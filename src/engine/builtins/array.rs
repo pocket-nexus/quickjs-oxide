@@ -422,7 +422,15 @@ impl Runtime {
 
         let values = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Values)?;
         let values = match self.get_property_in_realm(realm, array_prototype, &values)? {
-            Completion::Return(value) => self.root_and_release_jsvalue(value)?,
+            Completion::Return(JsValue::Object(id)) => {
+                ObjectRef::from_owned_handle(self.clone(), id)
+            }
+            Completion::Return(value) => {
+                self.release_jsvalue(value)?;
+                return Err(RuntimeError::Invariant(
+                    "Array.prototype.values was not callable during alias bootstrap",
+                ));
+            }
             Completion::Throw(value) => {
                 self.release_jsvalue(value)?;
                 return Err(RuntimeError::Invariant(
@@ -430,26 +438,21 @@ impl Runtime {
                 ));
             }
         };
-        let Value::Object(values_object) = &values else {
-            return Err(RuntimeError::Invariant(
-                "Array.prototype.values was not callable during alias bootstrap",
-            ));
-        };
         self.0
             .state
             .borrow_mut()
             .heap
-            .attach_array_prototype_values(realm, values_object.object_id())?;
+            .attach_array_prototype_values(realm, values.object_id())?;
         let iterator = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Iterator));
-        if !self.define_own_property(
+        if !self.define_raw_property(
             array_prototype,
             &iterator,
-            &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(values),
-                writable: DescriptorField::Present(true),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
+            &crate::engine::object::property::PropertyDescriptor {
+                value: Some(crate::engine::heap::RawValue::Object(values.object_id())),
+                writable: Some(true),
+                enumerable: Some(false),
+                configurable: Some(true),
+                ..Default::default()
             },
         )? {
             return Err(RuntimeError::Invariant(
@@ -566,44 +569,23 @@ impl Runtime {
         })
     }
 
-    fn array_constructor_length(
-        &self,
-        realm: ContextId,
-        value: &Value,
-    ) -> Result<ArrayLengthConversion, RuntimeError> {
-        match value {
-            Value::Int(value) if *value >= 0 => Ok(ArrayLengthConversion::Length(*value as u32)),
-            Value::Float(value) => self.validate_array_length_number(Some(realm), *value, None),
-            Value::Int(_) => self.invalid_array_length(Some(realm)),
-            _ => Err(RuntimeError::Invariant(
-                "Array constructor length validator received a non-number",
-            )),
-        }
-    }
-
     pub(crate) fn create_array_data_property(
         &self,
         realm: ContextId,
         object: &ObjectRef,
         index: u32,
-        value: Value,
-    ) -> Result<Option<Value>, RuntimeError> {
+        value: JsValue,
+    ) -> Result<Option<JsValue>, RuntimeError> {
         self.create_indexed_data_property(realm, object, u64::from(index), value)
     }
-
-    /// QuickJS `JS_DefinePropertyValueUint32` without `JS_PROP_THROW`: an
-    /// ordinary `false` result is ignored, while an actual JavaScript throw is
-    /// still returned to the caller. Promise aggregate element handlers use
-    /// this form, which is observably distinct after a custom capability
-    /// exposes and freezes their output Array early.
 
     fn create_indexed_data_property(
         &self,
         realm: ContextId,
         object: &ObjectRef,
         index: u64,
-        value: Value,
-    ) -> Result<Option<Value>, RuntimeError> {
+        value: JsValue,
+    ) -> Result<Option<JsValue>, RuntimeError> {
         self.finish_create_indexed_data_property(
             realm,
             index,
@@ -616,12 +598,12 @@ impl Runtime {
         realm: ContextId,
         index: u64,
         result: NativeConversion<InternalDefineResult>,
-    ) -> Result<Option<Value>, RuntimeError> {
+    ) -> Result<Option<JsValue>, RuntimeError> {
         match result {
             NativeConversion::Value(InternalDefineResult::Defined) => Ok(None),
             NativeConversion::Value(InternalDefineResult::RejectedProxyTrap) => {
                 let error = Error::new(ErrorKind::Type, "proxy: defineProperty exception");
-                Ok(Some(self.new_native_error_from_error(
+                Ok(Some(self.new_native_error_from_error_jsvalue(
                     realm,
                     NativeErrorKind::Type,
                     &error,
@@ -645,7 +627,7 @@ impl Runtime {
                 } else {
                     Error::new(ErrorKind::Type, "property is not configurable")
                 };
-                Ok(Some(self.new_native_error_from_error(
+                Ok(Some(self.new_native_error_from_error_jsvalue(
                     realm,
                     NativeErrorKind::Type,
                     &error,
@@ -660,17 +642,11 @@ impl Runtime {
         realm: ContextId,
         object: &ObjectRef,
         index: u64,
-        value: Value,
+        value: JsValue,
     ) -> Result<NativeConversion<InternalDefineResult>, RuntimeError> {
+        let descriptor = crate::engine::object::OwnedPropertyDescriptor::data(self, value);
         let key = self.property_key_for_index(index)?;
-        let descriptor = OrdinaryPropertyDescriptor {
-            value: DescriptorField::Present(value),
-            writable: DescriptorField::Present(true),
-            enumerable: DescriptorField::Present(true),
-            configurable: DescriptorField::Present(true),
-            ..OrdinaryPropertyDescriptor::new()
-        };
-        self.internal_define_own_property(realm, object, &key, &descriptor)
+        self.internal_define_owned_property(realm, object, &key, descriptor)
     }
 
     pub(crate) fn call_array_is_array(
@@ -685,15 +661,12 @@ impl Runtime {
             ));
         };
         let result = match arguments.readable.first() {
-            Some(value) => {
-                let value = self.root_value(value)?;
-                match self.internal_is_array(realm, &value)? {
-                    NativeConversion::Value(value) => value,
-                    NativeConversion::Throw(value) => {
-                        return Ok(Completion::Throw(self.into_jsvalue(value)?));
-                    }
+            Some(value) => match self.internal_is_array_jsvalue(realm, value)? {
+                NativeConversion::Value(value) => value,
+                NativeConversion::Throw(value) => {
+                    return Ok(Completion::Throw(value));
                 }
-            }
+            },
             None => false,
         };
         Ok(Completion::Return(JsValue::Bool(result)))
@@ -735,26 +708,22 @@ impl Runtime {
     fn new_array_with_length(
         &self,
         realm: ContextId,
-        length: Option<Value>,
+        length: Option<f64>,
     ) -> Result<Completion, RuntimeError> {
         let array = self.new_array(realm)?;
         if let Some(length) = length {
-            let length = match self.array_constructor_length(realm, &length)? {
+            let length = match self.validate_array_length_number(Some(realm), length, None)? {
                 ArrayLengthConversion::Length(length) => length,
                 ArrayLengthConversion::Throw(value) => {
-                    return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                    return Ok(Completion::Throw(value));
                 }
             };
             let key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
-            match self.define_own_property_in_realm(
-                Some(realm),
-                &array,
-                &key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(Self::array_length_value(length)),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )? {
+            let mut descriptor = crate::engine::object::OwnedPropertyDescriptor::new(self);
+            descriptor.value = DescriptorField::Present(
+                crate::engine::value::number::operations::Number::compact(f64::from(length)).into(),
+            );
+            match self.define_owned_property_in_realm(Some(realm), &array, &key, &descriptor)? {
                 PropertyDefineOutcome::Defined(true) => {}
                 PropertyDefineOutcome::Defined(false) => {
                     return Err(RuntimeError::Invariant(
@@ -762,11 +731,11 @@ impl Runtime {
                     ));
                 }
                 PropertyDefineOutcome::Throw(value) => {
-                    return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                    return Ok(Completion::Throw(value));
                 }
             }
         }
-        Ok(Completion::Return(self.into_jsvalue(Value::Object(array))?))
+        Ok(Completion::Return(JsValue::Object(array.into_handle())))
     }
 
     pub(crate) fn call_array_of(
@@ -814,7 +783,7 @@ impl Runtime {
         const MAX_FAST_ARRAY_LENGTH: u64 = 2_147_483_647;
 
         if length > MAX_FAST_ARRAY_LENGTH {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Range,
                 "invalid array length",
@@ -1026,9 +995,7 @@ impl Runtime {
                     .ok_or(RuntimeError::Invariant("flatten count was not numeric"))?
                     as u64,
             )),
-            Completion::Throw(value) => Ok(NativeConversion::Throw(
-                self.root_and_release_jsvalue(value)?,
-            )),
+            Completion::Throw(value) => Ok(NativeConversion::Throw(value)),
         }
     }
 
@@ -1221,7 +1188,7 @@ impl Runtime {
         {
             return Ok(NativeConversion::Value(Some(callable)));
         }
-        Ok(NativeConversion::Throw(self.new_native_error(
+        Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
             realm,
             NativeErrorKind::Type,
             "not a function",
@@ -1352,7 +1319,7 @@ impl Runtime {
             value => match self.native_to_object_jsvalue(realm, self.dup_jsvalue(value)?)? {
                 NativeConversion::Value(object) => std::borrow::Cow::Owned(object),
                 NativeConversion::Throw(value) => {
-                    return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                    return Ok(Completion::Throw(value));
                 }
             },
         };

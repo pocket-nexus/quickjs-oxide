@@ -70,9 +70,7 @@ impl CreateStep {
         let source = match runtime.iterator_receiver(realm, invocation)? {
             NativeConversion::Value(source) => source,
             NativeConversion::Throw(value) => {
-                return Ok(Self::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(Self::Complete(Completion::Throw(value)));
             }
         };
         let argument = runtime.dup_jsvalue(arguments.readable.first().ok_or(
@@ -95,7 +93,7 @@ impl CreateStep {
         if let NativeConversion::Throw(value) =
             runtime.iterator_callable_jsvalue(realm, &resume.callback)?
         {
-            return resume.close(runtime, runtime.into_jsvalue(value)?);
+            return resume.close(runtime, value);
         }
         resume.read(runtime)
     }
@@ -122,7 +120,7 @@ impl CreateResume {
         let number = match reply {
             NativeConversion::Value(number) => number,
             NativeConversion::Throw(value) => {
-                return self.close(runtime, runtime.into_jsvalue(value)?);
+                return self.close(runtime, value);
             }
         };
         let count = if number == f64::INFINITY {

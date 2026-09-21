@@ -1523,6 +1523,13 @@ pub(super) fn object_edges(object: &ObjectData) -> Edges {
     }
     edges.push(RawId::Shape(object.shape));
     match &object.payload {
+        ObjectPayload::Primitive(PrimitiveObjectData::String(id)) => edges.push(RawId::String(*id)),
+        ObjectPayload::Primitive(PrimitiveObjectData::BigInt(id)) => edges.push(RawId::BigInt(*id)),
+        ObjectPayload::Primitive(
+            PrimitiveObjectData::Number(_)
+            | PrimitiveObjectData::Boolean(_)
+            | PrimitiveObjectData::Symbol(_),
+        ) => {}
         ObjectPayload::Array { dense } => {
             if let Some(dense) = dense {
                 for value in dense {
@@ -1533,7 +1540,6 @@ pub(super) fn object_edges(object: &ObjectData) -> Edges {
         ObjectPayload::Ordinary
         | ObjectPayload::RawJson
         | ObjectPayload::Arguments { .. }
-        | ObjectPayload::Primitive(_)
         | ObjectPayload::Date(_)
         | ObjectPayload::RegExp(_)
         | ObjectPayload::ArrayBuffer(_)

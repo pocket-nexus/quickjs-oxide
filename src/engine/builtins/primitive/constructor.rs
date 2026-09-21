@@ -91,9 +91,9 @@ impl PrimitiveConstructorStep {
         if matches!(kind, PrimitiveKind::Symbol | PrimitiveKind::BigInt)
             && !matches!(resume.new_target, JsValue::Undefined)
         {
-            return Ok(Self::Complete(Completion::Throw(runtime.into_jsvalue(
+            return Ok(Self::Complete(Completion::Throw(
                 runtime.new_not_constructor_error_jsvalue(realm, &resume.new_target)?,
-            )?)));
+            )));
         }
         match kind {
             PrimitiveKind::Boolean => {
@@ -172,9 +172,7 @@ impl PrimitiveConstructorResume {
                 match runtime.number_constructor_from_primitive(self.0.realm, &self.0.value)? {
                     NativeConversion::Value(value) => runtime.into_jsvalue(Value::number(value))?,
                     NativeConversion::Throw(value) => {
-                        return Ok(PrimitiveConstructorStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(PrimitiveConstructorStep::Complete(Completion::Throw(value)));
                     }
                 }
             }
@@ -188,9 +186,7 @@ impl PrimitiveConstructorResume {
                         }
                     }
                     NativeConversion::Throw(value) => {
-                        return Ok(PrimitiveConstructorStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(PrimitiveConstructorStep::Complete(Completion::Throw(value)));
                     }
                 }
             }
@@ -208,6 +204,9 @@ impl PrimitiveConstructorResume {
         result: NativeConversion<JsString>,
     ) -> Result<PrimitiveConstructorStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Value) {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "primitive constructor string phase mismatch",
             ));
@@ -215,9 +214,7 @@ impl PrimitiveConstructorResume {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(PrimitiveConstructorStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(PrimitiveConstructorStep::Complete(Completion::Throw(value)));
             }
         };
         if self.0.kind == PrimitiveKind::Symbol {
@@ -279,15 +276,14 @@ impl PrimitiveConstructorResume {
                 if let Some(value) = other {
                     runtime.release_jsvalue(value)?;
                 }
-                let realm =
-                    match runtime.function_realm_from_jsvalue(self.0.realm, &self.0.new_target)? {
-                        NativeConversion::Value(realm) => realm,
-                        NativeConversion::Throw(value) => {
-                            return Ok(PrimitiveConstructorStep::Complete(Completion::Throw(
-                                runtime.into_jsvalue(value)?,
-                            )));
-                        }
-                    };
+                let realm = match runtime
+                    .function_realm_from_jsvalue(self.0.realm, &self.0.new_target)?
+                {
+                    NativeConversion::Value(realm) => realm,
+                    NativeConversion::Throw(value) => {
+                        return Ok(PrimitiveConstructorStep::Complete(Completion::Throw(value)));
+                    }
+                };
                 runtime.primitive_prototype_for_realm(realm, self.0.kind)?
             }
         };

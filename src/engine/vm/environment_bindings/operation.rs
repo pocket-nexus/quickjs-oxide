@@ -229,9 +229,7 @@ impl EnvironmentResume {
         let present = match reply {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(EnvironmentStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(EnvironmentStep::Complete(Completion::Throw(value)));
             }
         };
         let realm = self.0.realm;
@@ -378,17 +376,20 @@ impl EnvironmentResume {
         };
         match std::mem::replace(&mut self.0.phase, Phase::Boolean) {
             Phase::Unscopables { key } => Ok(match value {
-                JsValue::Object(object) => EnvironmentStep::request_read(
-                    runtime,
-                    JsValue::Object(object),
-                    ObjectRef::from_borrowed_handle(runtime.clone(), object)?,
-                    key,
-                    EnvironmentResume(Box::new(EnvironmentResumeState {
-                        pending_effect: EnvironmentStepPending::default(),
-                        realm: self.0.realm,
-                        phase: Phase::Excluded,
-                    })),
-                ),
+                JsValue::Object(object) => {
+                    let owner = ObjectRef::from_owned_handle(runtime.clone(), object);
+                    EnvironmentStep::request_read(
+                        runtime,
+                        JsValue::Object(owner.clone().into_handle()),
+                        owner,
+                        key,
+                        EnvironmentResume(Box::new(EnvironmentResumeState {
+                            pending_effect: EnvironmentStepPending::default(),
+                            realm: self.0.realm,
+                            phase: Phase::Excluded,
+                        })),
+                    )
+                }
                 value => {
                     runtime.release_jsvalue(value)?;
                     EnvironmentStep::Complete(Completion::Return(JsValue::Bool(true)))
@@ -402,9 +403,20 @@ impl EnvironmentResume {
                 )))
             }
             Phase::Value => Ok(EnvironmentStep::Complete(Completion::Return(value))),
-            _ => Err(RuntimeError::Invariant(
-                "environment value reply has wrong phase",
-            )),
+            phase => {
+                if let Phase::Put {
+                    object,
+                    value: pending,
+                    ..
+                } = phase
+                {
+                    let _ = object.runtime().release_jsvalue(pending);
+                }
+                runtime.release_jsvalue(value)?;
+                Err(RuntimeError::Invariant(
+                    "environment value reply has wrong phase",
+                ))
+            }
         }
     }
     pub(in crate::engine::vm) fn set(
@@ -412,11 +424,17 @@ impl EnvironmentResume {
         runtime: &Runtime,
         reply: NativeConversion<InternalSetResult>,
     ) -> Result<EnvironmentStep, RuntimeError> {
-        let Phase::Set { key, strict } = std::mem::replace(&mut self.0.phase, Phase::Boolean)
-        else {
+        if !matches!(self.0.phase, Phase::Set { .. }) {
+            if let NativeConversion::Throw(value) = reply {
+                runtime.release_jsvalue(value)?;
+            }
             return Err(RuntimeError::Invariant(
                 "environment Set reply has wrong phase",
             ));
+        }
+        let Phase::Set { key, strict } = std::mem::replace(&mut self.0.phase, Phase::Boolean)
+        else {
+            unreachable!()
         };
         Ok(EnvironmentStep::Complete(
             runtime.finish_property_set(reply, &key, strict)?,

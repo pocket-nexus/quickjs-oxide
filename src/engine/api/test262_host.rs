@@ -189,9 +189,7 @@ impl Runtime {
                         NativeConversion::Value(value) => {
                             Completion::Return(self.into_jsvalue(Value::String(value))?)
                         }
-                        NativeConversion::Throw(value) => {
-                            Completion::Throw(self.into_jsvalue(value)?)
-                        }
+                        NativeConversion::Throw(value) => Completion::Throw(value),
                     };
                     resume.resume(self, result)?
                 }

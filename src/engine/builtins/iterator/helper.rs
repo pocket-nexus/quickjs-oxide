@@ -141,9 +141,7 @@ impl HelperResumeStep {
         let helper = match runtime.iterator_receiver(realm, invocation)? {
             NativeConversion::Value(helper) => helper,
             NativeConversion::Throw(value) => {
-                return Ok(Self::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(Self::Complete(Completion::Throw(value)));
             }
         };
         let state_result = {
@@ -424,7 +422,8 @@ impl HelperResume {
         }
         let callable = match runtime.iterator_callable_jsvalue(self.0.realm, &self.0.callback)? {
             NativeConversion::Value(callback) => callback,
-            NativeConversion::Throw(_) => {
+            NativeConversion::Throw(discarded) => {
+                runtime.release_jsvalue(discarded)?;
                 return Err(RuntimeError::Invariant(
                     "Iterator Helper callback lost its callable brand",
                 ));
@@ -566,7 +565,7 @@ impl HelperResume {
                 let callable = match callable {
                     NativeConversion::Value(callable) => callable,
                     NativeConversion::Throw(value) => {
-                        return self.fail(runtime, runtime.into_jsvalue(value)?, true);
+                        return self.fail(runtime, value, true);
                     }
                 };
                 self.0.phase = Phase::MappedIterator;

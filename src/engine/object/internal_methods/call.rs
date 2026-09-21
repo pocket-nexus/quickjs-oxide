@@ -116,9 +116,9 @@ impl Search {
             ))?;
         if data.is_revoked {
             return match runtime.proxy_revoked_throw(self.realm)? {
-                NativeConversion::Throw(value) => Ok(ProxyCallStep::Complete(Completion::Throw(
-                    runtime.unroot_value(&value)?,
-                ))),
+                NativeConversion::Throw(value) => {
+                    Ok(ProxyCallStep::Complete(Completion::Throw(value)))
+                }
                 NativeConversion::Value(()) => Err(RuntimeError::Invariant(
                     "revoked Proxy call returned a value",
                 )),

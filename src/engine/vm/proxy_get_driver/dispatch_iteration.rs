@@ -133,13 +133,8 @@ pub(super) fn advance(
                     .try_reserve(1)
                     .map_err(|_| Error::internal("iterator continuation allocation failed"))?;
                 query.parents.push(resume);
-                *step = crate::engine::builtins::IteratorNextStep::start(
-                    runtime,
-                    realm,
-                    iterator,
-                    runtime
-                        .root_and_release_jsvalue(method)
-                        .map_err(runtime_error_to_vm_error)?,
+                *step = crate::engine::builtins::IteratorNextStep::start_jsvalue(
+                    runtime, realm, iterator, method,
                 )
                 .map_err(runtime_error_to_vm_error)?
                 .into();

@@ -4,9 +4,12 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::ContextId,
     object::{CallableRef, ObjectRef, PropertyKey},
-    value::{JsValue, Value},
+    value::JsValue,
     vm::{Completion, call::NativeInvokeOutcome},
 };
+
+#[cfg(test)]
+use crate::engine::value::Value;
 
 pub(crate) enum NextStep {
     Complete(ObjectIteratorStep),
@@ -93,24 +96,6 @@ impl NextStep {
         } else {
             runtime.release_jsvalue(method)?;
             None
-        };
-        let Some(callable) = callable else {
-            return Ok(Self::Complete(ObjectIteratorStep::Throw(
-                runtime.new_native_error_jsvalue(realm, NativeErrorKind::Type, "not a function")?,
-            )));
-        };
-        Ok(Self::call(realm, iterator, callable))
-    }
-
-    pub(crate) fn start(
-        runtime: &Runtime,
-        realm: ContextId,
-        iterator: ObjectRef,
-        method: Value,
-    ) -> Result<Self, RuntimeError> {
-        let callable = match method {
-            Value::Object(ref object) => runtime.as_callable(object)?,
-            _ => None,
         };
         let Some(callable) = callable else {
             return Ok(Self::Complete(ObjectIteratorStep::Throw(

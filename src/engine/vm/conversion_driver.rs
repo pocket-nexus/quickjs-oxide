@@ -47,6 +47,11 @@ impl Drop for ConversionState {
     /// Consumption uses `Option::take`/`mem::replace`, so a drained slot is
     /// `Undefined` here; releases are defer-safe and nothrow.
     fn drop(&mut self) {
+        if let Some(PrimitiveStep::Complete(Completion::Return(value) | Completion::Throw(value))) =
+            self.step.take()
+        {
+            let _ = self.runtime.release_jsvalue(value);
+        }
         let finish = std::mem::replace(&mut self.finish, Finish::Plus);
         match finish {
             Finish::PropertyWrite { base, value } => {
@@ -555,11 +560,11 @@ impl ConversionTask {
             return Ok(Progress::Entered);
         }
         let frame = self.frame;
+        let realm = execution.frames.current_mut(frame)?.executable.realm;
         let step = self
             .step
             .take()
             .ok_or_else(|| Error::internal("conversion task lost its step"))?;
-        let realm = execution.frames.current_mut(frame)?.executable.realm;
         match step {
             PrimitiveStep::Complete(completion) => {
                 let completion = match completion {
@@ -568,6 +573,7 @@ impl ConversionTask {
                         // Domain completion guarantees a primitive: this call
                         // cannot recursively perform another ToPrimitive.
                         if matches!(value, JsValue::Object(_)) {
+                            let _ = runtime.release_jsvalue(value);
                             return Err(Error::internal("conversion returned an object"));
                         }
                         match &mut self.finish {
@@ -736,6 +742,30 @@ impl ConversionTask {
     }
 }
 
+// Own the call operands until a normalized callback or prepared frame accepts them.
+struct ConversionInvocation {
+    runtime: Runtime,
+    receiver: JsValue,
+    arguments: Vec<JsValue>,
+}
+impl ConversionInvocation {
+    fn take_receiver(&mut self) -> JsValue {
+        std::mem::replace(&mut self.receiver, JsValue::Undefined)
+    }
+    fn take_arguments(&mut self) -> Vec<JsValue> {
+        std::mem::take(&mut self.arguments)
+    }
+}
+impl Drop for ConversionInvocation {
+    fn drop(&mut self) {
+        let receiver = self.take_receiver();
+        let _ = self.runtime.release_jsvalue(receiver);
+        for value in self.arguments.drain(..) {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn invoke(
     runtime: &Runtime,
@@ -746,6 +776,11 @@ fn invoke(
     arguments: Vec<JsValue>,
     resume: PrimitiveResume,
 ) -> Result<Progress, Error> {
+    let mut operands = ConversionInvocation {
+        runtime: runtime.clone(),
+        receiver,
+        arguments,
+    };
     let frame = task.frame;
     let identity = task.identity;
     let realm = execution.frames.current_mut(frame)?.executable.realm;
@@ -754,14 +789,16 @@ fn invoke(
         receiver,
         arguments,
         classification,
-    } = match super::call::normalize_callback(runtime, realm, callable, receiver, arguments)? {
+    } = match super::call::normalize_callback(
+        runtime,
+        realm,
+        callable,
+        operands.take_receiver(),
+        operands.take_arguments(),
+    )? {
         crate::engine::value::conversion::NativeConversion::Value(call) => call,
         crate::engine::value::conversion::NativeConversion::Throw(value) => {
-            // The callback boundary threw a public root; transfer it into the
-            // internal completion without a retain/release pair.
-            let value = runtime
-                .into_jsvalue(value)
-                .map_err(runtime_error_to_vm_error)?;
+            // Transfer the callback's owned exception directly to the continuation.
             return Ok(Progress::Ready(
                 task.with_step(
                     resume
@@ -771,6 +808,8 @@ fn invoke(
             ));
         }
     };
+    operands.receiver = receiver;
+    operands.arguments = arguments;
     let is_proxy = matches!(classification, CallableExecution::Proxy);
     let is_native = matches!(classification, CallableExecution::Native { .. });
     let is_resumable = if let CallableExecution::Bytecode { bytecode, .. } = &classification {
@@ -795,13 +834,19 @@ fn invoke(
                 execution,
                 frame,
                 callable.as_object().clone(),
-                receiver,
-                arguments,
+                operands.take_receiver(),
+                operands.take_arguments(),
                 wait,
             )?
         } else {
             super::proxy_get_driver::start_native_conversion_call(
-                runtime, execution, frame, callable, receiver, arguments, wait,
+                runtime,
+                execution,
+                frame,
+                callable,
+                operands.take_receiver(),
+                operands.take_arguments(),
+                wait,
             )?
         };
         return match progress {
@@ -846,8 +891,8 @@ fn invoke(
             }
             let request = BytecodeCallRequest {
                 callable,
-                receiver,
-                arguments,
+                receiver: operands.take_receiver(),
+                arguments: operands.take_arguments(),
                 new_target: JsValue::Undefined,
                 bytecode,
                 closure_slots,

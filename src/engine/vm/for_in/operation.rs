@@ -140,7 +140,7 @@ impl ForInStep {
     pub(in crate::engine::vm) fn start(
         runtime: &Runtime,
         realm: ContextId,
-        value: Value,
+        value: JsValue,
     ) -> Result<Self, RuntimeError> {
         let object = runtime.for_in_object(realm, value)?;
         let fast = object
@@ -292,7 +292,7 @@ fn advance(
             }
             NativeConversion::Value(false) => {}
             NativeConversion::Throw(value) => {
-                return Ok(ForInStep::Throw(runtime.into_jsvalue(value)?));
+                return Ok(ForInStep::Throw(value));
             }
         }
     }
@@ -312,7 +312,7 @@ impl ForInResume {
         let keys = match reply {
             NativeConversion::Value(keys) => keys,
             NativeConversion::Throw(value) => {
-                return Ok(ForInStep::Throw(runtime.into_jsvalue(value)?));
+                return Ok(ForInStep::Throw(value));
             }
         };
         match self.0.phase {
@@ -340,7 +340,7 @@ impl ForInResume {
         let value = match reply {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(ForInStep::Throw(runtime.into_jsvalue(value)?));
+                return Ok(ForInStep::Throw(value));
             }
         };
         match self.0.phase {
@@ -389,7 +389,7 @@ impl ForInResume {
         let prototype = match reply {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(ForInStep::Throw(runtime.into_jsvalue(value)?));
+                return Ok(ForInStep::Throw(value));
             }
         };
         match self.0.phase {
@@ -446,7 +446,7 @@ fn snapshot_next(
             )? {
                 NativeConversion::Value(value) => value,
                 NativeConversion::Throw(value) => {
-                    return Ok(ForInStep::Throw(runtime.into_jsvalue(value)?));
+                    return Ok(ForInStep::Throw(value));
                 }
             };
             pending
@@ -527,7 +527,7 @@ fn probe_keys(
             {
                 NativeConversion::Value(value) => value,
                 NativeConversion::Throw(value) => {
-                    return Ok(ForInStep::Throw(runtime.into_jsvalue(value)?));
+                    return Ok(ForInStep::Throw(value));
                 }
             };
             record_local_step();
@@ -649,9 +649,12 @@ mod tests {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
         let value = context.eval("globalThis.forInTrapCalls=0;new Proxy({a:1},{ownKeys(){forInTrapCalls++;throw 42}})").unwrap();
-        let ForInStep::Keys { object, resume } =
-            ForInStep::start(&runtime, context.realm, value).unwrap()
-        else {
+        let ForInStep::Keys { object, resume } = ForInStep::start(
+            &runtime,
+            context.realm,
+            runtime.into_jsvalue(value).unwrap(),
+        )
+        .unwrap() else {
             panic!("expected selected Proxy ownKeys step");
         };
         let id = object.object_id();

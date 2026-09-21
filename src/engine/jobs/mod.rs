@@ -18,7 +18,9 @@ use crate::engine::heap::{
 use crate::engine::modules::ModuleLoader;
 use crate::engine::object::ObjectRef;
 
-use crate::engine::value::{JsString, Value};
+#[cfg(test)]
+use crate::engine::value::Value;
+use crate::engine::value::{JsString, JsValue};
 use crate::engine::vm::Completion;
 use std::collections::VecDeque;
 
@@ -554,14 +556,14 @@ impl Runtime {
         let callback = self.as_callable(&callback)?.ok_or(RuntimeError::Invariant(
             "FinalizationRegistry job callback lost its callable brand",
         ))?;
-        let held_value = self.root_raw_value(held_value.clone())?;
-
-        crate::engine::vm::entry::call(
-            self,
+        let held_value = JsValue::from_raw(held_value.clone()).ok_or(RuntimeError::Invariant(
+            "FinalizationRegistry held value contains a private sentinel",
+        ))?;
+        self.call_internal_jsvalue(
             realm,
             &callback,
-            Value::Undefined,
-            std::slice::from_ref(&held_value),
+            JsValue::Undefined,
+            vec![self.dup_jsvalue(&held_value)?],
         )
     }
 

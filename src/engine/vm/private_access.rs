@@ -9,7 +9,7 @@ use crate::engine::api::{
 };
 use crate::engine::code::bytecode::PrivateNameSource;
 use crate::engine::code::function::metadata::ClosureVariableKind;
-use crate::engine::value::{JsValue, Value};
+use crate::engine::value::JsValue;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Access {
@@ -124,12 +124,15 @@ pub(super) fn step(
                 return Err(super::bindings::lexical_read_only_error(runtime, name)?);
             }
             if access == Access::In {
-                let Value::Object(receiver) = runtime
-                    .root_and_release_jsvalue(base_owner.take().unwrap())
-                    .map_err(runtime_error_to_vm_error)?
-                else {
+                let base_value = base_owner.take().unwrap();
+                let JsValue::Object(receiver) = base_value else {
+                    runtime
+                        .release_jsvalue(base_value)
+                        .map_err(runtime_error_to_vm_error)?;
                     return Err(Error::new(ErrorKind::Type, "invalid 'in' operand"));
                 };
+                let receiver =
+                    crate::engine::object::ObjectRef::from_owned_handle(runtime.clone(), receiver);
                 let present = if let Some(method) =
                     private_bindings::optional_callable(runtime, source, kind)?
                 {
@@ -164,26 +167,22 @@ pub(super) fn step(
                     base_owner.take().unwrap(),
                 )?;
                 if access == Access::GetKeep {
-                    execution.slots.push(
-                        &mut frame.window,
-                        runtime
-                            .into_jsvalue(Value::Object(receiver))
-                            .map_err(runtime_error_to_vm_error)?,
-                    )?;
+                    execution
+                        .slots
+                        .push(&mut frame.window, JsValue::Object(receiver.into_handle()))?;
                 }
                 execution.slots.push(
                     &mut frame.window,
-                    runtime
-                        .into_jsvalue(Value::Object(method.as_object().clone()))
-                        .map_err(runtime_error_to_vm_error)?,
+                    JsValue::Object(method.as_object().clone().into_handle()),
                 )?;
             }
             return Ok(());
         }
-        let Value::Object(receiver) = runtime
-            .root_and_release_jsvalue(base_owner.take().unwrap())
-            .map_err(runtime_error_to_vm_error)?
-        else {
+        let base_value = base_owner.take().unwrap();
+        let JsValue::Object(receiver) = base_value else {
+            runtime
+                .release_jsvalue(base_value)
+                .map_err(runtime_error_to_vm_error)?;
             return Err(Error::new(
                 ErrorKind::Type,
                 if access == Access::In {
@@ -193,6 +192,8 @@ pub(super) fn step(
                 },
             ));
         };
+        let receiver =
+            crate::engine::object::ObjectRef::from_owned_handle(runtime.clone(), receiver);
         let name = private_bindings::optional_field_name(runtime, source)?;
         if access == Access::In {
             let present = if let Some(name) = name {
@@ -218,12 +219,9 @@ pub(super) fn step(
                         .get_private_field_own(&receiver, &name)
                         .map_err(runtime_error_to_vm_error)?;
                     if access == Access::GetKeep {
-                        execution.slots.push(
-                            &mut frame.window,
-                            runtime
-                                .into_jsvalue(Value::Object(receiver))
-                                .map_err(runtime_error_to_vm_error)?,
-                        )?;
+                        execution
+                            .slots
+                            .push(&mut frame.window, JsValue::Object(receiver.into_handle()))?;
                     }
                     execution.slots.push(&mut frame.window, value)?;
                 }
@@ -234,12 +232,9 @@ pub(super) fn step(
                     runtime
                         .define_private_field_own(&receiver, &name, value.take().unwrap())
                         .map_err(runtime_error_to_vm_error)?;
-                    execution.slots.push(
-                        &mut frame.window,
-                        runtime
-                            .into_jsvalue(Value::Object(receiver))
-                            .map_err(runtime_error_to_vm_error)?,
-                    )?;
+                    execution
+                        .slots
+                        .push(&mut frame.window, JsValue::Object(receiver.into_handle()))?;
                 }
                 Access::In => unreachable!(),
             }

@@ -84,9 +84,7 @@ impl CallbackStep {
         let map = match runtime.map_receiver(realm, invocation, false)? {
             NativeConversion::Value(map) => map,
             NativeConversion::Throw(value) => {
-                return Ok(Self::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(Self::Complete(Completion::Throw(value)));
             }
         };
         if let CallbackKind::Insert { computed } = kind {
@@ -104,9 +102,7 @@ impl CallbackStep {
                     NativeConversion::Throw(value) => {
                         runtime.release_jsvalue(key)?;
                         runtime.release_jsvalue(second)?;
-                        return Ok(Self::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(Self::Complete(Completion::Throw(value)));
                     }
                 }
             } else {
@@ -115,9 +111,11 @@ impl CallbackStep {
             if let Some((_, value)) = runtime.find_map_record(&map, &key)? {
                 runtime.release_jsvalue(key)?;
                 runtime.release_jsvalue(second)?;
-                return Ok(Self::Complete(Completion::Return(
-                    runtime.into_jsvalue(runtime.root_raw_value(value.clone())?)?,
-                )));
+                return Ok(Self::Complete(Completion::Return(runtime.dup_jsvalue(
+                    &JsValue::from_raw(value.clone()).ok_or(RuntimeError::Invariant(
+                        "stored collection value is uninitialized",
+                    ))?,
+                )?)));
             }
             if let Some(callable) = callback {
                 runtime.release_jsvalue(second)?;
@@ -144,9 +142,7 @@ impl CallbackStep {
         let callback = match callable(runtime, realm, value)? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(Self::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(Self::Complete(Completion::Throw(value)));
             }
         };
         CallbackResume(Box::new(CallbackResumeState {
@@ -179,7 +175,7 @@ fn callable(
     };
     Ok(match result {
         Some(value) => NativeConversion::Value(value),
-        None => NativeConversion::Throw(runtime.new_native_error(
+        None => NativeConversion::Throw(runtime.new_native_error_jsvalue(
             realm,
             NativeErrorKind::Type,
             "not a function",
@@ -215,8 +211,29 @@ impl CallbackResume {
         *index = record_index.checked_add(1).ok_or(RuntimeError::Invariant(
             "Map forEach record index overflowed",
         ))?;
-        let key = runtime.into_jsvalue(runtime.root_raw_value(key.clone())?)?;
-        let value = runtime.into_jsvalue(runtime.root_raw_value(value.clone())?)?;
+        let key = runtime.dup_jsvalue(&JsValue::from_raw(key.clone()).ok_or(
+            RuntimeError::Invariant("stored collection value is uninitialized"),
+        )?)?;
+        let value = (|| {
+            runtime.dup_jsvalue(&JsValue::from_raw(value.clone()).ok_or(
+                RuntimeError::Invariant("stored collection value is uninitialized"),
+            )?)
+        })();
+        let value = match value {
+            Ok(value) => value,
+            Err(error) => {
+                let _ = runtime.release_jsvalue(key);
+                return Err(error);
+            }
+        };
+        let receiver = match runtime.dup_jsvalue(receiver) {
+            Ok(receiver) => receiver,
+            Err(error) => {
+                let _ = runtime.release_jsvalue(value);
+                let _ = runtime.release_jsvalue(key);
+                return Err(error);
+            }
+        };
         *record = Some(
             runtime.push_active_collection_record(ActiveCollectionRecord::Map {
                 object: self.0.map.object_id(),
@@ -225,11 +242,11 @@ impl CallbackResume {
         );
         Ok(CallbackStep::request_call(
             callback.clone(),
-            runtime.dup_jsvalue(receiver)?,
+            receiver,
             vec![
                 value,
                 key,
-                runtime.into_jsvalue(crate::engine::value::Value::Object(self.0.map.clone()))?,
+                JsValue::Object(self.0.map.clone().into_handle()),
             ],
             self,
         ))
@@ -277,15 +294,7 @@ pub(crate) fn finish(
                 let arguments = resume.take_call_arguments();
                 resume.resume(
                     runtime,
-                    runtime.call_internal(
-                        realm,
-                        &callable,
-                        runtime.root_and_release_jsvalue(receiver)?,
-                        &arguments
-                            .into_iter()
-                            .map(|value| runtime.root_and_release_jsvalue(value))
-                            .collect::<Result<Vec<_>, _>>()?,
-                    )?,
+                    runtime.call_internal_jsvalue(realm, &callable, receiver, arguments)?,
                 )?
             }
         };

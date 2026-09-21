@@ -103,17 +103,13 @@ impl TypedIterationStep {
         let target = match runtime.require_typed_array_jsvalue(realm, this_value)? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(Self::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(Self::Complete(Completion::Throw(value)));
             }
         };
         let length = match runtime.typed_array_validated_length(realm, &target)? {
             NativeConversion::Value(value) => u64::from(value),
             NativeConversion::Throw(value) => {
-                return Ok(Self::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(Self::Complete(Completion::Throw(value)));
             }
         };
         let callback_value = arguments.readable.first().ok_or(RuntimeError::Invariant(
@@ -263,9 +259,7 @@ impl TypedIterationResume {
         let target = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(TypedIterationStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(TypedIterationStep::Complete(Completion::Throw(value)));
             }
         };
         match self.0.phase {
@@ -300,9 +294,7 @@ impl TypedIterationResume {
         let bytes = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(TypedIterationStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(TypedIterationStep::Complete(Completion::Throw(value)));
             }
         };
         let IterationPhase::Mapped { state, index } = self.0.phase else {
@@ -388,9 +380,7 @@ impl TypedIterationResume {
                             crate::engine::object::operations::PropertyDefineOutcome::Throw(
                                 value,
                             ) => {
-                                return Ok(TypedIterationStep::Complete(Completion::Throw(
-                                    runtime.into_jsvalue(value)?,
-                                )));
+                                return Ok(TypedIterationStep::Complete(Completion::Throw(value)));
                             }
                         }
                         *length = length.checked_add(1).ok_or(RuntimeError::Invariant(

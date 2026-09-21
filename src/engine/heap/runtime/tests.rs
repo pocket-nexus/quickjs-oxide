@@ -490,9 +490,12 @@ fn set_property(
     match runtime.prepare_set_property(object, key, value)? {
         PropertySetAction::Complete => Ok(true),
         PropertySetAction::Rejected(_) | PropertySetAction::RejectedProxyTrap => Ok(false),
-        PropertySetAction::Throw(_) => Err(RuntimeError::Invariant(
-            "context-free property test produced a JavaScript throw",
-        )),
+        PropertySetAction::Throw(value) => {
+            runtime.release_jsvalue(value)?;
+            Err(RuntimeError::Invariant(
+                "context-free property test produced a JavaScript throw",
+            ))
+        }
         PropertySetAction::Call { .. } => Err(RuntimeError::Invariant(
             "ordinary-property test helper unexpectedly reached a setter",
         )),
@@ -509,9 +512,12 @@ fn set_property_with_receiver(
     match runtime.prepare_set_property_with_receiver(object, key, value, receiver)? {
         PropertySetAction::Complete => Ok(true),
         PropertySetAction::Rejected(_) | PropertySetAction::RejectedProxyTrap => Ok(false),
-        PropertySetAction::Throw(_) => Err(RuntimeError::Invariant(
-            "context-free property test produced a JavaScript throw",
-        )),
+        PropertySetAction::Throw(value) => {
+            runtime.release_jsvalue(value)?;
+            Err(RuntimeError::Invariant(
+                "context-free property test produced a JavaScript throw",
+            ))
+        }
         PropertySetAction::Call { .. } => Err(RuntimeError::Invariant(
             "ordinary-property test helper unexpectedly reached a setter",
         )),

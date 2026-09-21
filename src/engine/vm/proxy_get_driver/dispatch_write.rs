@@ -102,14 +102,7 @@ pub(super) fn keys(
                             unreachable!()
                         };
                         *step = resume
-                            .keys(
-                                runtime,
-                                NativeConversion::Throw(
-                                    runtime
-                                        .root_and_release_jsvalue(value)
-                                        .map_err(runtime_error_to_vm_error)?,
-                                ),
-                            )
+                            .keys(runtime, NativeConversion::Throw(value))
                             .map_err(runtime_error_to_vm_error)?;
                         continue;
                     }
@@ -162,14 +155,7 @@ pub(super) fn keys(
                         resume: Some(resume),
                     },
                     NativeConversion::Throw(reason) => resume
-                        .resume(
-                            runtime,
-                            Completion::Throw(
-                                runtime
-                                    .into_jsvalue(reason)
-                                    .map_err(runtime_error_to_vm_error)?,
-                            ),
-                        )
+                        .resume(runtime, Completion::Throw(reason))
                         .map_err(runtime_error_to_vm_error)?,
                 };
                 continue;
@@ -213,11 +199,7 @@ pub(super) fn set(
                     *step = resume
                         .set(
                             runtime,
-                            crate::engine::object::operations::PropertySetAction::Throw(
-                                runtime
-                                    .root_and_release_jsvalue(value)
-                                    .map_err(runtime_error_to_vm_error)?,
-                            ),
+                            crate::engine::object::operations::PropertySetAction::Throw(value),
                         )
                         .map_err(runtime_error_to_vm_error)?;
                     continue;
@@ -356,11 +338,7 @@ pub(super) fn set(
                     *step = resume
                         .set(
                             runtime,
-                            crate::engine::object::operations::PropertySetAction::Throw(
-                                runtime
-                                    .root_and_release_jsvalue(error)
-                                    .map_err(runtime_error_to_vm_error)?,
-                            ),
+                            crate::engine::object::operations::PropertySetAction::Throw(error),
                         )
                         .map_err(runtime_error_to_vm_error)?;
                     continue;
@@ -417,11 +395,7 @@ pub(super) fn set(
                     *step = resume
                         .set(
                             runtime,
-                            crate::engine::object::operations::PropertySetAction::Throw(
-                                runtime
-                                    .root_and_release_jsvalue(error)
-                                    .map_err(runtime_error_to_vm_error)?,
-                            ),
+                            crate::engine::object::operations::PropertySetAction::Throw(error),
                         )
                         .map_err(runtime_error_to_vm_error)?;
                     continue;
@@ -527,14 +501,7 @@ pub(super) fn define(
                             unreachable!()
                         };
                         *step = resume
-                            .defined(
-                                runtime,
-                                NativeConversion::Throw(
-                                    runtime
-                                        .root_and_release_jsvalue(value)
-                                        .map_err(runtime_error_to_vm_error)?,
-                                ),
-                            )
+                            .defined(runtime, NativeConversion::Throw(value))
                             .map_err(runtime_error_to_vm_error)?;
                         continue;
                     }

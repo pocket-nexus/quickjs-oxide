@@ -88,9 +88,7 @@ fn method(
     step: MethodStep,
 ) -> Result<ProxyOwnStep, RuntimeError> {
     Ok(match step {
-        MethodStep::Throw(value) => ProxyOwnStep::Complete(NativeConversion::Throw(
-            runtime.root_and_release_jsvalue(value.take())?,
-        )),
+        MethodStep::Throw(value) => ProxyOwnStep::Complete(NativeConversion::Throw(value.take())),
         MethodStep::Complete { mut resume } => {
             let rooted = resume.take_completed_rooted();
             let target = resume.take_completed_target();
@@ -151,9 +149,7 @@ impl ProxyOwnResume {
     ) -> Result<ProxyOwnStep, RuntimeError> {
         let value = match completion {
             Completion::Throw(value) => {
-                return Ok(ProxyOwnStep::Complete(NativeConversion::Throw(
-                    runtime.root_and_release_jsvalue(value)?,
-                )));
+                return Ok(ProxyOwnStep::Complete(NativeConversion::Throw(value)));
             }
             Completion::Return(value) => value,
         };
@@ -256,6 +252,10 @@ impl ProxyOwnResume {
             .expect("ProxyOwnStep Extensible result");
         let realm = state.realm;
         let Phase::Extensible { rooted, target } = state.phase else {
+            let _ = state.pending_effect.runtime.release_jsvalue(value);
+            if let NativeConversion::Throw(thrown) = result {
+                let _ = state.pending_effect.runtime.release_jsvalue(thrown);
+            }
             return Err(RuntimeError::Invariant(
                 "Proxy descriptor continuation received an extensibility reply",
             ));
@@ -292,6 +292,9 @@ impl ProxyOwnResume {
             extensible,
         } = self.0.phase
         else {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "Proxy descriptor continuation received a conversion reply",
             ));

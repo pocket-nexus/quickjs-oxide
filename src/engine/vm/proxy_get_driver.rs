@@ -43,6 +43,12 @@ pub(super) struct PendingProxyGet {
     query: Query,
 }
 
+impl Drop for PendingProxyGet {
+    fn drop(&mut self) {
+        std::mem::replace(&mut self.resume, Resume::Identity).release_owned();
+    }
+}
+
 impl PendingProxyGet {
     pub(super) fn is_direct_property_read(&self, operation: Option<OperationTarget>) -> bool {
         operation == Some(OperationTarget::PropertyGet(self.identity))
@@ -156,7 +162,9 @@ impl Query {
             .pop()
             .ok_or_else(|| Error::internal("native result has no scope"))?;
         self.saved_native_depth -= 1 + scope.parents.len() as u128;
-        while self.parents.pop().is_some() {}
+        while let Some(resume) = self.parents.pop() {
+            resume.release_owned();
+        }
         let empty = std::mem::replace(&mut self.parents, scope.parents);
         // Reservation happens before installing the native scope.
         self.spare_parents.push(empty);
@@ -169,12 +177,16 @@ impl Drop for Query {
         // Current domain states belong to the innermost native activation.
         // Each saved resume/parent stack belongs to its caller, outside that
         // activation; release them before proceeding to the next outer scope.
-        while self.parents.pop().is_some() {}
+        while let Some(resume) = self.parents.pop() {
+            resume.release_owned();
+        }
         while let Some(mut scope) = self.natives.pop() {
             let _ = scope.call.release_invocation();
             drop(scope.call);
-            drop(scope.resume);
-            while scope.parents.pop().is_some() {}
+            scope.resume.release_owned();
+            while let Some(resume) = scope.parents.pop() {
+                resume.release_owned();
+            }
         }
     }
 }
@@ -326,25 +338,30 @@ pub(super) fn start_owned_read(
     frame: FrameId,
     object: ObjectRef,
     key: PropertyKey,
-    receiver: Value,
+    receiver: JsValue,
     depth: usize,
 ) -> Result<CallStep, Error> {
-    let parent = execution.frames.current_mut(frame)?;
-    let identity = parent
-        .property_generation
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("property operation identity exhausted"))?;
-    parent.property_generation = identity;
-    let realm = parent.executable.realm;
-    let step = Step::Read {
+    let mut step = Step::Read {
         object: Some(object.clone()),
         key: Some(key),
-        receiver: Some(
-            runtime
-                .into_jsvalue(receiver)
-                .map_err(runtime_error_to_vm_error)?,
-        ),
+        receiver: Some(receiver),
         resume: Some(Resume::ReadOwner(object)),
+    };
+    let prepared = (|| {
+        let parent = execution.frames.current_mut(frame)?;
+        let identity = parent
+            .property_generation
+            .checked_add(1)
+            .ok_or_else(|| Error::internal("property operation identity exhausted"))?;
+        parent.property_generation = identity;
+        Ok((identity, parent.executable.realm))
+    })();
+    let (identity, realm) = match prepared {
+        Ok(value) => value,
+        Err(error) => {
+            step.release_owned(runtime);
+            return Err(error);
+        }
     };
     let result = advance(
         runtime,
@@ -784,9 +801,7 @@ pub(super) fn start_waitable_native_call(
                         // Release the abandoned inner state while its outer
                         // activation still owns the protocol call. The reply
                         // resume is likewise consumed before the outer finish.
-                        records[0].step = Step::Complete(Some(Completion::Return(
-                            crate::engine::value::JsValue::Undefined,
-                        )));
+                        records[0].step.release_owned(runtime);
                         if let Some(mut parent) = parent.take() {
                             let outer = parent.call.take().expect("outer replace activation");
                             drop(parent);
@@ -1592,6 +1607,11 @@ fn drive_inner(
             Ok(step) => advance_inner(runtime, execution, owner, identity, &mut query, step),
             Err(error) => Err(error.take().expect("pending dispatch error")),
         };
+        // Any fields not transferred into the returned effect still belong to
+        // this request, including terminal throws after a dispatch error.
+        if let Ok(step) = &mut step {
+            step.release_owned(runtime);
+        }
         match result {
             Ok(Next::Done(result)) => {
                 #[cfg(feature = "profiling")]
@@ -1625,7 +1645,7 @@ fn drive_inner(
                         let pending = take_pending(execution, owner)?;
                         let (_, restored, resume) =
                             execution.query_storage.release_pending(pending);
-                        drop(resume);
+                        resume.release_owned();
                         query = restored;
                         #[cfg(feature = "profiling")]
                         {
@@ -1900,9 +1920,6 @@ fn invoke(
         NativeConversion::Throw(value) => {
             // The normalization boundary threw a public root; transfer it into
             // the internal completion without a retain/release pair.
-            let value = runtime
-                .into_jsvalue(value)
-                .map_err(runtime_error_to_vm_error)?;
             step = resume
                 .resume(runtime, Completion::Throw(value))
                 .map_err(runtime_error_to_vm_error)?;
@@ -2611,11 +2628,12 @@ pub(super) fn start_iterator_next(
     iterator: crate::engine::value::JsValue,
     method: crate::engine::object::CallableRef,
 ) -> Result<CallStep, Error> {
-    let Value::Object(iterator) = runtime
-        .root_and_release_jsvalue(iterator)
-        .map_err(runtime_error_to_vm_error)?
-    else {
-        return Err(Error::internal("iterator record lost object receiver"));
+    let iterator = match iterator {
+        JsValue::Object(id) => ObjectRef::from_owned_handle(runtime.clone(), id),
+        value => {
+            let _ = runtime.release_jsvalue(value);
+            return Err(Error::internal("iterator record lost object receiver"));
+        }
     };
     let step = crate::engine::builtins::IteratorNextStep::start_callable(
         runtime,
@@ -2975,25 +2993,24 @@ pub(super) fn start_object_copy(
     let realm = parent.executable.realm;
     // The copy machine borrows rooted copies; the slot owners stay live until
     // the pops below consume them.
-    let target = runtime
-        .root_value(execution.slots.peek(&parent.window, target_depth)?)
-        .map_err(runtime_error_to_vm_error)?;
-    let Value::Object(target) = target else {
+    let JsValue::Object(target) = execution.slots.peek(&parent.window, target_depth)? else {
         return Err(Error::internal(
             "CopyDataProperties target is not an object",
         ));
     };
+    let target = ObjectRef::from_borrowed_handle(runtime.clone(), *target)
+        .map_err(|error| runtime_error_to_vm_error(error.into()))?;
     let source = execution.slots.peek(&parent.window, source_depth)?;
     let excluded = if let Some(depth) = excluded_depth {
-        let excluded = runtime
-            .root_value(execution.slots.peek(&parent.window, depth)?)
-            .map_err(runtime_error_to_vm_error)?;
-        let Value::Object(object) = excluded else {
+        let JsValue::Object(id) = execution.slots.peek(&parent.window, depth)? else {
             return Err(Error::internal(
                 "CopyDataProperties exclusion is not an object",
             ));
         };
-        Some(object)
+        Some(
+            ObjectRef::from_borrowed_handle(runtime.clone(), *id)
+                .map_err(|error| runtime_error_to_vm_error(error.into()))?,
+        )
     } else {
         None
     };
@@ -3171,11 +3188,12 @@ fn continue_iterator(
             false,
         ),
         IteratorAction::Next(callable, receiver) => {
-            let Value::Object(iterator) = runtime
-                .root_and_release_jsvalue(receiver)
-                .map_err(runtime_error_to_vm_error)?
-            else {
-                return Err(Error::internal("iterator record lost object receiver"));
+            let iterator = match receiver {
+                JsValue::Object(id) => ObjectRef::from_owned_handle(runtime.clone(), id),
+                value => {
+                    let _ = runtime.release_jsvalue(value);
+                    return Err(Error::internal("iterator record lost object receiver"));
+                }
             };
             (
                 crate::engine::builtins::IteratorNextStep::start_callable(
@@ -3454,14 +3472,9 @@ pub(super) fn start_import(
         .executable
         .ensure_root(runtime)
         .map_err(runtime_error_to_vm_error)?;
-    // The import machine borrows rooted copies; `start_instruction` consumes
-    // the two slot owners.
-    let options = runtime
-        .root_value(execution.slots.peek(&parent.window, 0)?)
-        .map_err(runtime_error_to_vm_error)?;
-    let specifier = runtime
-        .root_value(execution.slots.peek(&parent.window, 1)?)
-        .map_err(runtime_error_to_vm_error)?;
+    // Slot owners remain live until the import record has acquired its edges.
+    let options = execution.slots.peek(&parent.window, 0)?;
+    let specifier = execution.slots.peek(&parent.window, 1)?;
     let result = crate::engine::modules::import::ImportStep::start(
         runtime,
         realm,

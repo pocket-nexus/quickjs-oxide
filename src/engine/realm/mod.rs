@@ -17,7 +17,7 @@ use crate::engine::object::{
     AccessorValue, CallableRef, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor,
     PropertyKey, WellKnownSymbol,
 };
-use crate::engine::value::{JsString, Value};
+use crate::engine::value::{JsString, JsValue, Value};
 use crate::engine::vm::Completion;
 
 impl Runtime {
@@ -118,21 +118,44 @@ impl Runtime {
         for name in ["parseInt", "parseFloat"] {
             let key = self.intern_property_key(name)?;
             let value = match self.get_property_in_realm(realm, global_object, &key)? {
-                Completion::Return(value) => match self.root_and_release_jsvalue(value)? {
-                    value @ Value::Object(_) => value,
-                    _ => {
-                        return Err(RuntimeError::Invariant(
-                            "global numeric parser was not an object during Number bootstrap",
-                        ));
-                    }
-                },
-                Completion::Throw(_) => {
+                Completion::Return(value @ JsValue::Object(_)) => value,
+                Completion::Return(value) => {
+                    self.release_jsvalue(value)?;
+                    return Err(RuntimeError::Invariant(
+                        "global numeric parser was not an object during Number bootstrap",
+                    ));
+                }
+                Completion::Throw(value) => {
+                    self.release_jsvalue(value)?;
                     return Err(RuntimeError::Invariant(
                         "global numeric parser lookup threw during Number bootstrap",
                     ));
                 }
             };
-            self.define_function_data_property(constructor.as_object(), name, value, true, true)?;
+            let mut descriptor = crate::engine::object::OwnedPropertyDescriptor::new(self);
+            descriptor.value = DescriptorField::Present(value);
+            descriptor.writable = DescriptorField::Present(true);
+            descriptor.enumerable = DescriptorField::Present(false);
+            descriptor.configurable = DescriptorField::Present(true);
+            match self.define_owned_property_in_realm(
+                None,
+                constructor.as_object(),
+                &key,
+                &descriptor,
+            )? {
+                crate::engine::object::operations::PropertyDefineOutcome::Defined(true) => {}
+                crate::engine::object::operations::PropertyDefineOutcome::Defined(false) => {
+                    return Err(RuntimeError::Invariant(
+                        "function intrinsic property definition was rejected",
+                    ));
+                }
+                crate::engine::object::operations::PropertyDefineOutcome::Throw(value) => {
+                    self.release_jsvalue(value)?;
+                    return Err(RuntimeError::Invariant(
+                        "Number parser alias definition threw during bootstrap",
+                    ));
+                }
+            }
         }
         for (predicate, name) in [
             (NumberPredicateKind::IsNaN, "isNaN"),

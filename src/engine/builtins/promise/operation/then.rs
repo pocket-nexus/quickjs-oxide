@@ -118,9 +118,7 @@ pub(super) fn species(
         Completion::Return(JsValue::Undefined | JsValue::Null) => None,
         Completion::Return(value) => match runtime.constructor_from_jsvalue(realm, value)? {
             NativeConversion::Throw(value) => {
-                return Ok(PromiseStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(PromiseStep::Complete(Completion::Throw(value)));
             }
             NativeConversion::Value(constructor) => Some(constructor),
         },

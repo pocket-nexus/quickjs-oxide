@@ -195,7 +195,7 @@ impl BuildStep {
             for value in &arguments.readable[..arguments.actual_arg_count] {
                 values.push(runtime.dup_jsvalue(value)?);
             }
-            return resume.construct(runtime, Some(Runtime::array_length_value(length)), false);
+            return resume.construct(runtime, Some(f64::from(length)), false);
         }
         let items = arguments
             .readable
@@ -204,9 +204,10 @@ impl BuildStep {
         let mapfn = if arguments.actual_arg_count > 1
             && !matches!(arguments.readable[1], JsValue::Undefined)
         {
-            let mapfn_value = runtime.root_value(&arguments.readable[1])?;
-            let callable = match &mapfn_value {
-                Value::Object(object) => runtime.as_callable(object)?,
+            let callable = match &arguments.readable[1] {
+                JsValue::Object(id) => {
+                    runtime.as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)?
+                }
                 _ => None,
             };
             let Some(callable) = callable else {
@@ -270,8 +271,8 @@ impl BuildResume {
         self.0.scheduler_set_key.take().expect("waiting Set key")
     }
 
-    fn abrupt(mut self, runtime: &Runtime, value: Value) -> Result<BuildStep, RuntimeError> {
-        let completion = Completion::Throw(runtime.into_jsvalue(value)?);
+    fn abrupt(mut self, _runtime: &Runtime, value: JsValue) -> Result<BuildStep, RuntimeError> {
+        let completion = Completion::Throw(value);
         if matches!(self.0.phase, Phase::Map | Phase::Define)
             && let Mode::Iterable { iterator, .. } = &mut self.0.mode
             && let Some(iterator) = iterator.take()
@@ -292,18 +293,19 @@ impl BuildResume {
     fn construct(
         mut self,
         runtime: &Runtime,
-        length: Option<Value>,
+        length: Option<f64>,
         initialize_length: bool,
     ) -> Result<BuildStep, RuntimeError> {
         self.0.phase = Phase::Construct;
-        let constructor = runtime.root_and_release_jsvalue(std::mem::replace(
-            &mut self.0.constructor,
-            JsValue::Undefined,
-        ))?;
-        if let Value::Object(object) = &constructor
-            && runtime.is_constructor(object)?
-        {
-            let target = match runtime.constructor_from_value(self.0.realm, constructor)? {
+        let is_constructor = match &self.0.constructor {
+            JsValue::Object(id) => {
+                runtime.is_constructor(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)?
+            }
+            _ => false,
+        };
+        if is_constructor {
+            let constructor = std::mem::replace(&mut self.0.constructor, JsValue::Undefined);
+            let target = match runtime.constructor_from_jsvalue(self.0.realm, constructor)? {
                 NativeConversion::Value(target) => target,
                 NativeConversion::Throw(value) => return self.abrupt(runtime, value),
             };
@@ -311,8 +313,10 @@ impl BuildResume {
                 target,
                 length
                     .into_iter()
-                    .map(|value| runtime.into_jsvalue(value))
-                    .collect::<Result<Vec<_>, _>>()?,
+                    .map(|value| {
+                        crate::engine::value::number::operations::Number::compact(value).into()
+                    })
+                    .collect(),
                 self,
             ));
         }
@@ -498,7 +502,7 @@ impl BuildResume {
         let value = match reply {
             Completion::Return(value) => value,
             Completion::Throw(value) => {
-                return self.abrupt(runtime, runtime.root_and_release_jsvalue(value)?);
+                return self.abrupt(runtime, value);
             }
         };
         if matches!(self.0.phase, Phase::Value) {
@@ -507,15 +511,15 @@ impl BuildResume {
         if matches!(self.0.phase, Phase::Map) {
             return self.define(runtime, value);
         }
-        let value = runtime.root_and_release_jsvalue(value)?;
         match self.0.phase {
             Phase::Method => {
                 let Mode::Acquire(items) =
                     std::mem::replace(&mut self.0.mode, Mode::Acquire(JsValue::Undefined))
                 else {
+                    runtime.release_jsvalue(value)?;
                     return Err(RuntimeError::Invariant("Array.from items missing"));
                 };
-                if matches!(value, Value::Undefined | Value::Null) {
+                if matches!(value, JsValue::Undefined | JsValue::Null) {
                     let source = match runtime.native_to_object_jsvalue(self.0.realm, items)? {
                         NativeConversion::Value(source) => source,
                         NativeConversion::Throw(value) => return self.abrupt(runtime, value),
@@ -532,13 +536,23 @@ impl BuildResume {
                         self,
                     ));
                 }
-                let callable = match value {
-                    Value::Object(ref object) => runtime.as_callable(object)?,
-                    _ => None,
+                let callable = (|| match &value {
+                    JsValue::Object(id) => {
+                        runtime.as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)
+                    }
+                    _ => Ok(None),
+                })();
+                runtime.release_jsvalue(value)?;
+                let callable = match callable {
+                    Ok(callable) => callable,
+                    Err(error) => {
+                        let _ = runtime.release_jsvalue(items);
+                        return Err(error);
+                    }
                 };
                 let Some(method) = callable else {
                     runtime.release_jsvalue(items)?;
-                    let error = runtime.new_native_error(
+                    let error = runtime.new_native_error_jsvalue(
                         self.0.realm,
                         NativeErrorKind::Type,
                         "value is not iterable",
@@ -555,18 +569,16 @@ impl BuildResume {
             }
             Phase::Length => {
                 self.0.phase = Phase::Number;
-                Ok(BuildStep::request_number(
-                    runtime.into_jsvalue(value)?,
-                    self,
-                ))
+                Ok(BuildStep::request_number(value, self))
             }
             Phase::Construct => {
-                let Value::Object(result) = value else {
+                let JsValue::Object(result) = value else {
+                    runtime.release_jsvalue(value)?;
                     return Err(RuntimeError::Invariant(
                         "Array result constructor returned a primitive",
                     ));
                 };
-                self.0.result = Some(result);
+                self.0.result = Some(ObjectRef::from_owned_handle(runtime.clone(), result));
                 if let Mode::Iterable { items, method, .. } = &self.0.mode {
                     let receiver = runtime.dup_jsvalue(items)?;
                     let callable = method.clone();
@@ -581,14 +593,16 @@ impl BuildResume {
                 self.next(runtime)
             }
             Phase::Iterator => {
-                let Value::Object(iterator) = value else {
-                    let error = runtime.new_native_error(
+                let JsValue::Object(iterator) = value else {
+                    runtime.release_jsvalue(value)?;
+                    let error = runtime.new_native_error_jsvalue(
                         self.0.realm,
                         NativeErrorKind::Type,
                         "not an object",
                     )?;
                     return self.abrupt(runtime, error);
                 };
+                let iterator = ObjectRef::from_owned_handle(runtime.clone(), iterator);
                 let Mode::Iterable {
                     iterator: target, ..
                 } = &mut self.0.mode
@@ -604,12 +618,16 @@ impl BuildResume {
                 ))
             }
             Phase::NextMethod => {
-                let callable = match value {
-                    Value::Object(ref object) => runtime.as_callable(object)?,
-                    _ => None,
-                };
+                let callable = (|| match &value {
+                    JsValue::Object(id) => {
+                        runtime.as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)
+                    }
+                    _ => Ok(None),
+                })();
+                runtime.release_jsvalue(value)?;
+                let callable = callable?;
                 let Some(callable) = callable else {
-                    let error = runtime.new_native_error(
+                    let error = runtime.new_native_error_jsvalue(
                         self.0.realm,
                         NativeErrorKind::Type,
                         "not a function",
@@ -622,9 +640,12 @@ impl BuildResume {
                 *next = Some(callable);
                 self.next(runtime)
             }
-            _ => Err(RuntimeError::Invariant(
-                "Array builder completion phase mismatch",
-            )),
+            _ => {
+                runtime.release_jsvalue(value)?;
+                Err(RuntimeError::Invariant(
+                    "Array builder completion phase mismatch",
+                ))
+            }
         }
     }
     pub(crate) fn number(
@@ -647,7 +668,7 @@ impl BuildResume {
             ));
         };
         *length = Runtime::length_from_number(number);
-        let value = Value::number(*length as f64);
+        let value = *length as f64;
         self.construct(runtime, Some(value), true)
     }
     pub(crate) fn parsed(
@@ -661,9 +682,7 @@ impl BuildResume {
             ));
         }
         match reply {
-            ObjectIteratorStep::Throw(value) => {
-                self.abrupt(runtime, runtime.root_and_release_jsvalue(value)?)
-            }
+            ObjectIteratorStep::Throw(value) => self.abrupt(runtime, value),
             ObjectIteratorStep::Done => self.set_length(runtime),
             ObjectIteratorStep::Yield(value) => self.map(runtime, value),
         }
@@ -674,6 +693,9 @@ impl BuildResume {
         reply: NativeConversion<InternalDefineResult>,
     ) -> Result<BuildStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Define) {
+            if let NativeConversion::Throw(value) = reply {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "Array builder definition phase mismatch",
             ));
@@ -695,6 +717,9 @@ impl BuildResume {
         reply: NativeConversion<InternalSetResult>,
     ) -> Result<BuildStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::LengthSet) {
+            if let NativeConversion::Throw(value) = reply {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "Array builder length-set phase mismatch",
             ));
@@ -702,9 +727,9 @@ impl BuildResume {
         if let Some(value) = runtime.finish_set_property_or_throw(self.0.realm, &key, reply)? {
             return self.abrupt(runtime, value);
         }
-        Ok(BuildStep::Complete(Completion::Return(
-            runtime.into_jsvalue(Value::Object(self.result()?))?,
-        )))
+        Ok(BuildStep::Complete(Completion::Return(JsValue::Object(
+            self.result()?.into_handle(),
+        ))))
     }
 }
 pub(crate) fn finish(
@@ -716,40 +741,37 @@ pub(crate) fn finish(
         step = match step {
             BuildStep::Complete(result) => return Ok(result),
             BuildStep::Read { mut resume } => {
-                let receiver = runtime.root_and_release_jsvalue(resume.take_read_receiver())?;
+                let receiver = resume.take_read_receiver();
                 let key = resume.take_read_key();
                 resume.resume(
                     runtime,
-                    runtime.get_value_property_in_realm(realm, receiver, &key)?,
+                    runtime.get_value_property_in_realm_jsvalue(realm, receiver, &key)?,
                 )?
             }
             BuildStep::Number { mut resume } => {
-                let value = runtime.root_and_release_jsvalue(resume.take_number_value())?;
-                resume.number(runtime, runtime.native_to_number(realm, &value)?)?
+                let value = resume.take_number_value();
+                resume.number(runtime, runtime.native_to_number_jsvalue(realm, value)?)?
             }
             BuildStep::Call { mut resume } => {
                 let callable = resume.take_call_callable();
-                let receiver = runtime.root_and_release_jsvalue(resume.take_call_receiver())?;
-                let arguments = resume
-                    .take_call_arguments()
-                    .into_iter()
-                    .map(|value| runtime.root_and_release_jsvalue(value))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let receiver = resume.take_call_receiver();
+                let arguments = resume.take_call_arguments();
                 resume.resume(
                     runtime,
-                    runtime.call_internal(realm, &callable, receiver, &arguments)?,
+                    runtime.call_internal_jsvalue(realm, &callable, receiver, arguments)?,
                 )?
             }
             BuildStep::Construct { mut resume } => {
                 let target = resume.take_construct_target();
-                let arguments = resume
-                    .take_construct_arguments()
-                    .into_iter()
-                    .map(|value| runtime.root_and_release_jsvalue(value))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let arguments = resume.take_construct_arguments();
                 resume.resume(
                     runtime,
-                    runtime.construct_constructor_internal(realm, &target, &target, &arguments)?,
+                    runtime.construct_internal_jsvalue(
+                        realm,
+                        &target,
+                        crate::engine::vm::call::ConstructNewTarget::Validated(target.clone()),
+                        arguments,
+                    )?,
                 )?
             }
             BuildStep::Parse { mut resume } => {
@@ -775,14 +797,14 @@ pub(crate) fn finish(
             BuildStep::Set { mut resume } => {
                 let object = resume.take_set_object();
                 let key = resume.take_set_key();
-                let value = runtime.root_and_release_jsvalue(resume.take_set_value())?;
+                let value = resume.take_set_value();
                 {
-                    let reply = runtime.internal_set(
+                    let reply = runtime.internal_set_jsvalue(
                         realm,
                         &object,
                         &key,
                         value,
-                        Value::Object(object.clone()),
+                        JsValue::Object(object.clone().into_handle()),
                     )?;
                     resume.set(runtime, key, reply)?
                 }

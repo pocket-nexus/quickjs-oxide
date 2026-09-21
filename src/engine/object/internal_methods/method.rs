@@ -131,10 +131,7 @@ impl Search {
             else {
                 unreachable!("revoked proxy throws")
             };
-            return Ok(MethodStep::Throw(MethodThrow::new(
-                runtime.clone(),
-                runtime.unroot_value(&value)?,
-            )));
+            return Ok(MethodStep::Throw(MethodThrow::new(runtime.clone(), value)));
         }
         // A cached data-slot location skips the dynamic `handler[name]` read.
         // The value is always read from today's slot, so a same-shape overwrite
@@ -150,7 +147,7 @@ impl Search {
                 selected: None,
                 search: self,
             }));
-            return resume.resume(runtime, Completion::Return(runtime.unroot_value(&value)?));
+            return resume.resume(runtime, Completion::Return(value));
         }
         let rooted = runtime.root_proxy_snapshot(&proxy, data)?;
         let receiver = runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?;
@@ -212,10 +209,7 @@ impl MethodResume {
                     else {
                         unreachable!("revoked proxy throws")
                     };
-                    return Ok(MethodStep::Throw(MethodThrow::new(
-                        runtime.clone(),
-                        runtime.unroot_value(&value)?,
-                    )));
+                    return Ok(MethodStep::Throw(MethodThrow::new(runtime.clone(), value)));
                 }
                 let next = runtime.root_proxy_snapshot(&target, data)?;
                 let cached = runtime.proxy_trap_read(
@@ -228,7 +222,7 @@ impl MethodResume {
                 match cached {
                     Some(method_value) => {
                         drop(old);
-                        value = runtime.unroot_value(&method_value)?;
+                        value = method_value;
                         continue;
                     }
                     None => {

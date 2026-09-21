@@ -394,11 +394,7 @@ impl FromSyncResume {
                         for argument in std::mem::take(&mut state.arguments) {
                             runtime.release_jsvalue(argument)?;
                         }
-                        return self.settle(
-                            runtime,
-                            state.capability,
-                            Completion::Throw(runtime.into_jsvalue(reason)?),
-                        );
+                        return self.settle(runtime, state.capability, Completion::Throw(reason));
                     }
                 };
                 Ok({
@@ -416,7 +412,8 @@ impl FromSyncResume {
                 })
             }
             Phase::Result(state) => {
-                let Value::Object(result) = runtime.root_and_release_jsvalue(value)? else {
+                let JsValue::Object(result) = value else {
+                    runtime.release_jsvalue(value)?;
                     let reason = runtime.new_native_error_jsvalue(
                         realm,
                         NativeErrorKind::Type,
@@ -424,11 +421,11 @@ impl FromSyncResume {
                     )?;
                     return self.settle(runtime, state.capability, Completion::Throw(reason));
                 };
+                let result = ObjectRef::from_owned_handle(runtime.clone(), result);
                 Ok({
-                    let __pending_field_receiver =
-                        runtime.into_jsvalue(Value::Object(result.clone()))?;
                     let __pending_field_key = runtime
                         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Done)?;
+                    let __pending_field_receiver = JsValue::Object(result.clone().into_handle());
                     let __pending_field_resume = self.continue_with(Phase::Done { state, result });
                     FromSyncStep::request_read(
                         __pending_field_receiver,
@@ -464,11 +461,13 @@ impl FromSyncResume {
                 )
             }),
             Phase::Promise { state, done } => {
-                let Value::Object(promise) = runtime.root_and_release_jsvalue(value)? else {
+                let JsValue::Object(promise) = value else {
+                    runtime.release_jsvalue(value)?;
                     return Err(RuntimeError::Invariant(
                         "intrinsic PromiseResolve returned a non-object",
                     ));
                 };
+                let promise = ObjectRef::from_owned_handle(runtime.clone(), promise);
                 let unwrap = runtime.new_internal_promise_function(
                     realm,
                     NativeFunctionId::AsyncFromSyncIteratorUnwrap,

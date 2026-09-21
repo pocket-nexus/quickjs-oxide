@@ -58,7 +58,7 @@ impl Runtime {
         strict: bool,
     ) -> Result<Completion, RuntimeError> {
         match result {
-            NativeConversion::Throw(value) => Ok(Completion::Throw(self.unroot_value(&value)?)),
+            NativeConversion::Throw(value) => Ok(Completion::Throw(value)),
             NativeConversion::Value(false) if strict => Err(RuntimeError::Engine(
                 crate::engine::api::Error::new(ErrorKind::Type, "could not delete property"),
             )),
@@ -179,7 +179,7 @@ impl Runtime {
             NativeConversion::Value(value) => {
                 Completion::Return(value.unwrap_or(JsValue::Undefined))
             }
-            NativeConversion::Throw(value) => Completion::Throw(self.into_jsvalue(value)?),
+            NativeConversion::Throw(value) => Completion::Throw(value),
         })
     }
 
@@ -196,16 +196,15 @@ impl Runtime {
         match read {
             Ok(read) => Ok(NativeConversion::Value(read)),
             Err(RuntimeError::Engine(error)) if nullish && error.kind() == ErrorKind::Type => {
-                Ok(NativeConversion::Throw(self.new_native_error_from_error(
-                    realm,
-                    NativeErrorKind::Type,
-                    &error,
-                )?))
+                Ok(NativeConversion::Throw(
+                    self.new_native_error_from_error_jsvalue(realm, NativeErrorKind::Type, &error)?,
+                ))
             }
             Err(error) => Err(error),
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn get_value_property_in_realm(
         &self,
         realm: ContextId,
@@ -227,9 +226,9 @@ impl Runtime {
         match read {
             Ok(read) => self.finish_value_property_read(realm, key, read),
             Err(RuntimeError::Engine(error)) if nullish && error.kind() == ErrorKind::Type => {
-                Ok(Completion::Throw(self.into_jsvalue(
-                    self.new_native_error_from_error(realm, NativeErrorKind::Type, &error)?,
-                )?))
+                Ok(Completion::Throw(
+                    self.new_native_error_from_error_jsvalue(realm, NativeErrorKind::Type, &error)?,
+                ))
             }
             Err(error) => Err(error),
         }

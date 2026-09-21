@@ -152,14 +152,13 @@ impl AsyncResume {
                 let promise = match completion {
                     Completion::Throw(reason) => return self.settle(Completion::Throw(reason)),
                     Completion::Return(value) => {
-                        let Value::Object(promise) =
-                            self.runtime.root_and_release_jsvalue(value)?
-                        else {
+                        let JsValue::Object(promise) = value else {
+                            self.runtime.release_jsvalue(value)?;
                             return Err(RuntimeError::Invariant(
                                 "intrinsic PromiseResolve returned a non-object",
                             ));
                         };
-                        promise
+                        ObjectRef::from_owned_handle(self.runtime.clone(), promise)
                     }
                 };
                 let realm = self

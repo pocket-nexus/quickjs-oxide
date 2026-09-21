@@ -7,7 +7,7 @@
 //! above the heap, ensures no `RefCell` borrow survives a re-entrant Proxy
 //! trap.
 
-use crate::engine::api::error::{Error, ErrorKind, NativeErrorKind, NativeErrorMessage};
+use crate::engine::api::error::{Error, ErrorKind, NativeErrorKind};
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 
@@ -19,8 +19,8 @@ use crate::engine::object::operations::{
 };
 use crate::engine::object::property::validate_and_apply_property_descriptor;
 use crate::engine::object::{
-    CallableRef, CompleteOrdinaryPropertyDescriptor, DescriptorField, ObjectRef,
-    OrdinaryPropertyDescriptor, PropertyKey, SymbolRef,
+    CallableRef, CompleteOrdinaryPropertyDescriptor, DescriptorField, ObjectRef, PropertyKey,
+    SymbolRef,
 };
 use crate::engine::value::conversion::NativeConversion;
 use crate::engine::value::{JsValue, Value};
@@ -196,9 +196,12 @@ impl Runtime {
     pub(crate) fn callable_realm(&self, callable: &CallableRef) -> Result<ContextId, RuntimeError> {
         match self.function_realm_object_impl(None, callable.as_object().clone(), false)? {
             NativeConversion::Value(realm) => Ok(realm),
-            NativeConversion::Throw(_) => Err(RuntimeError::Invariant(
-                "raw callable realm lookup produced a JavaScript throw",
-            )),
+            NativeConversion::Throw(value) => {
+                self.release_jsvalue(value)?;
+                Err(RuntimeError::Invariant(
+                    "raw callable realm lookup produced a JavaScript throw",
+                ))
+            }
         }
     }
 
@@ -218,21 +221,6 @@ impl Runtime {
     /// primitives fall back to the current realm; Proxy and bound wrappers are
     /// still traversed so revocation and nested function realms remain
     /// observable after a `newTarget.prototype` lookup.
-    pub(crate) fn function_realm_from_value(
-        &self,
-        caller_realm: ContextId,
-        value: &Value,
-    ) -> Result<NativeConversion<ContextId>, RuntimeError> {
-        self.0.state.borrow().heap.context(caller_realm)?;
-        let Value::Object(object) = value else {
-            return Ok(NativeConversion::Value(caller_realm));
-        };
-        if !object.belongs_to(self) {
-            return Err(RuntimeError::WrongRuntime("function realm value"));
-        }
-        self.function_realm_object_impl(Some(caller_realm), object.clone(), true)
-    }
-
     pub(crate) fn function_realm_from_jsvalue(
         &self,
         caller_realm: ContextId,
@@ -373,17 +361,6 @@ impl Runtime {
     ///
     /// Array branding crosses every Proxy layer without invoking a handler
     /// trap. A revoked Proxy still fails observably in the caller's realm.
-    pub(crate) fn internal_is_array(
-        &self,
-        realm: ContextId,
-        value: &Value,
-    ) -> Result<NativeConversion<bool>, RuntimeError> {
-        let Value::Object(object) = value else {
-            return Ok(NativeConversion::Value(false));
-        };
-        self.internal_is_array_object(realm, object)
-    }
-
     pub(crate) fn internal_is_array_jsvalue(
         &self,
         realm: ContextId,
@@ -410,7 +387,7 @@ impl Runtime {
             // `js_resolve_proxy` checks the prior depth, then increments it.
             // This admits 1001 Proxy layers and fails on the 1002nd.
             if depth > 1000 {
-                return Ok(NativeConversion::Throw(self.new_native_error(
+                return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                     realm,
                     NativeErrorKind::Internal,
                     "stack overflow",
@@ -459,7 +436,7 @@ impl Runtime {
         &self,
         realm: ContextId,
     ) -> Result<NativeConversion<T>, RuntimeError> {
-        Ok(NativeConversion::Throw(self.new_native_error(
+        Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
             realm,
             NativeErrorKind::Type,
             "revoked proxy",
@@ -471,13 +448,11 @@ impl Runtime {
         realm: ContextId,
         operation: &'static str,
     ) -> Result<NativeConversion<T>, RuntimeError> {
-        Ok(NativeConversion::Throw(
-            self.new_native_error_from_message(
-                realm,
-                NativeErrorKind::Type,
-                NativeErrorMessage::from_utf8(&format!("proxy: inconsistent {operation}")),
-            )?,
-        ))
+        Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
+            realm,
+            NativeErrorKind::Type,
+            &format!("proxy: inconsistent {operation}"),
+        )?))
     }
 
     fn property_key_value(&self, key: &PropertyKey) -> Result<Value, RuntimeError> {
@@ -638,16 +613,19 @@ impl Runtime {
             realm,
             ProxyPrototypeStep::start(self, realm, object.clone(), ProxyPrototypeKind::Get)?,
         )? {
-            Completion::Return(value) => match self.root_and_release_jsvalue(value)? {
-                Value::Object(object) => Ok(NativeConversion::Value(Some(object))),
-                Value::Null => Ok(NativeConversion::Value(None)),
-                _ => Err(RuntimeError::Invariant(
-                    "GetPrototypeOf completed with an invalid value",
-                )),
+            Completion::Return(value) => match value {
+                JsValue::Object(id) => Ok(NativeConversion::Value(Some(
+                    ObjectRef::from_owned_handle(self.clone(), id),
+                ))),
+                JsValue::Null => Ok(NativeConversion::Value(None)),
+                value => {
+                    self.release_jsvalue(value)?;
+                    Err(RuntimeError::Invariant(
+                        "GetPrototypeOf completed with an invalid value",
+                    ))
+                }
             },
-            Completion::Throw(value) => Ok(NativeConversion::Throw(
-                self.root_and_release_jsvalue(value)?,
-            )),
+            Completion::Throw(value) => Ok(NativeConversion::Throw(value)),
         }
     }
 
@@ -672,15 +650,16 @@ impl Runtime {
                 ProxyPrototypeKind::Set(prototype.cloned()),
             )?,
         )? {
-            Completion::Return(value) => match self.root_and_release_jsvalue(value)? {
-                Value::Bool(value) => Ok(NativeConversion::Value(value)),
-                _ => Err(RuntimeError::Invariant(
-                    "SetPrototypeOf completed with an invalid value",
-                )),
+            Completion::Return(value) => match value {
+                JsValue::Bool(value) => Ok(NativeConversion::Value(value)),
+                value => {
+                    self.release_jsvalue(value)?;
+                    Err(RuntimeError::Invariant(
+                        "SetPrototypeOf completed with an invalid value",
+                    ))
+                }
             },
-            Completion::Throw(value) => Ok(NativeConversion::Throw(
-                self.root_and_release_jsvalue(value)?,
-            )),
+            Completion::Throw(value) => Ok(NativeConversion::Throw(value)),
         }
     }
 
@@ -831,7 +810,7 @@ impl Runtime {
                 NativeConversion::Value(value) => {
                     Completion::Return(value.unwrap_or(JsValue::Undefined))
                 }
-                NativeConversion::Throw(value) => Completion::Throw(self.into_jsvalue(value)?),
+                NativeConversion::Throw(value) => Completion::Throw(value),
             },
         )
     }
@@ -946,9 +925,7 @@ impl Runtime {
                         self.release_jsvalue(value)?;
                         Ok(NativeConversion::Value(InternalSetResult::Accepted))
                     }
-                    Completion::Throw(value) => Ok(NativeConversion::Throw(
-                        self.root_and_release_jsvalue(value)?,
-                    )),
+                    Completion::Throw(value) => Ok(NativeConversion::Throw(value)),
                 }
             }
         }
@@ -1123,19 +1100,15 @@ impl Runtime {
                 }
                 ProxyOwnStep::Call { mut resume } => {
                     let target = resume.take_call_target();
-                    let receiver = self.root_and_release_jsvalue(resume.take_call_receiver())?;
-                    let arguments = resume
-                        .take_call_arguments()
-                        .into_iter()
-                        .map(|value| self.root_and_release_jsvalue(value))
-                        .collect::<Result<Vec<_>, _>>()?;
+                    let receiver = resume.take_call_receiver();
+                    let arguments = resume.take_call_arguments();
                     {
                         let completion = match target {
                             DirectCallTarget::Callable(callable) => {
-                                self.call_internal(realm, &callable, receiver, &arguments)?
+                                self.call_internal_jsvalue(realm, &callable, receiver, arguments)?
                             }
                             DirectCallTarget::NonCallableProxy(proxy) => {
-                                self.call_proxy(realm, &proxy, receiver, &arguments)?
+                                self.call_proxy_jsvalue(realm, &proxy, receiver, arguments)?
                             }
                         };
                         resume.resume(self, completion)?
@@ -1162,34 +1135,6 @@ impl Runtime {
                 }
             };
         }
-    }
-
-    pub(crate) fn internal_define_own_property(
-        &self,
-        realm: ContextId,
-        object: &ObjectRef,
-        key: &PropertyKey,
-        descriptor: &OrdinaryPropertyDescriptor,
-    ) -> Result<NativeConversion<InternalDefineResult>, RuntimeError> {
-        let Some(_) = self.proxy_snapshot_if_any(object)? else {
-            return Ok(
-                match self.define_own_property_in_realm(Some(realm), object, key, descriptor)? {
-                    PropertyDefineOutcome::Defined(true) => {
-                        NativeConversion::Value(InternalDefineResult::Defined)
-                    }
-                    PropertyDefineOutcome::Defined(false) => NativeConversion::Value(
-                        InternalDefineResult::RejectedOrdinary(object.clone()),
-                    ),
-                    PropertyDefineOutcome::Throw(value) => NativeConversion::Throw(value),
-                },
-            );
-        };
-        self.proxy_define_owned_property(
-            realm,
-            object,
-            key,
-            crate::engine::object::OwnedPropertyDescriptor::from_public(self, descriptor)?,
-        )
     }
 
     pub(crate) fn internal_define_owned_property(
@@ -1245,19 +1190,15 @@ impl Runtime {
                 }
                 ProxyDefineStep::Call { mut resume } => {
                     let target = resume.take_call_target();
-                    let receiver = self.root_and_release_jsvalue(resume.take_call_receiver())?;
-                    let arguments = resume
-                        .take_call_arguments()
-                        .into_iter()
-                        .map(|value| self.root_and_release_jsvalue(value))
-                        .collect::<Result<Vec<_>, _>>()?;
+                    let receiver = resume.take_call_receiver();
+                    let arguments = resume.take_call_arguments();
                     {
                         let completion = match target {
                             DirectCallTarget::Callable(callable) => {
-                                self.call_internal(realm, &callable, receiver, &arguments)?
+                                self.call_internal_jsvalue(realm, &callable, receiver, arguments)?
                             }
                             DirectCallTarget::NonCallableProxy(proxy) => {
-                                self.call_proxy(realm, &proxy, receiver, &arguments)?
+                                self.call_proxy_jsvalue(realm, &proxy, receiver, arguments)?
                             }
                         };
                         resume.resume(self, completion)?
@@ -1319,24 +1260,6 @@ impl Runtime {
             realm,
             own_keys::KeysStep::start(self, realm, object.clone())?,
         )
-    }
-
-    pub(crate) fn call_proxy(
-        &self,
-        realm: ContextId,
-        proxy: &ObjectRef,
-        this_value: Value,
-        arguments: &[Value],
-    ) -> Result<Completion, RuntimeError> {
-        let mut owned_arguments = Vec::new();
-        owned_arguments
-            .try_reserve_exact(arguments.len())
-            .map_err(|_| RuntimeError::Invariant("Proxy call arguments allocation failed"))?;
-        for argument in arguments {
-            owned_arguments.push(self.unroot_value(argument)?);
-        }
-        let receiver = self.into_jsvalue(this_value)?;
-        self.call_proxy_jsvalue(realm, proxy, receiver, owned_arguments)
     }
 
     pub(crate) fn call_proxy_jsvalue(

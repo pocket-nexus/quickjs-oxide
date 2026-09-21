@@ -100,8 +100,8 @@ impl Runtime {
         let entries_key =
             self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Entries)?;
         let entries = match self.get_property_in_realm(realm, &map_prototype, &entries_key)? {
-            Completion::Return(value @ JsValue::Object(_)) => {
-                self.root_and_release_jsvalue(value)?
+            Completion::Return(JsValue::Object(id)) => {
+                ObjectRef::from_owned_handle(self.clone(), id)
             }
             Completion::Return(value) => {
                 self.release_jsvalue(value)?;
@@ -117,15 +117,15 @@ impl Runtime {
             }
         };
         let iterator_key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Iterator));
-        if !self.define_own_property(
+        if !self.define_raw_property(
             &map_prototype,
             &iterator_key,
-            &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(entries),
-                writable: DescriptorField::Present(true),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
+            &crate::engine::object::property::PropertyDescriptor {
+                value: Some(crate::engine::heap::RawValue::Object(entries.object_id())),
+                writable: Some(true),
+                enumerable: Some(false),
+                configurable: Some(true),
+                ..Default::default()
             },
         )? {
             return Err(RuntimeError::Invariant(
@@ -361,7 +361,7 @@ impl Runtime {
             }
         };
         let JsValue::Object(id) = this_value else {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "Map object expected",
@@ -381,7 +381,7 @@ impl Runtime {
             ObjectPayload::Map { .. }
         );
         if !is_map {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "Map object expected",
@@ -484,7 +484,7 @@ impl Runtime {
         let map = match self.map_receiver(realm, invocation, false)? {
             NativeConversion::Value(map) => map,
             NativeConversion::Throw(value) => {
-                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                return Ok(Completion::Throw(value));
             }
         };
         let key = self.dup_jsvalue(arguments.readable.first().ok_or(
@@ -506,18 +506,21 @@ impl Runtime {
         let map = match self.map_receiver(realm, invocation, false)? {
             NativeConversion::Value(map) => map,
             NativeConversion::Throw(value) => {
-                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                return Ok(Completion::Throw(value));
             }
         };
         let key = Self::normalized_map_key(self.dup_jsvalue(arguments.readable.first().ok_or(
             RuntimeError::Invariant("Map.prototype.get key argv was not padded"),
         )?)?);
-        let value = match self.find_map_record(&map, &key)? {
-            Some((_, value)) => self.root_raw_value(value.clone())?,
-            None => Value::Undefined,
-        };
+        let result = (|| match self.find_map_record(&map, &key)? {
+            Some((_, value)) => self.dup_jsvalue(
+                &JsValue::from_raw(value)
+                    .ok_or(RuntimeError::Invariant("Map value is uninitialized"))?,
+            ),
+            None => Ok(JsValue::Undefined),
+        })();
         self.release_jsvalue(key)?;
-        Ok(Completion::Return(self.into_jsvalue(value)?))
+        Ok(Completion::Return(result?))
     }
 
     fn call_map_has(
@@ -529,7 +532,7 @@ impl Runtime {
         let map = match self.map_receiver(realm, invocation, false)? {
             NativeConversion::Value(map) => map,
             NativeConversion::Throw(value) => {
-                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                return Ok(Completion::Throw(value));
             }
         };
         let key = Self::normalized_map_key(self.dup_jsvalue(arguments.readable.first().ok_or(
@@ -549,7 +552,7 @@ impl Runtime {
         let map = match self.map_receiver(realm, invocation, false)? {
             NativeConversion::Value(map) => map,
             NativeConversion::Throw(value) => {
-                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                return Ok(Completion::Throw(value));
             }
         };
         let key = self.dup_jsvalue(arguments.readable.first().ok_or(
@@ -568,7 +571,7 @@ impl Runtime {
         let map = match self.map_receiver(realm, invocation, false)? {
             NativeConversion::Value(map) => map,
             NativeConversion::Throw(value) => {
-                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                return Ok(Completion::Throw(value));
             }
         };
         let mut state = self.0.state.borrow_mut();
@@ -585,7 +588,7 @@ impl Runtime {
         let map = match self.map_receiver(realm, invocation, true)? {
             NativeConversion::Value(map) => map,
             NativeConversion::Throw(value) => {
-                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                return Ok(Completion::Throw(value));
             }
         };
         let size = self.0.state.borrow().heap.map_size(map.object_id())?;
@@ -669,7 +672,7 @@ impl Runtime {
         let map = match self.map_receiver(realm, invocation, false)? {
             NativeConversion::Value(map) => map,
             NativeConversion::Throw(value) => {
-                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                return Ok(Completion::Throw(value));
             }
         };
         Ok(Completion::Return(self.into_jsvalue(Value::Object(
@@ -702,8 +705,8 @@ impl Runtime {
                 "Map Iterator next did not receive an iterator-next invocation",
             ));
         };
-        let this_value = self.root_and_release_jsvalue(this_value)?;
-        let Value::Object(iterator) = this_value else {
+        let JsValue::Object(iterator) = this_value else {
+            self.release_jsvalue(this_value)?;
             return Ok(NativeInvokeOutcome::Completion(Completion::Throw(
                 self.new_native_error_jsvalue(
                     realm,
@@ -712,6 +715,7 @@ impl Runtime {
                 )?,
             )));
         };
+        let iterator = ObjectRef::from_owned_handle(self.clone(), iterator);
         let iterator_id = iterator.object_id();
         let state = self
             .0
@@ -768,16 +772,37 @@ impl Runtime {
             .borrow_mut()
             .heap
             .set_map_iterator_current(iterator_id, record_index)?;
-        let key = self.root_raw_value(key.clone())?;
         let value = match kind {
-            MapIteratorKind::Key => self.into_jsvalue(key)?,
-            MapIteratorKind::Value => self.into_jsvalue(self.root_raw_value(value.clone())?)?,
+            MapIteratorKind::Key => self.dup_jsvalue(
+                &JsValue::from_raw(key)
+                    .ok_or(RuntimeError::Invariant("Map key is uninitialized"))?,
+            )?,
+            MapIteratorKind::Value => {
+                self.dup_jsvalue(&JsValue::from_raw(value.clone()).ok_or(
+                    RuntimeError::Invariant("stored collection value is uninitialized"),
+                )?)?
+            }
             MapIteratorKind::KeyAndValue => {
-                let key = self.into_jsvalue(key)?;
-                let value = self.into_jsvalue(self.root_raw_value(value.clone())?)?;
-                self.into_jsvalue(Value::Object(
-                    self.new_array_from_values_jsvalue(realm, vec![key, value])?,
-                ))?
+                let key = self.dup_jsvalue(
+                    &JsValue::from_raw(key)
+                        .ok_or(RuntimeError::Invariant("Map key is uninitialized"))?,
+                )?;
+                let value = (|| {
+                    self.dup_jsvalue(&JsValue::from_raw(value.clone()).ok_or(
+                        RuntimeError::Invariant("stored collection value is uninitialized"),
+                    )?)
+                })();
+                let value = match value {
+                    Ok(value) => value,
+                    Err(error) => {
+                        let _ = self.release_jsvalue(key);
+                        return Err(error);
+                    }
+                };
+                JsValue::Object(
+                    self.new_array_from_values_jsvalue(realm, vec![key, value])?
+                        .into_handle(),
+                )
             }
         };
         Ok(NativeInvokeOutcome::IteratorNextRaw { value, done: false })

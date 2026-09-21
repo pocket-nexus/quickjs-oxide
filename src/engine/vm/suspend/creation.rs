@@ -3,7 +3,7 @@ use super::{EncodedVmActivation, VmRunOutcome};
 use crate::engine::api::{runtime::Runtime, runtime_error::RuntimeError};
 use crate::engine::heap::ContextId;
 use crate::engine::object::{CallableRef, ObjectRef, PropertyKey};
-use crate::engine::value::{Value, conversion::NativeConversion};
+use crate::engine::value::{JsValue, Value, conversion::NativeConversion};
 use crate::engine::vm::{Completion, VmSuspendKind};
 
 pub(in crate::engine::vm) struct GeneratorCreation {
@@ -76,18 +76,17 @@ impl GeneratorPrototype {
             Completion::Throw(value) => {
                 return Ok(CreationStep::Complete(Completion::Throw(value)));
             }
-            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Return(value) => value,
         };
-        let prototype = if let Value::Object(prototype) = value {
-            prototype
+        let prototype = if let JsValue::Object(prototype) = value {
+            ObjectRef::from_owned_handle(runtime.clone(), prototype)
         } else {
+            runtime.release_jsvalue(value)?;
             let realm =
                 match runtime.function_realm(self.creation.realm, &self.creation.callable)? {
                     NativeConversion::Value(realm) => realm,
                     NativeConversion::Throw(value) => {
-                        return Ok(CreationStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(CreationStep::Complete(Completion::Throw(value)));
                     }
                 };
             let id = {

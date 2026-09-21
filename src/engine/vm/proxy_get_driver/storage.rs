@@ -52,7 +52,7 @@ impl QueryStorage {
         if let Some(mut pending) = self.pending.pop() {
             pending.identity = identity;
             pending.query = query;
-            pending.resume = resume;
+            std::mem::replace(&mut pending.resume, resume).release_owned();
             return pending;
         }
         #[cfg(feature = "profiling")]
@@ -94,6 +94,7 @@ impl QueryStorage {
 
     pub(super) fn take_native_wait(
         &mut self,
+        runtime: &crate::engine::api::runtime::Runtime,
     ) -> Result<Vec<super::native::NativeWaitRecord>, crate::engine::api::Error> {
         let mut waiting = self.native_waits.pop().unwrap_or_default();
         if waiting.is_empty() {
@@ -101,6 +102,7 @@ impl QueryStorage {
                 crate::engine::api::Error::internal("native waiting payload allocation failed")
             })?;
             waiting.push(super::native::NativeWaitRecord {
+                runtime: None,
                 call: None,
                 step: super::Step::Complete(Some(crate::engine::vm::Completion::Return(
                     crate::engine::value::JsValue::Undefined,
@@ -110,12 +112,19 @@ impl QueryStorage {
         }
         debug_assert_eq!(waiting.len(), 1);
         debug_assert!(waiting[0].call.is_none() && waiting[0].parents.is_empty());
+        debug_assert!(waiting[0].runtime.is_none());
+        waiting[0].runtime = Some(runtime.clone());
         Ok(waiting)
     }
 
-    pub(super) fn recycle_native_wait(&mut self, waiting: Vec<super::native::NativeWaitRecord>) {
+    pub(super) fn recycle_native_wait(
+        &mut self,
+        mut waiting: Vec<super::native::NativeWaitRecord>,
+    ) {
         debug_assert_eq!(waiting.len(), 1);
         debug_assert!(waiting[0].call.is_none() && waiting[0].parents.is_empty());
+        waiting[0].release_owned();
+        debug_assert!(waiting[0].runtime.is_none());
         if reserve(&mut self.native_waits, 1, "query.native_wait_pool").is_ok() {
             self.native_waits.push(waiting);
         }
@@ -185,11 +194,16 @@ impl Query {
     pub(super) fn recycle(mut self, storage: &mut QueryStorage) {
         // Preserve Query::drop's native/root release order. On abnormal exits
         // this includes every still-waiting native and its enclosing parents.
-        while self.parents.pop().is_some() {}
+        while let Some(resume) = self.parents.pop() {
+            resume.release_owned();
+        }
         while let Some(mut scope) = self.natives.pop() {
+            let _ = scope.call.release_invocation();
             drop(scope.call);
-            drop(scope.resume);
-            while scope.parents.pop().is_some() {}
+            scope.resume.release_owned();
+            while let Some(resume) = scope.parents.pop() {
+                resume.release_owned();
+            }
             // Caching must not turn successful cleanup into an allocation error.
             if reserve(&mut self.spare_parents, 1, "query.spare_parents").is_ok() {
                 self.spare_parents.push(scope.parents);

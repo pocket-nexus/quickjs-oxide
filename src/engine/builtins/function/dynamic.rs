@@ -157,9 +157,7 @@ impl DynamicFunctionResume {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(DynamicFunctionStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(DynamicFunctionStep::Complete(Completion::Throw(value)));
             }
         };
         self.source()?.push_js_string(&value)?;
@@ -224,9 +222,7 @@ impl DynamicFunctionResume {
                     {
                         NativeConversion::Value(realm) => realm,
                         NativeConversion::Throw(value) => {
-                            return Ok(DynamicFunctionStep::Complete(Completion::Throw(
-                                runtime.into_jsvalue(value)?,
-                            )));
+                            return Ok(DynamicFunctionStep::Complete(Completion::Throw(value)));
                         }
                     };
                     let prototype = {

@@ -3,7 +3,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::ContextId,
     object::{ObjectRef, PropertyKey, operations::InternalSetResult},
-    value::{JsValue, Value, conversion::NativeConversion},
+    value::{JsValue, conversion::NativeConversion},
     vm::Completion,
 };
 pub(crate) enum CopyStep {
@@ -126,9 +126,7 @@ impl CopyResume {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(CopyStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(CopyStep::Complete(Completion::Throw(value)));
             }
         };
         match self.0.phase {
@@ -191,12 +189,13 @@ impl CopyResume {
         result: NativeConversion<InternalSetResult>,
     ) -> Result<CopyStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Write) {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant("Array copy set phase mismatch"));
         }
         if let Some(value) = runtime.finish_set_property_or_throw(self.0.realm, &key, result)? {
-            return Ok(CopyStep::Complete(Completion::Throw(
-                runtime.into_jsvalue(value)?,
-            )));
+            return Ok(CopyStep::Complete(Completion::Throw(value)));
         }
         self.0.offset += 1;
         self.next(runtime)
@@ -229,14 +228,14 @@ pub(crate) fn finish(
             CopyStep::Set { mut resume } => {
                 let object = resume.take_set_object();
                 let key = resume.take_set_key();
-                let value = runtime.root_and_release_jsvalue(resume.take_set_value())?;
+                let value = resume.take_set_value();
                 {
-                    let result = runtime.internal_set(
+                    let result = runtime.internal_set_jsvalue(
                         realm,
                         &object,
                         &key,
                         value,
-                        Value::Object(object.clone()),
+                        JsValue::Object(object.clone().into_handle()),
                     )?;
                     resume.set(runtime, key, result)?
                 }

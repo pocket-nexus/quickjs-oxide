@@ -150,9 +150,7 @@ impl DatePrototypeStep {
                 match runtime.native_to_object_jsvalue(realm, runtime.dup_jsvalue(this_value)?)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(Self::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(Self::Complete(Completion::Throw(value)));
                     }
                 };
             return Ok(Self::Primitive {
@@ -172,9 +170,7 @@ impl DatePrototypeStep {
         let (object, value) = match runtime.date_this_time_value_jsvalue(realm, this_value)? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(Self::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(Self::Complete(Completion::Throw(value)));
             }
         };
         let (phase, count) = match kind {
@@ -272,9 +268,7 @@ impl DatePrototypeResume {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(DatePrototypeStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(DatePrototypeStep::Complete(Completion::Throw(value)));
             }
         };
         match &mut self.0.phase {

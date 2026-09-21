@@ -308,9 +308,7 @@ impl RegExpSplitResume {
         let constructor = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(RegExpSplitStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(RegExpSplitStep::Complete(Completion::Throw(value)));
             }
         };
         let Phase::Species { regexp, input } = std::mem::replace(&mut self.0.phase, Phase::Vacant)
@@ -336,7 +334,7 @@ impl RegExpSplitResume {
         let key =
             runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
         let result = match runtime.finish_set_property_or_throw(self.0.realm, &key, result)? {
-            Some(value) => Completion::Throw(runtime.into_jsvalue(value)?),
+            Some(value) => Completion::Throw(value),
             None => Completion::Return(JsValue::Undefined),
         };
         self.resume(runtime, result)
@@ -383,9 +381,7 @@ impl RegExpSplitResume {
                 let input = match self.string_reply(runtime)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(RegExpSplitStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(RegExpSplitStep::Complete(Completion::Throw(value)));
                     }
                 };
                 let value = self.0.step_pending.value.take().unwrap();
@@ -424,9 +420,7 @@ impl RegExpSplitResume {
                 let flags = match self.string_reply(runtime)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(RegExpSplitStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(RegExpSplitStep::Complete(Completion::Throw(value)));
                     }
                 };
                 let unicode = flags
@@ -516,9 +510,7 @@ impl RegExpSplitResume {
                 let number = match self.number_reply(runtime)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(RegExpSplitStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(RegExpSplitStep::Complete(Completion::Throw(value)));
                     }
                 };
                 state.limit = Runtime::to_uint32_number(number);
@@ -577,9 +569,7 @@ impl RegExpSplitResume {
                 let number = match self.number_reply(runtime)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(RegExpSplitStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(RegExpSplitStep::Complete(Completion::Throw(value)));
                     }
                 };
                 let end = usize::try_from(
@@ -616,9 +606,7 @@ impl RegExpSplitResume {
                 let number = match self.number_reply(runtime)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(RegExpSplitStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(RegExpSplitStep::Complete(Completion::Throw(value)));
                     }
                 };
                 state.captures(

@@ -30,9 +30,6 @@ pub(super) fn enter(
     let constructor = match runtime.constructor_from_jsvalue(realm, target) {
         Ok(NativeConversion::Value(target)) => target,
         Ok(NativeConversion::Throw(value)) => {
-            let value = runtime
-                .into_jsvalue(value)
-                .map_err(runtime_error_to_vm_error)?;
             return Ok(CallStep::Complete(Completion::Throw(value)));
         }
         Err(error) => {
@@ -107,9 +104,6 @@ pub(super) fn enter_default_derived(
                     .release_jsvalue(argument)
                     .map_err(runtime_error_to_vm_error)?;
             }
-            let value = runtime
-                .into_jsvalue(value)
-                .map_err(runtime_error_to_vm_error)?;
             return Ok(CallStep::Complete(Completion::Throw(value)));
         }
         Err(error) => {

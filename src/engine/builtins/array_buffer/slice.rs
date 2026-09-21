@@ -107,9 +107,7 @@ impl BufferSliceStep {
         let (source, length) = match source {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(Self::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(Self::Complete(Completion::Throw(value)));
             }
         };
         let mut resume = BufferSliceResume(Box::new(BufferSliceResumeState {
@@ -168,9 +166,7 @@ impl BufferSliceResume {
         let target = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(BufferSliceStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(BufferSliceStep::Complete(Completion::Throw(value)));
             }
         };
         self.copy(runtime, target, start, count)
@@ -215,9 +211,7 @@ impl BufferSliceResume {
                 let start = match primitive_clamp(runtime, self.0.realm, value, self.0.length)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(BufferSliceStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(BufferSliceStep::Complete(Completion::Throw(value)));
                     }
                 };
                 if let Some(value) = self.0.end.take() {
@@ -238,9 +232,7 @@ impl BufferSliceResume {
                 let end = match primitive_clamp(runtime, self.0.realm, value, self.0.length)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(BufferSliceStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(BufferSliceStep::Complete(Completion::Throw(value)));
                     }
                 };
                 self.select(runtime, start, end)
@@ -277,16 +269,12 @@ impl BufferSliceResume {
                 if !matches!(value, JsValue::Object(_)) {
                     let error = runtime.new_not_constructor_error_jsvalue(self.0.realm, &value);
                     runtime.release_jsvalue(value)?;
-                    return Ok(BufferSliceStep::Complete(Completion::Throw(
-                        runtime.into_jsvalue(error?)?,
-                    )));
+                    return Ok(BufferSliceStep::Complete(Completion::Throw(error?)));
                 }
                 let constructor = match runtime.constructor_from_jsvalue(self.0.realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(BufferSliceStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(BufferSliceStep::Complete(Completion::Throw(value)));
                     }
                 };
                 let mut arguments = Vec::new();

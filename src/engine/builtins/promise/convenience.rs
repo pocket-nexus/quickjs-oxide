@@ -71,7 +71,7 @@ impl Runtime {
         value: &JsValue,
     ) -> Result<NativeConversion<CallableRef>, RuntimeError> {
         let JsValue::Object(id) = value else {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "not a function",
@@ -80,7 +80,7 @@ impl Runtime {
         let object = ObjectRef::from_borrowed_handle(self.clone(), *id)?;
         match self.as_callable(&object)? {
             Some(callable) => Ok(NativeConversion::Value(callable)),
-            None => Ok(NativeConversion::Throw(self.new_native_error(
+            None => Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "not a function",

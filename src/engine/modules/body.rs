@@ -8,8 +8,8 @@ use crate::engine::builtins::{
 use crate::engine::heap::{
     ContextId, InternalCallableData, PromiseState, RawModuleRef, roots::VarRefRoot,
 };
-use crate::engine::object::CallableRef;
-use crate::engine::value::{JsValue, Value};
+use crate::engine::object::{CallableRef, ObjectRef};
+use crate::engine::value::JsValue;
 use crate::engine::vm::Completion;
 
 pub(crate) enum BodyStep {
@@ -34,6 +34,16 @@ pub(crate) struct BodyResume {
     phase: Phase,
 }
 impl BodyStep {
+    pub(crate) fn release(self, runtime: &Runtime) {
+        match self {
+            Self::Complete(Completion::Return(value) | Completion::Throw(value)) => {
+                let _ = runtime.release_jsvalue(value);
+            }
+            Self::Call { .. } => {}
+            Self::Promise { step, .. } => (*step).release(runtime),
+        }
+    }
+
     pub(crate) fn start(
         runtime: &Runtime,
         realm: ContextId,
@@ -71,8 +81,10 @@ impl BodyStep {
                         "linked JSON module has no default live cell",
                     ))?;
                 let slot = VarRefRoot::from_borrowed_handle(runtime.clone(), slot)?;
-                let default_value = runtime.root_raw_value(default_value.clone())?;
-                runtime.write_var_ref(&slot, runtime.into_jsvalue(default_value)?)?;
+                let default_value = JsValue::from_raw(default_value.clone()).ok_or(
+                    RuntimeError::Invariant("JSON module default value is an internal sentinel"),
+                )?;
+                runtime.write_var_ref(&slot, runtime.dup_jsvalue(&default_value)?)?;
                 Ok(Self::Complete(Completion::Return(JsValue::Undefined)))
             }
             ModuleRecordBody::Parsing => Err(RuntimeError::Invariant(
@@ -91,17 +103,23 @@ impl BodyResume {
         match self.phase {
             Phase::Sync => inspect_sync(runtime, completion).map(BodyStep::Complete),
             Phase::Attach => {
-                if let Completion::Throw(reason) = completion {
-                    // Preserve the ignored abrupt attachment and pending exception.
-                    runtime.set_pending_exception_jsvalue(reason)?;
+                match completion {
+                    Completion::Throw(reason) => {
+                        // Preserve the ignored abrupt attachment and pending exception.
+                        runtime.set_pending_exception_jsvalue(reason)?;
+                    }
+                    Completion::Return(value) => runtime.release_jsvalue(value)?,
                 }
                 Ok(BodyStep::Complete(Completion::Return(JsValue::Undefined)))
             }
             Phase::Async => {
                 let promise = match completion {
-                    Completion::Return(value) => match runtime.root_and_release_jsvalue(value)? {
-                        Value::Object(promise) => promise,
-                        _ => {
+                    Completion::Return(value) => match value {
+                        JsValue::Object(promise) => {
+                            ObjectRef::from_owned_handle(runtime.clone(), promise)
+                        }
+                        value => {
+                            runtime.release_jsvalue(value)?;
                             return Err(RuntimeError::Invariant(
                                 "async module callable did not return a Promise",
                             ));
@@ -138,9 +156,10 @@ impl BodyResume {
 }
 fn inspect_sync(runtime: &Runtime, completion: Completion) -> Result<Completion, RuntimeError> {
     let promise = match completion {
-        Completion::Return(value) => match runtime.root_and_release_jsvalue(value)? {
-            Value::Object(promise) => promise,
-            _ => {
+        Completion::Return(value) => match value {
+            JsValue::Object(promise) => ObjectRef::from_owned_handle(runtime.clone(), promise),
+            value => {
+                runtime.release_jsvalue(value)?;
                 return Err(RuntimeError::Invariant(
                     "async module callable returned a non-Promise",
                 ));
@@ -159,10 +178,12 @@ fn inspect_sync(runtime: &Runtime, completion: Completion) -> Result<Completion,
         .borrow()
         .heap
         .promise_snapshot(promise.object_id())?;
-    let result = runtime.root_raw_value(snapshot.result.clone())?;
+    let result = JsValue::from_raw(snapshot.result.clone()).ok_or(RuntimeError::Invariant(
+        "module Promise result is an internal sentinel",
+    ))?;
     match snapshot.state {
-        PromiseState::Fulfilled => Ok(Completion::Return(runtime.into_jsvalue(result)?)),
-        PromiseState::Rejected => Ok(Completion::Throw(runtime.into_jsvalue(result)?)),
+        PromiseState::Fulfilled => Ok(Completion::Return(runtime.dup_jsvalue(&result)?)),
+        PromiseState::Rejected => Ok(Completion::Throw(runtime.dup_jsvalue(&result)?)),
         PromiseState::Pending => Err(RuntimeError::Invariant(
             "synchronous module body retained a pending Promise",
         )),

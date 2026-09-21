@@ -5,7 +5,7 @@ use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::heap::ContextId;
 
-use crate::engine::value::{JsString, JsStringError, Value};
+use crate::engine::value::{JsString, JsStringError, JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
 
@@ -79,22 +79,24 @@ impl Runtime {
                 "RegExp.escape did not receive a generic invocation",
             ));
         };
-        let argument = self.root_value(
-            arguments
-                .readable
-                .first()
-                .ok_or(RuntimeError::Invariant("RegExp.escape argv was not padded"))?,
-        )?;
-        let Value::String(source) = &argument else {
+        let argument = arguments
+            .readable
+            .first()
+            .ok_or(RuntimeError::Invariant("RegExp.escape argv was not padded"))?;
+        let JsValue::String(source) = argument else {
             return Ok(Completion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "not a string",
             )?));
         };
-        Ok(Completion::Return(self.into_jsvalue(Value::String(
-            regexp_escape_with_limit(source, JsString::MAX_LEN)?,
-        ))?))
+        let escaped = {
+            let state = self.0.state.borrow();
+            regexp_escape_with_limit(state.heap.string(*source)?, JsString::MAX_LEN)?
+        };
+        Ok(Completion::Return(
+            self.into_jsvalue(Value::String(escaped))?,
+        ))
     }
 }
 

@@ -137,9 +137,6 @@ fn prepare_and_enter(
                 JsValue::Object(object.into_handle())
             }
             NativeConversion::Throw(value) => {
-                let value = runtime
-                    .into_jsvalue(value)
-                    .map_err(runtime_error_to_vm_error)?;
                 return Ok(CallStep::Complete(Completion::Throw(value)));
             }
         }
@@ -304,11 +301,7 @@ pub(super) fn apply(
     let values = match values {
         NativeConversion::Value(values) => values,
         NativeConversion::Throw(value) => {
-            return Ok(CallStep::Complete(Completion::Throw(
-                runtime
-                    .into_jsvalue(value)
-                    .map_err(runtime_error_to_vm_error)?,
-            )));
+            return Ok(CallStep::Complete(Completion::Throw(value)));
         }
     };
     let mut owners = ApplyArgumentsOwner {
@@ -364,11 +357,7 @@ pub(super) fn apply(
                 {
                     NativeConversion::Value(values) => values,
                     NativeConversion::Throw(value) => {
-                        return Ok(CallStep::Complete(Completion::Throw(
-                            runtime
-                                .into_jsvalue(value)
-                                .map_err(runtime_error_to_vm_error)?,
-                        )));
+                        return Ok(CallStep::Complete(Completion::Throw(value)));
                     }
                 };
                 callable = target;

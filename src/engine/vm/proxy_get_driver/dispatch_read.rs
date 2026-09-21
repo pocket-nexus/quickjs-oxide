@@ -64,14 +64,7 @@ pub(super) fn prototype(
                             unreachable!()
                         };
                         *step = resume
-                            .prototype(
-                                runtime,
-                                NativeConversion::Throw(
-                                    runtime
-                                        .root_and_release_jsvalue(value)
-                                        .map_err(runtime_error_to_vm_error)?,
-                                ),
-                            )
+                            .prototype(runtime, NativeConversion::Throw(value))
                             .map_err(runtime_error_to_vm_error)?;
                         continue;
                     }
@@ -117,14 +110,7 @@ pub(super) fn prototype(
                             unreachable!()
                         };
                         *step = resume
-                            .boolean(
-                                runtime,
-                                NativeConversion::Throw(
-                                    runtime
-                                        .root_and_release_jsvalue(value)
-                                        .map_err(runtime_error_to_vm_error)?,
-                                ),
-                            )
+                            .boolean(runtime, NativeConversion::Throw(value))
                             .map_err(runtime_error_to_vm_error)?;
                         continue;
                     }
@@ -196,14 +182,7 @@ pub(super) fn attributes(
                             unreachable!()
                         };
                         *step = resume
-                            .boolean(
-                                runtime,
-                                NativeConversion::Throw(
-                                    runtime
-                                        .root_and_release_jsvalue(value)
-                                        .map_err(runtime_error_to_vm_error)?,
-                                ),
-                            )
+                            .boolean(runtime, NativeConversion::Throw(value))
                             .map_err(runtime_error_to_vm_error)?;
                         continue;
                     }
@@ -246,14 +225,7 @@ pub(super) fn attributes(
                             unreachable!()
                         };
                         *step = resume
-                            .boolean(
-                                runtime,
-                                NativeConversion::Throw(
-                                    runtime
-                                        .root_and_release_jsvalue(value)
-                                        .map_err(runtime_error_to_vm_error)?,
-                                ),
-                            )
+                            .boolean(runtime, NativeConversion::Throw(value))
                             .map_err(runtime_error_to_vm_error)?;
                         continue;
                     }
@@ -416,12 +388,15 @@ pub(super) fn get(
                 let receiver = receiver.take().expect("selected Step field");
                 let resume = resume.take().expect("selected Step field");
 
-                let receiver = runtime
-                    .root_and_release_jsvalue(receiver)
-                    .map_err(runtime_error_to_vm_error)?;
-                let read = runtime
-                    .prepare_ordinary_read(&object, &key, receiver)
-                    .map_err(runtime_error_to_vm_error)?;
+                let read = runtime.prepare_ordinary_read_selected(&object, &key, &receiver, None);
+                let _ = runtime.release_jsvalue(receiver);
+                let read = match read {
+                    Ok(read) => read,
+                    Err(error) => {
+                        resume.release_owned();
+                        return Err(runtime_error_to_vm_error(error));
+                    }
+                };
                 *step = Step::PreparedRead {
                     read: Some(read),
                     key: Some(key),

@@ -271,7 +271,7 @@ fn string_split_output_index_overflow_is_checked_before_array_mutation() {
             context.realm,
             &result,
             &mut length,
-            Value::String(JsString::from_static("unreachable")),
+            JsString::from_static("unreachable"),
         ),
         Err(RuntimeError::Invariant(
             "String split output index exceeded Uint32"

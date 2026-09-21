@@ -137,14 +137,20 @@ impl Runtime {
         let Ok(index) = usize::try_from(index) else {
             return Ok(None);
         };
-        Ok(value.code_unit_at(index).map(JsString::from_code_unit))
+        Ok(state
+            .heap
+            .string(*value)?
+            .code_unit_at(index)
+            .map(JsString::from_code_unit))
     }
 
     fn string_exotic_length(&self, object: &ObjectRef) -> Result<Option<usize>, RuntimeError> {
         let state = self.0.state.borrow();
         let object = state.heap.object(object.object_id())?;
         Ok(match &object.payload {
-            ObjectPayload::Primitive(PrimitiveObjectData::String(value)) => Some(value.len()),
+            ObjectPayload::Primitive(PrimitiveObjectData::String(value)) => {
+                Some(state.heap.string(*value)?.len())
+            }
             ObjectPayload::Ordinary
             | ObjectPayload::ArrayBuffer(_)
             | ObjectPayload::SharedArrayBuffer(_)
@@ -685,9 +691,12 @@ impl Runtime {
     ) -> Result<bool, RuntimeError> {
         match self.define_own_property_in_realm(None, object, key, descriptor)? {
             PropertyDefineOutcome::Defined(defined) => Ok(defined),
-            PropertyDefineOutcome::Throw(_) => Err(RuntimeError::Invariant(
-                "context-free property definition produced a JavaScript throw",
-            )),
+            PropertyDefineOutcome::Throw(value) => {
+                self.release_jsvalue(value)?;
+                Err(RuntimeError::Invariant(
+                    "context-free property definition produced a JavaScript throw",
+                ))
+            }
         }
     }
 
@@ -1018,7 +1027,8 @@ impl Runtime {
                     &descriptor.raw_record(),
                 )? {
                     PropertyDefineOutcome::Defined(value) => Ok(Some(value)),
-                    PropertyDefineOutcome::Throw(_) => {
+                    PropertyDefineOutcome::Throw(value) => {
+                        self.release_jsvalue(value)?;
                         Err(RuntimeError::Invariant("raw array index definition threw"))
                     }
                 };
@@ -1617,7 +1627,7 @@ impl Runtime {
                 let state = self.0.state.borrow();
                 validate_and_apply_property_descriptor(
                     state.heap.object(object.object_id())?.extensible,
-                    &record,
+                    record,
                     current.as_ref(),
                     &RawValue::Undefined,
                     |a, b| crate::engine::value::collection_key::same_value(&state.heap, a, b),
@@ -1651,7 +1661,7 @@ impl Runtime {
             }
             self.materialize_dense_array(object)?;
         }
-        if !self.define_raw_property(object, key, &record)? {
+        if !self.define_raw_property(object, key, record)? {
             return Ok(PropertyDefineOutcome::Defined(false));
         }
 
@@ -1867,11 +1877,13 @@ impl Runtime {
         realm: Option<ContextId>,
     ) -> Result<ArrayLengthConversion, RuntimeError> {
         if let Some(realm) = realm {
-            return Ok(ArrayLengthConversion::Throw(self.new_native_error(
-                realm,
-                NativeErrorKind::Range,
-                "invalid array length",
-            )?));
+            return Ok(ArrayLengthConversion::Throw(
+                self.new_native_error_jsvalue(
+                    realm,
+                    NativeErrorKind::Range,
+                    "invalid array length",
+                )?,
+            ));
         }
         Err(RuntimeError::Engine(Error::new(
             ErrorKind::Range,

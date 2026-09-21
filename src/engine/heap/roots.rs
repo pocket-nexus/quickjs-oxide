@@ -35,6 +35,7 @@ impl Runtime {
     /// Public-root boundary form of [`Runtime::new_var_ref`]: converts the
     /// root into an internal value (allocating string/BigInt nodes) and
     /// consumes it.
+    #[cfg(test)]
     pub(crate) fn new_var_ref_rooted(
         &self,
         value: Value,

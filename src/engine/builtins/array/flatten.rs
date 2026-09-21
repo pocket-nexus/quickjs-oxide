@@ -110,9 +110,7 @@ impl FlattenStep {
             match runtime.native_to_object_jsvalue(realm, runtime.dup_jsvalue(this_value)?)? {
                 NativeConversion::Value(value) => value,
                 NativeConversion::Throw(value) => {
-                    return Ok(Self::Complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
+                    return Ok(Self::Complete(Completion::Throw(value)));
                 }
             };
         let mut resume = FlattenResume(Box::new(FlattenResumeState {
@@ -264,9 +262,7 @@ impl FlattenResume {
         let number = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(FlattenStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(FlattenStep::Complete(Completion::Throw(value)));
             }
         };
         match self.0.phase {
@@ -387,6 +383,9 @@ impl FlattenResume {
         result: NativeConversion<bool>,
     ) -> Result<FlattenStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Has) {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "Array flatten boolean phase mismatch",
             ));
@@ -394,9 +393,7 @@ impl FlattenResume {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(FlattenStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(FlattenStep::Complete(Completion::Throw(value)));
             }
         };
         if !value {
@@ -415,9 +412,7 @@ impl FlattenResume {
             match runtime.internal_is_array_jsvalue(self.0.realm, &self.0.element)? {
                 NativeConversion::Value(value) => value,
                 NativeConversion::Throw(value) => {
-                    return Ok(FlattenStep::Complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
+                    return Ok(FlattenStep::Complete(Completion::Throw(value)));
                 }
             }
         } else {
@@ -469,6 +464,9 @@ impl FlattenResume {
         result: NativeConversion<InternalDefineResult>,
     ) -> Result<FlattenStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Define) {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "Array flatten define phase mismatch",
             ));
@@ -478,9 +476,7 @@ impl FlattenResume {
             self.0.target_index,
             result,
         )? {
-            return Ok(FlattenStep::Complete(Completion::Throw(
-                runtime.into_jsvalue(value)?,
-            )));
+            return Ok(FlattenStep::Complete(Completion::Throw(value)));
         }
         self.0.target_index += 1;
         self.next(runtime)

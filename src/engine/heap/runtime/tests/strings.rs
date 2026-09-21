@@ -26,7 +26,7 @@ fn string_wrapper_exotic_indices_length_define_delete_and_order_match_quickjs() 
             .object(string_prototype.object_id())
             .unwrap()
             .payload,
-        ObjectPayload::Primitive(PrimitiveObjectData::String(value)) if value.is_empty()
+        ObjectPayload::Primitive(PrimitiveObjectData::String(value)) if runtime.0.state.borrow().heap.string(*value).unwrap().is_empty()
     ));
     assert_eq!(
         own_key_names(&runtime, &string_prototype),
@@ -113,7 +113,7 @@ fn string_wrapper_exotic_indices_length_define_delete_and_order_match_quickjs() 
             .object(wrapper.object_id())
             .unwrap()
             .payload,
-        ObjectPayload::Primitive(PrimitiveObjectData::String(value)) if value == &payload
+        ObjectPayload::Primitive(PrimitiveObjectData::String(value)) if runtime.0.state.borrow().heap.string(*value).unwrap() == &payload
     ));
     assert_eq!(
         runtime.get_prototype_of(&wrapper).unwrap(),

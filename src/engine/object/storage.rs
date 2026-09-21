@@ -112,16 +112,7 @@ impl Runtime {
     }
 
     /// Apply ECMAScript `ToBoolean`, including QuickJS's Annex B falsy
-    /// `is_HTMLDDA` object exception.
-    pub(crate) fn value_to_boolean(&self, value: &Value) -> Result<bool, RuntimeError> {
-        if self.value_is_html_dda(value)? {
-            Ok(false)
-        } else {
-            Ok(value.to_boolean_primitive())
-        }
-    }
-
-    /// Internal-value form of [`Runtime::value_to_boolean`].
+    /// `is_HTMLDDA` object exception, to an internal value.
     pub(crate) fn value_to_boolean_jsvalue(&self, value: &JsValue) -> Result<bool, RuntimeError> {
         match value {
             JsValue::Object(id) => Ok(!self.0.state.borrow().heap.object(*id)?.is_html_dda),

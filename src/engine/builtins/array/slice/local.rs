@@ -13,11 +13,8 @@ impl SliceStep {
             self = match self {
                 Self::Read { mut resume } => {
                     let (object, key) = resume.take_read();
-                    let receiver = Value::Object(object);
-                    let Value::Object(object) = &receiver else {
-                        unreachable!()
-                    };
-                    match runtime.prepare_ordinary_read_borrowed(object, &key, &receiver)? {
+                    let receiver = JsValue::Object(object.object_id());
+                    match runtime.prepare_ordinary_read_selected(&object, &key, &receiver, None)? {
                         OrdinaryRead::Complete(value) => {
                             #[cfg(feature = "profiling")]
                             crate::engine::api::profiling::record_owned_execution_event(
@@ -35,8 +32,8 @@ impl SliceStep {
                     if !matches!(resume.0.pending.value.as_ref(), Some(JsValue::Object(_))) =>
                 {
                     let (value,) = resume.take_number();
-                    let value = runtime.root_and_release_jsvalue(value)?;
-                    let NumberStep::Complete(result) = NumberStep::start(runtime, realm, value)?
+                    let NumberStep::Complete(result) =
+                        NumberStep::start_jsvalue(runtime, realm, value)?
                     else {
                         return Err(RuntimeError::Invariant(
                             "primitive slice conversion suspended",

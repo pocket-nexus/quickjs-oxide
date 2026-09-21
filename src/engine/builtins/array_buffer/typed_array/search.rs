@@ -93,7 +93,7 @@ impl Runtime {
             }
         };
 
-        let current_length = i64::from(self.typed_array_state(&target)?.length);
+        let current_length = i64::from(self.typed_array_state(target)?.length);
         // QuickJS treats integer indices that disappeared during fromIndex
         // coercion as `undefined` only for includes. indexOf/lastIndexOf scan
         // direct machine words and therefore never observe that missing tail.
@@ -122,7 +122,7 @@ impl Runtime {
         while index != end {
             let value = self
                 .typed_array_read_index_jsvalue(
-                    &target,
+                    target,
                     u64::try_from(index).map_err(|_| {
                         RuntimeError::Invariant("TypedArray search index was negative")
                     })?,
@@ -222,9 +222,7 @@ impl TypedSearchStep {
         let target = match runtime.require_typed_array_jsvalue(realm, this_value)? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(Self::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(Self::Complete(Completion::Throw(value)));
             }
         };
         let length = if matches!(kind, TypedSearchKind::At) {
@@ -243,9 +241,7 @@ impl TypedSearchStep {
             match runtime.typed_array_validated_length(realm, &target)? {
                 NativeConversion::Value(value) => i64::from(value),
                 NativeConversion::Throw(value) => {
-                    return Ok(Self::Complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
+                    return Ok(Self::Complete(Completion::Throw(value)));
                 }
             }
         };
@@ -315,9 +311,7 @@ impl TypedSearchResume {
         let index = match number? {
             NativeConversion::Value(number) => Runtime::int64_from_number(number),
             NativeConversion::Throw(value) => {
-                return Ok(TypedSearchStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(TypedSearchStep::Complete(Completion::Throw(value)));
             }
         };
         Ok(TypedSearchStep::Complete(match self.0.kind {

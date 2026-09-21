@@ -261,9 +261,7 @@ impl AggregateResume {
                 ));
             }
             crate::engine::object::operations::PropertyDefineOutcome::Throw(value) => {
-                return Ok(AggregateStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(AggregateStep::Complete(Completion::Throw(value)));
             }
         }
         self.0.index = self.0.index.checked_add(1).ok_or(RuntimeError::Invariant(

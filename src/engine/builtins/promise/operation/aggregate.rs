@@ -132,9 +132,7 @@ impl PromiseStep {
             .constructor_from_jsvalue(realm, JsValue::Object(object.clone().into_handle()))?
         {
             NativeConversion::Throw(value) => {
-                return Ok(Self::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(Self::Complete(Completion::Throw(value)));
             }
             NativeConversion::Value(constructor) => constructor,
         };
@@ -218,12 +216,7 @@ pub(super) fn resume(
             let conversion = runtime.promise_callable(realm, &value);
             runtime.release_jsvalue(value)?;
             match conversion? {
-                NativeConversion::Throw(reason) => reject(
-                    runtime,
-                    realm,
-                    state.capability,
-                    runtime.into_jsvalue(reason)?,
-                ),
+                NativeConversion::Throw(reason) => reject(runtime, realm, state.capability, reason),
                 NativeConversion::Value(resolve) => Ok({
                     let __pending_field_receiver = runtime.dup_jsvalue(&state.inputs.iterable)?;
                     let __pending_field_key =
@@ -242,18 +235,14 @@ pub(super) fn resume(
             let conversion = runtime.promise_callable(realm, &value);
             runtime.release_jsvalue(value)?;
             match conversion? {
-                NativeConversion::Throw(_) => {
-                    let reason = runtime.new_native_error(
+                NativeConversion::Throw(discarded) => {
+                    runtime.release_jsvalue(discarded)?;
+                    let reason = runtime.new_native_error_jsvalue(
                         realm,
                         NativeErrorKind::Type,
                         "value is not iterable",
                     )?;
-                    reject(
-                        runtime,
-                        realm,
-                        state.capability,
-                        runtime.into_jsvalue(reason)?,
-                    )
+                    reject(runtime, realm, state.capability, reason)
                 }
                 NativeConversion::Value(callable) => Ok({
                     let __pending_field_callable = callable;
@@ -295,14 +284,12 @@ pub(super) fn resume(
             }
             other => {
                 runtime.release_jsvalue(other)?;
-                let reason =
-                    runtime.new_native_error(realm, NativeErrorKind::Type, "not an object")?;
-                reject(
-                    runtime,
+                let reason = runtime.new_native_error_jsvalue(
                     realm,
-                    state.capability,
-                    runtime.into_jsvalue(reason)?,
-                )
+                    NativeErrorKind::Type,
+                    "not an object",
+                )?;
+                reject(runtime, realm, state.capability, reason)
             }
         },
         Phase::NextMethod {
@@ -348,7 +335,7 @@ pub(super) fn resume(
                 )? {
                     NativeConversion::Value(handlers) => handlers,
                     NativeConversion::Throw(reason) => {
-                        return state.close(realm, runtime.into_jsvalue(reason)?);
+                        return state.close(realm, reason);
                     }
                 };
                 let Some(count) = elements.remaining.get().checked_add(1) else {
@@ -447,12 +434,12 @@ impl Loop {
         runtime: &Runtime,
         realm: ContextId,
     ) -> Result<PromiseStep, RuntimeError> {
-        let reason = runtime.new_native_error(
+        let reason = runtime.new_native_error_jsvalue(
             realm,
             NativeErrorKind::Range,
             "too many Promise aggregate elements",
         )?;
-        self.close(realm, runtime.into_jsvalue(reason)?)
+        self.close(realm, reason)
     }
     pub(super) fn next(
         self: Box<Self>,

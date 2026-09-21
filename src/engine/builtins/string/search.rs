@@ -186,9 +186,7 @@ impl StringSearchResume {
                 let source = match string_value(runtime, realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(StringSearchStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(StringSearchStep::Complete(Completion::Throw(value)));
                     }
                 };
                 match self.0.kind {
@@ -259,9 +257,7 @@ impl StringSearchResume {
                 let needle = match string_value(runtime, realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(StringSearchStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(StringSearchStep::Complete(Completion::Throw(value)));
                     }
                 };
                 i32::try_from(source.len()).map_err(|_| {
@@ -295,9 +291,7 @@ impl StringSearchResume {
                 let position = match number_value(runtime, realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(StringSearchStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(StringSearchStep::Complete(Completion::Throw(value)));
                     }
                 };
                 {
@@ -311,9 +305,7 @@ impl StringSearchResume {
                 let start = match number_value(runtime, realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(StringSearchStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(StringSearchStep::Complete(Completion::Throw(value)));
                     }
                 };
                 let next = {
@@ -341,9 +333,7 @@ impl StringSearchResume {
                 let end = match number_value(runtime, realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(StringSearchStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(StringSearchStep::Complete(Completion::Throw(value)));
                     }
                 };
                 let StringSearchKind::Subrange(kind) = self.0.kind else {

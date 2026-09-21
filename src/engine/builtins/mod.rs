@@ -120,7 +120,7 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
         value: Value,
-    ) -> Result<Option<Value>, RuntimeError> {
+    ) -> Result<Option<crate::engine::value::JsValue>, RuntimeError> {
         self.finish_set_property_or_throw(
             realm,
             key,
@@ -133,7 +133,7 @@ impl Runtime {
         realm: ContextId,
         key: &PropertyKey,
         result: NativeConversion<InternalSetResult>,
-    ) -> Result<Option<Value>, RuntimeError> {
+    ) -> Result<Option<crate::engine::value::JsValue>, RuntimeError> {
         match result {
             NativeConversion::Value(InternalSetResult::Accepted) => Ok(None),
             NativeConversion::Throw(value) => Ok(Some(value)),
@@ -164,7 +164,7 @@ impl Runtime {
                     }
                     InternalSetResult::Accepted => unreachable!("accepted Set returned above"),
                 };
-                Ok(Some(self.new_native_error_from_error(
+                Ok(Some(self.new_native_error_from_error_jsvalue(
                     realm,
                     NativeErrorKind::Type,
                     &error,

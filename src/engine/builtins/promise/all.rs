@@ -352,9 +352,12 @@ impl Runtime {
         match self.define_owned_property_in_realm(None, object, &key, &descriptor)? {
             PropertyDefineOutcome::Defined(true) => Ok(()),
             PropertyDefineOutcome::Defined(false) => Err(RuntimeError::Invariant(rejection)),
-            PropertyDefineOutcome::Throw(_) => Err(RuntimeError::Invariant(
-                "context-free property definition produced a JavaScript throw",
-            )),
+            PropertyDefineOutcome::Throw(value) => {
+                self.release_jsvalue(value)?;
+                Err(RuntimeError::Invariant(
+                    "context-free property definition produced a JavaScript throw",
+                ))
+            }
         }
     }
 
@@ -365,7 +368,7 @@ impl Runtime {
         object: &ObjectRef,
         index: u32,
         value: &JsValue,
-    ) -> Result<Option<Value>, RuntimeError> {
+    ) -> Result<Option<JsValue>, RuntimeError> {
         let key = self.property_key_for_index(u64::from(index))?;
         let mut descriptor = OwnedPropertyDescriptor::new(self);
         descriptor.value = DescriptorField::Present(self.dup_jsvalue(value)?);
@@ -391,9 +394,7 @@ impl Runtime {
     ) -> Result<operation::PromiseStep, RuntimeError> {
         let values = ObjectRef::from_borrowed_handle(self.clone(), values)?;
         if let Some(value) = self.define_promise_array_element(realm, &values, index, value)? {
-            return Ok(operation::PromiseStep::Complete(Completion::Throw(
-                self.into_jsvalue(value)?,
-            )));
+            return Ok(operation::PromiseStep::Complete(Completion::Throw(value)));
         }
 
         let count = remaining

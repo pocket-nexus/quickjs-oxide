@@ -21,6 +21,7 @@ impl Runtime {
         invocation: NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
         let NativeInvocation::Getter { .. } = invocation else {
+            invocation.release(self)?;
             return Err(RuntimeError::Invariant(
                 "RegExp accessor did not receive a getter invocation",
             ));
@@ -31,11 +32,10 @@ impl Runtime {
                     "RegExp accessor lost its getter invocation",
                 ));
             };
-            let this_value = self.root_value(this_value)?;
             match kind {
-                RegExpNativeKind::Source => self.call_regexp_source(realm, &this_value),
-                RegExpNativeKind::Flags => self.call_regexp_flags(realm, &this_value),
-                RegExpNativeKind::Flag(flag) => self.call_regexp_flag(realm, &this_value, flag),
+                RegExpNativeKind::Source => self.call_regexp_source(realm, this_value),
+                RegExpNativeKind::Flags => self.call_regexp_flags(realm, this_value),
+                RegExpNativeKind::Flag(flag) => self.call_regexp_flag(realm, this_value, flag),
                 RegExpNativeKind::Constructor
                 | RegExpNativeKind::Escape
                 | RegExpNativeKind::Species
@@ -71,23 +71,23 @@ impl Runtime {
     fn call_regexp_source(
         &self,
         realm: ContextId,
-        this_value: &Value,
+        this_value: &JsValue,
     ) -> Result<Completion, RuntimeError> {
-        let Value::Object(object) = this_value else {
+        let JsValue::Object(object) = this_value else {
             return Ok(Completion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "not an object",
             )?));
         };
-        if object.object_id() == self.regexp_realm_data(realm)?.prototype {
+        if *object == self.regexp_realm_data(realm)?.prototype {
             return Ok(Completion::Return(
                 self.into_jsvalue(Value::String(JsString::from_static("(?:)")))?,
             ));
         }
         let pattern = {
             let state = self.0.state.borrow();
-            match &state.heap.object(object.object_id())?.payload {
+            match &state.heap.object(*object)?.payload {
                 ObjectPayload::RegExp(RegExpObjectData::Compiled { pattern, .. }) => {
                     Some(pattern.clone())
                 }
@@ -154,10 +154,10 @@ impl Runtime {
     fn call_regexp_flag(
         &self,
         realm: ContextId,
-        this_value: &Value,
+        this_value: &JsValue,
         flag: RegExpFlagKind,
     ) -> Result<Completion, RuntimeError> {
-        let Value::Object(object) = this_value else {
+        let JsValue::Object(object) = this_value else {
             return Ok(Completion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
@@ -166,7 +166,7 @@ impl Runtime {
         };
         let flags = {
             let state = self.0.state.borrow();
-            match &state.heap.object(object.object_id())?.payload {
+            match &state.heap.object(*object)?.payload {
                 ObjectPayload::RegExp(RegExpObjectData::Compiled { program, .. }) => {
                     Some(program.flags())
                 }
@@ -218,7 +218,7 @@ impl Runtime {
                 flags.contains(regexp_flag_mask(flag)),
             )));
         }
-        if object.object_id() == self.regexp_realm_data(realm)?.prototype {
+        if *object == self.regexp_realm_data(realm)?.prototype {
             return Ok(Completion::Return(JsValue::Undefined));
         }
         Ok(Completion::Throw(self.new_native_error_jsvalue(
@@ -231,10 +231,10 @@ impl Runtime {
     fn call_regexp_flags(
         &self,
         realm: ContextId,
-        this_value: &Value,
+        this_value: &JsValue,
     ) -> Result<Completion, RuntimeError> {
         let invocation = NativeInvocation::Getter {
-            this_value: self.unroot_value(this_value)?,
+            this_value: self.dup_jsvalue(this_value)?,
         };
         self.dispatch_borrowed_invocation(invocation, |invocation| {
             finish_presentation(
@@ -381,24 +381,22 @@ impl RegExpPresentationStep {
                 ));
             }
         };
-        let this_value = runtime.root_value(this_value)?;
         if matches!(kind, RegExpNativeKind::Source) {
             return Ok(Self::Complete(
-                runtime.call_regexp_source(realm, &this_value)?,
+                runtime.call_regexp_source(realm, this_value)?,
             ));
         }
         if let RegExpNativeKind::Flag(flag) = kind {
-            return Ok(Self::Complete(runtime.call_regexp_flag(
-                realm,
-                &this_value,
-                flag,
-            )?));
+            return Ok(Self::Complete(
+                runtime.call_regexp_flag(realm, this_value, flag)?,
+            ));
         }
-        let Value::Object(object) = this_value else {
+        let JsValue::Object(object) = this_value else {
             return Ok(Self::Complete(Completion::Throw(
                 runtime.new_native_error_jsvalue(realm, NativeErrorKind::Type, "not an object")?,
             )));
         };
+        let object = ObjectRef::from_borrowed_handle(runtime.clone(), *object)?;
         let (phase, name) = if matches!(kind, RegExpNativeKind::ToString) {
             (PresentationPhase::Source, "source")
         } else {
@@ -428,14 +426,14 @@ impl RegExpPresentationResume {
         result: Completion,
     ) -> Result<RegExpPresentationStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Return(value) => value,
             Completion::Throw(value) => {
                 return Ok(RegExpPresentationStep::Complete(Completion::Throw(value)));
             }
         };
         match self.0.phase {
             PresentationPhase::Source => Ok(RegExpPresentationStep::Primitive {
-                value: runtime.into_jsvalue(value)?,
+                value,
                 resume: {
                     let updated_0 = PresentationPhase::SourceString;
                     self.0.phase = updated_0;
@@ -443,7 +441,7 @@ impl RegExpPresentationResume {
                 },
             }),
             PresentationPhase::Flags(output) => Ok(RegExpPresentationStep::Primitive {
-                value: runtime.into_jsvalue(value)?,
+                value,
                 resume: {
                     let updated_0 = PresentationPhase::FlagsString(output);
                     self.0.phase = updated_0;
@@ -451,17 +449,16 @@ impl RegExpPresentationResume {
                 },
             }),
             PresentationPhase::SourceString => {
-                if matches!(value, Value::Object(_)) {
+                if matches!(value, JsValue::Object(_)) {
+                    runtime.release_jsvalue(value)?;
                     return Err(RuntimeError::Invariant(
                         "RegExp source conversion returned an object",
                     ));
                 }
-                let source = match runtime.native_to_js_string(self.0.realm, &value)? {
+                let source = match runtime.native_to_js_string_jsvalue(self.0.realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(RegExpPresentationStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(RegExpPresentationStep::Complete(Completion::Throw(value)));
                     }
                 };
                 let mut output = JsStringBuilder::new(source.len().saturating_add(2));
@@ -479,17 +476,16 @@ impl RegExpPresentationResume {
                 })
             }
             PresentationPhase::FlagsString(mut output) => {
-                if matches!(value, Value::Object(_)) {
+                if matches!(value, JsValue::Object(_)) {
+                    runtime.release_jsvalue(value)?;
                     return Err(RuntimeError::Invariant(
                         "RegExp flags conversion returned an object",
                     ));
                 }
-                let flags = match runtime.native_to_js_string(self.0.realm, &value)? {
+                let flags = match runtime.native_to_js_string_jsvalue(self.0.realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(RegExpPresentationStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(RegExpPresentationStep::Complete(Completion::Throw(value)));
                     }
                 };
                 output.push_js_string(&flags)?;
@@ -498,7 +494,9 @@ impl RegExpPresentationResume {
                 )))
             }
             PresentationPhase::Flag { index, mut output } => {
-                if runtime.value_to_boolean(&value)? {
+                let boolean = runtime.value_to_boolean_jsvalue(&value);
+                runtime.release_jsvalue(value)?;
+                if boolean? {
                     output.push(FLAG_PROPERTIES[index].1);
                 }
                 let index = index + 1;

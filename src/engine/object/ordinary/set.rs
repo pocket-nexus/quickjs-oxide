@@ -31,6 +31,16 @@ pub(crate) enum SetStep {
     Define { resume: SetResume },
 }
 
+impl SetStep {
+    /// Drain the terminal edge when an enclosing request is abandoned.
+    pub(crate) fn release(self, runtime: &Runtime) {
+        if let Self::Complete(PropertySetAction::Throw(value)) = self {
+            let _ = runtime.release_jsvalue(value);
+        }
+        // Setter payloads and every suspended variant own their own records.
+    }
+}
+
 const _: () = assert!(std::mem::size_of::<SetStep>() <= 64);
 pub(crate) struct SetResume(Box<SetResumeState>);
 impl std::ops::Deref for SetResume {
@@ -1118,6 +1128,9 @@ impl SetResume {
         result: crate::engine::object::operations::ArrayLengthConversion,
     ) -> Result<SetStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Forward) {
+            if let crate::engine::object::operations::ArrayLengthConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "Set continuation received an Array length reply",
             ));
@@ -1150,6 +1163,7 @@ impl SetResume {
     }
     pub(crate) fn forward(self, action: PropertySetAction) -> Result<SetStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Forward) {
+            SetStep::Complete(action).release(&self.0.state.runtime);
             return Err(RuntimeError::Invariant(
                 "Set continuation received a forward reply",
             ));
@@ -1162,6 +1176,9 @@ impl SetResume {
         result: Option<NativeConversion<InternalSetResult>>,
     ) -> Result<SetStep, RuntimeError> {
         let Phase::Special(current) = std::mem::replace(&mut self.0.phase, Phase::Forward) else {
+            if let Some(NativeConversion::Throw(value)) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "Set continuation received a special reply",
             ));
@@ -1180,6 +1197,9 @@ impl SetResume {
         result: NativeConversion<Option<OwnedCompletePropertyDescriptor>>,
     ) -> Result<SetStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Receiver) {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "Set continuation received a descriptor reply",
             ));
@@ -1194,6 +1214,9 @@ impl SetResume {
         result: NativeConversion<InternalDefineResult>,
     ) -> Result<SetStep, RuntimeError> {
         let Phase::Define(receiver) = self.0.phase else {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "Set continuation received a define reply",
             ));
@@ -1246,7 +1269,7 @@ impl Runtime {
             NativeConversion::Value(InternalSetResult::Rejected(
                 PropertySetRejection::NotObject,
             )) => Err(Error::new(ErrorKind::Type, "not an object").into()),
-            NativeConversion::Throw(value) => Ok(Completion::Throw(self.unroot_value(&value)?)),
+            NativeConversion::Throw(value) => Ok(Completion::Throw(value)),
         }
     }
 }
@@ -1257,6 +1280,7 @@ const _: () = assert!(std::mem::size_of::<SetStep>() <= 64);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::object::CompleteOrdinaryPropertyDescriptor;
 
     #[test]
     fn set_preserves_string_handle_for_ordinary_dense_and_sparse_storage() {
@@ -1378,7 +1402,7 @@ mod tests {
                     .expect("expected immediate action")
                 };
                 assert!(matches!(
-                    (expected, action),
+                    (expected, &action),
                     ("stored", PropertySetAction::Complete)
                         | (
                             "rejected",
@@ -1386,6 +1410,7 @@ mod tests {
                         )
                         | ("throw", PropertySetAction::Throw(_))
                 ));
+                SetStep::Complete(action).release(&runtime);
             }
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
@@ -1454,7 +1479,7 @@ mod tests {
             loop {
                 match step {
                     SetStep::Complete(PropertySetAction::Throw(value)) => {
-                        assert_eq!(value, marker);
+                        assert_eq!(runtime.root_and_release_jsvalue(value).unwrap(), marker);
                         break;
                     }
                     SetStep::Complete(_) => panic!("conversion throw was lost"),
@@ -1543,13 +1568,13 @@ mod tests {
         )
         .unwrap()
         .expect("expected immediate action");
-        let PropertySetAction::Throw(Value::Object(error)) = &action else {
+        let PropertySetAction::Throw(JsValue::Object(error)) = &action else {
             panic!("expected rooted TypeError");
         };
-        let id = error.object_id();
+        let id = *error;
         runtime.run_gc().unwrap();
         assert!(runtime.0.state.borrow().heap.object(id).is_ok());
-        drop(action);
+        SetStep::Complete(action).release(&runtime);
         runtime.run_gc().unwrap();
         assert!(runtime.0.state.borrow().heap.object(id).is_err());
     }

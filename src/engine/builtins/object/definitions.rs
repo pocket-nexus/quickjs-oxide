@@ -5,7 +5,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::ContextId,
     object::{ObjectRef, PropertyKey, operations::InternalDefineResult},
-    value::{JsValue, Value, conversion::NativeConversion},
+    value::{JsValue, conversion::NativeConversion},
     vm::{Completion, call::NativeArguments},
 };
 #[derive(Clone, Copy)]
@@ -111,24 +111,22 @@ impl DefinitionsStep {
             },
         };
         let value = match arguments.readable.get(1) {
-            Some(value) => runtime.root_value(value)?,
+            Some(value) => value,
             None => {
                 return Err(RuntimeError::Invariant(
                     "Object definitions properties argv was not padded",
                 ));
             }
         };
-        if matches!(kind, DefinitionsKind::Create) && matches!(value, Value::Undefined) {
+        if matches!(kind, DefinitionsKind::Create) && matches!(value, JsValue::Undefined) {
             return Ok(Self::Complete(Completion::Return(JsValue::Object(
                 target.into_handle(),
             ))));
         }
-        let source = match runtime.native_to_object(realm, value)? {
+        let source = match runtime.native_to_object_jsvalue(realm, runtime.dup_jsvalue(value)?)? {
             NativeConversion::Value(object) => object,
             NativeConversion::Throw(value) => {
-                return Ok(Self::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(Self::Complete(Completion::Throw(value)));
             }
         };
         Ok(Self::request_keys(
@@ -150,6 +148,9 @@ impl DefinitionsResume {
         result: NativeConversion<Vec<PropertyKey>>,
     ) -> Result<DefinitionsStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Keys) {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "Object definitions received unexpected keys",
             ));
@@ -157,9 +158,7 @@ impl DefinitionsResume {
         let keys = match result {
             NativeConversion::Value(keys) => keys,
             NativeConversion::Throw(value) => {
-                return Ok(DefinitionsStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(DefinitionsStep::Complete(Completion::Throw(value)));
             }
         };
         let mut selected = Vec::new();
@@ -202,15 +201,16 @@ impl DefinitionsResume {
             key,
         } = self.0.phase
         else {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "Object definitions received unexpected enumerable reply",
             ));
         };
         match result {
             NativeConversion::Throw(value) => {
-                return Ok(DefinitionsStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(DefinitionsStep::Complete(Completion::Throw(value)));
             }
             NativeConversion::Value(true) => selected.push(key),
             NativeConversion::Value(false) => {}
@@ -224,7 +224,7 @@ impl DefinitionsResume {
     }
     fn next(
         mut self,
-        _runtime: &Runtime,
+        __runtime: &Runtime,
         mut remaining: std::vec::IntoIter<PropertyKey>,
     ) -> Result<DefinitionsStep, RuntimeError> {
         let Some(key) = remaining.next() else {
@@ -244,7 +244,7 @@ impl DefinitionsResume {
     }
     pub(crate) fn read(
         mut self,
-        _runtime: &Runtime,
+        __runtime: &Runtime,
         result: Completion,
     ) -> Result<DefinitionsStep, RuntimeError> {
         let Phase::Read { remaining, key } = self.0.phase else {
@@ -263,18 +263,19 @@ impl DefinitionsResume {
     }
     pub(crate) fn converted(
         mut self,
-        runtime: &Runtime,
+        _runtime: &Runtime,
         result: NativeConversion<crate::engine::object::OwnedPropertyDescriptor>,
     ) -> Result<DefinitionsStep, RuntimeError> {
         let Phase::Convert { remaining, key } = self.0.phase else {
+            if let NativeConversion::Throw(value) = result {
+                let _ = _runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "Object definitions received unexpected conversion reply",
             ));
         };
         Ok(match result {
-            NativeConversion::Throw(value) => {
-                DefinitionsStep::Complete(Completion::Throw(runtime.into_jsvalue(value)?))
-            }
+            NativeConversion::Throw(value) => DefinitionsStep::Complete(Completion::Throw(value)),
             NativeConversion::Value(descriptor) => {
                 DefinitionsStep::request_define(self.0.target.clone(), key.clone(), descriptor, {
                     let updated_0 = Phase::Define { remaining, key };
@@ -290,14 +291,15 @@ impl DefinitionsResume {
         result: NativeConversion<InternalDefineResult>,
     ) -> Result<DefinitionsStep, RuntimeError> {
         let Phase::Define { remaining, key } = self.0.phase else {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "Object definitions received unexpected definition reply",
             ));
         };
         if let Some(value) = runtime.finish_define_property_or_throw(self.0.realm, &key, result)? {
-            return Ok(DefinitionsStep::Complete(Completion::Throw(
-                runtime.into_jsvalue(value)?,
-            )));
+            return Ok(DefinitionsStep::Complete(Completion::Throw(value)));
         }
         {
             let updated_0 = Phase::Keys;

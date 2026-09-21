@@ -86,7 +86,7 @@ impl Runtime {
     ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
         if !matches!(&constructor, JsValue::Object(_)) {
             self.release_jsvalue(constructor)?;
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "not a function",
@@ -106,7 +106,7 @@ impl Runtime {
                 JsValue::Object(object) => ObjectRef::from_owned_handle(self.clone(), object),
                 value => {
                     self.release_jsvalue(value)?;
-                    return Ok(NativeConversion::Throw(self.new_native_error(
+                    return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                         realm,
                         NativeErrorKind::Type,
                         "not a TypedArray",
@@ -114,13 +114,11 @@ impl Runtime {
                 }
             },
             Completion::Throw(value) => {
-                return Ok(NativeConversion::Throw(
-                    self.root_and_release_jsvalue(value)?,
-                ));
+                return Ok(NativeConversion::Throw(value));
             }
         };
         let Some(_) = self.typed_array_snapshot_if_branded(&target)? else {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "not a TypedArray",
@@ -131,7 +129,7 @@ impl Runtime {
             NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
         };
         if minimum_length.is_some_and(|length| u64::from(target_length) < length) {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "TypedArray length is too small",
@@ -155,7 +153,7 @@ impl Runtime {
         let width = u64::from(element.byte_length());
         // Alignment precedes the detached-buffer check in pinned QuickJS.
         if byte_offset % width != 0 {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Range,
                 "invalid offset",
@@ -163,7 +161,7 @@ impl Runtime {
         }
         let backing = self.snapshot_buffer_access(buffer.object_id())?.state;
         if backing.detached {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "ArrayBuffer is detached",
@@ -179,7 +177,7 @@ impl Runtime {
                     "ToIndex TypedArray end offset overflowed u64",
                 ))?;
             if end > u64::from(backing.byte_length) {
-                return Ok(NativeConversion::Throw(self.new_native_error(
+                return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                     realm,
                     NativeErrorKind::Range,
                     "invalid length",
@@ -194,7 +192,7 @@ impl Runtime {
             )
         } else {
             if byte_offset > u64::from(backing.byte_length) {
-                return Ok(NativeConversion::Throw(self.new_native_error(
+                return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                     realm,
                     NativeErrorKind::Range,
                     "invalid offset",
@@ -207,7 +205,7 @@ impl Runtime {
                 None
             } else {
                 if u64::from(available) % width != 0 {
-                    return Ok(NativeConversion::Throw(self.new_native_error(
+                    return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                         realm,
                         NativeErrorKind::Range,
                         "invalid length",
@@ -364,7 +362,11 @@ impl TypedSpeciesStep {
         }));
         let JsValue::Object(id) = &resume.0.constructor_value else {
             return Ok(Self::Complete(NativeConversion::Throw(
-                runtime.new_native_error(realm, NativeErrorKind::Type, "not a constructor")?,
+                runtime.new_native_error_jsvalue(
+                    realm,
+                    NativeErrorKind::Type,
+                    "not a constructor",
+                )?,
             )));
         };
         let object = ObjectRef::from_borrowed_handle(runtime.clone(), *id)?;
@@ -422,7 +424,11 @@ impl TypedSpeciesResume {
         if arguments.try_reserve_exact(count).is_err() {
             runtime.release_jsvalue(species)?;
             return Ok(TypedSpeciesStep::Complete(NativeConversion::Throw(
-                runtime.new_native_error(realm, NativeErrorKind::Internal, "out of memory")?,
+                runtime.new_native_error_jsvalue(
+                    realm,
+                    NativeErrorKind::Internal,
+                    "out of memory",
+                )?,
             )));
         }
         let minimum = match input.mode {
@@ -461,9 +467,7 @@ impl TypedSpeciesResume {
         let value = match result {
             Completion::Return(value) => value,
             Completion::Throw(value) => {
-                return Ok(TypedSpeciesStep::Complete(NativeConversion::Throw(
-                    runtime.root_and_release_jsvalue(value)?,
-                )));
+                return Ok(TypedSpeciesStep::Complete(NativeConversion::Throw(value)));
             }
         };
         match std::mem::replace(&mut self.0.phase, SpeciesPhase::Constructed(None)) {
@@ -474,7 +478,7 @@ impl TypedSpeciesResume {
                 let JsValue::Object(id) = value else {
                     runtime.release_jsvalue(value)?;
                     return Ok(TypedSpeciesStep::Complete(NativeConversion::Throw(
-                        runtime.new_native_error(
+                        runtime.new_native_error_jsvalue(
                             self.0.realm,
                             NativeErrorKind::Type,
                             "not an object",

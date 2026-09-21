@@ -8,9 +8,7 @@ use crate::engine::object::operations::{
     PropertySetRejection,
 };
 use crate::engine::object::ordinary_storage::{SetProbe, SpecialKind};
-use crate::engine::object::{
-    CompleteOrdinaryPropertyDescriptor, DescriptorField, ObjectRef, PropertyKey,
-};
+use crate::engine::object::{CallableRef, DescriptorField, ObjectRef, PropertyKey};
 use crate::engine::value::conversion::NativeConversion;
 use crate::engine::value::{JsValue, Value};
 
@@ -136,9 +134,7 @@ impl Runtime {
         };
         Ok(match completion {
             Completion::Return(value) => NativeConversion::Value(Some(value)),
-            Completion::Throw(value) => {
-                NativeConversion::Throw(self.root_and_release_jsvalue(value)?)
-            }
+            Completion::Throw(value) => NativeConversion::Throw(value),
         })
     }
 
@@ -210,31 +206,48 @@ impl Runtime {
                     {
                         let value = match numeric {
                             crate::engine::builtins::CanonicalNumericIndex::Valid(index) => self
-                                .typed_array_read_index(current, index)?
-                                .unwrap_or(Value::Undefined),
+                                .typed_array_read_index_jsvalue(current, index)?
+                                .unwrap_or(JsValue::Undefined),
                             crate::engine::builtins::CanonicalNumericIndex::Invalid => {
-                                Value::Undefined
+                                JsValue::Undefined
                             }
                         };
-                        return Ok(OrdinaryRead::Complete(Some(self.unroot_value(&value)?)));
+                        return Ok(OrdinaryRead::Complete(Some(value)));
                     }
                     // Reuse the full storage kernel for Array holes, String,
                     // Arguments, namespace live cells and lazy own properties.
                     // Materializing a descriptor does not invoke its getter.
-                    if let Some(own) = self.get_own_property_in_operation(current, key)? {
-                        return Ok(match own {
-                            CompleteOrdinaryPropertyDescriptor::Data { value, .. } => {
-                                OrdinaryRead::Complete(Some(self.unroot_value(&value)?))
+                    if let Some(own) = self.get_own_property_owned(current, key)? {
+                        use crate::engine::object::property::CompletePropertyDescriptor;
+                        return Ok(match own.record() {
+                            CompletePropertyDescriptor::Data { value, .. } => {
+                                OrdinaryRead::Complete(Some(self.dup_jsvalue(
+                                    &JsValue::from_raw(value.clone()).ok_or(
+                                        RuntimeError::Invariant(
+                                            "own descriptor stored an internal sentinel",
+                                        ),
+                                    )?,
+                                )?))
                             }
-                            CompleteOrdinaryPropertyDescriptor::Accessor {
-                                get: Some(getter),
+                            CompletePropertyDescriptor::Accessor {
+                                get: Some(crate::engine::heap::RawValue::Object(id)),
                                 ..
-                            } => OrdinaryRead::Call {
-                                getter,
-                                receiver: self.dup_jsvalue(receiver)?,
-                            },
-                            CompleteOrdinaryPropertyDescriptor::Accessor { get: None, .. } => {
+                            } => {
+                                let getter = CallableRef::from_validated_object(
+                                    ObjectRef::from_borrowed_handle(self.clone(), *id)?,
+                                );
+                                OrdinaryRead::Call {
+                                    getter,
+                                    receiver: self.dup_jsvalue(receiver)?,
+                                }
+                            }
+                            CompletePropertyDescriptor::Accessor { get: None, .. } => {
                                 OrdinaryRead::Complete(Some(JsValue::Undefined))
+                            }
+                            _ => {
+                                return Err(RuntimeError::Invariant(
+                                    "stored accessor getter was not an object",
+                                ));
                             }
                         });
                     }

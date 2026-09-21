@@ -179,9 +179,6 @@ pub(super) fn for_in(
         super::for_in::operation::ForInStep::next(runtime, realm, &iterator)
     } else {
         let value = execution.slots.pop(&mut frame.window)?;
-        let value = runtime
-            .root_and_release_jsvalue(value)
-            .map_err(runtime_error_to_vm_error)?;
         super::for_in::operation::ForInStep::start(runtime, realm, value)
     };
     match step {
@@ -237,12 +234,7 @@ pub(super) fn set_name(
 ) -> Result<CallStep, Error> {
     match super::property_keys::set_name(runtime, execution, id, index)? {
         None => Ok(CallStep::Entered),
-        Some(value) => {
-            let value = runtime
-                .into_jsvalue(value)
-                .map_err(runtime_error_to_vm_error)?;
-            Ok(CallStep::Complete(Completion::Throw(value)))
-        }
+        Some(value) => Ok(CallStep::Complete(Completion::Throw(value))),
     }
 }
 
@@ -645,8 +637,14 @@ pub(super) fn normalize_this(
     let value = runtime
         .native_to_object_jsvalue(frame.executable.realm, this_value)
         .map_err(runtime_error_to_vm_error)?;
-    let NativeConversion::Value(object) = value else {
-        return Err(Error::internal("non-null primitive this boxing threw"));
+    let object = match value {
+        NativeConversion::Value(object) => object,
+        NativeConversion::Throw(value) => {
+            runtime
+                .release_jsvalue(value)
+                .map_err(runtime_error_to_vm_error)?;
+            return Err(Error::internal("non-null primitive this boxing threw"));
+        }
     };
     frame.cold.release_normalized_this();
     frame.cold.normalized_this = Some(JsValue::Object(object.into_handle()));

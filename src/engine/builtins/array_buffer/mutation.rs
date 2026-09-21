@@ -4,7 +4,7 @@ use crate::engine::{
     builtins::native::ArrayBufferNativeKind,
     heap::ContextId,
     object::ObjectRef,
-    value::{JsValue, Value, conversion::NativeConversion},
+    value::{JsValue, conversion::NativeConversion},
     vm::{
         Completion, ToPrimitiveHint,
         call::{NativeArguments, NativeInvocation},
@@ -48,15 +48,12 @@ impl BufferMutationStep {
                 "SharedArrayBuffer.prototype.grow received a constructor invocation",
             ));
         };
-        let object =
-            match runtime.require_shared_array_buffer(realm, runtime.root_value(this_value)?)? {
-                NativeConversion::Value(value) => value,
-                NativeConversion::Throw(value) => {
-                    return Ok(Self::Complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
-                }
-            };
+        let object = match runtime.require_shared_array_buffer_jsvalue(realm, this_value)? {
+            NativeConversion::Value(value) => value,
+            NativeConversion::Throw(value) => {
+                return Ok(Self::Complete(Completion::Throw(value)));
+            }
+        };
         Ok(Self::Primitive {
             value: runtime.dup_jsvalue(arguments.readable.first().ok_or(
                 RuntimeError::Invariant("SharedArrayBuffer grow argument was not padded"),
@@ -96,12 +93,10 @@ impl BufferMutationStep {
                 },
             ));
         };
-        let object = match runtime.require_array_buffer(realm, runtime.root_value(this_value)?)? {
+        let object = match runtime.require_array_buffer_jsvalue(realm, this_value)? {
             NativeConversion::Value(object) => object,
             NativeConversion::Throw(value) => {
-                return Ok(Self::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(Self::Complete(Completion::Throw(value)));
             }
         };
         if !matches!(kind, ArrayBufferNativeKind::Resize) {
@@ -142,18 +137,27 @@ impl BufferMutationResume {
         result: Completion,
     ) -> Result<BufferMutationStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Return(value) => value,
             Completion::Throw(value) => {
                 return Ok(BufferMutationStep::Complete(Completion::Throw(value)));
             }
         };
-        if matches!(value, Value::Object(_)) {
+        if matches!(value, JsValue::Object(_)) {
+            runtime.release_jsvalue(value)?;
             return Err(RuntimeError::Invariant(
                 "buffer length conversion returned an object",
             ));
         }
+        let number = runtime.number_from_primitive_jsvalue(self.0.realm, &value);
+        runtime.release_jsvalue(value)?;
+        let number = match number? {
+            NativeConversion::Value(number) => number,
+            NativeConversion::Throw(value) => {
+                return Ok(BufferMutationStep::Complete(Completion::Throw(value)));
+            }
+        };
         let result = if matches!(self.0.kind, ArrayBufferNativeKind::Resize) {
-            match runtime.native_to_int64(self.0.realm, &value)? {
+            match NativeConversion::Value(super::quickjs_to_int64_free(number)) {
                 NativeConversion::Value(length) => {
                     if self.0.shared {
                         runtime.finish_shared_array_buffer_grow(
@@ -165,17 +169,17 @@ impl BufferMutationResume {
                         runtime.finish_array_buffer_resize(self.0.realm, self.0.object, length)?
                     }
                 }
-                NativeConversion::Throw(value) => Completion::Throw(runtime.into_jsvalue(value)?),
+                NativeConversion::Throw(value) => Completion::Throw(value),
             }
         } else {
-            match runtime.native_to_index(self.0.realm, &value)? {
+            match runtime.index_from_number(self.0.realm, number)? {
                 NativeConversion::Value(length) => runtime.finish_array_buffer_transfer(
                     self.0.realm,
                     self.0.object,
                     length,
                     matches!(self.0.kind, ArrayBufferNativeKind::TransferToFixedLength),
                 )?,
-                NativeConversion::Throw(value) => Completion::Throw(runtime.into_jsvalue(value)?),
+                NativeConversion::Throw(value) => Completion::Throw(value),
             }
         };
         Ok(BufferMutationStep::Complete(result))

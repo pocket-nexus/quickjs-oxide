@@ -145,9 +145,7 @@ impl RegExpSearchResume {
                     match runtime.string_from_primitive_jsvalue(self.realm, &self.converted)? {
                         NativeConversion::Value(value) => value,
                         NativeConversion::Throw(value) => {
-                            return Ok(RegExpSearchStep::Complete(Completion::Throw(
-                                runtime.into_jsvalue(value)?,
-                            )));
+                            return Ok(RegExpSearchStep::Complete(Completion::Throw(value)));
                         }
                     };
                 let key = runtime
@@ -218,9 +216,7 @@ impl RegExpSearchResume {
         let key =
             runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
         if let Some(value) = runtime.finish_set_property_or_throw(self.realm, &key, result)? {
-            return Ok(RegExpSearchStep::Complete(Completion::Throw(
-                runtime.into_jsvalue(value)?,
-            )));
+            return Ok(RegExpSearchStep::Complete(Completion::Throw(value)));
         }
         match std::mem::replace(&mut self.phase, SearchPhase::Index) {
             SearchPhase::InitialSet(input) => self.execute(runtime, input),

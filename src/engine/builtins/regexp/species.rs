@@ -64,9 +64,7 @@ impl RegExpSpeciesResume {
         let value = match result {
             Completion::Return(value) => value,
             Completion::Throw(value) => {
-                return Ok(RegExpSpeciesStep::Complete(NativeConversion::Throw(
-                    runtime.root_and_release_jsvalue(value)?,
-                )));
+                return Ok(RegExpSpeciesStep::Complete(NativeConversion::Throw(value)));
             }
         };
         if self.0.species {
@@ -91,7 +89,11 @@ impl RegExpSpeciesResume {
         let JsValue::Object(id) = value else {
             runtime.release_jsvalue(value)?;
             return Ok(RegExpSpeciesStep::Complete(NativeConversion::Throw(
-                runtime.new_native_error(self.0.realm, NativeErrorKind::Type, "not an object")?,
+                runtime.new_native_error_jsvalue(
+                    self.0.realm,
+                    NativeErrorKind::Type,
+                    "not an object",
+                )?,
             )));
         };
         Ok(RegExpSpeciesStep::Read {

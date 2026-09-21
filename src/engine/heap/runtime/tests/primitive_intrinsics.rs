@@ -402,7 +402,7 @@ fn bigint_intrinsic_graph_conversion_truncation_and_wrappers_match_quickjs() {
             .unwrap()
             .payload,
         ObjectPayload::Primitive(PrimitiveObjectData::BigInt(value))
-            if value == &JsBigInt::from(123)
+            if runtime.0.state.borrow().heap.bigint(*value).unwrap() == &JsBigInt::from(123)
     ));
     assert_eq!(
         context

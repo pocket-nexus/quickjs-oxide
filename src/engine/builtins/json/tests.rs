@@ -1,6 +1,6 @@
 use crate::engine::atom::AtomIdx;
 use crate::engine::builtins::native::NativeCProto;
-use crate::engine::value::conversion::NativeConversion;
+use crate::engine::value::{JsValue, conversion::NativeConversion};
 
 use super::*;
 
@@ -198,12 +198,13 @@ fn quickjs_extended_json_module_parser_is_host_selected_and_keeps_strict_json_st
         Value::Bool(true)
     );
 
-    let NativeConversion::Throw(Value::Object(error)) = runtime
+    let NativeConversion::Throw(JsValue::Object(error)) = runtime
         .parse_json_module_text(context.realm, &source, &filename)
         .unwrap()
     else {
         panic!("strict JSON unexpectedly accepted QuickJS extended JSON");
     };
+    let error = ObjectRef::from_owned_handle(runtime.clone(), error);
     let message = runtime
         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message)
         .unwrap();
@@ -398,9 +399,10 @@ fn assert_json_module_syntax_location_with_mode(
     } else {
         runtime.parse_json_module_text(context.realm, &source, &filename)
     };
-    let NativeConversion::Throw(Value::Object(error)) = parsed.unwrap() else {
+    let NativeConversion::Throw(JsValue::Object(error)) = parsed.unwrap() else {
         panic!("invalid JSON module text did not throw a SyntaxError");
     };
+    let error = ObjectRef::from_owned_handle(runtime.clone(), error);
 
     for (name, expected) in [
         (

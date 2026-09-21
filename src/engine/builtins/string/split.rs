@@ -232,9 +232,7 @@ impl StringSplitResume {
                 let source = match converted? {
                     NativeConversion::Value(value) => value.linearize(),
                     NativeConversion::Throw(value) => {
-                        return Ok(StringSplitStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(StringSplitStep::Complete(Completion::Throw(value)));
                     }
                 };
                 let result = runtime.new_array(realm)?;
@@ -264,9 +262,7 @@ impl StringSplitResume {
                 let limit = match converted? {
                     NativeConversion::Value(value) => Runtime::to_uint32_number(value),
                     NativeConversion::Throw(value) => {
-                        return Ok(StringSplitStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(StringSplitStep::Complete(Completion::Throw(value)));
                     }
                 };
                 {
@@ -292,9 +288,7 @@ impl StringSplitResume {
                 let separator = match converted? {
                     NativeConversion::Value(value) => value.linearize(),
                     NativeConversion::Throw(value) => {
-                        return Ok(StringSplitStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(StringSplitStep::Complete(Completion::Throw(value)));
                     }
                 };
                 Ok(StringSplitStep::Complete(runtime.finish_string_split(

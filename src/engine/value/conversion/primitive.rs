@@ -262,13 +262,10 @@ impl Runtime {
                 }
                 PrimitiveStep::Call { mut resume } => {
                     let callable = resume.take_callable();
-                    let receiver = self.root_and_release_jsvalue(resume.take_receiver())?;
-                    let arguments = resume
-                        .take_arguments()
-                        .into_iter()
-                        .map(|argument| self.root_and_release_jsvalue(argument))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    let completion = self.call_internal(realm, &callable, receiver, &arguments)?;
+                    let receiver = resume.take_receiver();
+                    let arguments = resume.take_arguments();
+                    let completion =
+                        self.call_internal_jsvalue(realm, &callable, receiver, arguments)?;
                     resume.resume(self, completion)?
                 }
             };

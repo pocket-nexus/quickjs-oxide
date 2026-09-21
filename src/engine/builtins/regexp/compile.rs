@@ -66,7 +66,7 @@ impl Runtime {
         if let Some(value) =
             self.set_property_or_throw(realm, regexp, &last_index, Value::Int(0))?
         {
-            return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            return Ok(Completion::Throw(value));
         }
         Ok(Completion::Return(JsValue::Object(
             regexp.clone().into_handle(),
@@ -228,9 +228,7 @@ impl RegExpCompileResume {
         let value = match runtime.string_from_primitive_jsvalue(self.0.realm, &self.0.converted)? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(RegExpCompileStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(RegExpCompileStep::Complete(Completion::Throw(value)));
             }
         };
         match std::mem::replace(&mut self.0.phase, CompilePhase::Pattern) {

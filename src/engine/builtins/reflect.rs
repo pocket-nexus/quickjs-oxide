@@ -339,11 +339,13 @@ impl Runtime {
             }
         };
         if length > MAX_APPLY_ARGUMENTS {
-            return Ok(Some(NativeConversion::Throw(self.new_native_error(
-                realm,
-                NativeErrorKind::Range,
-                "too many arguments in function call (only 65534 allowed)",
-            )?)));
+            return Ok(Some(NativeConversion::Throw(
+                self.new_native_error_jsvalue(
+                    realm,
+                    NativeErrorKind::Range,
+                    "too many arguments in function call (only 65534 allowed)",
+                )?,
+            )));
         }
         self.fast_array_like_values_jsvalue(object, length as u32)
             .map(|values| values.map(NativeConversion::Value))
@@ -643,11 +645,12 @@ mod argument_preparation_tests {
         let Value::Object(oversized) = context.eval("Array(65535)").unwrap() else {
             panic!("expected array")
         };
-        assert!(matches!(
-            runtime
-                .prepare_fast_array_arguments(context.realm, &oversized)
-                .unwrap(),
-            Some(NativeConversion::Throw(_))
-        ));
+        let Some(NativeConversion::Throw(thrown)) = runtime
+            .prepare_fast_array_arguments(context.realm, &oversized)
+            .unwrap()
+        else {
+            panic!("expected oversized arguments throw")
+        };
+        runtime.release_jsvalue(thrown).unwrap();
     }
 }

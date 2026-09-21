@@ -14,7 +14,7 @@ use crate::engine::code::function::metadata::{
 use crate::engine::code::runtime::PublishedFunctionSnapshot;
 use crate::engine::heap::{ObjectPayload, roots::VarRefRoot};
 use crate::engine::object::ObjectRef;
-use crate::engine::value::Value;
+use crate::engine::value::JsValue;
 
 fn eval_local_kind(
     executable: &PublishedFunctionSnapshot,
@@ -96,19 +96,15 @@ pub(super) fn eval_variable_object<'a>(
                 .map_err(runtime_error_to_vm_error)?
         }
     };
-    let value = runtime
-        .root_and_release_jsvalue(value)
-        .map_err(runtime_error_to_vm_error)?;
-    let Value::Object(object) = value else {
+    let JsValue::Object(object) = value else {
+        runtime
+            .release_jsvalue(value)
+            .map_err(runtime_error_to_vm_error)?;
         return Err(Error::internal(
             "eval variable-object binding did not contain an Object",
         ));
     };
-    if !object.belongs_to(runtime) {
-        return Err(Error::internal(
-            "eval variable object belongs to another runtime",
-        ));
-    }
+    let object = ObjectRef::from_owned_handle(runtime.clone(), object);
     let state = runtime.0.state.borrow();
     let object_data = state
         .heap
@@ -194,17 +190,15 @@ pub(super) fn with_object<'a>(
                 .map_err(runtime_error_to_vm_error)?
         }
     };
-    let value = runtime
-        .root_and_release_jsvalue(value)
-        .map_err(runtime_error_to_vm_error)?;
-    let Value::Object(object) = value else {
+    let JsValue::Object(object) = value else {
+        runtime
+            .release_jsvalue(value)
+            .map_err(runtime_error_to_vm_error)?;
         return Err(Error::internal(
             "with-object binding did not contain an Object",
         ));
     };
-    if !object.belongs_to(runtime) {
-        return Err(Error::internal("with object belongs to another runtime"));
-    }
+    let object = ObjectRef::from_owned_handle(runtime.clone(), object);
     Ok(object)
 }
 

@@ -489,16 +489,14 @@ impl Runtime {
             }
             Completion::Return(value) => {
                 self.release_jsvalue(value)?;
-                return Ok(NativeConversion::Throw(self.new_native_error(
+                return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                     realm,
                     NativeErrorKind::Type,
                     "not an object",
                 )?));
             }
             Completion::Throw(value) => {
-                return Ok(NativeConversion::Throw(
-                    self.root_and_release_jsvalue(value)?,
-                ));
+                return Ok(NativeConversion::Throw(value));
             }
         };
         let capture = self
@@ -508,27 +506,33 @@ impl Runtime {
             .heap
             .promise_capability_capture(executor.as_object().object_id())?;
         let (Some(resolve), Some(reject)) = (capture.resolve, capture.reject) else {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "resolving function is not callable",
             )?));
         };
-        let resolve = self.root_raw_value(resolve.clone())?;
-        let reject = self.root_raw_value(reject.clone())?;
+        let resolve = JsValue::from_raw(resolve.clone()).ok_or(RuntimeError::Invariant(
+            "Promise resolve capture is an internal sentinel",
+        ))?;
+        let reject = JsValue::from_raw(reject.clone()).ok_or(RuntimeError::Invariant(
+            "Promise reject capture is an internal sentinel",
+        ))?;
         let resolve = match resolve {
-            Value::Object(object) => match self.as_callable(&object)? {
-                Some(callable) => callable,
-                None => {
-                    return Ok(NativeConversion::Throw(self.new_native_error(
-                        realm,
-                        NativeErrorKind::Type,
-                        "resolving function is not callable",
-                    )?));
+            JsValue::Object(object) => {
+                match self.as_callable(&ObjectRef::from_borrowed_handle(self.clone(), object)?)? {
+                    Some(callable) => callable,
+                    None => {
+                        return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
+                            realm,
+                            NativeErrorKind::Type,
+                            "resolving function is not callable",
+                        )?));
+                    }
                 }
-            },
+            }
             _ => {
-                return Ok(NativeConversion::Throw(self.new_native_error(
+                return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                     realm,
                     NativeErrorKind::Type,
                     "resolving function is not callable",
@@ -536,18 +540,20 @@ impl Runtime {
             }
         };
         let reject = match reject {
-            Value::Object(object) => match self.as_callable(&object)? {
-                Some(callable) => callable,
-                None => {
-                    return Ok(NativeConversion::Throw(self.new_native_error(
-                        realm,
-                        NativeErrorKind::Type,
-                        "resolving function is not callable",
-                    )?));
+            JsValue::Object(object) => {
+                match self.as_callable(&ObjectRef::from_borrowed_handle(self.clone(), object)?)? {
+                    Some(callable) => callable,
+                    None => {
+                        return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
+                            realm,
+                            NativeErrorKind::Type,
+                            "resolving function is not callable",
+                        )?));
+                    }
                 }
-            },
+            }
             _ => {
-                return Ok(NativeConversion::Throw(self.new_native_error(
+                return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                     realm,
                     NativeErrorKind::Type,
                     "resolving function is not callable",
@@ -996,9 +1002,7 @@ impl Runtime {
                 self.release_jsvalue(value)?;
                 Ok(NativeConversion::Value(()))
             }
-            Completion::Throw(value) => Ok(NativeConversion::Throw(
-                self.root_and_release_jsvalue(value)?,
-            )),
+            Completion::Throw(value) => Ok(NativeConversion::Throw(value)),
         }
     }
 

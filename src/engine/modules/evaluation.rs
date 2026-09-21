@@ -170,11 +170,16 @@ impl EvaluationStep {
         .map_err(RuntimeError::Engine)?;
 
         match completion {
-            Completion::Return(value) => match runtime.root_and_release_jsvalue(value)? {
-                Value::Object(promise) => Ok(promise),
-                _ => Err(RuntimeError::Invariant(
-                    "module evaluation did not return a Promise",
-                )),
+            Completion::Return(value) => match value {
+                JsValue::Object(promise) => {
+                    Ok(ObjectRef::from_owned_handle(runtime.clone(), promise))
+                }
+                value => {
+                    runtime.release_jsvalue(value)?;
+                    Err(RuntimeError::Invariant(
+                        "module evaluation did not return a Promise",
+                    ))
+                }
             },
             Completion::Throw(value) => {
                 runtime.release_jsvalue(value)?;

@@ -4,7 +4,7 @@ use super::exception::runtime_error_to_vm_error;
 use crate::engine::api::{error::Error, runtime::Runtime};
 use crate::engine::atom::Atom;
 use crate::engine::code::function::metadata::{ClosureVariableKind, VariableDefinition};
-use crate::engine::value::{JsValue, Value};
+use crate::engine::value::JsValue;
 
 pub(in crate::engine::vm) fn validate_definition(
     definition: VariableDefinition,
@@ -80,58 +80,64 @@ pub(in crate::engine::vm) fn initialize_callable(
     infer_name: bool,
     accepts_kind: impl FnOnce(ClosureVariableKind) -> bool,
 ) -> Result<(), Error> {
-    let (source_name, kind) = validate_definition(definition)?;
-    if !accepts_kind(kind) {
-        return Err(Error::internal(
-            "private-callable initializer referenced an incompatible binding",
-        ));
-    }
-    let JsValue::Object(home_object) = home_object else {
-        return Err(Error::internal(
-            "private-callable initializer did not receive a HomeObject",
-        ));
-    };
-    let home_object = ObjectRef::from_owned_handle(runtime.clone(), home_object);
-    let callable_value = runtime
-        .root_and_release_jsvalue(callable_value)
-        .map_err(runtime_error_to_vm_error)?;
-    let callable = runtime
-        .callable_from_value(callable_value)
-        .map_err(|error| Error::internal(error.to_string()))?;
-    if infer_name {
-        let name = runtime
-            .0
-            .state
-            .borrow()
-            .atoms
-            .to_js_string(source_name)
-            .map_err(|error| Error::internal(error.to_string()))?;
-        runtime
-            .define_object_name(&Value::Object(callable.as_object().clone()), &name)
-            .map_err(runtime_error_to_vm_error)?;
-    }
-    runtime
-        .install_object_literal_home_object(&callable, &home_object)
-        .map_err(runtime_error_to_vm_error)?;
-
-    match binding {
-        FrameBinding::Uninitialized => {
-            *binding = FrameBinding::PrivateCallable(callable);
-            Ok(())
+    let outcome = (|| {
+        let (source_name, kind) = validate_definition(definition)?;
+        if !accepts_kind(kind) {
+            return Err(Error::internal(
+                "private-callable initializer referenced an incompatible binding",
+            ));
         }
-        FrameBinding::Captured(root) => runtime
-            .initialize_private_callable_var_ref(&root, &callable, kind)
-            .map_err(runtime_error_to_vm_error),
-        FrameBinding::PrivateCallable(_) => Err(Error::internal(
-            "private-callable local was initialized more than once",
-        )),
-        FrameBinding::Private(_) => Err(Error::internal(
-            "private-callable initializer reached a private-field frame cell",
-        )),
-        FrameBinding::Direct(_) => Err(Error::internal(
-            "private-callable initializer reached an ordinary frame value",
-        )),
-    }
+        let JsValue::Object(home_id) = &home_object else {
+            return Err(Error::internal(
+                "private-callable initializer did not receive a HomeObject",
+            ));
+        };
+        let home_object = ObjectRef::from_borrowed_handle(runtime.clone(), *home_id)
+            .map_err(|error| runtime_error_to_vm_error(error.into()))?;
+        let callable = runtime
+            .callable_from_jsvalue(&callable_value)
+            .map_err(|error| Error::internal(error.to_string()))?;
+        if infer_name {
+            let name = runtime
+                .0
+                .state
+                .borrow()
+                .atoms
+                .to_js_string(source_name)
+                .map_err(|error| Error::internal(error.to_string()))?;
+            runtime
+                .define_object_name_for_object(callable.as_object(), &name)
+                .map_err(runtime_error_to_vm_error)?;
+        }
+        runtime
+            .install_object_literal_home_object(&callable, &home_object)
+            .map_err(runtime_error_to_vm_error)?;
+
+        match binding {
+            FrameBinding::Uninitialized => {
+                *binding = FrameBinding::PrivateCallable(callable);
+                Ok(())
+            }
+            FrameBinding::Captured(root) => runtime
+                .initialize_private_callable_var_ref(&root, &callable, kind)
+                .map_err(runtime_error_to_vm_error),
+            FrameBinding::PrivateCallable(_) => Err(Error::internal(
+                "private-callable local was initialized more than once",
+            )),
+            FrameBinding::Private(_) => Err(Error::internal(
+                "private-callable initializer reached a private-field frame cell",
+            )),
+            FrameBinding::Direct(_) => Err(Error::internal(
+                "private-callable initializer reached an ordinary frame value",
+            )),
+        }
+    })();
+    let home_released = runtime.release_jsvalue(home_object);
+    let callable_released = runtime.release_jsvalue(callable_value);
+    outcome?;
+    home_released.map_err(runtime_error_to_vm_error)?;
+    callable_released.map_err(runtime_error_to_vm_error)?;
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

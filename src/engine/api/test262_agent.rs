@@ -656,9 +656,7 @@ impl Runtime {
                         NativeConversion::Value(value) => {
                             Completion::Return(self.into_jsvalue(Value::String(value))?)
                         }
-                        NativeConversion::Throw(value) => {
-                            Completion::Throw(self.into_jsvalue(value)?)
-                        }
+                        NativeConversion::Throw(value) => Completion::Throw(value),
                     };
                     resume.resume(self, result)?
                 }
@@ -688,35 +686,35 @@ impl Runtime {
         value: &Value,
     ) -> Result<NativeConversion<SharedBufferHandle>, RuntimeError> {
         let Value::Object(object) = value else {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "ArrayBuffer object expected",
             )?));
         };
         let Some(access) = self.snapshot_buffer_access_if_branded(object)? else {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "ArrayBuffer object expected",
             )?));
         };
         if access.state.detached {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "ArrayBuffer is detached",
             )?));
         }
         if !access.is_shared() {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "ordinary ArrayBuffer broadcast is unavailable across runtimes",
             )?));
         }
         if access.state.max_byte_length.is_some() {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "growable SharedArrayBuffer broadcast is unavailable across runtimes",

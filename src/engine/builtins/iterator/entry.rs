@@ -151,9 +151,7 @@ impl TagSetterResume {
         reply: NativeConversion<bool>,
     ) -> Result<TagSetterStep, RuntimeError> {
         match reply {
-            NativeConversion::Throw(value) => Ok(TagSetterStep::Complete(Completion::Throw(
-                self.0.runtime.into_jsvalue(value)?,
-            ))),
+            NativeConversion::Throw(value) => Ok(TagSetterStep::Complete(Completion::Throw(value))),
             NativeConversion::Value(true) => Ok({
                 let __pending_field_object = self.0.receiver.clone();
                 let __pending_field_key = self.0.key.clone();
@@ -213,7 +211,7 @@ impl TagSetterResume {
                     message,
                 )?)
             }
-            NativeConversion::Throw(value) => Completion::Throw(runtime.into_jsvalue(value)?),
+            NativeConversion::Throw(value) => Completion::Throw(value),
         }))
     }
     pub(crate) fn set(
@@ -223,7 +221,7 @@ impl TagSetterResume {
     ) -> Result<TagSetterStep, RuntimeError> {
         Ok(TagSetterStep::Complete(
             match runtime.finish_set_property_or_throw(self.0.realm, &self.0.key, reply)? {
-                Some(value) => Completion::Throw(runtime.into_jsvalue(value)?),
+                Some(value) => Completion::Throw(value),
                 None => Completion::Return(JsValue::Undefined),
             },
         ))
@@ -254,15 +252,15 @@ pub(crate) fn finish_tag(
             TagSetterStep::Set { mut resume } => {
                 let object = resume.take_set_object();
                 let key = resume.take_set_key();
-                let value = runtime.root_and_release_jsvalue(resume.take_set_value())?;
+                let value = resume.take_set_value();
                 resume.set(
                     runtime,
-                    runtime.internal_set(
+                    runtime.internal_set_jsvalue(
                         realm,
                         &object,
                         &key,
                         value,
-                        Value::Object(object.clone()),
+                        JsValue::Object(object.clone().into_handle()),
                     )?,
                 )?
             }

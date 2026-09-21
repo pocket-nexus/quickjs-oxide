@@ -169,9 +169,10 @@ impl IterationStep {
             let value = arguments.readable.get(1).ok_or(RuntimeError::Invariant(
                 "groupBy callback argv was not padded",
             ))?;
-            let value = runtime.root_value(value)?;
             let callback = match value {
-                Value::Object(object) => runtime.as_callable(&object)?,
+                JsValue::Object(id) => {
+                    runtime.as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)?
+                }
                 _ => None,
             };
             let Some(callback) = callback else {
@@ -541,7 +542,7 @@ impl IterationResume {
         let key = match runtime.property_key_from_primitive_jsvalue(self.0.realm, value)? {
             NativeConversion::Value(key) => key,
             NativeConversion::Throw(value) => {
-                return Ok(self.abrupt(runtime.into_jsvalue(value)?));
+                return Ok(self.abrupt(value));
             }
         };
         let Phase::Key = std::mem::replace(&mut self.0.phase, Phase::Next) else {
@@ -579,7 +580,7 @@ impl IterationResume {
     ) -> Result<IterationStep, RuntimeError> {
         let result = match reply {
             NativeConversion::Throw(value) => {
-                return Ok(self.abrupt(runtime.into_jsvalue(value)?));
+                return Ok(self.abrupt(value));
             }
             NativeConversion::Value(result) => result,
         };
@@ -590,7 +591,7 @@ impl IterationResume {
                     &key,
                     NativeConversion::Value(result),
                 )? {
-                    return Ok(self.abrupt(runtime.into_jsvalue(value)?));
+                    return Ok(self.abrupt(value));
                 }
                 self.next_step(runtime)
             }
@@ -632,35 +633,31 @@ pub(crate) fn finish(
                 );
             }
             IterationStep::Read { mut resume } => {
-                let receiver = runtime.root_and_release_jsvalue(resume.take_read_receiver())?;
+                let receiver = resume.take_read_receiver();
                 let key = resume.take_read_key();
                 resume.resume(
                     runtime,
-                    runtime.get_value_property_in_realm(realm, receiver, &key)?,
+                    runtime.get_value_property_in_realm_jsvalue(realm, receiver, &key)?,
                 )?
             }
             IterationStep::Call { mut resume } => {
                 let callable = resume.take_call_callable();
-                let receiver = runtime.root_and_release_jsvalue(resume.take_call_receiver())?;
-                let arguments = resume
-                    .take_call_arguments()
-                    .into_iter()
-                    .map(|value| runtime.root_and_release_jsvalue(value))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let receiver = resume.take_call_receiver();
+                let arguments = resume.take_call_arguments();
                 resume.resume(
                     runtime,
-                    runtime.call_internal(realm, &callable, receiver, &arguments)?,
+                    runtime.call_internal_jsvalue(realm, &callable, receiver, arguments)?,
                 )?
             }
             IterationStep::Next { mut resume } => {
                 let iterator = resume.take_next_iterator();
-                let method = runtime.root_and_release_jsvalue(resume.take_next_method())?;
+                let method = resume.take_next_method();
                 resume.next(
                     runtime,
                     finish_next(
                         runtime,
                         realm,
-                        NextStep::start(runtime, realm, iterator, method)?,
+                        NextStep::start_jsvalue(runtime, realm, iterator, method)?,
                     )?,
                 )?
             }

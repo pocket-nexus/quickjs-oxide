@@ -175,19 +175,22 @@ impl Runtime {
                 // SyntaxError without a backtrace, then prepends that exact
                 // token location before the active native/bytecode frames.
                 let position = parser.source_location(failure.offset)?;
-                let exception = self.new_native_error_without_backtrace_from_error(
+                let exception = self.new_native_error_without_backtrace_from_error_jsvalue(
                     realm,
                     NativeErrorKind::Syntax,
                     &Error::new(ErrorKind::Syntax, failure.message),
                 )?;
-                self.ensure_error_backtrace(
+                if let Err(error) = self.ensure_error_backtrace_jsvalue(
                     &exception,
                     false,
                     Some(ExplicitBacktraceLocation {
                         filename: JsString::from_static("<input>"),
                         position,
                     }),
-                )?;
+                ) {
+                    let _ = self.release_jsvalue(exception);
+                    return Err(error);
+                }
                 Ok(NativeConversion::Throw(exception))
             }
             Err(JsonParseFailure::Runtime(error)) => Err(error),
@@ -295,19 +298,22 @@ impl Runtime {
             }
             Err(JsonParseFailure::Syntax(failure)) => {
                 let position = parser.source_location(failure.offset)?;
-                let exception = self.new_native_error_without_backtrace_from_error(
+                let exception = self.new_native_error_without_backtrace_from_error_jsvalue(
                     realm,
                     NativeErrorKind::Syntax,
                     &Error::new(ErrorKind::Syntax, failure.message),
                 )?;
-                self.ensure_error_backtrace(
+                if let Err(error) = self.ensure_error_backtrace_jsvalue(
                     &exception,
                     false,
                     Some(ExplicitBacktraceLocation {
                         filename: filename.clone(),
                         position,
                     }),
-                )?;
+                ) {
+                    let _ = self.release_jsvalue(exception);
+                    return Err(error);
+                }
                 Ok(NativeConversion::Throw(exception))
             }
             Err(JsonParseFailure::Runtime(error)) => Err(error),
@@ -834,10 +840,13 @@ impl<'a> JsonParser<'a> {
             .runtime
             .define_selected_set_data(object, key, &value, false);
         self.runtime.release_jsvalue(value)?;
-        if !matches!(
-            result?,
-            crate::engine::object::operations::PropertyDefineOutcome::Defined(true)
-        ) {
+        if !match result? {
+            crate::engine::object::operations::PropertyDefineOutcome::Defined(defined) => defined,
+            crate::engine::object::operations::PropertyDefineOutcome::Throw(value) => {
+                self.runtime.release_jsvalue(value)?;
+                false
+            }
+        } {
             return Err(JsonParseFailure::Runtime(RuntimeError::Invariant(
                 "fresh JSON property definition was rejected",
             )));

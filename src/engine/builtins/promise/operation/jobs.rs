@@ -53,7 +53,9 @@ impl PromiseStep {
         reaction: &PromiseReaction,
         argument: &RawValue,
     ) -> Result<Self, RuntimeError> {
-        let argument = runtime.root_raw_value(argument.clone())?;
+        let argument = JsValue::from_raw(argument.clone()).ok_or(RuntimeError::Invariant(
+            "Promise reaction argument is an internal sentinel",
+        ))?;
         let targets = reaction
             .capability
             .map(|capability| {
@@ -79,7 +81,7 @@ impl PromiseStep {
             Ok({
                 let __pending_field_callable = handler;
                 let __pending_field_receiver = JsValue::Undefined;
-                let __pending_field_arguments = vec![runtime.into_jsvalue(argument.clone())?];
+                let __pending_field_arguments = vec![runtime.dup_jsvalue(&argument)?];
                 let __pending_field_resume = resume;
                 Self::request_call(
                     __pending_field_callable,
@@ -89,7 +91,7 @@ impl PromiseStep {
                 )
             })
         } else {
-            let argument = runtime.into_jsvalue(argument)?;
+            let argument = runtime.dup_jsvalue(&argument)?;
             let completion = if reaction.kind == PromiseReactionKind::Reject {
                 Completion::Throw(argument)
             } else {

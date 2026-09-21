@@ -54,13 +54,13 @@ impl Runtime {
             let current_source_length = match self.typed_array_validated_length(realm, &source)? {
                 NativeConversion::Value(value) => u64::from(value),
                 NativeConversion::Throw(value) => {
-                    return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                    return Ok(Completion::Throw(value));
                 }
             };
             match self.typed_array_validated_length(realm, &target)? {
                 NativeConversion::Value(_) => {}
                 NativeConversion::Throw(value) => {
-                    return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                    return Ok(Completion::Throw(value));
                 }
             }
 
@@ -91,7 +91,7 @@ impl Runtime {
                         {
                             NativeConversion::Value(_) => {}
                             NativeConversion::Throw(value) => {
-                                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                                return Ok(Completion::Throw(value));
                             }
                         }
                     }
@@ -231,18 +231,14 @@ impl TypedSliceStep {
         let source = match runtime.require_typed_array_jsvalue(realm, this_value)? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(Self::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(Self::Complete(Completion::Throw(value)));
             }
         };
         let length = match kind {
             TypedSliceKind::Slice => match runtime.typed_array_validated_length(realm, &source)? {
                 NativeConversion::Value(value) => i64::from(value),
                 NativeConversion::Throw(value) => {
-                    return Ok(Self::Complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
+                    return Ok(Self::Complete(Completion::Throw(value)));
                 }
             },
             TypedSliceKind::Subarray => i64::from(runtime.typed_array_state(&source)?.length),
@@ -287,9 +283,7 @@ impl TypedSliceResume {
         )? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(TypedSliceStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(TypedSliceStep::Complete(Completion::Throw(value)));
             }
         };
         match self.0.phase {
@@ -380,9 +374,7 @@ impl TypedSliceResume {
         let target = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(TypedSliceStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(TypedSliceStep::Complete(Completion::Throw(value)));
             }
         };
         let Phase::Species { start, count } = self.0.phase else {

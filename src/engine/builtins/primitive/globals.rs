@@ -118,12 +118,11 @@ impl GlobalStep {
         loop {
             self = match self {
                 Self::String { value, resume } if !matches!(value, JsValue::Object(_)) => {
-                    let value = runtime.root_and_release_jsvalue(value)?;
-                    resume.string(runtime, runtime.string_from_primitive(realm, &value)?)?
+                    resume.string(runtime, runtime.native_to_js_string_jsvalue(realm, value)?)?
                 }
                 Self::Number { value, resume } if !matches!(value, JsValue::Object(_)) => {
-                    let value = runtime.root_and_release_jsvalue(value)?;
-                    let NumberStep::Complete(result) = NumberStep::start(runtime, realm, value)?
+                    let NumberStep::Complete(result) =
+                        NumberStep::start_jsvalue(runtime, realm, value)?
                     else {
                         return Err(RuntimeError::Invariant("primitive global number suspended"));
                     };
@@ -150,9 +149,7 @@ impl GlobalResume {
         let input = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(GlobalStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(GlobalStep::Complete(Completion::Throw(value)));
             }
         };
         match self.0.kind {
@@ -193,9 +190,7 @@ impl GlobalResume {
         let number = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(GlobalStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(GlobalStep::Complete(Completion::Throw(value)));
             }
         };
         let value = match self.0.kind {
@@ -230,12 +225,10 @@ pub(crate) fn finish(
         step = match step {
             GlobalStep::Complete(result) => return Ok(result),
             GlobalStep::String { value, resume } => {
-                let value = runtime.root_and_release_jsvalue(value)?;
-                resume.string(runtime, runtime.native_to_js_string(realm, &value)?)?
+                resume.string(runtime, runtime.native_to_js_string_jsvalue(realm, value)?)?
             }
             GlobalStep::Number { value, resume } => {
-                let value = runtime.root_and_release_jsvalue(value)?;
-                resume.number(runtime, runtime.native_to_number(realm, &value)?)?
+                resume.number(runtime, runtime.native_to_number_jsvalue(realm, value)?)?
             }
         };
     }

@@ -412,10 +412,11 @@ impl Runtime {
         // fallback and before reading @@toStringTag. That unwraps every Proxy
         // layer and makes revocation observable even when the handler would
         // otherwise provide a custom tag.
-        let is_array = match self.internal_is_array(realm, &Value::Object(object.clone()))? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
+        let is_array =
+            match self.internal_is_array_jsvalue(realm, &JsValue::Object(object.object_id()))? {
+                NativeConversion::Value(value) => value,
+                NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
+            };
         let default_tag = if is_array {
             JsString::from_static("Array")
         } else {
@@ -651,14 +652,14 @@ impl Runtime {
         realm: ContextId,
         object: &ObjectRef,
         result: NativeConversion<bool>,
-    ) -> Result<Option<Value>, RuntimeError> {
+    ) -> Result<Option<JsValue>, RuntimeError> {
         match result {
             NativeConversion::Value(true) => return Ok(None),
             NativeConversion::Throw(value) => return Ok(Some(value)),
             NativeConversion::Value(false) => {}
         }
         if self.is_proxy_object(object)? {
-            return Ok(Some(self.new_native_error(
+            return Ok(Some(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "proxy: bad prototype",
@@ -676,7 +677,7 @@ impl Runtime {
         } else {
             "circular prototype chain"
         };
-        Ok(Some(self.new_native_error(
+        Ok(Some(self.new_native_error_jsvalue(
             realm,
             NativeErrorKind::Type,
             message,
@@ -713,7 +714,7 @@ impl Runtime {
         realm: ContextId,
         object: &ObjectRef,
         key: &PropertyKey,
-    ) -> Result<Value, RuntimeError> {
+    ) -> Result<JsValue, RuntimeError> {
         if let ArrayOwnKey::Index(index) = self.array_own_key(object, key)? {
             let (length, writable) = self.array_length_state(object)?;
             if index >= length && !writable {
@@ -721,7 +722,11 @@ impl Runtime {
                     self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
                 let error =
                     self.native_atom_error(ErrorKind::Type, "'", &length, "' is read-only")?;
-                return self.new_native_error_from_error(realm, NativeErrorKind::Type, &error);
+                return self.new_native_error_from_error_jsvalue(
+                    realm,
+                    NativeErrorKind::Type,
+                    &error,
+                );
             }
         }
         let message = if !self.has_own_property(object, key)? && !self.is_extensible(object)? {
@@ -729,7 +734,7 @@ impl Runtime {
         } else {
             "property is not configurable"
         };
-        self.new_native_error(realm, NativeErrorKind::Type, message)
+        self.new_native_error_jsvalue(realm, NativeErrorKind::Type, message)
     }
 
     fn finish_define_property_or_throw(
@@ -737,11 +742,11 @@ impl Runtime {
         realm: ContextId,
         key: &PropertyKey,
         result: NativeConversion<InternalDefineResult>,
-    ) -> Result<Option<Value>, RuntimeError> {
+    ) -> Result<Option<JsValue>, RuntimeError> {
         match result {
             NativeConversion::Value(InternalDefineResult::Defined) => Ok(None),
             NativeConversion::Value(InternalDefineResult::RejectedProxyTrap) => self
-                .new_native_error(
+                .new_native_error_jsvalue(
                     realm,
                     NativeErrorKind::Type,
                     "proxy: defineProperty exception",
@@ -860,24 +865,24 @@ impl Runtime {
         &self,
         array: &ObjectRef,
         index: u32,
-        value: Value,
+        value: JsValue,
         rejection: &'static str,
     ) -> Result<(), RuntimeError> {
-        let key = self.intern_property_key(&index.to_string())?;
-        if !self.define_own_property(
-            array,
-            &key,
-            &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(value),
-                writable: DescriptorField::Present(true),
-                enumerable: DescriptorField::Present(true),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(rejection));
+        let outcome = (|| {
+            let key = self.property_key_for_index(u64::from(index))?;
+            self.define_selected_set_data(array, &key, &value, false)
+        })();
+        self.release_jsvalue(value)?;
+        match outcome? {
+            crate::engine::object::operations::PropertyDefineOutcome::Defined(true) => Ok(()),
+            crate::engine::object::operations::PropertyDefineOutcome::Defined(false) => {
+                Err(RuntimeError::Invariant(rejection))
+            }
+            crate::engine::object::operations::PropertyDefineOutcome::Throw(value) => {
+                self.release_jsvalue(value)?;
+                Err(RuntimeError::Invariant(rejection))
+            }
         }
-        Ok(())
     }
 
     pub(crate) fn call_object_extensibility(
@@ -921,23 +926,21 @@ impl Runtime {
         &self,
         object: &ObjectRef,
         key: &PropertyKey,
-        value: Value,
+        value: JsValue,
         rejection: &'static str,
     ) -> Result<(), RuntimeError> {
-        if !self.define_own_property(
-            object,
-            key,
-            &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(value),
-                writable: DescriptorField::Present(true),
-                enumerable: DescriptorField::Present(true),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(rejection));
+        let outcome = self.define_selected_set_data(object, key, &value, false);
+        self.release_jsvalue(value)?;
+        match outcome? {
+            crate::engine::object::operations::PropertyDefineOutcome::Defined(true) => Ok(()),
+            crate::engine::object::operations::PropertyDefineOutcome::Defined(false) => {
+                Err(RuntimeError::Invariant(rejection))
+            }
+            crate::engine::object::operations::PropertyDefineOutcome::Throw(value) => {
+                self.release_jsvalue(value)?;
+                Err(RuntimeError::Invariant(rejection))
+            }
         }
-        Ok(())
     }
 
     fn complete_descriptor_to_object(
@@ -990,10 +993,15 @@ impl Runtime {
         };
         for (name, value) in fields {
             let key = self.intern_property_key(name)?;
-            if !matches!(
-                self.define_selected_set_data(&object, &key, &value, false)?,
-                crate::engine::object::operations::PropertyDefineOutcome::Defined(true)
-            ) {
+            if !match self.define_selected_set_data(&object, &key, &value, false)? {
+                crate::engine::object::operations::PropertyDefineOutcome::Defined(defined) => {
+                    defined
+                }
+                crate::engine::object::operations::PropertyDefineOutcome::Throw(value) => {
+                    self.release_jsvalue(value)?;
+                    false
+                }
+            } {
                 return Err(RuntimeError::Invariant(
                     "fresh property descriptor object rejected a field",
                 ));

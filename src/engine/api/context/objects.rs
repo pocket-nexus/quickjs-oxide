@@ -58,7 +58,7 @@ impl Context {
         match result {
             NativeConversion::Value(value) => Ok(value),
             NativeConversion::Throw(value) => {
-                self.runtime.set_pending_exception(value)?;
+                self.runtime.set_pending_exception_jsvalue(value)?;
                 Err(RuntimeError::Exception)
             }
         }
@@ -153,7 +153,7 @@ impl Context {
         match result {
             NativeConversion::Value(value) => Ok(value),
             NativeConversion::Throw(value) => {
-                self.runtime.set_pending_exception(value)?;
+                self.runtime.set_pending_exception_jsvalue(value)?;
                 Err(RuntimeError::Exception)
             }
         }

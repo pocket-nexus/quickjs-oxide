@@ -123,9 +123,7 @@ impl FromResume {
                 let callable = match callable? {
                     NativeConversion::Value(callable) => callable,
                     NativeConversion::Throw(value) => {
-                        return Ok(FromStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(FromStep::Complete(Completion::Throw(value)));
                     }
                 };
                 let input = self.iterator.take().expect("iterator input");
@@ -186,11 +184,11 @@ pub(crate) fn finish(
         step = match step {
             FromStep::Complete(result) => return Ok(result),
             FromStep::Read { mut resume } => {
-                let receiver = runtime.root_and_release_jsvalue(resume.take_read_receiver())?;
+                let receiver = resume.take_read_receiver();
                 let key = resume.take_read_key();
                 resume.resume(
                     runtime,
-                    runtime.get_value_property_in_realm(realm, receiver, &key)?,
+                    runtime.get_value_property_in_realm_jsvalue(realm, receiver, &key)?,
                 )?
             }
             FromStep::Call { mut resume } => {
@@ -203,10 +201,19 @@ pub(crate) fn finish(
             }
             FromStep::Instance { mut resume } => {
                 let constructor = resume.take_instance_constructor();
-                let value = runtime.root_and_release_jsvalue(resume.take_instance_value())?;
+                let value = resume.take_instance_value();
                 resume.resume(
                     runtime,
-                    runtime.ordinary_is_instance_of(realm, &constructor, value)?,
+                    crate::engine::builtins::function::instance::finish(
+                        runtime,
+                        realm,
+                        crate::engine::builtins::function::instance::InstanceStep::ordinary(
+                            runtime,
+                            realm,
+                            &constructor,
+                            value,
+                        )?,
+                    )?,
                 )?
             }
         };

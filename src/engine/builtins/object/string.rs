@@ -4,7 +4,7 @@ use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::ContextId,
-    object::{PropertyKey, WellKnownSymbol},
+    object::{ObjectRef, PropertyKey, WellKnownSymbol},
     value::{JsString, JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion,
@@ -99,22 +99,16 @@ impl ObjectStringStep {
                     JsValue::Null => return tag_string(runtime, JsString::from_static("Null")),
                     _ => {}
                 }
-                let object = match runtime
-                    .native_to_object(realm, runtime.root_and_release_jsvalue(this_value)?)?
-                {
+                let object = match runtime.native_to_object_jsvalue(realm, this_value)? {
                     NativeConversion::Value(object) => object,
                     NativeConversion::Throw(value) => {
-                        return Ok(Self::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(Self::Complete(Completion::Throw(value)));
                     }
                 };
                 let tag = match runtime.object_default_to_string_tag(realm, &object)? {
                     NativeConversion::Value(tag) => tag,
                     NativeConversion::Throw(value) => {
-                        return Ok(Self::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(Self::Complete(Completion::Throw(value)));
                     }
                 };
                 let receiver = runtime.into_jsvalue(Value::Object(object))?;
@@ -165,27 +159,37 @@ impl ObjectStringResume {
         result: Completion,
     ) -> Result<ObjectStringStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Return(value) => value,
             Completion::Throw(value) => {
                 return Ok(ObjectStringStep::Complete(Completion::Throw(value)));
             }
         };
         match std::mem::replace(&mut self.0.phase, Phase::LocaleResult) {
-            Phase::Tag(default_tag) => tag_string(
-                runtime,
-                match value {
-                    Value::String(tag) => tag,
-                    _ => default_tag,
-                },
-            ),
-            Phase::LocaleResult => Ok(ObjectStringStep::Complete(Completion::Return(
-                runtime.into_jsvalue(value)?,
-            ))),
-            Phase::LocaleMethod => {
-                let callable = match value {
-                    Value::Object(object) => runtime.as_callable(&object)?,
-                    _ => None,
+            Phase::Tag(default_tag) => {
+                let tag = match &value {
+                    JsValue::String(id) => runtime
+                        .0
+                        .state
+                        .borrow()
+                        .heap
+                        .string(*id)
+                        .cloned()
+                        .map_err(RuntimeError::from),
+                    _ => Ok(default_tag),
                 };
+                runtime.release_jsvalue(value)?;
+                tag_string(runtime, tag?)
+            }
+            Phase::LocaleResult => Ok(ObjectStringStep::Complete(Completion::Return(value))),
+            Phase::LocaleMethod => {
+                let callable = (|| match &value {
+                    JsValue::Object(id) => {
+                        runtime.as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)
+                    }
+                    _ => Ok(None),
+                })();
+                runtime.release_jsvalue(value)?;
+                let callable = callable?;
                 let Some(callable) = callable else {
                     return Ok(ObjectStringStep::Complete(Completion::Throw(
                         runtime.new_native_error_jsvalue(
@@ -213,23 +217,23 @@ pub(super) fn finish(
         step = match step {
             ObjectStringStep::Complete(result) => return Ok(result),
             ObjectStringStep::Read { mut resume } => {
-                let receiver = runtime.root_and_release_jsvalue(resume.take_read_receiver())?;
+                let receiver = resume.take_read_receiver();
                 let key = resume.take_read_key();
                 resume.resume(
                     runtime,
-                    runtime.get_value_property_in_realm(realm, receiver, &key)?,
+                    runtime.get_value_property_in_realm_jsvalue(realm, receiver, &key)?,
                 )?
             }
             ObjectStringStep::Call { mut resume } => {
                 let target = resume.take_call_target();
-                let receiver = runtime.root_and_release_jsvalue(resume.take_call_receiver())?;
+                let receiver = resume.take_call_receiver();
                 {
                     let result = match target {
                         DirectCallTarget::Callable(callable) => {
-                            runtime.call_internal(realm, &callable, receiver, &[])?
+                            runtime.call_internal_jsvalue(realm, &callable, receiver, Vec::new())?
                         }
                         DirectCallTarget::NonCallableProxy(proxy) => {
-                            runtime.call_proxy(realm, &proxy, receiver, &[])?
+                            runtime.call_proxy_jsvalue(realm, &proxy, receiver, Vec::new())?
                         }
                     };
                     resume.resume(runtime, result)?

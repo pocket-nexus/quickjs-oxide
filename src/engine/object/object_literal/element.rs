@@ -106,9 +106,7 @@ impl LiteralDefinitionResume {
         let key = match runtime.property_key_from_primitive_jsvalue(realm, key)? {
             NativeConversion::Value(key) => key,
             NativeConversion::Throw(value) => {
-                return Ok(LiteralDefinitionStep::Complete(Completion::Throw(
-                    runtime.unroot_value(&value)?,
-                )));
+                return Ok(LiteralDefinitionStep::Complete(Completion::Throw(value)));
             }
         };
         self.0.key = Some(key);
@@ -142,9 +140,9 @@ impl LiteralDefinitionResume {
                 PropertyDefineOutcome::Defined(false) => {
                     Err(Error::new(ErrorKind::Type, "property is not configurable").into())
                 }
-                PropertyDefineOutcome::Throw(value) => Ok(LiteralDefinitionStep::Complete(
-                    Completion::Throw(runtime.into_jsvalue(value)?),
-                )),
+                PropertyDefineOutcome::Throw(value) => {
+                    Ok(LiteralDefinitionStep::Complete(Completion::Throw(value)))
+                }
             };
         }
         let value = self.0.value.take().expect("literal value");
@@ -156,16 +154,18 @@ impl LiteralDefinitionResume {
         result: NativeConversion<InternalDefineResult>,
     ) -> Result<LiteralDefinitionStep, RuntimeError> {
         if self.0.realm.is_some() {
+            if let NativeConversion::Throw(value) = result {
+                let _ = self.0.runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "literal definition reply has wrong owner",
             ));
         }
-        let runtime = self.0.runtime.clone();
         Ok(LiteralDefinitionStep::Complete(match result {
             NativeConversion::Value(InternalDefineResult::Defined) => {
                 Completion::Return(crate::engine::value::JsValue::Undefined)
             }
-            NativeConversion::Throw(value) => Completion::Throw(runtime.unroot_value(&value)?),
+            NativeConversion::Throw(value) => Completion::Throw(value),
             NativeConversion::Value(InternalDefineResult::RejectedOrdinary(_)) => {
                 return Err(Error::new(ErrorKind::Type, "property is not configurable").into());
             }

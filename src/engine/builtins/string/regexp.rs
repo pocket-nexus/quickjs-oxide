@@ -345,9 +345,7 @@ impl StringProtocolResume {
                 let flags = match protocol_string(runtime, realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(StringProtocolStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(StringProtocolStep::Complete(Completion::Throw(value)));
                     }
                 };
                 if !flags.utf16_units().any(|unit| unit == u16::from(b'g')) {
@@ -375,9 +373,7 @@ impl StringProtocolResume {
                             runtime.into_jsvalue(Value::String(value))?
                         }
                         NativeConversion::Throw(value) => {
-                            return Ok(StringProtocolStep::Complete(Completion::Throw(
-                                runtime.into_jsvalue(value)?,
-                            )));
+                            return Ok(StringProtocolStep::Complete(Completion::Throw(value)));
                         }
                     }
                 };

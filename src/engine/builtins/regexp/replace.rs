@@ -146,7 +146,7 @@ impl Runtime {
         let sticky = flags.contains(RegExpFlags::STICKY);
         let mut last_index = if global {
             if let Some(value) = self.set_regexp_last_index(realm, regexp, 0)? {
-                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                return Ok(Completion::Throw(value));
             }
             0
         } else if sticky {
@@ -199,7 +199,7 @@ impl Runtime {
                 if (global || sticky)
                     && let Some(value) = self.set_regexp_last_index(realm, regexp, 0)?
                 {
-                    return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                    return Ok(Completion::Throw(value));
                 }
                 break;
             };
@@ -235,7 +235,7 @@ impl Runtime {
                 )?;
                 let status = match status {
                     Ok(status) => status,
-                    Err(value) => return Ok(Completion::Throw(self.into_jsvalue(value)?)),
+                    Err(value) => return Ok(Completion::Throw(value)),
                 };
                 if matches!(status, SubstitutionStatus::BufferFailed) || output.error().is_some() {
                     return self.complete_regexp_replacement_buffer(realm, output);
@@ -248,7 +248,7 @@ impl Runtime {
                         RuntimeError::Invariant("RegExp match end exceeded signed String range")
                     })?;
                     if let Some(value) = self.set_regexp_last_index(realm, regexp, end)? {
-                        return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                        return Ok(Completion::Throw(value));
                     }
                 }
                 break;
@@ -275,7 +275,7 @@ impl Runtime {
             NativeConversion::Value(value) => {
                 Ok(Completion::Return(self.into_jsvalue(Value::String(value))?))
             }
-            NativeConversion::Throw(value) => Ok(Completion::Throw(self.into_jsvalue(value)?)),
+            NativeConversion::Throw(value) => Ok(Completion::Throw(value)),
         }
     }
 }
@@ -408,6 +408,9 @@ impl Drop for RegExpReplaceResumeState {
             &mut self.state.input_value,
             JsValue::Undefined,
         ));
+        if let Some(step) = self.step_pending.step.take() {
+            (*step).release(&self.runtime);
+        }
         if let Some(read) = self.step_pending.read.take() {
             read.release(&self.runtime);
         }
@@ -552,9 +555,7 @@ impl RegExpReplaceStep {
             source = Some(match runtime.string_from_primitive_jsvalue(realm, input)? {
                 NativeConversion::Value(value) => value,
                 NativeConversion::Throw(value) => {
-                    return Ok(Self::Complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
+                    return Ok(Self::Complete(Completion::Throw(value)));
                 }
             });
             if !matches!(replacement, JsValue::Object(_)) {
@@ -562,9 +563,7 @@ impl RegExpReplaceStep {
                     match runtime.string_from_primitive_jsvalue(realm, replacement)? {
                         NativeConversion::Value(value) => value,
                         NativeConversion::Throw(value) => {
-                            return Ok(Self::Complete(Completion::Throw(
-                                runtime.into_jsvalue(value)?,
-                            )));
+                            return Ok(Self::Complete(Completion::Throw(value)));
                         }
                     },
                 );
@@ -619,10 +618,9 @@ fn converted_input(
     value: &JsValue,
     converted: Option<JsString>,
 ) -> Result<JsValue, RuntimeError> {
-    if matches!(value, JsValue::String(_)) || converted.is_none() {
-        runtime.dup_jsvalue(value)
-    } else {
-        runtime.into_jsvalue(Value::String(converted.unwrap()))
+    match (value, converted) {
+        (JsValue::String(_), _) | (_, None) => runtime.dup_jsvalue(value),
+        (_, Some(converted)) => runtime.into_jsvalue(Value::String(converted)),
     }
 }
 
@@ -635,7 +633,7 @@ fn converted_string(
     runtime.release_jsvalue(value)?;
     result
 }
-fn converted_string_owned(
+pub(super) fn converted_string_owned(
     runtime: &Runtime,
     realm: ContextId,
     value: JsValue,
@@ -1071,9 +1069,7 @@ impl RegExpReplaceResume {
             .expect("replacement named cursor disappeared");
         match runtime.finish_replacement_buffer(self.0.realm, state.buffer)? {
             NativeConversion::Value(value) => self.append_result(runtime, value),
-            NativeConversion::Throw(value) => Ok(ReplaceAction::Complete(Completion::Throw(
-                runtime.into_jsvalue(value)?,
-            ))),
+            NativeConversion::Throw(value) => Ok(ReplaceAction::Complete(Completion::Throw(value))),
         }
     }
     pub(crate) fn set(
@@ -1092,9 +1088,7 @@ impl RegExpReplaceResume {
         let key =
             runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
         if let Some(value) = runtime.finish_set_property_or_throw(self.0.realm, &key, result)? {
-            return Ok(ReplaceAction::Complete(Completion::Throw(
-                runtime.into_jsvalue(value)?,
-            )));
+            return Ok(ReplaceAction::Complete(Completion::Throw(value)));
         }
         match self.0.phase {
             ReplacePhase::InitialSet | ReplacePhase::AdvancedSet => self.execute(runtime),
@@ -1128,9 +1122,7 @@ impl RegExpReplaceResume {
                 let (source, source_value) = match converted_string_owned(runtime, realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(ReplaceAction::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(ReplaceAction::Complete(Completion::Throw(value)));
                     }
                 };
                 self.0.state.input = Some(source);
@@ -1163,9 +1155,7 @@ impl RegExpReplaceResume {
                 self.0.state.replacement = Some(match converted_string(runtime, realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(ReplaceAction::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(ReplaceAction::Complete(Completion::Throw(value)));
                     }
                 });
                 self.prepared(runtime)
@@ -1177,9 +1167,7 @@ impl RegExpReplaceResume {
                 let flags = match converted_string(runtime, realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(ReplaceAction::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(ReplaceAction::Complete(Completion::Throw(value)));
                     }
                 };
                 self.0.state.global = flags.utf16_units().any(|unit| unit == u16::from(b'g'));
@@ -1229,9 +1217,7 @@ impl RegExpReplaceResume {
                 let matched = match converted_string(runtime, realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(ReplaceAction::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(ReplaceAction::Complete(Completion::Throw(value)));
                     }
                 };
                 if matched.is_empty() {
@@ -1261,9 +1247,7 @@ impl RegExpReplaceResume {
                 let current = match converted_number(runtime, realm, value)? {
                     NativeConversion::Value(value) => Runtime::length_from_number(value),
                     NativeConversion::Throw(value) => {
-                        return Ok(ReplaceAction::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(ReplaceAction::Complete(Completion::Throw(value)));
                     }
                 };
                 let next = advance_string_index(self.source(), current, self.0.state.unicode);
@@ -1286,9 +1270,7 @@ impl RegExpReplaceResume {
                 let count = match converted_number(runtime, realm, value)? {
                     NativeConversion::Value(value) => Runtime::to_uint32_number(value),
                     NativeConversion::Throw(value) => {
-                        return Ok(ReplaceAction::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(ReplaceAction::Complete(Completion::Throw(value)));
                     }
                 };
                 self.0
@@ -1315,9 +1297,7 @@ impl RegExpReplaceResume {
                 {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(ReplaceAction::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(ReplaceAction::Complete(Completion::Throw(value)));
                     }
                 };
                 let state = self
@@ -1348,9 +1328,7 @@ impl RegExpReplaceResume {
                         Runtime::length_from_number(value).min(self.source().len() as u64)
                     }
                     NativeConversion::Throw(value) => {
-                        return Ok(ReplaceAction::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(ReplaceAction::Complete(Completion::Throw(value)));
                     }
                 };
                 let state = self
@@ -1375,9 +1353,7 @@ impl RegExpReplaceResume {
                 let (_, capture) = match converted_string_owned(runtime, realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(ReplaceAction::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(ReplaceAction::Complete(Completion::Throw(value)));
                     }
                 };
                 self.capture(runtime, capture)
@@ -1431,9 +1407,7 @@ impl RegExpReplaceResume {
                         match runtime.native_to_object_jsvalue(realm, value)? {
                             NativeConversion::Value(value) => Some(value),
                             NativeConversion::Throw(value) => {
-                                return Ok(ReplaceAction::Complete(Completion::Throw(
-                                    runtime.into_jsvalue(value)?,
-                                )));
+                                return Ok(ReplaceAction::Complete(Completion::Throw(value)));
                             }
                         }
                     };
@@ -1452,9 +1426,7 @@ impl RegExpReplaceResume {
                 let text = match converted_string(runtime, realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(ReplaceAction::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(ReplaceAction::Complete(Completion::Throw(value)));
                     }
                 };
                 self.append_result(runtime, text)
@@ -1484,9 +1456,7 @@ impl RegExpReplaceResume {
                 let text = match converted_string(runtime, realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(ReplaceAction::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(ReplaceAction::Complete(Completion::Throw(value)));
                     }
                 };
                 let named = self
@@ -1562,9 +1532,7 @@ fn finish_replace(
                                         let _ = runtime.release_jsvalue(value);
                                         NativeConversion::Value(InternalSetResult::Accepted)
                                     }
-                                    Completion::Throw(value) => NativeConversion::Throw(
-                                        runtime.root_and_release_jsvalue(value)?,
-                                    ),
+                                    Completion::Throw(value) => NativeConversion::Throw(value),
                                 };
                             }
                             SetStep::Complete(action) => break local_set_result(action)?,
@@ -1582,9 +1550,7 @@ fn finish_replace(
                         NativeConversion::Value(value) => {
                             Completion::Return(value.unwrap_or(JsValue::Undefined))
                         }
-                        NativeConversion::Throw(value) => {
-                            Completion::Throw(runtime.into_jsvalue(value)?)
-                        }
+                        NativeConversion::Throw(value) => Completion::Throw(value),
                     };
                     resume.resume(runtime, result)?
                 }

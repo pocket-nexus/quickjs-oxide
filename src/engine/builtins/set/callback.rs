@@ -63,9 +63,7 @@ impl EachStep {
         let set = match runtime.set_receiver(realm, invocation, false)? {
             NativeConversion::Value(set) => set,
             NativeConversion::Throw(value) => {
-                return Ok(Self::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(Self::Complete(Completion::Throw(value)));
             }
         };
         let value = arguments.readable.first().ok_or(RuntimeError::Invariant(

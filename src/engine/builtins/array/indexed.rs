@@ -115,9 +115,7 @@ impl IndexedStep {
             match runtime.native_to_object_jsvalue(realm, runtime.dup_jsvalue(this_value)?)? {
                 NativeConversion::Value(value) => value,
                 NativeConversion::Throw(value) => {
-                    return Ok(Self::Complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
+                    return Ok(Self::Complete(Completion::Throw(value)));
                 }
             };
         let mut resume = IndexedResume(Box::new(IndexedResumeState {
@@ -235,9 +233,7 @@ impl IndexedResume {
         let number = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(IndexedStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(IndexedStep::Complete(Completion::Throw(value)));
             }
         };
         match self.0.phase {
@@ -329,9 +325,7 @@ impl IndexedResume {
                     self.0.replacement = self.0.index;
                     self.0.index = 0;
                     if let Some(value) = self.allocate(runtime)? {
-                        return Ok(IndexedStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(IndexedStep::Complete(Completion::Throw(value)));
                     }
                 }
             }
@@ -356,9 +350,7 @@ impl IndexedResume {
             }
             IndexedKind::ToReversed => {
                 if let Some(value) = self.allocate(runtime)? {
-                    return Ok(IndexedStep::Complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
+                    return Ok(IndexedStep::Complete(Completion::Throw(value)));
                 }
                 self.0.index = self.0.length - 1;
                 self.0.end = -1;
@@ -368,7 +360,7 @@ impl IndexedResume {
         }
         self.next(runtime)
     }
-    fn allocate(&mut self, runtime: &Runtime) -> Result<Option<Value>, RuntimeError> {
+    fn allocate(&mut self, runtime: &Runtime) -> Result<Option<JsValue>, RuntimeError> {
         match runtime.native_allocate_fast_array_values(
             self.0.realm,
             self.0.length as u64,
@@ -440,9 +432,7 @@ impl IndexedResume {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(IndexedStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(IndexedStep::Complete(Completion::Throw(value)));
             }
         };
         match self.0.phase {
@@ -472,12 +462,13 @@ impl IndexedResume {
         result: NativeConversion<InternalSetResult>,
     ) -> Result<IndexedStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Write) {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant("Array indexed set phase mismatch"));
         }
         if let Some(value) = runtime.finish_set_property_or_throw(self.0.realm, &key, result)? {
-            return Ok(IndexedStep::Complete(Completion::Throw(
-                runtime.into_jsvalue(value)?,
-            )));
+            return Ok(IndexedStep::Complete(Completion::Throw(value)));
         }
         self.advance(runtime)
     }
@@ -516,8 +507,8 @@ pub(crate) fn finish(
                 )?
             }
             IndexedStep::Number { mut resume } => {
-                let value = runtime.root_and_release_jsvalue(resume.take_number_value())?;
-                resume.number(runtime, runtime.native_to_number(realm, &value)?)?
+                let value = resume.take_number_value();
+                resume.number(runtime, runtime.native_to_number_jsvalue(realm, value)?)?
             }
             IndexedStep::Has { mut resume } => {
                 let object = resume.take_has_object();
@@ -530,14 +521,14 @@ pub(crate) fn finish(
             IndexedStep::Set { mut resume } => {
                 let object = resume.take_set_object();
                 let key = resume.take_set_key();
-                let value = runtime.root_and_release_jsvalue(resume.take_set_value())?;
+                let value = resume.take_set_value();
                 {
-                    let result = runtime.internal_set(
+                    let result = runtime.internal_set_jsvalue(
                         realm,
                         &object,
                         &key,
                         value,
-                        Value::Object(object.clone()),
+                        JsValue::Object(object.clone().into_handle()),
                     )?;
                     resume.set(runtime, key, result)?
                 }

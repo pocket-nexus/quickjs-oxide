@@ -194,9 +194,7 @@ impl DateConstructorResume {
             match runtime.number_from_primitive_jsvalue(self.0.realm, &self.converted)? {
                 NativeConversion::Value(value) => value,
                 NativeConversion::Throw(value) => {
-                    return Ok(DateConstructorStep::Complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
+                    return Ok(DateConstructorStep::Complete(Completion::Throw(value)));
                 }
             }
         };
@@ -209,14 +207,15 @@ impl DateConstructorResume {
         result: NativeConversion<JsString>,
     ) -> Result<DateConstructorStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Parse) {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant("Date parse phase mismatch"));
         }
         let string = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(DateConstructorStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(DateConstructorStep::Complete(Completion::Throw(value)));
             }
         };
         Ok(DateConstructorStep::Complete(Completion::Return(
@@ -253,14 +252,15 @@ impl DateConstructorResume {
         result: NativeConversion<f64>,
     ) -> Result<DateConstructorStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Fields) {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant("Date numeric field phase mismatch"));
         }
         self.0.fields[self.0.index] = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(DateConstructorStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(DateConstructorStep::Complete(Completion::Throw(value)));
             }
         };
         self.0.index += 1;
@@ -304,9 +304,7 @@ impl DateConstructorResume {
                     match runtime.function_realm_from_jsvalue(self.0.realm, &self.0.new_target)? {
                         NativeConversion::Value(realm) => realm,
                         NativeConversion::Throw(value) => {
-                            return Ok(DateConstructorStep::Complete(Completion::Throw(
-                                runtime.into_jsvalue(value)?,
-                            )));
+                            return Ok(DateConstructorStep::Complete(Completion::Throw(value)));
                         }
                     };
                 let prototype = runtime

@@ -233,12 +233,34 @@ pub(super) fn begin_synchronous(
 }
 
 pub(super) struct NativeWaitRecord {
+    pub(super) runtime: Option<Runtime>,
     pub(super) call: Option<PreparedNativeCall>,
     pub(super) step: Step,
     // Only a real wait in the selected nested @@replace needs this owner.
     // Ordinary local completion never allocates or transports a parent record.
     pub(super) parents: Vec<ReplaceParent>,
 }
+impl NativeWaitRecord {
+    pub(super) fn release_owned(&mut self) {
+        if let Some(runtime) = self.runtime.take() {
+            self.step.release_owned(&runtime);
+        }
+        if let Some(mut call) = self.call.take() {
+            let _ = call.release_invocation();
+        }
+        while let Some(mut parent) = self.parents.pop() {
+            if let Some(mut call) = parent.call.take() {
+                let _ = call.release_invocation();
+            }
+        }
+    }
+}
+impl Drop for NativeWaitRecord {
+    fn drop(&mut self) {
+        self.release_owned();
+    }
+}
+
 pub(super) struct ReplaceParent {
     pub(super) call: Option<PreparedNativeCall>,
     pub(super) resume: crate::engine::builtins::StringReplaceResume,
@@ -274,6 +296,7 @@ fn capture_native_step(
         let arguments = resume.take_call_arguments();
         let DirectCallTarget::Callable(callable) = target else {
             return capture_waiting_step(
+                runtime,
                 storage,
                 NativeStep::StringReplace(StringReplaceStep::make_call(
                     target, receiver, arguments, resume,
@@ -349,8 +372,7 @@ fn capture_native_step(
                                 Err(Error::internal("replace parent storage allocation failed")),
                             )
                             .and_then(identity_completion);
-                            records[0].step =
-                                Step::Complete(Some(Completion::Return(JsValue::Undefined)));
+                            records[0].step.release_owned(runtime);
                             storage.recycle_native_wait(records);
                             let result = result?;
                             return match resume
@@ -375,6 +397,7 @@ fn capture_native_step(
             }
         }
         return capture_waiting_step(
+            runtime,
             storage,
             NativeStep::StringReplace(StringReplaceStep::make_call(
                 DirectCallTarget::Callable(callable),
@@ -385,11 +408,12 @@ fn capture_native_step(
             pending,
         );
     }
-    capture_waiting_step(storage, step, pending)
+    capture_waiting_step(runtime, storage, step, pending)
 }
 
 #[inline(never)]
 fn capture_waiting_step(
+    runtime: &Runtime,
     storage: &mut storage::QueryStorage,
     step: crate::engine::builtins::continuation::NativeStep,
     pending: &mut Option<Vec<NativeWaitRecord>>,
@@ -400,7 +424,13 @@ fn capture_waiting_step(
     if let Some(result) = take_immediate(&mut step) {
         return Ok(Some(result));
     }
-    let mut records = storage.take_native_wait()?;
+    let mut records = match storage.take_native_wait(runtime) {
+        Ok(records) => records,
+        Err(error) => {
+            step.release_owned(runtime);
+            return Err(error);
+        }
+    };
     records[0].step = step;
     *pending = Some(records);
     Ok(None)
@@ -537,7 +567,7 @@ pub(super) fn begin_local(
             if let Some(inner) = records[0].call.take() {
                 result = finish_result(runtime, slots, inner, result);
             }
-            records[0].step = Step::Complete(Some(Completion::Return(JsValue::Undefined)));
+            records[0].step.release_owned(runtime);
             debug_assert!(
                 records[0]
                     .parents

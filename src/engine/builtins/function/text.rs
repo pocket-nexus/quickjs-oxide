@@ -173,14 +173,15 @@ impl FunctionTextResume {
         result: NativeConversion<JsString>,
     ) -> Result<FunctionTextStep, RuntimeError> {
         if !self.converted {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant("Function name string before Get"));
         }
         let name = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(FunctionTextStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(FunctionTextStep::Complete(Completion::Throw(value)));
             }
         };
         let prefix = match self.kind {
@@ -215,8 +216,8 @@ pub(crate) fn finish(
                 )?
             }
             FunctionTextStep::String { mut resume } => {
-                let value = runtime.root_and_release_jsvalue(resume.take_string_value())?;
-                resume.string(runtime, runtime.native_to_js_string(realm, &value)?)?
+                let value = resume.take_string_value();
+                resume.string(runtime, runtime.native_to_js_string_jsvalue(realm, value)?)?
             }
         };
     }

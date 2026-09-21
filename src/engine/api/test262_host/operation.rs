@@ -5,7 +5,7 @@ use crate::engine::api::{
 };
 use crate::engine::heap::ContextId;
 use crate::engine::object::CallableRef;
-use crate::engine::value::{JsValue, Value};
+use crate::engine::value::JsValue;
 use crate::engine::vm::{
     Completion,
     call::{NativeArguments, NativeInvocation},
@@ -58,14 +58,23 @@ impl EvalScriptResume {
             Completion::Throw(value) => {
                 return Ok(EvalScriptStep::Complete(Completion::Throw(value)));
             }
-            Completion::Return(value) => match runtime.root_and_release_jsvalue(value)? {
-                Value::String(source) => source,
-                _ => {
-                    return Err(RuntimeError::Invariant(
+            Completion::Return(value) => {
+                let source = match &value {
+                    JsValue::String(id) => runtime
+                        .0
+                        .state
+                        .borrow()
+                        .heap
+                        .string(*id)
+                        .cloned()
+                        .map_err(RuntimeError::from),
+                    _ => Err(RuntimeError::Invariant(
                         "evalScript conversion returned a non-string",
-                    ));
-                }
-            },
+                    )),
+                };
+                runtime.release_jsvalue(value)?;
+                source?
+            }
         };
         let realm = self.realm;
         // The compiler currently accepts UTF-8 source rather than an exact
@@ -88,9 +97,7 @@ impl EvalScriptResume {
         let script = match runtime.compile_in_realm(realm, &source, EVAL_SCRIPT_FILENAME)? {
             Compilation::Published(script) => script,
             Compilation::Throw(value) => {
-                return Ok(EvalScriptStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(EvalScriptStep::Complete(Completion::Throw(value)));
             }
         };
         let callable = runtime.new_bytecode_closure(realm, &script)?;

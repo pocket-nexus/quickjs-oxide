@@ -79,9 +79,9 @@ fn method(
     step: MethodStep,
 ) -> Result<ProxyDefineStep, RuntimeError> {
     Ok(match step {
-        MethodStep::Throw(value) => ProxyDefineStep::Complete(NativeConversion::Throw(
-            runtime.root_and_release_jsvalue(value.take())?,
-        )),
+        MethodStep::Throw(value) => {
+            ProxyDefineStep::Complete(NativeConversion::Throw(value.take()))
+        }
         MethodStep::Read { mut resume } => {
             let object = resume.take_read_object();
             let method_key = resume.take_read_key();
@@ -156,9 +156,7 @@ impl ProxyDefineResume {
     ) -> Result<ProxyDefineStep, RuntimeError> {
         let value = match completion {
             Completion::Throw(value) => {
-                return Ok(ProxyDefineStep::Complete(NativeConversion::Throw(
-                    runtime.root_and_release_jsvalue(value)?,
-                )));
+                return Ok(ProxyDefineStep::Complete(NativeConversion::Throw(value)));
             }
             Completion::Return(value) => value,
         };
@@ -206,6 +204,9 @@ impl ProxyDefineResume {
         result: NativeConversion<InternalDefineResult>,
     ) -> Result<ProxyDefineStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Forward { .. }) {
+            if let NativeConversion::Throw(value) = result {
+                let _ = self.0.pending_effect.runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "Proxy Define continuation received a Define reply",
             ));
@@ -218,6 +219,9 @@ impl ProxyDefineResume {
         result: NativeConversion<Option<OwnedCompletePropertyDescriptor>>,
     ) -> Result<ProxyDefineStep, RuntimeError> {
         let Phase::Invariant { rooted, descriptor } = self.0.phase else {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "Proxy Define continuation received a descriptor reply",
             ));
