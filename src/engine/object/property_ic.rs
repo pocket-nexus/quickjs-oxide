@@ -6,7 +6,6 @@ use crate::engine::api::{runtime::Runtime, runtime_error::RuntimeError};
 use crate::engine::atom::{Atom, AtomIdx, AtomTable};
 use crate::engine::code::bytecode::Instruction;
 use crate::engine::heap::{ContextId, Heap, ObjectId, ObjectKind, PropertySlot, RawValue, ShapeId};
-use crate::engine::value::Value;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Location {
     domain: u64,
@@ -171,7 +170,7 @@ impl Runtime {
         realm: ContextId,
         handler: ObjectId,
         atom: Atom,
-    ) -> Result<Option<Value>, RuntimeError> {
+    ) -> Result<Option<crate::engine::value::JsValue>, RuntimeError> {
         let raw = {
             let state = self.0.state.borrow();
             let cache = &state.proxy_trap_reads[trap];
@@ -198,14 +197,17 @@ impl Runtime {
                 }
             }
         };
-        // String/BigInt clone their backing owner; Object/Symbol retain their
-        // heap count. The handler slot owner keeps the source alive meanwhile.
+        // Retain the same handle; the handler slot keeps the source alive
+        // until this owned result has acquired its edge.
         let mut state = self.0.state.borrow_mut();
         state.retain_raw_root(raw.clone())?;
         drop(state);
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("proxy_trap_read.hit");
-        Ok(Some(self.take_owned_raw_value(raw)?))
+        Ok(Some(
+            crate::engine::value::JsValue::from_raw(raw)
+                .expect("cached trap excludes internal sentinels"),
+        ))
     }
 }
 
@@ -428,6 +430,7 @@ fn event(name: &'static str) {
 mod tests {
     use super::*;
     use crate::engine::api::runtime::Runtime;
+    #[cfg(test)]
     use crate::engine::value::Value;
 
     fn object(value: Value) -> crate::engine::object::ObjectRef {

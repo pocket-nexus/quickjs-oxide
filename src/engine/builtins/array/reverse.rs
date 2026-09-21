@@ -80,9 +80,7 @@ impl ReverseStep {
             match runtime.native_to_object_jsvalue(realm, runtime.dup_jsvalue(this_value)?)? {
                 NativeConversion::Value(value) => value,
                 NativeConversion::Throw(value) => {
-                    return Ok(Self::Complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
+                    return Ok(Self::Complete(Completion::Throw(value)));
                 }
             };
         Ok(Self::request_read(
@@ -152,6 +150,9 @@ impl ReverseResume {
         result: NativeConversion<f64>,
     ) -> Result<ReverseStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Number) {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "Array reverse number phase mismatch",
             ));
@@ -159,9 +160,7 @@ impl ReverseResume {
         self.0.upper = match result {
             NativeConversion::Value(value) => Runtime::length_from_number(value).saturating_sub(1),
             NativeConversion::Throw(value) => {
-                return Ok(ReverseStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(ReverseStep::Complete(Completion::Throw(value)));
             }
         };
         self.next(runtime)
@@ -244,9 +243,7 @@ impl ReverseResume {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(ReverseStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(ReverseStep::Complete(Completion::Throw(value)));
             }
         };
         match self.0.phase {
@@ -301,9 +298,7 @@ impl ReverseResume {
         result: NativeConversion<InternalSetResult>,
     ) -> Result<ReverseStep, RuntimeError> {
         if let Some(value) = runtime.finish_set_property_or_throw(self.0.realm, &key, result)? {
-            return Ok(ReverseStep::Complete(Completion::Throw(
-                runtime.into_jsvalue(value)?,
-            )));
+            return Ok(ReverseStep::Complete(Completion::Throw(value)));
         }
         match self.0.phase {
             Phase::LowerWrite => self.write_upper(runtime),

@@ -13,7 +13,7 @@ impl ArrayNextStep {
         source: crate::engine::heap::ObjectId,
         index: u32,
         kind: ArrayIteratorKind,
-    ) -> Result<Option<Value>, RuntimeError> {
+    ) -> Result<Option<JsValue>, RuntimeError> {
         use crate::engine::atom::{AtomKind, AtomSpelling};
         use crate::engine::heap::{ObjectKind, RawValue};
         if kind == ArrayIteratorKind::KeyAndValue
@@ -38,12 +38,14 @@ impl ArrayNextStep {
             return Ok(None);
         };
         let value = match (kind, raw) {
-            (ArrayIteratorKind::Key, _) => Runtime::array_length_value(index),
-            (_, RawValue::Undefined) => Value::Undefined,
-            (_, RawValue::Null) => Value::Null,
-            (_, RawValue::Bool(value)) => Value::Bool(*value),
-            (_, RawValue::Int(value)) => Value::Int(*value),
-            (_, RawValue::Float(value)) => Value::Float(*value),
+            (ArrayIteratorKind::Key, _) => {
+                i32::try_from(index).map_or(JsValue::Float(f64::from(index)), JsValue::Int)
+            }
+            (_, RawValue::Undefined) => JsValue::Undefined,
+            (_, RawValue::Null) => JsValue::Null,
+            (_, RawValue::Bool(value)) => JsValue::Bool(*value),
+            (_, RawValue::Int(value)) => JsValue::Int(*value),
+            (_, RawValue::Float(value)) => JsValue::Float(*value),
             _ => return Ok(None),
         };
         let shape = state.heap.shape(object.shape)?;
@@ -115,8 +117,9 @@ impl ArrayNextStep {
                 Self::Number { mut resume }
                     if !matches!(resume.requested_value, Some(JsValue::Object(_))) =>
                 {
-                    let value = runtime.root_and_release_jsvalue(resume.take_number())?;
-                    let NumberStep::Complete(result) = NumberStep::start(runtime, realm, value)?
+                    let value = resume.take_number();
+                    let NumberStep::Complete(result) =
+                        NumberStep::start_jsvalue(runtime, realm, value)?
                     else {
                         return Err(RuntimeError::Invariant(
                             "primitive iterator length suspended",
@@ -253,7 +256,8 @@ mod dense_immediate_tests {
                     index as u32,
                     kind
                 )
-                .unwrap(),
+                .unwrap()
+                .map(|value| runtime.root_and_release_jsvalue(value).unwrap()),
                 Some(expected)
             );
             assert_eq!(
@@ -282,6 +286,7 @@ mod dense_immediate_tests {
         assert!(
             ArrayNextStep::dense_immediate_next(&runtime, &iterator, source, 5, kind)
                 .unwrap()
+                .map(|value| runtime.root_and_release_jsvalue(value).unwrap())
                 .is_none()
         );
         assert_eq!(
@@ -317,6 +322,7 @@ mod dense_immediate_tests {
             assert!(
                 ArrayNextStep::dense_immediate_next(&runtime, &iterator, source, 0, kind)
                     .unwrap()
+                    .map(|value| runtime.root_and_release_jsvalue(value).unwrap())
                     .is_none(),
                 "{expression}"
             );
@@ -343,6 +349,7 @@ mod dense_immediate_tests {
         assert!(
             ArrayNextStep::dense_immediate_next(&runtime, &iterator, source, 0, kind)
                 .unwrap()
+                .map(|value| runtime.root_and_release_jsvalue(value).unwrap())
                 .is_none()
         );
         assert!(runtime.0.deferred_references.has_pending());
@@ -359,7 +366,9 @@ mod dense_immediate_tests {
         );
         runtime.drain_deferred_references().unwrap();
         assert_eq!(
-            ArrayNextStep::dense_immediate_next(&runtime, &iterator, source, 0, kind).unwrap(),
+            ArrayNextStep::dense_immediate_next(&runtime, &iterator, source, 0, kind)
+                .unwrap()
+                .map(|value| runtime.root_and_release_jsvalue(value).unwrap()),
             Some(Value::Int(1))
         );
     }
@@ -371,13 +380,15 @@ mod dense_immediate_tests {
         for index in 0..2 {
             assert_eq!(
                 ArrayNextStep::dense_immediate_next(&runtime, &iterator, source, index, kind)
-                    .unwrap(),
+                    .unwrap()
+                    .map(|value| runtime.root_and_release_jsvalue(value).unwrap()),
                 Some(Value::Int(index as i32))
             );
         }
         assert!(
             ArrayNextStep::dense_immediate_next(&runtime, &iterator, source, 2, kind)
                 .unwrap()
+                .map(|value| runtime.root_and_release_jsvalue(value).unwrap())
                 .is_none()
         );
         assert_eq!(live_next_index(u32::MAX - 1, u32::MAX), Some(u32::MAX));

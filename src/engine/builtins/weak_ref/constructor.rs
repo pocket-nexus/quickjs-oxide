@@ -129,9 +129,7 @@ impl WeakConstructorResume {
     ) -> Result<WeakConstructorStep, RuntimeError> {
         let prototype = match reply {
             NativeConversion::Throw(value) => {
-                return Ok(WeakConstructorStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(WeakConstructorStep::Complete(Completion::Throw(value)));
             }
             NativeConversion::Value(ConstructorPrototypeSource::Explicit(prototype)) => prototype,
             NativeConversion::Value(ConstructorPrototypeSource::Realm(realm)) => {

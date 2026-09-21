@@ -20,11 +20,12 @@ pub(crate) struct LinkedNativeSelection {
     data: crate::engine::builtins::native::NativeFunctionData,
 }
 impl LinkedNativeSelection {
-    pub(crate) fn into_parts(
+    pub(crate) fn into_parts_jsvalue(
         self,
-        function: &ObjectRef,
+        runtime: &Runtime,
+        function: ObjectId,
     ) -> Option<crate::engine::builtins::native::NativeFunctionData> {
-        (function.belongs_to(&self.runtime) && function.object_id() == self.function)
+        (runtime.domain_id() == self.runtime.domain_id() && function == self.function)
             .then_some(self.data)
     }
 }
@@ -1700,7 +1701,11 @@ mod ordinary_field_leaf_tests {
             panic!("own native")
         };
         drop(context.eval("selectedNative.x=Math.max").unwrap());
-        let data = fact.take().unwrap().into_parts(&callee).unwrap();
+        let data = fact
+            .take()
+            .unwrap()
+            .into_parts_jsvalue(callee.runtime(), callee.object_id())
+            .unwrap();
         assert_eq!(
             data.target,
             NativeFunctionId::MathMinMax(MathMinMaxKind::Min)
@@ -1711,7 +1716,12 @@ mod ordinary_field_leaf_tests {
                 .prepare_linked_own_read_selected(&base, &code, index, Some(&mut fact))
                 .unwrap(),
         );
-        assert!(fact.take().unwrap().into_parts(&callee).is_none());
+        assert!(
+            fact.take()
+                .unwrap()
+                .into_parts_jsvalue(callee.runtime(), callee.object_id())
+                .is_none()
+        );
         release_read(
             &runtime,
             runtime
@@ -1723,7 +1733,12 @@ mod ordinary_field_leaf_tests {
         let Value::Object(foreign_callee) = foreign_context.eval("Math.max").unwrap() else {
             panic!("native")
         };
-        assert!(fact.take().unwrap().into_parts(&foreign_callee).is_none());
+        assert!(
+            fact.take()
+                .unwrap()
+                .into_parts_jsvalue(foreign_callee.runtime(), foreign_callee.object_id())
+                .is_none()
+        );
         runtime.release_jsvalue(base).unwrap();
     }
 

@@ -152,9 +152,13 @@ impl RegExpIteratorResume {
         self.0.scheduler_set_key.take().expect("waiting Set key")
     }
 
-    fn abrupt(self, runtime: &Runtime, value: Value) -> Result<RegExpIteratorStep, RuntimeError> {
+    fn abrupt(
+        self,
+        _runtime: &Runtime,
+        value: JsValue,
+    ) -> Result<RegExpIteratorStep, RuntimeError> {
         Ok(RegExpIteratorStep::Complete(
-            NativeInvokeOutcome::Completion(Completion::Throw(runtime.into_jsvalue(value)?)),
+            NativeInvokeOutcome::Completion(Completion::Throw(value)),
         ))
     }
     fn yielded(mut self) -> Result<RegExpIteratorStep, RuntimeError> {
@@ -283,6 +287,9 @@ impl RegExpIteratorResume {
         reply: NativeConversion<JsString>,
     ) -> Result<RegExpIteratorStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::MatchString) {
+            if let NativeConversion::Throw(value) = reply {
+                runtime.release_jsvalue(value)?;
+            }
             return Err(RuntimeError::Invariant(
                 "RegExp iterator string phase mismatch",
             ));
@@ -308,6 +315,9 @@ impl RegExpIteratorResume {
         reply: NativeConversion<InternalSetResult>,
     ) -> Result<RegExpIteratorStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Set) {
+            if let NativeConversion::Throw(value) = reply {
+                runtime.release_jsvalue(value)?;
+            }
             return Err(RuntimeError::Invariant(
                 "RegExp iterator set phase mismatch",
             ));

@@ -489,9 +489,7 @@ impl RegExpConstructorResume {
                 )?
             }
             NativeConversion::Throw(value) => {
-                return Ok(RegExpConstructorStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(RegExpConstructorStep::Complete(Completion::Throw(value)));
             }
         };
         let object = runtime.new_uninitialized_regexp(&prototype)?;
@@ -601,9 +599,7 @@ impl RegExpConstructorResume {
                 let pattern = match result? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(RegExpConstructorStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(RegExpConstructorStep::Complete(Completion::Throw(value)));
                     }
                 };
                 self.lookup(runtime, RegExpPublication::Compile { pattern })
@@ -619,9 +615,7 @@ impl RegExpConstructorResume {
                 let flags = match result? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(RegExpConstructorStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(RegExpConstructorStep::Complete(Completion::Throw(value)));
                     }
                 };
                 Self::publish(runtime, object, pattern, flags)

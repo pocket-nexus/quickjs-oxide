@@ -168,9 +168,7 @@ impl BufferConstructorResume {
                 let length = match primitive_index(runtime, self.0.realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(BufferConstructorStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(BufferConstructorStep::Complete(Completion::Throw(value)));
                     }
                 };
                 if let Some(options) = &self.0.options {
@@ -215,9 +213,7 @@ impl BufferConstructorResume {
                 let maximum = match number? {
                     NativeConversion::Value(number) => super::quickjs_to_int64_free(number),
                     NativeConversion::Throw(value) => {
-                        return Ok(BufferConstructorStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(BufferConstructorStep::Complete(Completion::Throw(value)));
                     }
                 };
                 if maximum > MAX_SAFE_INTEGER_I64 || length > maximum as u64 {
@@ -254,9 +250,7 @@ impl BufferConstructorResume {
                 }
             }
             NativeConversion::Throw(value) => {
-                return Ok(BufferConstructorStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(BufferConstructorStep::Complete(Completion::Throw(value)));
             }
         };
         let ConstructorPhase::Prototype { length, maximum } = self.0.phase else {

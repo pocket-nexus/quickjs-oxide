@@ -155,9 +155,7 @@ impl TypedWriteStep {
             } => {
                 // This is the public context-free primitive conversion boundary.
                 // No descriptor or storage value is re-admitted to the heap.
-                let bytes = runtime.root_value(&value).and_then(|value| {
-                    runtime.typed_array_convert_primitive_element(element, &value)
-                });
+                let bytes = runtime.typed_array_convert_primitive_element_jsvalue(element, &value);
                 runtime.release_jsvalue(value)?;
                 let Self::Complete(result) =
                     resume.element(runtime, NativeConversion::Value(bytes?))?
@@ -314,11 +312,14 @@ mod tests {
                 runtime.release_jsvalue(value).unwrap();
                 runtime.release_jsvalue(receiver).unwrap();
                 assert!(matches!(
-                    (expected, result),
+                    (expected, &result),
                     ("decline", None)
                         | ("stored" | "ignore", Some(NativeConversion::Value(true)))
                         | ("throw", Some(NativeConversion::Throw(_)))
                 ));
+                if let Some(NativeConversion::Throw(value)) = result {
+                    runtime.release_jsvalue(value).unwrap();
+                }
                 assert_eq!(
                     runtime.typed_array_read_index(&object, 0).unwrap(),
                     Some(Value::Int(if expected == "stored" { 1 } else { 0 }))
@@ -354,12 +355,13 @@ mod tests {
             Some(NativeConversion::Value(true))
         ));
         let bigint = runtime.into_jsvalue(context.eval("1n").unwrap()).unwrap();
-        assert!(matches!(
-            runtime
-                .try_typed_array_set_primitive(context.realm, &object, &key, &bigint, &receiver)
-                .unwrap(),
-            Some(NativeConversion::Throw(_))
-        ));
+        let Some(NativeConversion::Throw(thrown)) = runtime
+            .try_typed_array_set_primitive(context.realm, &object, &key, &bigint, &receiver)
+            .unwrap()
+        else {
+            panic!("expected conversion throw")
+        };
+        runtime.release_jsvalue(thrown).unwrap();
         let other_receiver = JsValue::Object(runtime.new_object(None).unwrap().into_handle());
         assert!(matches!(
             runtime

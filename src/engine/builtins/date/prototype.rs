@@ -98,7 +98,7 @@ impl Runtime {
         this_value: &JsValue,
     ) -> Result<NativeConversion<(ObjectRef, f64)>, RuntimeError> {
         let JsValue::Object(id) = this_value else {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "not a Date object",
@@ -148,7 +148,7 @@ impl Runtime {
             }
         };
         let Some(value) = value else {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "not a Date object",
@@ -180,7 +180,7 @@ impl Runtime {
         let (_, value) = match self.date_this_time_value_jsvalue(realm, this_value)? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                return Ok(Completion::Throw(value));
             }
         };
         Ok(Completion::Return(
@@ -201,7 +201,7 @@ impl Runtime {
         let (_, value) = match self.date_this_time_value_jsvalue(realm, this_value)? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                return Ok(Completion::Throw(value));
             }
         };
         let kind = date_format_kind(method);
@@ -232,7 +232,7 @@ impl Runtime {
         let (_, value) = match self.date_this_time_value_jsvalue(realm, this_value)? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                return Ok(Completion::Throw(value));
             }
         };
         let Some(fields) = get_date_fields(value, field.uses_local_time(), false, |instant| {
@@ -259,7 +259,7 @@ impl Runtime {
         let (_, value) = match self.date_this_time_value_jsvalue(realm, this_value)? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                return Ok(Completion::Throw(value));
             }
         };
         if value.is_nan() {

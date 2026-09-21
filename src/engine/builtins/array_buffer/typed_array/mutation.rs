@@ -156,7 +156,7 @@ impl Runtime {
         let target = match self.require_typed_array_jsvalue(realm, this_value)? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                return Ok(Completion::Throw(value));
             }
         };
         let current = self.typed_array_state(&target)?;
@@ -284,17 +284,13 @@ impl TypedMutationStep {
         let target = match runtime.require_typed_array_jsvalue(realm, this_value)? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(Self::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(Self::Complete(Completion::Throw(value)));
             }
         };
         let length = match runtime.typed_array_validated_length(realm, &target)? {
             NativeConversion::Value(value) => i64::from(value),
             NativeConversion::Throw(value) => {
-                return Ok(Self::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(Self::Complete(Completion::Throw(value)));
             }
         };
         let phase = match kind {
@@ -345,9 +341,7 @@ impl TypedMutationResume {
         let bytes = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(TypedMutationStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(TypedMutationStep::Complete(Completion::Throw(value)));
             }
         };
         let Phase::FillValue { element } = self.0.phase else {
@@ -389,9 +383,7 @@ impl TypedMutationResume {
                 index.clamp(0, self.0.length)
             }
             NativeConversion::Throw(value) => {
-                return Ok(TypedMutationStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(TypedMutationStep::Complete(Completion::Throw(value)));
             }
         };
         match self.0.phase {

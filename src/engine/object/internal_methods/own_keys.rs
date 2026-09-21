@@ -40,21 +40,35 @@ pub(crate) struct KeysResumeState {
     realm: ContextId,
     phase: Phase,
 }
+impl Drop for KeysResumeState {
+    fn drop(&mut self) {
+        let list = match &mut self.phase {
+            Phase::Length { list, .. } | Phase::Number { list, .. } | Phase::Item { list, .. } => {
+                Some(std::mem::replace(list, JsValue::Undefined))
+            }
+            _ => None,
+        };
+        if let Some(value) = list {
+            let _ = self.pending_effect.runtime.release_jsvalue(value);
+        }
+    }
+}
 enum Phase {
+    Vacant,
     Method(MethodResume),
     Forward(RootedProxy),
     Trap(RootedProxy),
     Length {
         rooted: RootedProxy,
-        list: Value,
+        list: JsValue,
     },
     Number {
         rooted: RootedProxy,
-        list: Value,
+        list: JsValue,
     },
     Item {
         rooted: RootedProxy,
-        list: Value,
+        list: JsValue,
         length: u32,
         keys: Vec<PropertyKey>,
     },
@@ -110,9 +124,7 @@ fn method(runtime: &Runtime, realm: ContextId, step: MethodStep) -> Result<KeysS
                 })),
             )
         }
-        MethodStep::Throw(value) => KeysStep::Complete(NativeConversion::Throw(
-            runtime.root_and_release_jsvalue(value.take())?,
-        )),
+        MethodStep::Throw(value) => KeysStep::Complete(NativeConversion::Throw(value.take())),
         MethodStep::Complete { mut resume } => {
             let rooted = resume.take_completed_rooted();
             let target = resume.take_completed_target();
@@ -142,56 +154,58 @@ fn method(runtime: &Runtime, realm: ContextId, step: MethodStep) -> Result<KeysS
 }
 fn fail(runtime: &Runtime, realm: ContextId, message: &str) -> Result<KeysStep, RuntimeError> {
     Ok(KeysStep::Complete(NativeConversion::Throw(
-        runtime.new_native_error(realm, NativeErrorKind::Type, message)?,
+        runtime.new_native_error_jsvalue(realm, NativeErrorKind::Type, message)?,
     )))
 }
 fn items(
     runtime: &Runtime,
     realm: ContextId,
     rooted: RootedProxy,
-    list: Value,
+    list: JsValue,
     length: u32,
     keys: Vec<PropertyKey>,
 ) -> Result<KeysStep, RuntimeError> {
+    let mut resume = KeysResume(Box::new(KeysResumeState {
+        pending_effect: KeysStepPending::new(runtime.clone()),
+        realm,
+        phase: Phase::Item {
+            rooted,
+            list,
+            length,
+            keys,
+        },
+    }));
+    let Phase::Item { list, keys, .. } = &resume.0.phase else {
+        unreachable!()
+    };
     if keys.len() < length as usize {
         let key = runtime.intern_property_key(&keys.len().to_string())?;
-        return Ok(KeysStep::request_read(
-            runtime.into_jsvalue(list.clone())?,
-            key,
-            KeysResume(Box::new(KeysResumeState {
-                pending_effect: KeysStepPending::new(runtime.clone()),
-                realm,
-                phase: Phase::Item {
-                    rooted,
-                    list,
-                    length,
-                    keys,
-                },
-            })),
-        ));
+        let receiver = runtime.dup_jsvalue(list)?;
+        return Ok(KeysStep::request_read(receiver, key, resume));
     }
-    // Pinned QuickJS reads every list element before it reports duplicate keys.
     let mut atoms = HashSet::new();
     atoms
         .try_reserve(keys.len())
         .map_err(|_| RuntimeError::Invariant("Proxy ownKeys set allocation failed"))?;
-    for key in &keys {
+    for key in keys {
         if !atoms.insert(key.atom()) {
             return fail(runtime, realm, "proxy: duplicate property");
         }
     }
-    Ok(KeysStep::request_extensible(
-        rooted.target.clone(),
-        KeysResume(Box::new(KeysResumeState {
-            pending_effect: KeysStepPending::new(runtime.clone()),
-            realm,
-            phase: Phase::Extensible {
-                rooted,
-                keys,
-                atoms,
-            },
-        })),
-    ))
+    let Phase::Item {
+        rooted, list, keys, ..
+    } = std::mem::replace(&mut resume.0.phase, Phase::Vacant)
+    else {
+        unreachable!()
+    };
+    runtime.release_jsvalue(list)?;
+    let object = rooted.target.clone();
+    resume.0.phase = Phase::Extensible {
+        rooted,
+        keys,
+        atoms,
+    };
+    Ok(KeysStep::request_extensible(object, resume))
 }
 fn check_next(
     runtime: &Runtime,
@@ -223,36 +237,45 @@ fn check_next(
 }
 impl KeysResume {
     pub(crate) fn resume(
-        self,
+        mut self,
         runtime: &Runtime,
         result: Completion,
     ) -> Result<KeysStep, RuntimeError> {
+        if !matches!(
+            &self.0.phase,
+            Phase::Method(_) | Phase::Trap(_) | Phase::Length { .. } | Phase::Item { .. }
+        ) {
+            let (Completion::Return(value) | Completion::Throw(value)) = result;
+            let _ = runtime.release_jsvalue(value);
+            return Err(RuntimeError::Invariant(
+                "ownKeys received an unexpected resume reply",
+            ));
+        }
         let value = match result {
             Completion::Return(value) => value,
             Completion::Throw(value) => {
-                return Ok(KeysStep::Complete(NativeConversion::Throw(
-                    runtime.root_and_release_jsvalue(value)?,
-                )));
+                return Ok(KeysStep::Complete(NativeConversion::Throw(value)));
             }
         };
         let realm = self.0.realm;
-        match self.0.phase {
+        match std::mem::replace(&mut self.0.phase, Phase::Vacant) {
             Phase::Method(resume) => method(
                 runtime,
                 realm,
                 resume.resume(runtime, Completion::Return(value))?,
             ),
             Phase::Trap(rooted) => {
-                let list = runtime.root_and_release_jsvalue(value)?;
-                Ok(KeysStep::request_read(
-                    runtime.into_jsvalue(list.clone())?,
-                    runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
-                    Self(Box::new(KeysResumeState {
-                        pending_effect: KeysStepPending::new(runtime.clone()),
-                        realm,
-                        phase: Phase::Length { rooted, list },
-                    })),
-                ))
+                self.0.phase = Phase::Length {
+                    rooted,
+                    list: value,
+                };
+                let key =
+                    runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
+                let Phase::Length { list, .. } = &self.0.phase else {
+                    unreachable!()
+                };
+                let receiver = runtime.dup_jsvalue(list)?;
+                Ok(KeysStep::request_read(receiver, key, self))
             }
             Phase::Length { rooted, list } => Ok(KeysStep::request_number(
                 value,
@@ -266,18 +289,36 @@ impl KeysResume {
                 rooted,
                 list,
                 length,
-                mut keys,
+                keys,
             } => {
-                let key = match runtime.root_and_release_jsvalue(value)? {
-                    Value::String(value) => runtime.intern_property_key_js_string(&value)?,
-                    Value::Symbol(value) => PropertyKey::from(value),
-                    _ => {
-                        return fail(
-                            runtime,
-                            realm,
-                            "proxy: properties must be strings or symbols",
-                        );
+                self.0.phase = Phase::Item {
+                    rooted,
+                    list,
+                    length,
+                    keys,
+                };
+                if !matches!(value, JsValue::String(_) | JsValue::Symbol(_)) {
+                    runtime.release_jsvalue(value)?;
+                    return fail(
+                        runtime,
+                        realm,
+                        "proxy: properties must be strings or symbols",
+                    );
+                }
+                let key = match runtime.property_key_from_primitive_jsvalue(realm, value)? {
+                    NativeConversion::Value(key) => key,
+                    NativeConversion::Throw(value) => {
+                        return Ok(KeysStep::Complete(NativeConversion::Throw(value)));
                     }
+                };
+                let Phase::Item {
+                    rooted,
+                    list,
+                    length,
+                    mut keys,
+                } = std::mem::replace(&mut self.0.phase, Phase::Vacant)
+                else {
+                    unreachable!()
                 };
                 keys.push(key);
                 items(runtime, realm, rooted, list, length, keys)
@@ -286,15 +327,25 @@ impl KeysResume {
         }
     }
     pub(crate) fn number(
-        self,
+        mut self,
         runtime: &Runtime,
         result: NativeConversion<f64>,
     ) -> Result<KeysStep, RuntimeError> {
-        let Phase::Number { rooted, list } = self.0.phase else {
+        if !matches!(&self.0.phase, Phase::Number { .. }) {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
+            return Err(RuntimeError::Invariant(
+                "ownKeys received an unexpected number reply",
+            ));
+        }
+        let Phase::Number { rooted, list } = std::mem::replace(&mut self.0.phase, Phase::Vacant)
+        else {
             return Err(RuntimeError::Invariant(
                 "ownKeys received unexpected numeric reply",
             ));
         };
+        self.0.phase = Phase::Number { rooted, list };
         let length = match result {
             NativeConversion::Value(value) => Runtime::to_uint32_number(value),
             NativeConversion::Throw(value) => {
@@ -304,18 +355,30 @@ impl KeysResume {
         let mut keys = Vec::new();
         keys.try_reserve_exact(length as usize)
             .map_err(|_| RuntimeError::Invariant("Proxy ownKeys list allocation failed"))?;
+        let Phase::Number { rooted, list } = std::mem::replace(&mut self.0.phase, Phase::Vacant)
+        else {
+            unreachable!()
+        };
         items(runtime, self.0.realm, rooted, list, length, keys)
     }
     pub(crate) fn boolean(
-        self,
+        mut self,
         runtime: &Runtime,
         result: NativeConversion<bool>,
     ) -> Result<KeysStep, RuntimeError> {
+        if !matches!(&self.0.phase, Phase::Extensible { .. }) {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
+            return Err(RuntimeError::Invariant(
+                "ownKeys received an unexpected boolean reply",
+            ));
+        }
         let Phase::Extensible {
             rooted,
             keys,
             atoms,
-        } = self.0.phase
+        } = std::mem::replace(&mut self.0.phase, Phase::Vacant)
         else {
             return Err(RuntimeError::Invariant(
                 "ownKeys received unexpected boolean reply",
@@ -347,17 +410,25 @@ impl KeysResume {
         ))
     }
     pub(crate) fn keys(
-        self,
+        mut self,
         runtime: &Runtime,
         result: NativeConversion<Vec<PropertyKey>>,
     ) -> Result<KeysStep, RuntimeError> {
+        if !matches!(&self.0.phase, Phase::Forward(_) | Phase::TargetKeys { .. }) {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
+            return Err(RuntimeError::Invariant(
+                "ownKeys received an unexpected keys reply",
+            ));
+        }
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
                 return Ok(KeysStep::Complete(NativeConversion::Throw(value)));
             }
         };
-        match self.0.phase {
+        match std::mem::replace(&mut self.0.phase, Phase::Vacant) {
             Phase::Forward(_rooted) => Ok(KeysStep::Complete(NativeConversion::Value(value))),
             Phase::TargetKeys {
                 rooted,
@@ -381,11 +452,21 @@ impl KeysResume {
         }
     }
     pub(crate) fn descriptor(
-        self,
+        mut self,
         runtime: &Runtime,
         result: NativeConversion<Option<crate::engine::object::OwnedCompletePropertyDescriptor>>,
     ) -> Result<KeysStep, RuntimeError> {
-        let Phase::Descriptor { mut state, key } = self.0.phase else {
+        if !matches!(&self.0.phase, Phase::Descriptor { .. }) {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
+            return Err(RuntimeError::Invariant(
+                "ownKeys received an unexpected descriptor reply",
+            ));
+        }
+        let Phase::Descriptor { mut state, key } =
+            std::mem::replace(&mut self.0.phase, Phase::Vacant)
+        else {
             return Err(RuntimeError::Invariant(
                 "ownKeys received unexpected descriptor reply",
             ));
@@ -422,36 +503,32 @@ pub(super) fn finish(
         step = match step {
             KeysStep::Complete(result) => return Ok(result),
             KeysStep::Read { mut resume } => {
-                let receiver = runtime.root_and_release_jsvalue(resume.take_read_receiver())?;
+                let receiver = resume.take_read_receiver();
                 let key = resume.take_read_key();
                 resume.resume(
                     runtime,
-                    runtime.get_value_property_in_realm(realm, receiver, &key)?,
+                    runtime.get_value_property_in_realm_jsvalue(realm, receiver, &key)?,
                 )?
             }
             KeysStep::Call { mut resume } => {
                 let target = resume.take_call_target();
-                let receiver = runtime.root_and_release_jsvalue(resume.take_call_receiver())?;
-                let arguments = resume
-                    .take_call_arguments()
-                    .into_iter()
-                    .map(|value| runtime.root_and_release_jsvalue(value))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let receiver = resume.take_call_receiver();
+                let arguments = resume.take_call_arguments();
                 {
                     let completion = match target {
                         DirectCallTarget::Callable(callable) => {
-                            runtime.call_internal(realm, &callable, receiver, &arguments)?
+                            runtime.call_internal_jsvalue(realm, &callable, receiver, arguments)?
                         }
                         DirectCallTarget::NonCallableProxy(proxy) => {
-                            runtime.call_proxy(realm, &proxy, receiver, &arguments)?
+                            runtime.call_proxy_jsvalue(realm, &proxy, receiver, arguments)?
                         }
                     };
                     resume.resume(runtime, completion)?
                 }
             }
             KeysStep::Number { mut resume } => {
-                let value = runtime.root_and_release_jsvalue(resume.take_number_value())?;
-                resume.number(runtime, runtime.native_to_number(realm, &value)?)?
+                let value = resume.take_number_value();
+                resume.number(runtime, runtime.native_to_number_jsvalue(realm, value)?)?
             }
             KeysStep::Keys { mut resume } => {
                 let object = resume.take_keys_object();

@@ -351,9 +351,7 @@ impl StringReplaceResumeState {
                 let flags = match primitive_string(runtime, realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(StringReplaceAction::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(StringReplaceAction::Complete(Completion::Throw(value)));
                     }
                 };
                 if !flags.utf16_units().any(|unit| unit == u16::from(b'g')) {
@@ -432,9 +430,7 @@ impl StringReplaceResumeState {
                         text
                     }
                     NativeConversion::Throw(value) => {
-                        return Ok(StringReplaceAction::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(StringReplaceAction::Complete(Completion::Throw(value)));
                     }
                 });
                 self.phase = Phase::Search;
@@ -450,9 +446,7 @@ impl StringReplaceResumeState {
                         text
                     }
                     NativeConversion::Throw(value) => {
-                        return Ok(StringReplaceAction::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(StringReplaceAction::Complete(Completion::Throw(value)));
                     }
                 };
                 let functional = match &self.replace_value {
@@ -492,9 +486,7 @@ impl StringReplaceResumeState {
                 let replacement = match primitive_string(runtime, realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(StringReplaceAction::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(StringReplaceAction::Complete(Completion::Throw(value)));
                     }
                 };
                 self.cursor
@@ -511,9 +503,7 @@ impl StringReplaceResumeState {
                 let result = match primitive_string(runtime, realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(StringReplaceAction::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(StringReplaceAction::Complete(Completion::Throw(value)));
                     }
                 };
                 let state = self
@@ -649,15 +639,13 @@ impl StringReplaceResumeState {
                         NativeConversion::Value(_) => Err(RuntimeError::Invariant(
                             "failed replacement buffer unexpectedly completed",
                         )),
-                        NativeConversion::Throw(value) => Ok(StringReplaceAction::Complete(
-                            Completion::Throw(runtime.into_jsvalue(value)?),
-                        )),
+                        NativeConversion::Throw(value) => {
+                            Ok(StringReplaceAction::Complete(Completion::Throw(value)))
+                        }
                     };
                 }
                 Err(value) => {
-                    return Ok(StringReplaceAction::Complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
+                    return Ok(StringReplaceAction::Complete(Completion::Throw(value)));
                 }
             }
             state.end = position + state.search.len();
@@ -680,7 +668,7 @@ impl StringReplaceResumeState {
                 NativeConversion::Value(value) => {
                     Completion::Return(runtime.into_jsvalue(Value::String(value))?)
                 }
-                NativeConversion::Throw(value) => Completion::Throw(runtime.into_jsvalue(value)?),
+                NativeConversion::Throw(value) => Completion::Throw(value),
             },
         ))
     }
@@ -741,9 +729,7 @@ impl Runtime {
                                     NativeConversion::Value(value) => {
                                         Completion::Return(value.unwrap_or(JsValue::Undefined))
                                     }
-                                    NativeConversion::Throw(value) => {
-                                        Completion::Throw(self.into_jsvalue(value)?)
-                                    }
+                                    NativeConversion::Throw(value) => Completion::Throw(value),
                                 };
                             resume.resume(self, result)?
                         }

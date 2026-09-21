@@ -61,7 +61,7 @@ impl Runtime {
             match self.typed_array_copy_to_default(realm, &source, element, initial_length)? {
                 NativeConversion::Value(value) => value,
                 NativeConversion::Throw(value) => {
-                    return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                    return Ok(Completion::Throw(value));
                 }
             };
         let index = u64::try_from(index)
@@ -76,7 +76,7 @@ impl Runtime {
         {
             NativeConversion::Value(_) => {}
             NativeConversion::Throw(value) => {
-                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                return Ok(Completion::Throw(value));
             }
         }
         Ok(Completion::Return(JsValue::Object(target.into_handle())))
@@ -95,7 +95,7 @@ impl Runtime {
         let source = match self.require_typed_array_jsvalue(realm, this_value)? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                return Ok(Completion::Throw(value));
             }
         };
         let state = self.typed_array_state(&source)?;
@@ -107,7 +107,7 @@ impl Runtime {
         )? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                return Ok(Completion::Throw(value));
             }
         };
         let target_state = self.typed_array_state(&target)?;
@@ -162,7 +162,7 @@ impl Runtime {
     ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
         let source_state = self.typed_array_state_from_snapshot(source_snapshot)?;
         if source_state.out_of_bounds {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "ArrayBuffer is detached or resized",
@@ -176,7 +176,7 @@ impl Runtime {
 
         let source_state = self.typed_array_state(source)?;
         if source_state.out_of_bounds {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "ArrayBuffer is detached or resized",
@@ -281,9 +281,7 @@ impl TypedWithStep {
         let source = match runtime.require_typed_array_jsvalue(realm, this_value)? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(Self::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(Self::Complete(Completion::Throw(value)));
             }
         };
         let initial = runtime.typed_array_state(&source)?;
@@ -332,9 +330,7 @@ impl TypedWithResume {
                 let index = match number? {
                     NativeConversion::Value(number) => Runtime::int64_from_number(number),
                     NativeConversion::Throw(value) => {
-                        return Ok(TypedWithStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(TypedWithStep::Complete(Completion::Throw(value)));
                     }
                 };
                 let index = if index < 0 {

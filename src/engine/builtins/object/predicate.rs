@@ -103,9 +103,7 @@ impl PredicateStep {
                 match runtime.native_to_object_jsvalue(realm, runtime.dup_jsvalue(value)?)? {
                     NativeConversion::Value(object) => object,
                     NativeConversion::Throw(value) => {
-                        return Ok(Self::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(Self::Complete(Completion::Throw(value)));
                     }
                 };
             (
@@ -117,9 +115,7 @@ impl PredicateStep {
                 match runtime.native_to_object_jsvalue(realm, runtime.dup_jsvalue(this_value)?)? {
                     NativeConversion::Value(object) => object,
                     NativeConversion::Throw(value) => {
-                        return Ok(Self::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(Self::Complete(Completion::Throw(value)));
                     }
                 };
             (
@@ -199,9 +195,7 @@ impl PredicateResume {
         let key = match runtime.property_key_from_primitive_jsvalue(self.0.realm, value)? {
             NativeConversion::Value(key) => key,
             NativeConversion::Throw(value) => {
-                return Ok(PredicateStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(PredicateStep::Complete(Completion::Throw(value)));
             }
         };
         let object = match runtime
@@ -209,9 +203,7 @@ impl PredicateResume {
         {
             NativeConversion::Value(object) => object,
             NativeConversion::Throw(value) => {
-                return Ok(PredicateStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(PredicateStep::Complete(Completion::Throw(value)));
             }
         };
         let resume = {
@@ -248,7 +240,7 @@ impl PredicateResume {
     }
     pub(crate) fn boolean(
         self,
-        runtime: &Runtime,
+        _runtime: &Runtime,
         result: NativeConversion<bool>,
     ) -> Result<PredicateStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Own(_))
@@ -257,13 +249,16 @@ impl PredicateResume {
                 PredicateKind::Define(_) | PredicateKind::Lookup(_)
             )
         {
+            if let NativeConversion::Throw(value) = result {
+                let _ = _runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "own predicate received a boolean before key conversion",
             ));
         }
         Ok(PredicateStep::Complete(match result {
             NativeConversion::Value(value) => Completion::Return(JsValue::Bool(value)),
-            NativeConversion::Throw(value) => Completion::Throw(runtime.into_jsvalue(value)?),
+            NativeConversion::Throw(value) => Completion::Throw(value),
         }))
     }
 }
@@ -275,18 +270,24 @@ impl PredicateResume {
     ) -> Result<PredicateStep, RuntimeError> {
         let Phase::Own(key) = std::mem::replace(&mut self.0.phase, Phase::Key { accessor: None })
         else {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "accessor definition has wrong phase",
             ));
         };
         if !matches!(self.0.kind, PredicateKind::Define(_)) {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "accessor definition has wrong kind",
             ));
         }
         Ok(PredicateStep::Complete(
             match runtime.finish_define_property_or_throw(self.0.realm, &key, result)? {
-                Some(value) => Completion::Throw(runtime.into_jsvalue(value)?),
+                Some(value) => Completion::Throw(value),
                 None => Completion::Return(JsValue::Undefined),
             },
         ))
@@ -298,17 +299,21 @@ impl PredicateResume {
     ) -> Result<PredicateStep, RuntimeError> {
         let Phase::Own(key) = std::mem::replace(&mut self.0.phase, Phase::Key { accessor: None })
         else {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant("accessor lookup has wrong phase"));
         };
         let PredicateKind::Lookup(kind) = self.0.kind else {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant("accessor lookup has wrong kind"));
         };
         let descriptor = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(PredicateStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(PredicateStep::Complete(Completion::Throw(value)));
             }
         };
         let Some(descriptor) = descriptor else {
@@ -351,14 +356,15 @@ impl PredicateResume {
         let Phase::Prototype(key) =
             std::mem::replace(&mut self.0.phase, Phase::Key { accessor: None })
         else {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "accessor prototype reply has wrong phase",
             ));
         };
         Ok(match result {
-            NativeConversion::Throw(value) => {
-                PredicateStep::Complete(Completion::Throw(runtime.into_jsvalue(value)?))
-            }
+            NativeConversion::Throw(value) => PredicateStep::Complete(Completion::Throw(value)),
             NativeConversion::Value(None) => {
                 PredicateStep::Complete(Completion::Return(JsValue::Undefined))
             }

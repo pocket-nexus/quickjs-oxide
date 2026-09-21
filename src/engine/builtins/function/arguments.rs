@@ -65,7 +65,7 @@ impl ArgumentsStep {
         let JsValue::Object(carrier) = value else {
             runtime.release_jsvalue(value)?;
             return Ok(Self::Complete(NativeConversion::Throw(
-                runtime.new_native_error(realm, NativeErrorKind::Type, "not a object")?,
+                runtime.new_native_error_jsvalue(realm, NativeErrorKind::Type, "not a object")?,
             )));
         };
         let carrier = ObjectRef::from_owned_handle(runtime.clone(), carrier);
@@ -97,9 +97,7 @@ impl ArgumentsResume {
         let value = match result {
             Completion::Return(value) => value,
             Completion::Throw(value) => {
-                return Ok(ArgumentsStep::Complete(NativeConversion::Throw(
-                    runtime.root_and_release_jsvalue(value)?,
-                )));
+                return Ok(ArgumentsStep::Complete(NativeConversion::Throw(value)));
             }
         };
         match std::mem::replace(&mut self.0.phase, Phase::Number) {
@@ -128,6 +126,9 @@ impl ArgumentsResume {
         result: NativeConversion<f64>,
     ) -> Result<ArgumentsStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Number) {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "argument number reply has no length phase",
             ));
@@ -141,7 +142,7 @@ impl ArgumentsResume {
         let length = Runtime::length_from_number(number);
         if length > MAX_APPLY_ARGUMENTS {
             return Ok(ArgumentsStep::Complete(NativeConversion::Throw(
-                runtime.new_native_error(
+                runtime.new_native_error_jsvalue(
                     self.0.realm,
                     NativeErrorKind::Range,
                     "too many arguments in function call (only 65534 allowed)",

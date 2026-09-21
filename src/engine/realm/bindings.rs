@@ -278,9 +278,11 @@ impl Runtime {
                 let value = state.heap.var_ref(root.id())?.value.clone();
                 (flags, value)
             };
-            let value = self.root_raw_value(value.clone())?;
-            let replacement = self.new_var_ref_rooted(
-                value,
+            let value = JsValue::from_raw(value).ok_or(RuntimeError::Invariant(
+                "global property contains a private sentinel",
+            ))?;
+            let replacement = self.new_var_ref(
+                self.dup_jsvalue(&value)?,
                 false,
                 !flags.writable,
                 ClosureVariableKind::Normal,
@@ -474,8 +476,10 @@ impl Runtime {
                 }
             }
             PropertySlot::Data(value) => {
-                let value = self.into_jsvalue(self.root_raw_value(value.clone())?)?;
-                self.write_var_ref(&root, value)?;
+                let value = JsValue::from_raw(value.clone()).ok_or(RuntimeError::Invariant(
+                    "global property contains a private sentinel",
+                ))?;
+                self.write_var_ref(&root, self.dup_jsvalue(&value)?)?;
                 if hidden_root
                     .as_ref()
                     .is_none_or(|hidden_root| hidden_root.id() != root.id())

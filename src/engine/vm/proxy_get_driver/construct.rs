@@ -29,14 +29,7 @@ pub(super) fn start(
         NativeConversion::Value(result) => result,
         NativeConversion::Throw(value) => {
             return resume
-                .resume(
-                    runtime,
-                    Completion::Throw(
-                        runtime
-                            .into_jsvalue(value)
-                            .map_err(runtime_error_to_vm_error)?,
-                    ),
-                )
+                .resume(runtime, Completion::Throw(value))
                 .map_err(runtime_error_to_vm_error);
         }
     };
@@ -160,11 +153,12 @@ pub(super) fn prototype(
     completion: Completion,
     resume: Resume,
 ) -> Result<Step, Error> {
-    let new_target = runtime
-        .root_value(&request.new_target)
-        .map_err(runtime_error_to_vm_error)?;
     let receiver = runtime
-        .create_from_constructor_prototype_reply(request.caller_realm, &new_target, completion)
+        .create_from_constructor_prototype_reply(
+            request.caller_realm,
+            &request.new_target,
+            completion,
+        )
         .map_err(runtime_error_to_vm_error)?;
     Ok(Step::ConstructorReady {
         request: Some(request),

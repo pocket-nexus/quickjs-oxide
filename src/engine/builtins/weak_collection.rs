@@ -292,17 +292,14 @@ impl Runtime {
                 "weak collection method received the wrong native invocation",
             ));
         };
-        let this_value = self.root_value(this_value)?;
-        let Value::Object(object) = this_value else {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+        let JsValue::Object(id) = this_value else {
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 &format!("{} object expected", kind.name()),
             )?));
         };
-        if !object.belongs_to(self) {
-            return Err(RuntimeError::WrongRuntime("weak collection receiver"));
-        }
+        let object = ObjectRef::from_borrowed_handle(self.clone(), *id)?;
         let matches_brand = matches!(
             (
                 kind,
@@ -318,7 +315,7 @@ impl Runtime {
                 | (WeakCollectionKind::Set, ObjectPayload::WeakSet { .. })
         );
         if !matches_brand {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 &format!("{} object expected", kind.name()),
@@ -479,7 +476,7 @@ impl Runtime {
         let map = match self.weak_collection_receiver(realm, invocation, WeakCollectionKind::Map)? {
             NativeConversion::Value(map) => map,
             NativeConversion::Throw(value) => {
-                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                return Ok(Completion::Throw(value));
             }
         };
         let key_value = arguments
@@ -576,7 +573,7 @@ impl Runtime {
         let set = match self.weak_collection_receiver(realm, invocation, WeakCollectionKind::Set)? {
             NativeConversion::Value(set) => set,
             NativeConversion::Throw(value) => {
-                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                return Ok(Completion::Throw(value));
             }
         };
         let key_value = arguments

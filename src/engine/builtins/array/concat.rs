@@ -89,9 +89,7 @@ impl ConcatStep {
             match runtime.native_to_object_jsvalue(realm, runtime.dup_jsvalue(this_value)?)? {
                 NativeConversion::Value(value) => value,
                 NativeConversion::Throw(value) => {
-                    return Ok(Self::Complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
+                    return Ok(Self::Complete(Completion::Throw(value)));
                 }
             };
         let mut resume = ConcatResume(Box::new(ConcatResumeState {
@@ -185,9 +183,7 @@ impl ConcatResume {
                     match runtime.internal_is_array_jsvalue(self.0.realm, &self.0.element)? {
                         NativeConversion::Value(value) => value,
                         NativeConversion::Throw(value) => {
-                            return Ok(ConcatStep::Complete(Completion::Throw(
-                                runtime.into_jsvalue(value)?,
-                            )));
+                            return Ok(ConcatStep::Complete(Completion::Throw(value)));
                         }
                     }
                 } else {
@@ -256,6 +252,9 @@ impl ConcatResume {
         result: NativeConversion<f64>,
     ) -> Result<ConcatStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Number) {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "Array concat number phase mismatch",
             ));
@@ -263,9 +262,7 @@ impl ConcatResume {
         self.0.length = match result {
             NativeConversion::Value(value) => Runtime::length_from_number(value),
             NativeConversion::Throw(value) => {
-                return Ok(ConcatStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(ConcatStep::Complete(Completion::Throw(value)));
             }
         };
         if self.0.next_index.saturating_add(self.0.length) > (1_u64 << 53) - 1 {
@@ -290,6 +287,9 @@ impl ConcatResume {
         result: NativeConversion<bool>,
     ) -> Result<ConcatStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Has) {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "Array concat boolean phase mismatch",
             ));
@@ -297,9 +297,7 @@ impl ConcatResume {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(ConcatStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(ConcatStep::Complete(Completion::Throw(value)));
             }
         };
         if value {
@@ -340,6 +338,9 @@ impl ConcatResume {
         result: NativeConversion<InternalDefineResult>,
     ) -> Result<ConcatStep, RuntimeError> {
         let Phase::Define(indexed) = self.0.phase else {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "Array concat define phase mismatch",
             ));
@@ -347,9 +348,7 @@ impl ConcatResume {
         if let Some(value) =
             runtime.finish_create_indexed_data_property(self.0.realm, self.0.next_index, result)?
         {
-            return Ok(ConcatStep::Complete(Completion::Throw(
-                runtime.into_jsvalue(value)?,
-            )));
+            return Ok(ConcatStep::Complete(Completion::Throw(value)));
         }
         self.0.next_index += 1;
         if indexed {
@@ -366,12 +365,13 @@ impl ConcatResume {
         result: NativeConversion<InternalSetResult>,
     ) -> Result<ConcatStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Set) {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant("Array concat set phase mismatch"));
         }
         if let Some(value) = runtime.finish_set_property_or_throw(self.0.realm, &key, result)? {
-            return Ok(ConcatStep::Complete(Completion::Throw(
-                runtime.into_jsvalue(value)?,
-            )));
+            return Ok(ConcatStep::Complete(Completion::Throw(value)));
         }
         Ok(ConcatStep::Complete(Completion::Return(JsValue::Object(
             self.result()?.into_handle(),

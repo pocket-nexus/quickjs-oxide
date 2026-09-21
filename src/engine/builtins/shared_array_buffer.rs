@@ -278,7 +278,7 @@ impl Runtime {
         let object = match self.require_shared_array_buffer_jsvalue(realm, this_value)? {
             NativeConversion::Value(object) => object,
             NativeConversion::Throw(value) => {
-                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                return Ok(Completion::Throw(value));
             }
         };
         let snapshot = self.shared_array_buffer_snapshot(&object)?;
@@ -383,7 +383,7 @@ impl Runtime {
         value: &JsValue,
     ) -> Result<NativeConversion<(ObjectRef, i64)>, RuntimeError> {
         let JsValue::Object(id) = value else {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "SharedArrayBuffer object expected",
@@ -394,7 +394,7 @@ impl Runtime {
             .shared_array_buffer_snapshot_if_branded(&source)?
             .is_none()
         {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "SharedArrayBuffer object expected",
@@ -415,7 +415,7 @@ impl Runtime {
         let handle = match SharedBufferHandle::new(new_length, None) {
             Ok(handle) => handle,
             Err(SharedMemoryError::Allocation) => {
-                return Ok(NativeConversion::Throw(self.new_native_error(
+                return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                     realm,
                     NativeErrorKind::Internal,
                     "out of memory",
@@ -514,24 +514,13 @@ impl Runtime {
         Ok(ObjectRef::from_borrowed_handle(self.clone(), prototype)?)
     }
 
-    pub(in crate::engine::builtins) fn require_shared_array_buffer(
-        &self,
-        realm: ContextId,
-        value: Value,
-    ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
-        self.require_shared_array_buffer_borrowed(realm, &value)
-            .map(|result| match result {
-                NativeConversion::Value(object) => NativeConversion::Value(object.clone()),
-                NativeConversion::Throw(value) => NativeConversion::Throw(value),
-            })
-    }
-    fn require_shared_array_buffer_jsvalue(
+    pub(in crate::engine::builtins) fn require_shared_array_buffer_jsvalue(
         &self,
         realm: ContextId,
         value: &JsValue,
     ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
         let JsValue::Object(id) = value else {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "SharedArrayBuffer object expected",
@@ -542,35 +531,7 @@ impl Runtime {
             .shared_array_buffer_snapshot_if_branded(&object)?
             .is_none()
         {
-            return Ok(NativeConversion::Throw(self.new_native_error(
-                realm,
-                NativeErrorKind::Type,
-                "SharedArrayBuffer object expected",
-            )?));
-        }
-        Ok(NativeConversion::Value(object))
-    }
-
-    pub(in crate::engine::builtins) fn require_shared_array_buffer_borrowed<'a>(
-        &self,
-        realm: ContextId,
-        value: &'a Value,
-    ) -> Result<NativeConversion<&'a ObjectRef>, RuntimeError> {
-        let Value::Object(object) = value else {
-            return Ok(NativeConversion::Throw(self.new_native_error(
-                realm,
-                NativeErrorKind::Type,
-                "SharedArrayBuffer object expected",
-            )?));
-        };
-        if !object.belongs_to(self) {
-            return Err(RuntimeError::WrongRuntime("SharedArrayBuffer"));
-        }
-        if self
-            .shared_array_buffer_snapshot_if_branded(object)?
-            .is_none()
-        {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "SharedArrayBuffer object expected",

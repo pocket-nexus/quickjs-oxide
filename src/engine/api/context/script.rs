@@ -103,7 +103,7 @@ impl Context {
         match compilation {
             Compilation::Published(function) => Ok(function),
             Compilation::Throw(exception) => {
-                self.runtime.set_pending_exception(exception)?;
+                self.runtime.set_pending_exception_jsvalue(exception)?;
                 Err(RuntimeError::Exception)
             }
         }

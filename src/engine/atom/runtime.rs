@@ -4,7 +4,9 @@ use crate::engine::api::runtime_error::RuntimeError;
 
 use crate::engine::atom::{Atom, AtomError, AtomKind, AtomSpelling};
 use crate::engine::object::{PropertyKey, SymbolRef, WellKnownSymbol};
-use crate::engine::value::{JsString, Value};
+use crate::engine::value::JsString;
+#[cfg(test)]
+use crate::engine::value::Value;
 
 impl Runtime {
     pub(crate) fn pinned_property_key(
@@ -64,6 +66,7 @@ impl Runtime {
             .map(|atom| PropertyKey::from_owned_atom(self.clone(), atom))
     }
 
+    #[cfg(test)]
     pub(crate) fn immediate_numeric_property_key(&self, value: &Value) -> Option<PropertyKey> {
         let index = match value {
             Value::Int(value) => u32::try_from(*value).ok()?,

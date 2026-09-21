@@ -1089,9 +1089,6 @@ impl PendingIteratorState {
                         return Err(Error::new(ErrorKind::Type, "property is not configurable"));
                     }
                     PropertyDefineOutcome::Throw(thrown) => {
-                        let thrown = runtime
-                            .into_jsvalue(thrown)
-                            .map_err(runtime_error_to_vm_error)?;
                         return Ok(Action::Reply(Completion::Throw(thrown)));
                     }
                 }

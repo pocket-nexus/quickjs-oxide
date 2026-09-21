@@ -75,21 +75,40 @@ impl Runtime {
         let utc_string_key =
             self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::ToUTCString)?;
         let utc_string = match self.get_property_in_realm(realm, date_prototype, &utc_string_key)? {
-            Completion::Return(value) => {
-                if !matches!(value, crate::engine::value::JsValue::Object(_)) {
-                    return Err(RuntimeError::Invariant(
-                        "Date.prototype.toUTCString did not materialize as an object",
-                    ));
-                }
-                self.root_and_release_jsvalue(value)?
+            Completion::Return(crate::engine::value::JsValue::Object(id)) => {
+                ObjectRef::from_owned_handle(self.clone(), id)
             }
-            Completion::Throw(_) => {
+            Completion::Return(value) => {
+                self.release_jsvalue(value)?;
+                return Err(RuntimeError::Invariant(
+                    "Date.prototype.toUTCString did not materialize as an object",
+                ));
+            }
+            Completion::Throw(value) => {
+                self.release_jsvalue(value)?;
                 return Err(RuntimeError::Invariant(
                     "Date.prototype.toUTCString materialization threw",
                 ));
             }
         };
-        self.define_function_data_property(date_prototype, "toGMTString", utc_string, true, true)?;
+        let alias = self.intern_property_key("toGMTString")?;
+        if !self.define_raw_property(
+            date_prototype,
+            &alias,
+            &crate::engine::object::property::PropertyDescriptor {
+                value: Some(crate::engine::heap::RawValue::Object(
+                    utc_string.object_id(),
+                )),
+                writable: Some(true),
+                enumerable: Some(false),
+                configurable: Some(true),
+                ..Default::default()
+            },
+        )? {
+            return Err(RuntimeError::Invariant(
+                "Date.prototype.toGMTString alias rejected",
+            ));
+        }
 
         // The UTC/GMT alias has already been materialized. The following
         // table has no intermediate reads and can publish one final layout.

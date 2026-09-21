@@ -165,9 +165,7 @@ impl CopyResume {
         let keys = match reply {
             NativeConversion::Value(keys) => keys,
             NativeConversion::Throw(value) => {
-                return Ok(CopyStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(CopyStep::Complete(Completion::Throw(value)));
             }
         };
         let mut selected = Vec::new();
@@ -289,9 +287,7 @@ impl CopyResume {
         reply: NativeConversion<bool>,
     ) -> Result<CopyStep, RuntimeError> {
         match reply {
-            NativeConversion::Throw(value) => Ok(CopyStep::Complete(Completion::Throw(
-                runtime.into_jsvalue(value)?,
-            ))),
+            NativeConversion::Throw(value) => Ok(CopyStep::Complete(Completion::Throw(value))),
             NativeConversion::Value(false) => self.next(runtime),
             NativeConversion::Value(true) => Ok(CopyStep::Read {
                 object: clone_copy_object(&self.0.source),
@@ -335,9 +331,7 @@ pub(crate) fn finish(
                     NativeConversion::Value(value) => {
                         Completion::Return(value.unwrap_or(JsValue::Undefined))
                     }
-                    NativeConversion::Throw(value) => {
-                        Completion::Throw(runtime.into_jsvalue(value)?)
-                    }
+                    NativeConversion::Throw(value) => Completion::Throw(value),
                 };
                 resume.resume(runtime, completion)?
             }

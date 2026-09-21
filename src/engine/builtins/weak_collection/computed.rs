@@ -53,9 +53,7 @@ impl ComputedStep {
             match runtime.weak_collection_receiver(realm, invocation, WeakCollectionKind::Map)? {
                 NativeConversion::Value(map) => map,
                 NativeConversion::Throw(value) => {
-                    return Ok(Self::Complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
+                    return Ok(Self::Complete(Completion::Throw(value)));
                 }
             };
         let key_value = arguments

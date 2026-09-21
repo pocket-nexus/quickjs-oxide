@@ -141,9 +141,9 @@ impl Search {
                 ))?;
         if data.is_revoked {
             return match runtime.proxy_revoked_throw(self.realm)? {
-                NativeConversion::Throw(value) => Ok(ProxyConstructStep::Complete(
-                    Completion::Throw(runtime.unroot_value(&value)?),
-                )),
+                NativeConversion::Throw(value) => {
+                    Ok(ProxyConstructStep::Complete(Completion::Throw(value)))
+                }
                 NativeConversion::Value(()) => Err(RuntimeError::Invariant(
                     "revoked Proxy construct returned a value",
                 )),
@@ -200,9 +200,7 @@ impl ProxyConstructResume {
             }
             Ok(NativeConversion::Throw(value)) => {
                 runtime.release_jsvalue(method)?;
-                return Ok(ProxyConstructStep::Complete(Completion::Throw(
-                    runtime.unroot_value(&value)?,
-                )));
+                return Ok(ProxyConstructStep::Complete(Completion::Throw(value)));
             }
         };
         if matches!(method, JsValue::Null | JsValue::Undefined) {

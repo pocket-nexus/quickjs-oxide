@@ -406,8 +406,8 @@ impl Runtime {
     ) -> Result<(), RuntimeError> {
         let canonical_key = self.intern_property_key(canonical)?;
         let value = match self.get_property_in_realm(realm, string_prototype, &canonical_key)? {
-            Completion::Return(value @ JsValue::Object(_)) => {
-                self.root_and_release_jsvalue(value)?
+            Completion::Return(JsValue::Object(id)) => {
+                ObjectRef::from_owned_handle(self.clone(), id)
             }
             Completion::Return(value) => {
                 self.release_jsvalue(value)?;
@@ -422,7 +422,23 @@ impl Runtime {
                 ));
             }
         };
-        self.define_function_data_property(string_prototype, alias, value, true, true)
+        let key = self.intern_property_key(alias)?;
+        if !self.define_raw_property(
+            string_prototype,
+            &key,
+            &crate::engine::object::property::PropertyDescriptor {
+                value: Some(crate::engine::heap::RawValue::Object(value.object_id())),
+                writable: Some(true),
+                enumerable: Some(false),
+                configurable: Some(true),
+                ..Default::default()
+            },
+        )? {
+            return Err(RuntimeError::Invariant(
+                "String prototype alias definition rejected",
+            ));
+        }
+        Ok(())
     }
 
     /// Publish the complete own table of QuickJS's `%String%` constructor.
@@ -826,13 +842,10 @@ impl Runtime {
             ));
         }
         if matches!(separator, crate::engine::value::JsValue::Undefined) {
-            if let Some(value) = self.define_string_split_element(
-                realm,
-                &result,
-                &mut length,
-                Value::String(source.clone()),
-            )? {
-                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            if let Some(value) =
+                self.define_string_split_element(realm, &result, &mut length, source.clone())?
+            {
+                return Ok(Completion::Throw(value));
             }
             return Ok(Completion::Return(
                 self.into_jsvalue(Value::Object(result))?,
@@ -843,13 +856,10 @@ impl Runtime {
         let separator_len = separator_string.len();
         if source_len == 0 {
             if separator_len != 0 {
-                if let Some(value) = self.define_string_split_element(
-                    realm,
-                    &result,
-                    &mut length,
-                    Value::String(source),
-                )? {
-                    return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                if let Some(value) =
+                    self.define_string_split_element(realm, &result, &mut length, source)?
+                {
+                    return Ok(Completion::Throw(value));
                 }
             }
             return Ok(Completion::Return(
@@ -863,9 +873,9 @@ impl Runtime {
                     realm,
                     &result,
                     &mut length,
-                    Value::String(source.sub_string(index, index + 1)),
+                    source.sub_string(index, index + 1),
                 )? {
-                    return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                    return Ok(Completion::Throw(value));
                 }
                 if length == limit {
                     break;
@@ -893,12 +903,12 @@ impl Runtime {
                 realm,
                 &result,
                 &mut length,
-                Value::String(source.sub_string(
+                source.sub_string(
                     usize::try_from(start).expect("non-negative split start fits usize"),
                     usize::try_from(end).expect("non-negative split end fits usize"),
-                )),
+                ),
             )? {
-                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                return Ok(Completion::Throw(value));
             }
             if length == limit {
                 return Ok(Completion::Return(
@@ -911,12 +921,12 @@ impl Runtime {
             realm,
             &result,
             &mut length,
-            Value::String(source.sub_string(
+            source.sub_string(
                 usize::try_from(start).expect("non-negative split tail start fits usize"),
                 source_len,
-            )),
+            ),
         )? {
-            return Ok(Completion::Throw(self.into_jsvalue(value)?));
+            return Ok(Completion::Throw(value));
         }
         Ok(Completion::Return(
             self.into_jsvalue(Value::Object(result))?,
@@ -931,13 +941,18 @@ impl Runtime {
         realm: ContextId,
         result: &ObjectRef,
         length: &mut u32,
-        value: Value,
-    ) -> Result<Option<Value>, RuntimeError> {
+        value: JsString,
+    ) -> Result<Option<JsValue>, RuntimeError> {
         let index = *length;
         let next = index.checked_add(1).ok_or(RuntimeError::Invariant(
             "String split output index exceeded Uint32",
         ))?;
-        if let Some(value) = self.create_array_data_property(realm, result, index, value)? {
+        if let Some(value) = self.create_array_data_property(
+            realm,
+            result,
+            index,
+            self.into_jsvalue(Value::String(value))?,
+        )? {
             return Ok(Some(value));
         }
         *length = next;

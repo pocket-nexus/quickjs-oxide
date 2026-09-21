@@ -80,7 +80,7 @@ impl Runtime {
         handler: Value,
     ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
         let (Value::Object(target), Value::Object(handler)) = (&target, &handler) else {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "not an object",
@@ -103,7 +103,7 @@ impl Runtime {
         handler: &JsValue,
     ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
         let (JsValue::Object(target), JsValue::Object(handler)) = (target, handler) else {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "not an object",
@@ -173,7 +173,7 @@ impl Runtime {
             NativeConversion::Value(proxy) => {
                 Ok(Completion::Return(JsValue::Object(proxy.into_handle())))
             }
-            NativeConversion::Throw(value) => Ok(Completion::Throw(self.into_jsvalue(value)?)),
+            NativeConversion::Throw(value) => Ok(Completion::Throw(value)),
         }
     }
 
@@ -197,7 +197,7 @@ impl Runtime {
         let proxy = match self.new_proxy_jsvalue(realm, target, handler)? {
             NativeConversion::Value(proxy) => proxy,
             NativeConversion::Throw(value) => {
-                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                return Ok(Completion::Throw(value));
             }
         };
         let revoke = self.new_internal_promise_function(

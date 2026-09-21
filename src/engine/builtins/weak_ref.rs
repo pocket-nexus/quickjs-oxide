@@ -284,13 +284,10 @@ impl Runtime {
                         "WeakRef.prototype.deref received the wrong native invocation",
                     ));
                 };
-                let this_value = self.root_value(this_value)?;
-                let Value::Object(weak_ref) = this_value else {
+                let JsValue::Object(id) = this_value else {
                     return self.invalid_weak_target(realm, "WeakRef object expected");
                 };
-                if !weak_ref.belongs_to(self) {
-                    return Err(RuntimeError::WrongRuntime("WeakRef receiver"));
-                }
+                let weak_ref = ObjectRef::from_borrowed_handle(self.clone(), *id)?;
                 let target = {
                     let state = self.0.state.borrow();
                     state.heap.weak_ref_target(weak_ref.object_id())
@@ -329,9 +326,11 @@ impl Runtime {
                         RawValue::Symbol(AtomIdx::from_raw(atom.raw()))
                     }
                 };
-                Ok(Completion::Return(
-                    self.into_jsvalue(self.root_raw_value(raw.clone())?)?,
-                ))
+                Ok(Completion::Return(self.dup_jsvalue(
+                    &JsValue::from_raw(raw.clone()).ok_or(RuntimeError::Invariant(
+                        "stored collection value is uninitialized",
+                    ))?,
+                )?))
             }
         }
     }
@@ -346,17 +345,14 @@ impl Runtime {
                 "FinalizationRegistry method received the wrong native invocation",
             ));
         };
-        let this_value = self.root_value(this_value)?;
-        let Value::Object(registry) = this_value else {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+        let JsValue::Object(id) = this_value else {
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "FinalizationRegistry object expected",
             )?));
         };
-        if !registry.belongs_to(self) {
-            return Err(RuntimeError::WrongRuntime("FinalizationRegistry receiver"));
-        }
+        let registry = ObjectRef::from_borrowed_handle(self.clone(), *id)?;
         let has_brand = matches!(
             self.0
                 .state
@@ -367,7 +363,7 @@ impl Runtime {
             ObjectPayload::FinalizationRegistry(_)
         );
         if !has_brand {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "FinalizationRegistry object expected",
@@ -400,7 +396,7 @@ impl Runtime {
         let registry = match self.finalization_registry_receiver(realm, invocation)? {
             NativeConversion::Value(registry) => registry,
             NativeConversion::Throw(value) => {
-                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                return Ok(Completion::Throw(value));
             }
         };
         let first = arguments.readable.first().ok_or(RuntimeError::Invariant(

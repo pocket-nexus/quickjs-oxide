@@ -84,9 +84,7 @@ impl AgentStep {
                         match runtime.test262_agent_export_broadcast_buffer(realm, &buffer)? {
                             NativeConversion::Value(handle) => handle,
                             NativeConversion::Throw(value) => {
-                                return Ok(Self::Complete(Completion::Throw(
-                                    runtime.into_jsvalue(value)?,
-                                )));
+                                return Ok(Self::Complete(Completion::Throw(value)));
                             }
                         };
                     Ok(Self::Number {
@@ -139,9 +137,13 @@ impl AgentStep {
                     return runtime
                         .test262_agent_type_error(realm, "must be called inside an agent");
                 }
-                let argument = runtime.root_value(&arguments.readable[0])?;
-                let callback = match &argument {
-                    Value::Object(object) => runtime.as_callable(object)?,
+                let callback = match &arguments.readable[0] {
+                    JsValue::Object(id) => runtime.as_callable(
+                        &crate::engine::object::ObjectRef::from_borrowed_handle(
+                            runtime.clone(),
+                            *id,
+                        )?,
+                    )?,
                     _ => None,
                 };
                 let Some(callback) = callback else {
@@ -168,14 +170,23 @@ impl AgentResume {
     ) -> Result<AgentStep, RuntimeError> {
         let source = match completion {
             Completion::Throw(value) => return Ok(AgentStep::Complete(Completion::Throw(value))),
-            Completion::Return(value) => match runtime.root_and_release_jsvalue(value)? {
-                Value::String(value) => value,
-                _ => {
-                    return Err(RuntimeError::Invariant(
+            Completion::Return(value) => {
+                let source = match &value {
+                    JsValue::String(id) => runtime
+                        .0
+                        .state
+                        .borrow()
+                        .heap
+                        .string(*id)
+                        .cloned()
+                        .map_err(RuntimeError::from),
+                    _ => Err(RuntimeError::Invariant(
                         "agent string conversion returned a non-string",
-                    ));
-                }
-            },
+                    )),
+                };
+                runtime.release_jsvalue(value)?;
+                source?
+            }
         };
         let state = *self.0;
         let realm = state.realm;
@@ -223,9 +234,7 @@ impl AgentResume {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(AgentStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(AgentStep::Complete(Completion::Throw(value)));
             }
         };
         let state = *self.0;

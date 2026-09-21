@@ -158,9 +158,7 @@ impl Runtime {
         )? {
             Compilation::Published(function) => function,
             Compilation::Throw(value) => {
-                return Ok(DirectEvalPreparation::Complete(Completion::Throw(
-                    self.into_jsvalue(value)?,
-                )));
+                return Ok(DirectEvalPreparation::Complete(Completion::Throw(value)));
             }
         };
 
@@ -448,9 +446,7 @@ impl Runtime {
             match self.compile_eval_in_realm(realm, &source, DEFAULT_EVAL_FILENAME, context)? {
                 Compilation::Published(function) => function,
                 Compilation::Throw(value) => {
-                    return Ok(DirectEvalPreparation::Complete(Completion::Throw(
-                        self.into_jsvalue(value)?,
-                    )));
+                    return Ok(DirectEvalPreparation::Complete(Completion::Throw(value)));
                 }
             };
         let callable =
@@ -535,11 +531,18 @@ impl Runtime {
                         None
                     };
                     let exception = if error.kind() == ErrorKind::Syntax {
-                        self.new_native_error_without_backtrace_from_error(realm, kind, &error)?
+                        self.new_native_error_without_backtrace_from_error_jsvalue(
+                            realm, kind, &error,
+                        )?
                     } else {
-                        self.new_native_error_from_error(realm, kind, &error)?
+                        self.new_native_error_from_error_jsvalue(realm, kind, &error)?
                     };
-                    self.ensure_error_backtrace(&exception, false, explicit_location)?;
+                    if let Err(error) =
+                        self.ensure_error_backtrace_jsvalue(&exception, false, explicit_location)
+                    {
+                        let _ = self.release_jsvalue(exception);
+                        return Err(error);
+                    }
                     return Ok(Compilation::Throw(exception));
                 }
             };

@@ -101,9 +101,7 @@ impl NumericStep {
                 match runtime.primitive_this_value_jsvalue(realm, brand, this_value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(Self::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(Self::Complete(Completion::Throw(value)));
                     }
                 }
             }
@@ -154,9 +152,7 @@ impl NumericResume {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(NumericStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(NumericStep::Complete(Completion::Throw(value)));
             }
         };
         match self.0.phase {
@@ -188,9 +184,7 @@ impl NumericResume {
                 self.0.bits = match runtime.index_from_number(self.0.realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(NumericStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(NumericStep::Complete(Completion::Throw(value)));
                     }
                 };
                 self.0.phase = Phase::BigInt;
@@ -249,9 +243,7 @@ impl NumericResume {
         let value = match result? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(NumericStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(NumericStep::Complete(Completion::Throw(value)));
             }
         };
         let NumericKind::BigIntAsN(kind) = self.0.kind else {

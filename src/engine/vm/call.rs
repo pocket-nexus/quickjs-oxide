@@ -279,6 +279,7 @@ impl Runtime {
         .map(Some)
     }
 
+    #[cfg(test)]
     pub(crate) fn callable_from_value(&self, value: Value) -> Result<CallableRef, RuntimeError> {
         let Value::Object(object) = value else {
             return Err(RuntimeError::Engine(Error::new(
@@ -343,7 +344,7 @@ impl Runtime {
         let constructor = match self.constructor_from_value(caller_realm, function)? {
             NativeConversion::Value(constructor) => constructor,
             NativeConversion::Throw(value) => {
-                return Ok(Completion::Throw(self.unroot_value(&value)?));
+                return Ok(Completion::Throw(value));
             }
         };
         self.construct_constructor_with_raw_new_target_internal(
@@ -413,9 +414,11 @@ impl Runtime {
             object_data.is_constructor
         };
         if !is_constructor {
-            let value = Value::Object(object);
             return Ok(NativeConversion::Throw(
-                self.new_not_constructor_error(caller_realm, &value)?,
+                self.new_not_constructor_error_jsvalue(
+                    caller_realm,
+                    &JsValue::Object(object.object_id()),
+                )?,
             ));
         }
         Ok(NativeConversion::Value(
@@ -435,7 +438,7 @@ impl Runtime {
             match self.prepare_constructor_pair(caller_realm, constructor, new_target)? {
                 NativeConversion::Value(pair) => pair,
                 NativeConversion::Throw(value) => {
-                    return Ok(Completion::Throw(self.unroot_value(&value)?));
+                    return Ok(Completion::Throw(value));
                 }
             };
         self.construct_constructor_internal(caller_realm, &constructor, &new_target, arguments)
@@ -451,25 +454,30 @@ impl Runtime {
             return Err(RuntimeError::WrongRuntime("constructor"));
         }
         if !self.is_constructor(constructor.as_object())? {
-            return Ok(NativeConversion::Throw(self.new_not_constructor_error(
-                caller_realm,
-                &Value::Object(constructor.as_object().clone()),
-            )?));
+            return Ok(NativeConversion::Throw(
+                self.new_not_constructor_error_jsvalue(
+                    caller_realm,
+                    &JsValue::Object(constructor.as_object().object_id()),
+                )?,
+            ));
         }
         if !new_target.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("constructor"));
         }
         if !self.is_constructor(new_target.as_object())? {
-            return Ok(NativeConversion::Throw(self.new_not_constructor_error(
-                caller_realm,
-                &Value::Object(new_target.as_object().clone()),
-            )?));
+            return Ok(NativeConversion::Throw(
+                self.new_not_constructor_error_jsvalue(
+                    caller_realm,
+                    &JsValue::Object(new_target.as_object().object_id()),
+                )?,
+            ));
         }
         let constructor = ConstructorRef::from_validated_callable(constructor);
         let new_target = ConstructorRef::from_validated_callable(new_target);
         Ok(NativeConversion::Value((constructor, new_target)))
     }
 
+    #[cfg(test)]
     pub(crate) fn construct_constructor_internal(
         &self,
         caller_realm: ContextId,
@@ -511,10 +519,12 @@ impl Runtime {
                         self.release_jsvalue(argument)?;
                     }
                     new_target.take().expect("new target").release(self)?;
-                    return Ok(NativeConversion::Throw(self.new_not_constructor_error(
-                        caller_realm,
-                        &Value::Object(constructor.as_object().clone()),
-                    )?));
+                    return Ok(NativeConversion::Throw(
+                        self.new_not_constructor_error_jsvalue(
+                            caller_realm,
+                            &JsValue::Object(constructor.as_object().object_id()),
+                        )?,
+                    ));
                 }
                 if self.is_proxy_object(constructor.as_object())? {
                     return Ok(NativeConversion::Value(NormalizedConstructor {
@@ -576,6 +586,7 @@ impl Runtime {
         result
     }
 
+    #[cfg(test)]
     pub(crate) fn construct_internal_with_new_target(
         &self,
         caller_realm: ContextId,
@@ -618,7 +629,7 @@ impl Runtime {
         )? {
             NativeConversion::Value(result) => result,
             NativeConversion::Throw(value) => {
-                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                return Ok(Completion::Throw(value));
             }
         };
         let mut new_target = Some(new_target);
@@ -703,11 +714,10 @@ impl Runtime {
                         ConstructorKind::Base => {}
                     }
                     let this_value = {
-                        // Prototype lookup's public adapter borrows this root;
-                        // the constructor argv remains internal throughout.
-                        let target_root =
-                            self.root_value(&new_target.as_ref().expect("new target").value())?;
-                        match self.create_from_constructor_value(caller_realm, &target_root)? {
+                        match self.create_from_constructor_value(
+                            caller_realm,
+                            &new_target.as_ref().expect("new target").value(),
+                        )? {
                             Completion::Return(value) => value,
                             Completion::Throw(value) => return Ok(Completion::Throw(value)),
                         }
@@ -776,14 +786,18 @@ impl Runtime {
     pub(crate) fn create_from_constructor_value(
         &self,
         caller_realm: ContextId,
-        new_target: &Value,
+        new_target: &JsValue,
     ) -> Result<Completion, RuntimeError> {
-        let reply = if matches!(new_target, Value::Undefined) {
+        let reply = if matches!(new_target, JsValue::Undefined) {
             Completion::Return(JsValue::Undefined)
         } else {
             let key =
                 self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Prototype)?;
-            self.get_value_property_in_realm(caller_realm, new_target.clone(), &key)?
+            self.get_value_property_in_realm_jsvalue(
+                caller_realm,
+                self.dup_jsvalue(new_target)?,
+                &key,
+            )?
         };
         self.create_from_constructor_prototype_reply(caller_realm, new_target, reply)
     }
@@ -791,7 +805,7 @@ impl Runtime {
     pub(crate) fn create_from_constructor_prototype_reply(
         &self,
         caller_realm: ContextId,
-        new_target: &Value,
+        new_target: &JsValue,
         reply: Completion,
     ) -> Result<Completion, RuntimeError> {
         let prototype = match reply {
@@ -801,13 +815,13 @@ impl Runtime {
             }
             Completion::Return(value) => {
                 self.release_jsvalue(value)?;
-                let realm = if matches!(new_target, Value::Undefined) {
+                let realm = if matches!(new_target, JsValue::Undefined) {
                     caller_realm
                 } else {
-                    match self.function_realm_from_value(caller_realm, new_target)? {
+                    match self.function_realm_from_jsvalue(caller_realm, new_target)? {
                         NativeConversion::Value(realm) => realm,
                         NativeConversion::Throw(value) => {
-                            return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                            return Ok(Completion::Throw(value));
                         }
                     }
                 };

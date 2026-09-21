@@ -73,9 +73,7 @@ impl WrapStep {
         let receiver = match runtime.iterator_receiver(realm, invocation)? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(Self::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(Self::Complete(Completion::Throw(value)));
             }
         };
         let state = {
@@ -140,9 +138,7 @@ impl WrapStep {
                 let callable = match callable {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(Self::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(Self::Complete(Completion::Throw(value)));
                     }
                 };
                 let receiver = runtime.dup_jsvalue(&resume.0.source)?;
@@ -187,9 +183,7 @@ impl WrapResume {
                 let callable = match callable? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(WrapStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(WrapStep::Complete(Completion::Throw(value)));
                     }
                 };
                 self.0.phase = Phase::ReturnResult;

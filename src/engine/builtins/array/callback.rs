@@ -127,9 +127,7 @@ impl CallbackStep {
             match runtime.native_to_object_jsvalue(realm, runtime.dup_jsvalue(this_value)?)? {
                 NativeConversion::Value(object) => object,
                 NativeConversion::Throw(value) => {
-                    return Ok(Self::Complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
+                    return Ok(Self::Complete(Completion::Throw(value)));
                 }
             };
         let mut resume = CallbackResume(Box::new(CallbackResumeState {
@@ -338,6 +336,9 @@ impl CallbackResume {
         result: NativeConversion<f64>,
     ) -> Result<CallbackStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Number) {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "Array callback number phase mismatch",
             ));
@@ -345,9 +346,7 @@ impl CallbackResume {
         self.0.length = match result {
             NativeConversion::Value(value) => Runtime::length_from_number(value),
             NativeConversion::Throw(value) => {
-                return Ok(CallbackStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(CallbackStep::Complete(Completion::Throw(value)));
             }
         };
         let callback = match &self.0.callback_value {
@@ -421,6 +420,9 @@ impl CallbackResume {
         result: NativeConversion<bool>,
     ) -> Result<CallbackStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Has) {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "Array callback boolean phase mismatch",
             ));
@@ -428,9 +430,7 @@ impl CallbackResume {
         let present = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(CallbackStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(CallbackStep::Complete(Completion::Throw(value)));
             }
         };
         if !present {
@@ -468,6 +468,9 @@ impl CallbackResume {
         result: NativeConversion<InternalDefineResult>,
     ) -> Result<CallbackStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Define) {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "Array callback define phase mismatch",
             ));
@@ -484,9 +487,7 @@ impl CallbackResume {
         if let Some(value) =
             runtime.finish_create_indexed_data_property(self.0.realm, index, result)?
         {
-            return Ok(CallbackStep::Complete(Completion::Throw(
-                runtime.into_jsvalue(value)?,
-            )));
+            return Ok(CallbackStep::Complete(Completion::Throw(value)));
         }
         if filter {
             self.0.selected += 1;

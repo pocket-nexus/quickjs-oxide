@@ -199,9 +199,7 @@ impl StringTextResume {
                 let source = match runtime.string_from_primitive_jsvalue(realm, &self.converted)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(StringTextStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(StringTextStep::Complete(Completion::Throw(value)));
                     }
                 };
                 match self.0.kind {
@@ -285,9 +283,7 @@ impl StringTextResume {
                 let count = match runtime.number_from_primitive_jsvalue(realm, &self.converted)? {
                     NativeConversion::Value(value) => Runtime::int64_from_number(value),
                     NativeConversion::Throw(value) => {
-                        return Ok(StringTextStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(StringTextStep::Complete(Completion::Throw(value)));
                     }
                 };
                 runtime.finish_string_repeat(realm, source, count, self.0.limit)?
@@ -298,9 +294,7 @@ impl StringTextResume {
                         crate::engine::value::number::to_int32_sat(value)
                     }
                     NativeConversion::Throw(value) => {
-                        return Ok(StringTextStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(StringTextStep::Complete(Completion::Throw(value)));
                     }
                 };
                 let source_len = i32::try_from(source.len())
@@ -330,9 +324,7 @@ impl StringTextResume {
                 let filler = match runtime.string_from_primitive_jsvalue(realm, &self.converted)? {
                     NativeConversion::Value(value) => value.linearize(),
                     NativeConversion::Throw(value) => {
-                        return Ok(StringTextStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(StringTextStep::Complete(Completion::Throw(value)));
                     }
                 };
                 let StringTextKind::Pad(kind) = self.0.kind else {
@@ -351,9 +343,7 @@ impl StringTextResume {
                 let form = match runtime.string_from_primitive_jsvalue(realm, &self.converted)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(StringTextStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(StringTextStep::Complete(Completion::Throw(value)));
                     }
                 };
                 let form = if form.utf16_units().eq("NFC".encode_utf16()) {
@@ -379,9 +369,7 @@ impl StringTextResume {
                 let that = match runtime.string_from_primitive_jsvalue(realm, &self.converted)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(StringTextStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(StringTextStep::Complete(Completion::Throw(value)));
                     }
                 };
                 runtime.finish_string_locale_compare(realm, source, that)?
@@ -395,9 +383,7 @@ impl StringTextResume {
                     match runtime.string_from_primitive_jsvalue(realm, &self.converted)? {
                         NativeConversion::Value(value) => value.linearize(),
                         NativeConversion::Throw(value) => {
-                            return Ok(StringTextStep::Complete(Completion::Throw(
-                                runtime.into_jsvalue(value)?,
-                            )));
+                            return Ok(StringTextStep::Complete(Completion::Throw(value)));
                         }
                     };
                 buffer.append_escaped_attribute(&attribute);

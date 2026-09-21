@@ -74,7 +74,7 @@ impl Drop for PromiseResume {
     }
 }
 impl PromiseStep {
-    fn release(self, runtime: &Runtime) {
+    pub(crate) fn release(self, runtime: &Runtime) {
         match self {
             Self::Complete(Completion::Return(value) | Completion::Throw(value)) => {
                 let _ = runtime.release_jsvalue(value);
@@ -424,15 +424,16 @@ impl PromiseResume {
         let Phase::ConstructorPrototype { executor } =
             std::mem::replace(&mut self.phase, Phase::Identity)
         else {
+            if let NativeConversion::Throw(value) = result {
+                runtime.release_jsvalue(value)?;
+            }
             return Err(RuntimeError::Invariant(
                 "Promise prototype reply has wrong phase",
             ));
         };
         let prototype = match result {
             NativeConversion::Throw(value) => {
-                return Ok(PromiseStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(PromiseStep::Complete(Completion::Throw(value)));
             }
             NativeConversion::Value(ConstructorPrototypeSource::Explicit(object)) => object,
             NativeConversion::Value(ConstructorPrototypeSource::Realm(realm)) => {
@@ -497,9 +498,9 @@ impl PromiseResume {
                 let callable = runtime.promise_callable(realm, &value);
                 runtime.release_jsvalue(value)?;
                 match callable? {
-                    NativeConversion::Throw(value) => Ok(PromiseStep::Complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    ))),
+                    NativeConversion::Throw(value) => {
+                        Ok(PromiseStep::Complete(Completion::Throw(value)))
+                    }
                     NativeConversion::Value(callable) => Ok({
                         let __pending_field_callable = callable;
                         let __pending_field_receiver = inputs.take_receiver();

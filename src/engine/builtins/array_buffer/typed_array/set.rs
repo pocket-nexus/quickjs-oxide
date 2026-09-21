@@ -84,9 +84,7 @@ impl TypedSetStep {
         let target = match runtime.require_typed_array_jsvalue(realm, this_value)? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(Self::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(Self::Complete(Completion::Throw(value)));
             }
         };
         let mut resume = TypedSetResume(Box::new(TypedSetResumeState {
@@ -151,9 +149,7 @@ impl TypedSetResume {
                 let offset = match number? {
                     NativeConversion::Value(value) => Runtime::int64_from_number(value),
                     NativeConversion::Throw(value) => {
-                        return Ok(TypedSetStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(TypedSetStep::Complete(Completion::Throw(value)));
                     }
                 };
                 if offset < 0 {
@@ -169,9 +165,7 @@ impl TypedSetResume {
                 let target_length = match runtime.typed_array_validated_length(realm, &target)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(TypedSetStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(TypedSetStep::Complete(Completion::Throw(value)));
                     }
                 };
                 if let JsValue::Object(id) = &self.0.source {
@@ -197,9 +191,7 @@ impl TypedSetResume {
                 let source = match runtime.native_to_object_jsvalue(realm, source_value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(TypedSetStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(TypedSetStep::Complete(Completion::Throw(value)));
                     }
                 };
                 let key =
@@ -243,9 +235,7 @@ impl TypedSetResume {
                 state.length = match number? {
                     NativeConversion::Value(value) => Runtime::length_from_number(value),
                     NativeConversion::Throw(value) => {
-                        return Ok(TypedSetStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(TypedSetStep::Complete(Completion::Throw(value)));
                     }
                 };
                 if state
@@ -299,9 +289,7 @@ impl TypedSetResume {
         let bytes = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(TypedSetStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(TypedSetStep::Complete(Completion::Throw(value)));
             }
         };
         let SetPhase::Write(mut state) = std::mem::replace(&mut self.0.phase, SetPhase::Empty)

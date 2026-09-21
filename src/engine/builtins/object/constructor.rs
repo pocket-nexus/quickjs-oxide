@@ -54,7 +54,7 @@ impl ObjectConstructorStep {
                 NativeConversion::Value(object) => {
                     Completion::Return(JsValue::Object(object.into_handle()))
                 }
-                NativeConversion::Throw(value) => Completion::Throw(runtime.into_jsvalue(value)?),
+                NativeConversion::Throw(value) => Completion::Throw(value),
             },
         ))
     }
@@ -67,9 +67,7 @@ impl ObjectConstructorResume {
     ) -> Result<ObjectConstructorStep, RuntimeError> {
         let prototype = match result {
             NativeConversion::Throw(value) => {
-                return Ok(ObjectConstructorStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(ObjectConstructorStep::Complete(Completion::Throw(value)));
             }
             NativeConversion::Value(ConstructorPrototypeSource::Explicit(prototype)) => prototype,
             NativeConversion::Value(ConstructorPrototypeSource::Realm(realm)) => {

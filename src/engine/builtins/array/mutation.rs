@@ -106,6 +106,9 @@ impl Drop for MutationResumeState {
         if let Some(read) = self.pending_effect.prepared_read_read.take() {
             read.release(&self.runtime);
         }
+        if let Some(step) = self.pending_effect.prepared_set_step.take() {
+            (*step).release(&self.runtime);
+        }
         if let Some(value) = self.pending_effect.number_value.take() {
             let _ = self.runtime.release_jsvalue(value);
         }
@@ -131,9 +134,7 @@ impl MutationStep {
             match runtime.native_to_object_jsvalue(realm, runtime.dup_jsvalue(this_value)?)? {
                 NativeConversion::Value(object) => object,
                 NativeConversion::Throw(value) => {
-                    return Ok(Self::Complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
+                    return Ok(Self::Complete(Completion::Throw(value)));
                 }
             };
         let values = &arguments.readable[..arguments.actual_arg_count];
@@ -289,6 +290,9 @@ impl MutationResume {
         result: NativeConversion<f64>,
     ) -> Result<MutationAction, RuntimeError> {
         if !matches!(self.0.phase, Phase::Number) {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "Array mutation number phase mismatch",
             ));
@@ -296,9 +300,7 @@ impl MutationResume {
         self.0.length = match result {
             NativeConversion::Value(number) => Runtime::length_from_number(number),
             NativeConversion::Throw(value) => {
-                return Ok(MutationAction::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(MutationAction::Complete(Completion::Throw(value)));
             }
         };
         match self.0.kind {
@@ -390,7 +392,7 @@ impl MutationResume {
             .into(),
         })
     }
-    fn complete(&mut self, _runtime: &Runtime) -> Result<MutationAction, RuntimeError> {
+    fn complete(&mut self, __runtime: &Runtime) -> Result<MutationAction, RuntimeError> {
         let value = match self.0.kind {
             MutationKind::Push(_) => {
                 crate::engine::value::number::operations::Number::compact(self.0.new_length as f64)
@@ -408,9 +410,7 @@ impl MutationResume {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(MutationAction::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(MutationAction::Complete(Completion::Throw(value)));
             }
         };
         match self.0.phase {
@@ -438,9 +438,7 @@ impl MutationResume {
         result: NativeConversion<InternalSetResult>,
     ) -> Result<MutationAction, RuntimeError> {
         if let Some(value) = runtime.finish_set_property_or_throw(self.0.realm, &key, result)? {
-            return Ok(MutationAction::Complete(Completion::Throw(
-                runtime.into_jsvalue(value)?,
-            )));
+            return Ok(MutationAction::Complete(Completion::Throw(value)));
         }
         match self.0.phase {
             Phase::Write => {
@@ -574,7 +572,7 @@ impl MutationResume {
     }
     fn wait(
         self,
-        _runtime: &Runtime,
+        __runtime: &Runtime,
         action: MutationAction,
     ) -> Result<MutationStep, RuntimeError> {
         Ok(match action {
@@ -638,9 +636,7 @@ pub(crate) fn finish(
                         NativeConversion::Value(value) => Completion::Return(
                             runtime.into_jsvalue(value.unwrap_or(Value::Undefined))?,
                         ),
-                        NativeConversion::Throw(value) => {
-                            Completion::Throw(runtime.into_jsvalue(value)?)
-                        }
+                        NativeConversion::Throw(value) => Completion::Throw(value),
                     };
                     resume.resume(runtime, reply)?
                 }
@@ -667,9 +663,7 @@ pub(crate) fn finish(
                                         runtime.release_jsvalue(value)?;
                                         NativeConversion::Value(InternalSetResult::Accepted)
                                     }
-                                    Completion::Throw(value) => NativeConversion::Throw(
-                                        runtime.root_and_release_jsvalue(value)?,
-                                    ),
+                                    Completion::Throw(value) => NativeConversion::Throw(value),
                                 };
                             }
                             SetStep::Complete(action) => break local_set_result(action)?,
@@ -688,8 +682,8 @@ pub(crate) fn finish(
                 )?
             }
             MutationStep::Number { mut resume } => {
-                let value = runtime.root_and_release_jsvalue(resume.take_number_value())?;
-                resume.number(runtime, runtime.native_to_number(realm, &value)?)?
+                let value = resume.take_number_value();
+                resume.number(runtime, runtime.native_to_number_jsvalue(realm, value)?)?
             }
             MutationStep::Copy { mut resume } => {
                 let object = resume.take_copy_object();
@@ -711,14 +705,14 @@ pub(crate) fn finish(
             MutationStep::Set { mut resume } => {
                 let object = resume.take_set_object();
                 let key = resume.take_set_key();
-                let value = runtime.root_and_release_jsvalue(resume.take_set_value())?;
+                let value = resume.take_set_value();
                 {
-                    let result = runtime.internal_set(
+                    let result = runtime.internal_set_jsvalue(
                         realm,
                         &object,
                         &key,
                         value,
-                        Value::Object(object.clone()),
+                        JsValue::Object(object.clone().into_handle()),
                     )?;
                     resume.set(runtime, key, result)?
                 }

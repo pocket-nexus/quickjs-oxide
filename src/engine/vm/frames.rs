@@ -29,13 +29,14 @@ pub(in crate::engine::vm) struct NativeClassification {
 impl NativeClassification {
     pub(in crate::engine::vm) fn promote_selected(
         selection: super::call::ordinary::NativeSelection<'_>,
-    ) -> (crate::engine::object::CallableRef, Self) {
-        let (function, target, defining_realm, min_readable_args, operation) =
+    ) -> Result<(crate::engine::object::CallableRef, Self), RuntimeError> {
+        let (runtime, function, target, defining_realm, min_readable_args, operation) =
             selection.into_parts();
-        let domain = function.runtime().domain_id();
-        let callable = crate::engine::object::CallableRef::from_validated_object(function.clone());
-        let function = function.object_id();
-        (
+        let domain = runtime.domain_id();
+        let callable = crate::engine::object::CallableRef::from_validated_object(
+            ObjectRef::from_borrowed_handle(runtime.clone(), function)?,
+        );
+        Ok((
             callable,
             Self {
                 function,
@@ -45,31 +46,35 @@ impl NativeClassification {
                 min_readable_args,
                 operation: Some(operation),
             },
-        )
+        ))
     }
 
     pub(in crate::engine::vm) fn promote_linked(
+        runtime: &Runtime,
         selection: crate::engine::object::LinkedNativeSelection,
-        value: &crate::engine::value::Value,
-    ) -> Option<(crate::engine::object::CallableRef, Self)> {
-        let crate::engine::value::Value::Object(function) = value else {
-            return None;
+        value: &crate::engine::value::JsValue,
+    ) -> Result<Option<(crate::engine::object::CallableRef, Self)>, RuntimeError> {
+        let crate::engine::value::JsValue::Object(function) = value else {
+            return Ok(None);
         };
-        let data = selection.into_parts(function)?;
-        let domain = function.runtime().domain_id();
-        let callable = crate::engine::object::CallableRef::from_validated_object(function.clone());
-        let function = function.object_id();
-        Some((
+        let Some(data) = selection.into_parts_jsvalue(runtime, *function) else {
+            return Ok(None);
+        };
+        let domain = runtime.domain_id();
+        let callable = crate::engine::object::CallableRef::from_validated_object(
+            ObjectRef::from_borrowed_handle(runtime.clone(), *function)?,
+        );
+        Ok(Some((
             callable,
             Self {
-                function,
+                function: *function,
                 domain,
                 target: data.target,
                 defining_realm: data.realm.expect("selected native realm"),
                 min_readable_args: data.min_readable_args,
                 operation: data.operation(),
             },
-        ))
+        )))
     }
 
     pub(in crate::engine::vm) fn select(

@@ -10,7 +10,7 @@ use crate::engine::{
     heap::ContextId,
     object::operations::{InternalDefineResult, InternalSetResult},
     object::{ObjectRef, PropertyKey},
-    value::{JsValue, Value, conversion::NativeConversion},
+    value::{JsValue, conversion::NativeConversion},
     vm::{Completion, call::NativeArguments},
 };
 
@@ -123,7 +123,7 @@ enum Phase {
         key: PropertyKey,
     },
     AssignKeys {
-        sources: std::vec::IntoIter<JsValue>,
+        sources: AssignmentSources,
         source: ObjectRef,
         snapshot: bool,
     },
@@ -148,8 +148,26 @@ enum Phase {
         pair: Option<ObjectRef>,
     },
 }
+/// Retains the unvisited Object.assign arguments across observable callbacks.
+struct AssignmentSources {
+    runtime: Runtime,
+    remaining: std::vec::IntoIter<JsValue>,
+}
+impl Iterator for AssignmentSources {
+    type Item = JsValue;
+    fn next(&mut self) -> Option<JsValue> {
+        self.remaining.next()
+    }
+}
+impl Drop for AssignmentSources {
+    fn drop(&mut self) {
+        for value in self.remaining.by_ref() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
+}
 struct Assignment {
-    sources: std::vec::IntoIter<JsValue>,
+    sources: AssignmentSources,
     source: ObjectRef,
     remaining: std::vec::IntoIter<PropertyKey>,
     snapshot: bool,
@@ -199,9 +217,7 @@ impl PropertyStep {
             ) => match runtime.native_to_object_jsvalue(realm, runtime.dup_jsvalue(value)?)? {
                 NativeConversion::Value(object) => object,
                 NativeConversion::Throw(value) => {
-                    return Ok(Self::Complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
+                    return Ok(Self::Complete(Completion::Throw(value)));
                 }
             },
             _ => {
@@ -233,9 +249,23 @@ impl PropertyStep {
                     RuntimeError::Invariant("Object.assign sources allocation failed")
                 })?;
                 for value in arguments.readable.iter().skip(1).take(count) {
-                    sources.push(runtime.dup_jsvalue(value)?);
+                    match runtime.dup_jsvalue(value) {
+                        Ok(value) => sources.push(value),
+                        Err(error) => {
+                            for value in sources {
+                                let _ = runtime.release_jsvalue(value);
+                            }
+                            return Err(error);
+                        }
+                    }
                 }
-                resume.assign_source(runtime, sources.into_iter())
+                resume.assign_source(
+                    runtime,
+                    AssignmentSources {
+                        runtime: runtime.clone(),
+                        remaining: sources.into_iter(),
+                    },
+                )
             }
             PropertyKind::Keys
             | PropertyKind::ObjectKeys(_)
@@ -292,13 +322,14 @@ impl PropertyResume {
         result: NativeConversion<Vec<PropertyKey>>,
     ) -> Result<PropertyStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Result | Phase::AssignKeys { .. }) {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant("key-list reply has wrong phase"));
         }
         let keys = match result {
             NativeConversion::Throw(value) => {
-                return Ok(PropertyStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(PropertyStep::Complete(Completion::Throw(value)));
             }
             NativeConversion::Value(keys) => keys,
         };
@@ -331,9 +362,7 @@ impl PropertyResume {
                         &key,
                     )? {
                         NativeConversion::Throw(value) => {
-                            return Ok(PropertyStep::Complete(Completion::Throw(
-                                runtime.into_jsvalue(value)?,
-                            )));
+                            return Ok(PropertyStep::Complete(Completion::Throw(value)));
                         }
                         NativeConversion::Value(false) => continue,
                         NativeConversion::Value(true) => {}
@@ -452,7 +481,7 @@ impl PropertyResume {
     fn assign_source(
         mut self,
         runtime: &Runtime,
-        mut sources: std::vec::IntoIter<JsValue>,
+        mut sources: AssignmentSources,
     ) -> Result<PropertyStep, RuntimeError> {
         for value in sources.by_ref() {
             if matches!(value, JsValue::Null | JsValue::Undefined) {
@@ -460,7 +489,8 @@ impl PropertyResume {
             }
             let source = match runtime.native_to_object_jsvalue(self.0.realm, value)? {
                 NativeConversion::Value(source) => source,
-                NativeConversion::Throw(_) => {
+                NativeConversion::Throw(thrown) => {
+                    runtime.release_jsvalue(thrown)?;
                     return Err(RuntimeError::Invariant(
                         "non-nullish Object.assign source failed ToObject",
                     ));
@@ -556,11 +586,10 @@ impl PropertyResume {
         mut state: Enumeration,
         value: JsValue,
     ) -> Result<PropertyStep, RuntimeError> {
-        let element = runtime.root_and_release_jsvalue(value)?;
         runtime.define_fresh_object_keys_array_element(
             &state.result,
             state.index,
-            element,
+            value,
             "fresh Object keys result rejected an element",
         )?;
         state.index = state.index.checked_add(1).ok_or_else(|| {
@@ -587,9 +616,7 @@ impl PropertyResume {
             Ok(NativeConversion::Value(key)) => key,
             Ok(NativeConversion::Throw(value)) => {
                 self.release_key_phase(runtime);
-                return Ok(PropertyStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(PropertyStep::Complete(Completion::Throw(value)));
             }
             Err(error) => {
                 self.release_key_phase(runtime);
@@ -645,18 +672,19 @@ impl PropertyResume {
     }
     pub(crate) fn converted(
         mut self,
-        runtime: &Runtime,
+        _runtime: &Runtime,
         result: NativeConversion<crate::engine::object::OwnedPropertyDescriptor>,
     ) -> Result<PropertyStep, RuntimeError> {
         let Phase::Descriptor(key) = self.0.phase else {
+            if let NativeConversion::Throw(value) = result {
+                let _ = _runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "descriptor conversion reply has wrong phase",
             ));
         };
         Ok(match result {
-            NativeConversion::Throw(value) => {
-                PropertyStep::Complete(Completion::Throw(runtime.into_jsvalue(value)?))
-            }
+            NativeConversion::Throw(value) => PropertyStep::Complete(Completion::Throw(value)),
             NativeConversion::Value(descriptor) => {
                 PropertyStep::request_define(self.0.object.clone(), key.clone(), descriptor, {
                     let updated_0 = Phase::Defined(key);
@@ -675,9 +703,7 @@ impl PropertyResume {
             if let Some(value) =
                 runtime.finish_define_property_or_throw(self.0.realm, &key, result)?
             {
-                return Ok(PropertyStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(PropertyStep::Complete(Completion::Throw(value)));
             }
             return {
                 let updated_0 = Phase::Result;
@@ -694,7 +720,7 @@ impl PropertyResume {
         Ok(PropertyStep::Complete(
             if matches!(self.0.kind, PropertyKind::ObjectDefine) {
                 match runtime.finish_define_property_or_throw(self.0.realm, &key, result)? {
-                    Some(value) => Completion::Throw(runtime.into_jsvalue(value)?),
+                    Some(value) => Completion::Throw(value),
                     None => Completion::Return(JsValue::Object(self.0.object.into_handle())),
                 }
             } else {
@@ -703,9 +729,7 @@ impl PropertyResume {
                         result,
                         InternalDefineResult::Defined
                     ))),
-                    NativeConversion::Throw(value) => {
-                        Completion::Throw(runtime.into_jsvalue(value)?)
-                    }
+                    NativeConversion::Throw(value) => Completion::Throw(value),
                 }
             },
         ))
@@ -719,9 +743,7 @@ impl PropertyResume {
             let current = match result {
                 NativeConversion::Value(value) => value,
                 NativeConversion::Throw(value) => {
-                    return Ok(PropertyStep::Complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
+                    return Ok(PropertyStep::Complete(Completion::Throw(value)));
                 }
             };
             let PropertyKind::Integrity(kind) = self.0.kind else {
@@ -789,9 +811,7 @@ impl PropertyResume {
                     descriptor.is_some_and(|descriptor| descriptor.enumerable())
                 }
                 NativeConversion::Throw(value) => {
-                    return Ok(PropertyStep::Complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
+                    return Ok(PropertyStep::Complete(Completion::Throw(value)));
                 }
             };
             let resume = {
@@ -813,16 +833,17 @@ impl PropertyResume {
             };
             let descriptor = match result {
                 NativeConversion::Throw(value) => {
-                    return Ok(PropertyStep::Complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
+                    return Ok(PropertyStep::Complete(Completion::Throw(value)));
                 }
                 NativeConversion::Value(None) => return resume.enumerate(runtime, state),
                 NativeConversion::Value(Some(descriptor)) => descriptor,
             };
             if matches!(resume.kind, PropertyKind::ObjectDescriptors) {
-                let value =
-                    Value::Object(runtime.complete_descriptor_to_object(resume.realm, descriptor)?);
+                let value = JsValue::Object(
+                    runtime
+                        .complete_descriptor_to_object(resume.realm, descriptor)?
+                        .into_handle(),
+                );
                 runtime.define_fresh_object_descriptor_property(
                     &state.result,
                     &key,
@@ -849,7 +870,7 @@ impl PropertyResume {
                 runtime.define_fresh_object_keys_array_element(
                     &pair,
                     0,
-                    runtime.object_property_key_value(&key)?,
+                    runtime.into_jsvalue(runtime.object_property_key_value(&key)?)?,
                     "fresh Object.entries pair rejected its key",
                 )?;
                 Some(pair)
@@ -878,7 +899,7 @@ impl PropertyResume {
             ));
         }
         Ok(PropertyStep::Complete(match result {
-            NativeConversion::Throw(value) => Completion::Throw(runtime.into_jsvalue(value)?),
+            NativeConversion::Throw(value) => Completion::Throw(value),
             NativeConversion::Value(None) => Completion::Return(JsValue::Undefined),
             NativeConversion::Value(Some(descriptor)) => Completion::Return(JsValue::Object(
                 runtime
@@ -894,6 +915,9 @@ impl PropertyResume {
     ) -> Result<PropertyStep, RuntimeError> {
         if let PropertyKind::Integrity(kind) = self.0.kind {
             if !matches!(self.0.phase, Phase::Result) {
+                if let NativeConversion::Throw(value) = result {
+                    let _ = runtime.release_jsvalue(value);
+                }
                 return Err(RuntimeError::Invariant(
                     "integrity boolean reply has wrong phase",
                 ));
@@ -901,9 +925,7 @@ impl PropertyResume {
             let value = match result {
                 NativeConversion::Value(value) => value,
                 NativeConversion::Throw(value) => {
-                    return Ok(PropertyStep::Complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
+                    return Ok(PropertyStep::Complete(Completion::Throw(value)));
                 }
             };
             return if matches!(
@@ -940,7 +962,7 @@ impl PropertyResume {
             return Err(RuntimeError::Invariant("boolean reply has wrong phase"));
         }
         Ok(PropertyStep::Complete(match result {
-            NativeConversion::Throw(value) => Completion::Throw(runtime.into_jsvalue(value)?),
+            NativeConversion::Throw(value) => Completion::Throw(value),
             NativeConversion::Value(accepted)
                 if matches!(self.0.kind, PropertyKind::ObjectPrevent) =>
             {
@@ -964,9 +986,7 @@ impl PropertyResume {
     ) -> Result<PropertyStep, RuntimeError> {
         if let Phase::AssignSet { state, key } = self.0.phase {
             if let Some(value) = runtime.finish_set_property_or_throw(self.0.realm, &key, result)? {
-                return Ok(PropertyStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(PropertyStep::Complete(Completion::Throw(value)));
             }
             return {
                 let updated_0 = Phase::Result;
@@ -1020,11 +1040,10 @@ impl PropertyResume {
                 Completion::Return(value) => value,
             };
             let value = if let Some(pair) = pair {
-                let element = runtime.root_and_release_jsvalue(value)?;
                 runtime.define_fresh_object_keys_array_element(
                     &pair,
                     1,
-                    element,
+                    value,
                     "fresh Object.entries pair rejected its value",
                 )?;
                 JsValue::Object(pair.into_handle())
@@ -1080,10 +1099,9 @@ pub(in crate::engine::builtins) fn finish(
                 let object = resume.take_read_object();
                 let key = resume.take_read_key();
                 let receiver = resume.take_read_receiver();
-                let receiver = runtime.root_and_release_jsvalue(receiver)?;
                 resume.read(
                     runtime,
-                    runtime.internal_get(realm, &object, &key, receiver)?,
+                    runtime.internal_get_jsvalue(realm, &object, &key, receiver)?,
                 )?
             }
             PropertyStep::Set { mut resume } => {
@@ -1091,11 +1109,9 @@ pub(in crate::engine::builtins) fn finish(
                 let key = resume.take_set_key();
                 let value = resume.take_set_value();
                 let receiver = resume.take_set_receiver();
-                let value = runtime.root_and_release_jsvalue(value)?;
-                let receiver = runtime.root_and_release_jsvalue(receiver)?;
                 resume.set(
                     runtime,
-                    runtime.internal_set(realm, &object, &key, value, receiver)?,
+                    runtime.internal_set_jsvalue(realm, &object, &key, value, receiver)?,
                 )?
             }
             PropertyStep::Has { mut resume } => {
@@ -1463,6 +1479,7 @@ const _: () = assert!(std::mem::size_of::<PropertyStep>() <= 64);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::value::Value;
     #[test]
     fn entries_keep_unpublished_pair_and_target_alive_until_reply_or_abandonment() {
         let runtime = Runtime::new();

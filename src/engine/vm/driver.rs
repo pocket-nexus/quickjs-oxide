@@ -293,9 +293,6 @@ pub(super) fn enter_call(
                     {
                         NativeConversion::Value(arguments) => arguments,
                         NativeConversion::Throw(value) => {
-                            let value = runtime
-                                .into_jsvalue(value)
-                                .map_err(runtime_error_to_vm_error)?;
                             return Ok(CallStep::Complete(Completion::Throw(value)));
                         }
                     },
@@ -582,19 +579,9 @@ pub(super) fn execute_root_descriptor(
 ) -> Result<super::entry::DescriptorReply, Error> {
     match start_root(&runtime, realm, operation)? {
         RunningExit::RootDescriptor(result) => Ok(result),
-        RunningExit::Complete(Completion::Throw(value)) => {
-            // The internal exception crosses out to the public host adapter:
-            // its root is duplicated and the internal edge is released.
-            let rooted = runtime
-                .root_value(&value)
-                .map_err(runtime_error_to_vm_error)?;
-            runtime
-                .release_jsvalue(value)
-                .map_err(runtime_error_to_vm_error)?;
-            Ok(crate::engine::value::conversion::NativeConversion::Throw(
-                rooted,
-            ))
-        }
+        RunningExit::Complete(Completion::Throw(value)) => Ok(
+            crate::engine::value::conversion::NativeConversion::Throw(value),
+        ),
         _ => Err(Error::internal(
             "descriptor entry returned an untyped terminal result",
         )),
@@ -7042,7 +7029,7 @@ mod tests {
                 runtime
                     .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::X)
                     .unwrap(),
-                Value::Object(receiver),
+                JsValue::Object(receiver.into_handle()),
                 0
             )
             .unwrap(),

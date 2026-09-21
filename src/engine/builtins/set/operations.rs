@@ -137,9 +137,7 @@ impl SetStep {
         let set = match runtime.set_receiver(realm, invocation, false)? {
             NativeConversion::Value(set) => set,
             NativeConversion::Throw(value) => {
-                return Ok(Self::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(Self::Complete(Completion::Throw(value)));
             }
         };
         let target_ref = arguments.readable.first().ok_or(RuntimeError::Invariant(
@@ -493,9 +491,7 @@ impl SetResume {
         let size = match reply {
             NativeConversion::Value(size) => size,
             NativeConversion::Throw(value) => {
-                return Ok(SetStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(SetStep::Complete(Completion::Throw(value)));
             }
         };
         if size.is_nan() {

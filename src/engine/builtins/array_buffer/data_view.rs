@@ -240,19 +240,16 @@ impl Runtime {
                 "DataView prototype getter received a non-getter invocation",
             ));
         };
-        let this_value = self.root_value(this_value)?;
-        let object = match self.require_data_view_borrowed(realm, &this_value)? {
+        let object = match self.require_data_view_jsvalue(realm, this_value)? {
             NativeConversion::Value(object) => object,
             NativeConversion::Throw(value) => {
-                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                return Ok(Completion::Throw(value));
             }
         };
-        let view = self.data_view_snapshot(object)?;
+        let view = self.data_view_snapshot(&object)?;
         if kind == DataViewNativeKind::Buffer {
             let buffer = ObjectRef::from_borrowed_handle(self.clone(), view.buffer)?;
-            return Ok(Completion::Return(
-                self.into_jsvalue(Value::Object(buffer))?,
-            ));
+            return Ok(Completion::Return(JsValue::Object(buffer.into_handle())));
         }
 
         let buffer = self.snapshot_buffer_access(view.buffer)?.state;
@@ -264,10 +261,10 @@ impl Runtime {
             )?));
         };
         let value = match kind {
-            DataViewNativeKind::ByteLength => Value::Int(
+            DataViewNativeKind::ByteLength => JsValue::Int(
                 i32::try_from(byte_length).expect("DataView length is bounded by i32::MAX"),
             ),
-            DataViewNativeKind::ByteOffset => Value::Int(
+            DataViewNativeKind::ByteOffset => JsValue::Int(
                 i32::try_from(view.byte_offset).expect("DataView offset is bounded by i32::MAX"),
             ),
             DataViewNativeKind::Constructor
@@ -279,7 +276,7 @@ impl Runtime {
                 ));
             }
         };
-        Ok(Completion::Return(self.into_jsvalue(value)?))
+        Ok(Completion::Return(value))
     }
 
     fn call_data_view_get(
@@ -429,7 +426,7 @@ impl Runtime {
         width: usize,
     ) -> Result<NativeConversion<usize>, RuntimeError> {
         if buffer.detached {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "ArrayBuffer is detached",
@@ -447,7 +444,7 @@ impl Runtime {
             .checked_add(width)
             .is_none_or(|end| end > u64::from(range_length))
         {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Range,
                 "out of bound",
@@ -463,7 +460,7 @@ impl Runtime {
             .checked_add(range_length)
             .is_none_or(|end| end > buffer.byte_length)
         {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "out of bound",
@@ -492,7 +489,7 @@ impl Runtime {
                 return Ok(NativeConversion::Value(object));
             }
         }
-        Ok(NativeConversion::Throw(self.new_native_error(
+        Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
             realm,
             NativeErrorKind::Type,
             "ArrayBuffer object expected",
@@ -514,43 +511,11 @@ impl Runtime {
                 return Ok(NativeConversion::Value(object));
             }
         }
-        Ok(NativeConversion::Throw(self.new_native_error(
+        Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
             realm,
             NativeErrorKind::Type,
             "not a DataView",
         )?))
-    }
-
-    fn require_data_view_borrowed<'a>(
-        &self,
-        realm: ContextId,
-        value: &'a Value,
-    ) -> Result<NativeConversion<&'a ObjectRef>, RuntimeError> {
-        let Value::Object(object) = value else {
-            return Ok(NativeConversion::Throw(self.new_native_error(
-                realm,
-                NativeErrorKind::Type,
-                "not a DataView",
-            )?));
-        };
-        if !object.belongs_to(self) {
-            return Err(RuntimeError::WrongRuntime("DataView"));
-        }
-        let is_data_view = {
-            let state = self.0.state.borrow();
-            matches!(
-                state.heap.object(object.object_id())?.payload,
-                ObjectPayload::DataView(_)
-            )
-        };
-        if !is_data_view {
-            return Ok(NativeConversion::Throw(self.new_native_error(
-                realm,
-                NativeErrorKind::Type,
-                "not a DataView",
-            )?));
-        }
-        Ok(NativeConversion::Value(object))
     }
 
     fn data_view_snapshot(&self, object: &ObjectRef) -> Result<DataViewSnapshot, RuntimeError> {
@@ -834,9 +799,7 @@ impl DataViewAccessStep {
         let object = match runtime.require_data_view_jsvalue(realm, this_value)? {
             NativeConversion::Value(object) => object,
             NativeConversion::Throw(value) => {
-                return Ok(Self::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(Self::Complete(Completion::Throw(value)));
             }
         };
         // Preserve the original payload check before the first coercion.
@@ -895,9 +858,7 @@ impl DataViewAccessResume {
                     match super::constructor::primitive_index(runtime, self.0.realm, value)? {
                         NativeConversion::Value(position) => position,
                         NativeConversion::Throw(value) => {
-                            return Ok(DataViewAccessStep::Complete(Completion::Throw(
-                                runtime.into_jsvalue(value)?,
-                            )));
+                            return Ok(DataViewAccessStep::Complete(Completion::Throw(value)));
                         }
                     };
                 if matches!(self.0.phase, AccessPhase::SetPosition) {
@@ -921,9 +882,7 @@ impl DataViewAccessResume {
                 )? {
                     NativeConversion::Value(bytes) => bytes,
                     NativeConversion::Throw(value) => {
-                        return Ok(DataViewAccessStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(DataViewAccessStep::Complete(Completion::Throw(value)));
                     }
                 };
                 Ok(DataViewAccessStep::Complete(Completion::Return(
@@ -937,9 +896,7 @@ impl DataViewAccessResume {
                 let converted = match converted? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(DataViewAccessStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(DataViewAccessStep::Complete(Completion::Throw(value)));
                     }
                 };
                 let little_endian = runtime.value_to_boolean_jsvalue(&self.0.endian)?;
@@ -954,9 +911,7 @@ impl DataViewAccessResume {
                         &bytes,
                     )? {
                         NativeConversion::Value(()) => Completion::Return(JsValue::Undefined),
-                        NativeConversion::Throw(value) => {
-                            Completion::Throw(runtime.into_jsvalue(value)?)
-                        }
+                        NativeConversion::Throw(value) => Completion::Throw(value),
                     },
                 ))
             }
@@ -1047,9 +1002,7 @@ impl DataViewConstructorStep {
         let buffer = match runtime.require_data_view_array_buffer(realm, buffer_value)? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(Self::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(Self::Complete(Completion::Throw(value)));
             }
         };
         let mut resume = DataViewConstructorResume(Box::new(DataViewConstructorResumeState {
@@ -1167,9 +1120,7 @@ impl DataViewConstructorResume {
         let value = match super::constructor::primitive_index(runtime, self.0.realm, value)? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(DataViewConstructorStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(DataViewConstructorStep::Complete(Completion::Throw(value)));
             }
         };
         match self.0.phase {
@@ -1205,9 +1156,7 @@ impl DataViewConstructorResume {
                 runtime.data_view_default_prototype(realm)?
             }
             NativeConversion::Throw(value) => {
-                return Ok(DataViewConstructorStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(DataViewConstructorStep::Complete(Completion::Throw(value)));
             }
         };
         let DataViewConstructorPhase::Prototype { offset, length } = self.0.phase else {

@@ -127,14 +127,14 @@ enum Phase {
     },
 }
 fn result(
-    runtime: &Runtime,
+    __runtime: &Runtime,
     value: JsonStringifyResult<StringifyStep>,
 ) -> Result<StringifyStep, RuntimeError> {
     match value {
         Ok(step) => Ok(step),
-        Err(JsonStringifyFailure::Throw(value)) => Ok(StringifyStep::Complete(Completion::Throw(
-            runtime.into_jsvalue(value)?,
-        ))),
+        Err(JsonStringifyFailure::Throw(value)) => {
+            Ok(StringifyStep::Complete(Completion::Throw(value)))
+        }
         Err(JsonStringifyFailure::Runtime(error)) => Err(error),
     }
 }
@@ -144,12 +144,10 @@ fn converted<T>(reply: NativeConversion<T>) -> JsonStringifyResult<T> {
         NativeConversion::Throw(value) => Err(JsonStringifyFailure::Throw(value)),
     }
 }
-fn returned(runtime: &Runtime, reply: Completion) -> JsonStringifyResult<JsValue> {
+fn returned(__runtime: &Runtime, reply: Completion) -> JsonStringifyResult<JsValue> {
     match reply {
         Completion::Return(value) => Ok(value),
-        Completion::Throw(value) => Err(JsonStringifyFailure::Throw(
-            runtime.root_and_release_jsvalue(value)?,
-        )),
+        Completion::Throw(value) => Err(JsonStringifyFailure::Throw(value)),
     }
 }
 impl StringifyStep {
@@ -162,9 +160,10 @@ impl StringifyStep {
             runtime,
             (|| {
                 runtime.0.state.borrow().heap.context(realm)?;
-                let replacer_value = runtime.root_value(&arguments.readable[1])?;
-                let replacer = match &replacer_value {
-                    Value::Object(object) => runtime.as_callable(object)?,
+                let replacer_value = &arguments.readable[1];
+                let replacer = match replacer_value {
+                    JsValue::Object(id) => runtime
+                        .as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)?,
                     _ => None,
                 };
                 let mut state = Box::new(StringifyResumeState {
@@ -188,14 +187,15 @@ impl StringifyStep {
                 state.root = runtime.dup_jsvalue(&arguments.readable[0])?;
                 state.space = runtime.dup_jsvalue(&arguments.readable[2])?;
                 if state.replacer.is_none()
-                    && let Value::Object(object) = &replacer_value
-                    && converted(runtime.internal_is_array(realm, &replacer_value)?)?
+                    && let JsValue::Object(id) = replacer_value
+                    && converted(runtime.internal_is_array_jsvalue(realm, replacer_value)?)?
                 {
+                    let object = ObjectRef::from_borrowed_handle(runtime.clone(), *id)?;
                     return state.read(
                         runtime,
                         object.clone(),
                         "length",
-                        Phase::ListLength(object.clone()),
+                        Phase::ListLength(object),
                     );
                 }
                 state.gap(runtime)
@@ -314,10 +314,13 @@ impl StringifyResumeState {
         self.gap = gap;
         let holder = runtime.new_ordinary_object_in_realm(self.realm)?;
         let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal0)?;
-        if !matches!(
-            runtime.define_selected_set_data(&holder, &key, &self.root, false)?,
-            crate::engine::object::operations::PropertyDefineOutcome::Defined(true)
-        ) {
+        if !match runtime.define_selected_set_data(&holder, &key, &self.root, false)? {
+            crate::engine::object::operations::PropertyDefineOutcome::Defined(defined) => defined,
+            crate::engine::object::operations::PropertyDefineOutcome::Throw(value) => {
+                runtime.release_jsvalue(value)?;
+                false
+            }
+        } {
             return Err(RuntimeError::Invariant(
                 "fresh JSON.stringify root definition was rejected",
             )
@@ -366,11 +369,13 @@ impl StringifyResumeState {
         if let Some(callable) = &self.replacer {
             let mut arguments = Vec::new();
             if arguments.try_reserve_exact(2).is_err() {
-                return Err(JsonStringifyFailure::Throw(runtime.new_native_error(
-                    self.realm,
-                    NativeErrorKind::Internal,
-                    "out of memory",
-                )?));
+                return Err(JsonStringifyFailure::Throw(
+                    runtime.new_native_error_jsvalue(
+                        self.realm,
+                        NativeErrorKind::Internal,
+                        "out of memory",
+                    )?,
+                ));
             }
             arguments.push(runtime.into_jsvalue(Value::String(check.key.clone()))?);
             arguments.push(runtime.dup_jsvalue(&self.current)?);
@@ -490,11 +495,13 @@ impl StringifyResumeState {
                             self.output.push_utf8(text)?;
                         }
                         JsValue::BigInt(_) => {
-                            return Err(JsonStringifyFailure::Throw(runtime.new_native_error(
-                                self.realm,
-                                NativeErrorKind::Type,
-                                "Do not know how to serialize a BigInt",
-                            )?));
+                            return Err(JsonStringifyFailure::Throw(
+                                runtime.new_native_error_jsvalue(
+                                    self.realm,
+                                    NativeErrorKind::Type,
+                                    "Do not know how to serialize a BigInt",
+                                )?,
+                            ));
                         }
                         JsValue::Object(id) => {
                             let object = ObjectRef::from_borrowed_handle(runtime.clone(), *id)?;
@@ -530,7 +537,7 @@ impl StringifyResumeState {
                                 }
                                 JsonWrapperKind::BigInt => {
                                     return Err(JsonStringifyFailure::Throw(
-                                        runtime.new_native_error(
+                                        runtime.new_native_error_jsvalue(
                                             self.realm,
                                             NativeErrorKind::Type,
                                             "Do not know how to serialize a BigInt",
@@ -652,11 +659,13 @@ impl StringifyResumeState {
         indent: JsString,
     ) -> JsonStringifyResult<StringifyStep> {
         if self.stack.iter().any(|ancestor| ancestor == &object) {
-            return Err(JsonStringifyFailure::Throw(runtime.new_native_error(
-                self.realm,
-                NativeErrorKind::Type,
-                "circular reference",
-            )?));
+            return Err(JsonStringifyFailure::Throw(
+                runtime.new_native_error_jsvalue(
+                    self.realm,
+                    NativeErrorKind::Type,
+                    "circular reference",
+                )?,
+            ));
         }
         let next_indent = indent.try_concat(&self.gap)?;
         self.stack.push(object.clone());
@@ -665,7 +674,9 @@ impl StringifyResumeState {
             indent,
             next_indent,
         };
-        if converted(runtime.internal_is_array(self.realm, &Value::Object(object.clone()))?)? {
+        if converted(
+            runtime.internal_is_array_jsvalue(self.realm, &JsValue::Object(object.object_id()))?,
+        )? {
             return self.read(runtime, object, "length", Phase::ArrayLength(start));
         }
         if let Some(keys) = &self.property_list {
@@ -805,11 +816,13 @@ impl StringifyResume {
                 if let Some(callable) = callable {
                     let mut arguments = Vec::new();
                     if arguments.try_reserve_exact(1).is_err() {
-                        return Err(JsonStringifyFailure::Throw(runtime.new_native_error(
-                            state.realm,
-                            NativeErrorKind::Internal,
-                            "out of memory",
-                        )?));
+                        return Err(JsonStringifyFailure::Throw(
+                            runtime.new_native_error_jsvalue(
+                                state.realm,
+                                NativeErrorKind::Internal,
+                                "out of memory",
+                            )?,
+                        ));
                     }
                     arguments.push(runtime.into_jsvalue(Value::String(check.key.clone()))?);
                     let receiver = runtime.dup_jsvalue(&state.current)?;

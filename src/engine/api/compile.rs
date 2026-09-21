@@ -10,13 +10,13 @@ use crate::engine::compiler::{
     compile_unlinked_script_bytes_with_filename, compile_unlinked_script_with_filename,
 };
 use crate::engine::heap::ContextId;
-use crate::engine::value::{JsString, Value};
+use crate::engine::value::{JsString, JsValue};
 use crate::engine::vm::frames::ExplicitBacktraceLocation;
 use crate::source::QuickJsSourceLocator;
 
 pub(crate) enum Compilation {
     Published(FunctionBytecodeRef),
-    Throw(Value),
+    Throw(JsValue),
 }
 
 impl Runtime {
@@ -89,11 +89,16 @@ impl Runtime {
                     None
                 };
                 let exception = if error.kind() == ErrorKind::Syntax {
-                    self.new_native_error_without_backtrace_from_error(realm, kind, &error)?
+                    self.new_native_error_without_backtrace_from_error_jsvalue(realm, kind, &error)?
                 } else {
-                    self.new_native_error_from_error(realm, kind, &error)?
+                    self.new_native_error_from_error_jsvalue(realm, kind, &error)?
                 };
-                self.ensure_error_backtrace(&exception, false, explicit_location)?;
+                if let Err(error) =
+                    self.ensure_error_backtrace_jsvalue(&exception, false, explicit_location)
+                {
+                    let _ = self.release_jsvalue(exception);
+                    return Err(error);
+                }
                 return Ok(Compilation::Throw(exception));
             }
         };

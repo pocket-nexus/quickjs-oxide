@@ -216,9 +216,7 @@ impl ErrorResume {
                     {
                         NativeConversion::Value(realm) => realm,
                         NativeConversion::Throw(value) => {
-                            return Ok(ErrorStep::Complete(Completion::Throw(
-                                runtime.into_jsvalue(value)?,
-                            )));
+                            return Ok(ErrorStep::Complete(Completion::Throw(value)));
                         }
                     };
                     let prototype = {
@@ -334,9 +332,7 @@ impl ErrorResume {
             NativeConversion::Value(value) => {
                 self.string_value(runtime, runtime.into_jsvalue(Value::String(value))?)
             }
-            NativeConversion::Throw(value) => Ok(ErrorStep::Complete(Completion::Throw(
-                runtime.into_jsvalue(value)?,
-            ))),
+            NativeConversion::Throw(value) => Ok(ErrorStep::Complete(Completion::Throw(value))),
         }
     }
     fn string_value(
@@ -426,6 +422,9 @@ impl ErrorResume {
         result: NativeConversion<bool>,
     ) -> Result<ErrorStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::CauseHas) {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "Error cause boolean phase mismatch",
             ));
@@ -433,9 +432,7 @@ impl ErrorResume {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(ErrorStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(ErrorStep::Complete(Completion::Throw(value)));
             }
         };
         if !value {

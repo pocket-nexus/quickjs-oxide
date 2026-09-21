@@ -49,7 +49,7 @@ pub(crate) enum PropertySetAction {
     RejectedProxyTrap,
     Complete,
     Rejected(PropertySetRejection),
-    Throw(Value),
+    Throw(crate::engine::value::JsValue),
     Call { payload: Box<PropertySetterCall> },
 }
 
@@ -102,12 +102,12 @@ const _: () = assert!(std::mem::size_of::<PropertySetAction>() <= 64);
 
 pub(crate) enum PropertyDefineOutcome {
     Defined(bool),
-    Throw(Value),
+    Throw(crate::engine::value::JsValue),
 }
 
 pub(crate) enum ArrayLengthConversion {
     Length(u32),
-    Throw(Value),
+    Throw(crate::engine::value::JsValue),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

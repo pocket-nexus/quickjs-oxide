@@ -196,7 +196,7 @@ impl Runtime {
         mode: AtomicAccessMode,
     ) -> Result<NativeConversion<AtomicAccessPreparation>, RuntimeError> {
         let JsValue::Object(id) = typed_array else {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "integer TypedArray expected",
@@ -204,7 +204,7 @@ impl Runtime {
         };
         let object = ObjectRef::from_borrowed_handle(self.clone(), *id)?;
         let Some(snapshot) = self.typed_array_snapshot_if_branded(&object)? else {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "integer TypedArray expected",
@@ -217,7 +217,7 @@ impl Runtime {
             }
         };
         if !valid_element {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "integer TypedArray expected",
@@ -228,7 +228,7 @@ impl Runtime {
         // QuickJS performs this non-shared wait rejection before even its
         // initial detach check.
         if mode == AtomicAccessMode::Wait && !buffer_access.is_shared() {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "not a SharedArrayBuffer TypedArray",
@@ -237,7 +237,7 @@ impl Runtime {
 
         let buffer = buffer_access.state;
         if buffer.detached {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "ArrayBuffer is detached",
@@ -267,7 +267,7 @@ impl Runtime {
             old_length,
         } = prepared;
         if index >= u64::from(old_length) {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Range,
                 "out-of-bound access",
@@ -277,14 +277,14 @@ impl Runtime {
         if mode == AtomicAccessMode::Operation {
             let current = self.typed_array_state_from_snapshot(snapshot)?;
             if current.out_of_bounds {
-                return Ok(NativeConversion::Throw(self.new_native_error(
+                return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                     realm,
                     NativeErrorKind::Type,
                     "ArrayBuffer is detached or resized",
                 )?));
             }
             if index >= u64::from(current.length) {
-                return Ok(NativeConversion::Throw(self.new_native_error(
+                return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                     realm,
                     NativeErrorKind::Range,
                     "out-of-bound access",
@@ -309,14 +309,14 @@ impl Runtime {
         if current.out_of_bounds {
             // js_atomics_op/js_atomics_store explicitly use the detached
             // ArrayBuffer error here even when a RAB resize caused the state.
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "ArrayBuffer is detached",
             )?));
         }
         if access.index >= u64::from(current.length) {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Range,
                 "out-of-bound access",

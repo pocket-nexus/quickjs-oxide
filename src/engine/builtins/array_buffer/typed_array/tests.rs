@@ -1581,7 +1581,7 @@ fn scoped_typed_words_keep_only_view_root_and_conversion_error_realm() {
     let symbol = runtime
         .into_jsvalue(second.eval("Symbol()").unwrap())
         .unwrap();
-    let NativeConversion::Throw(Value::Object(error)) =
+    let NativeConversion::Throw(JsValue::Object(error)) =
         write::TypedWriteStep::set_primitive_result(
             &runtime,
             second.realm,
@@ -1593,6 +1593,7 @@ fn scoped_typed_words_keep_only_view_root_and_conversion_error_realm() {
     else {
         panic!("expected conversion error")
     };
+    let error = ObjectRef::from_owned_handle(runtime.clone(), error);
     let Value::Object(expected) = second.eval("TypeError.prototype").unwrap() else {
         panic!("expected prototype")
     };

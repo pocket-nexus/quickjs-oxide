@@ -217,15 +217,16 @@ impl CollectionResume {
         reply: NativeConversion<ConstructorPrototypeSource>,
     ) -> Result<CollectionStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Prototype) {
+            if let NativeConversion::Throw(value) = reply {
+                runtime.release_jsvalue(value)?;
+            }
             return Err(RuntimeError::Invariant(
                 "collection prototype phase mismatch",
             ));
         }
         let prototype = match reply {
             NativeConversion::Throw(value) => {
-                return Ok(CollectionStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(CollectionStep::Complete(Completion::Throw(value)));
             }
             NativeConversion::Value(ConstructorPrototypeSource::Explicit(prototype)) => prototype,
             NativeConversion::Value(ConstructorPrototypeSource::Realm(realm)) => {

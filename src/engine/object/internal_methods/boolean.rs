@@ -107,9 +107,9 @@ fn method(
     step: MethodStep,
 ) -> Result<ProxyBooleanStep, RuntimeError> {
     Ok(match step {
-        MethodStep::Throw(value) => ProxyBooleanStep::Complete(NativeConversion::Throw(
-            runtime.root_and_release_jsvalue(value.take())?,
-        )),
+        MethodStep::Throw(value) => {
+            ProxyBooleanStep::Complete(NativeConversion::Throw(value.take()))
+        }
         MethodStep::Read { mut resume } => {
             let object = resume.take_read_object();
             let key = resume.take_read_key();
@@ -195,9 +195,7 @@ impl ProxyBooleanResume {
         let value = match completion {
             Completion::Return(value) => value,
             Completion::Throw(value) => {
-                return Ok(ProxyBooleanStep::Complete(NativeConversion::Throw(
-                    runtime.root_and_release_jsvalue(value)?,
-                )));
+                return Ok(ProxyBooleanStep::Complete(NativeConversion::Throw(value)));
             }
         };
         match self.0.phase {
@@ -319,6 +317,9 @@ impl ProxyBooleanResume {
             Phase::HasInvariant { rooted, key } => (rooted, key, false),
             Phase::DeleteInvariant { rooted, key } => (rooted, key, true),
             _ => {
+                if let NativeConversion::Throw(value) = descriptor {
+                    let _ = runtime.release_jsvalue(value);
+                }
                 return Err(RuntimeError::Invariant(
                     "Proxy boolean continuation received a descriptor reply",
                 ));
@@ -391,27 +392,23 @@ pub(super) fn finish(
             ProxyBooleanStep::Read { mut resume } => {
                 let object = resume.take_read_object();
                 let key = resume.take_read_key();
-                let receiver = runtime.root_and_release_jsvalue(resume.take_read_receiver())?;
+                let receiver = resume.take_read_receiver();
                 resume.resume(
                     runtime,
-                    runtime.internal_get(realm, &object, &key, receiver)?,
+                    runtime.internal_get_jsvalue(realm, &object, &key, receiver)?,
                 )?
             }
             ProxyBooleanStep::Call { mut resume } => {
                 let target = resume.take_call_target();
-                let receiver = runtime.root_and_release_jsvalue(resume.take_call_receiver())?;
-                let arguments = resume
-                    .take_call_arguments()
-                    .into_iter()
-                    .map(|value| runtime.root_and_release_jsvalue(value))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let receiver = resume.take_call_receiver();
+                let arguments = resume.take_call_arguments();
                 {
                     let result = match target {
                         DirectCallTarget::Callable(callable) => {
-                            runtime.call_internal(realm, &callable, receiver, &arguments)?
+                            runtime.call_internal_jsvalue(realm, &callable, receiver, arguments)?
                         }
                         DirectCallTarget::NonCallableProxy(object) => {
-                            runtime.call_proxy(realm, &object, receiver, &arguments)?
+                            runtime.call_proxy_jsvalue(realm, &object, receiver, arguments)?
                         }
                     };
                     resume.resume(runtime, result)?

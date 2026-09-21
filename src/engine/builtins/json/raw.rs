@@ -38,8 +38,8 @@ impl Runtime {
         realm: ContextId,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        let argument = self.root_value(&arguments.readable[0])?;
-        RawResume { realm }.string(self, self.native_to_js_string(realm, &argument)?)
+        let argument = self.dup_jsvalue(&arguments.readable[0])?;
+        RawResume { realm }.string(self, self.native_to_js_string_jsvalue(realm, argument)?)
     }
 
     fn raw_json_from_string(
@@ -60,7 +60,10 @@ impl Runtime {
             NativeConversion::Value((value, _)) => {
                 self.release_jsvalue(value)?;
             }
-            NativeConversion::Throw(_) => return self.invalid_raw_json(realm),
+            NativeConversion::Throw(thrown) => {
+                self.release_jsvalue(thrown)?;
+                return self.invalid_raw_json(realm);
+            }
         }
 
         // QuickJS allocates the null-prototype branded object only after the
@@ -151,7 +154,7 @@ impl RawResume {
     ) -> Result<Completion, RuntimeError> {
         match reply {
             NativeConversion::Value(source) => runtime.raw_json_from_string(self.realm, source),
-            NativeConversion::Throw(value) => Ok(Completion::Throw(runtime.into_jsvalue(value)?)),
+            NativeConversion::Throw(value) => Ok(Completion::Throw(value)),
         }
     }
 }

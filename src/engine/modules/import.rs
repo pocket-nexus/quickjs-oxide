@@ -8,7 +8,7 @@ use crate::engine::code::{
 };
 use crate::engine::heap::ContextId;
 use crate::engine::object::{CallableRef, ObjectRef, PropertyKey};
-use crate::engine::value::{JsString, JsValue, Value, conversion::NativeConversion};
+use crate::engine::value::{JsString, JsValue, conversion::NativeConversion};
 use crate::engine::vm::Completion;
 
 pub(crate) enum ImportStep {
@@ -38,13 +38,16 @@ pub(crate) enum ImportStep {
     },
 }
 enum Phase {
-    Specifier(Value),
+    Specifier,
     With,
     Descriptors,
     Values,
     Reject,
 }
 pub(crate) struct ImportResume {
+    runtime: Runtime,
+    options: JsValue,
+    reply: JsValue,
     realm: ContextId,
     base_name: Option<JsString>,
     capability: RootedPromiseCapability,
@@ -57,47 +60,60 @@ pub(crate) struct ImportResume {
     index: usize,
     entries: Vec<ModuleImportAttribute>,
 }
+impl Drop for ImportResume {
+    fn drop(&mut self) {
+        for value in [&mut self.options, &mut self.reply] {
+            let _ = self
+                .runtime
+                .release_jsvalue(std::mem::replace(value, JsValue::Undefined));
+        }
+    }
+}
 impl ImportStep {
     pub(crate) fn start(
         runtime: &Runtime,
         realm: ContextId,
         root: Option<&FunctionBytecodeRef>,
-        specifier: Value,
-        options: Value,
+        specifier: &JsValue,
+        options: &JsValue,
     ) -> Result<Self, RuntimeError> {
         // Reject host-policy violations before filename observation, allocation,
         // conversion side effects, or any loader callback.
         runtime.ensure_dynamic_import_bytecode_authorized(root)?;
         let base_name = runtime.active_script_or_module_name()?;
         let capability = runtime.new_default_promise_capability(realm)?;
+        let resume = Box::new(ImportResume {
+            runtime: runtime.clone(),
+            options: runtime.dup_jsvalue(options)?,
+            reply: JsValue::Undefined,
+            realm,
+            base_name,
+            capability,
+            phase: Phase::Specifier,
+            specifier: None,
+            pending_name: None,
+            attributes: None,
+            keys: Vec::new(),
+            enumerable: Vec::new(),
+            index: 0,
+            entries: Vec::new(),
+        });
         Ok(Self::String {
-            value: runtime.into_jsvalue(specifier)?,
-            resume: Box::new(ImportResume {
-                realm,
-                base_name,
-                capability,
-                phase: Phase::Specifier(options),
-                specifier: None,
-                pending_name: None,
-                attributes: None,
-                keys: Vec::new(),
-                enumerable: Vec::new(),
-                index: 0,
-                entries: Vec::new(),
-            }),
+            value: runtime.dup_jsvalue(specifier)?,
+            resume,
         })
     }
 }
 impl ImportResume {
     fn reject(
         mut self: Box<Self>,
-        runtime: &Runtime,
-        reason: Value,
+        _runtime: &Runtime,
+        reason: JsValue,
     ) -> Result<ImportStep, RuntimeError> {
         self.phase = Phase::Reject;
         Ok(ImportStep::Call {
             callable: self.capability.reject.clone(),
-            reason: runtime.into_jsvalue(reason)?,
+            reason,
             resume: self,
         })
     }
@@ -106,7 +122,8 @@ impl ImportResume {
         runtime: &Runtime,
         message: &str,
     ) -> Result<ImportStep, RuntimeError> {
-        let reason = runtime.new_native_error(self.realm, NativeErrorKind::Type, message)?;
+        let reason =
+            runtime.new_native_error_jsvalue(self.realm, NativeErrorKind::Type, message)?;
         self.reject(runtime, reason)
     }
     fn enqueue(
@@ -124,9 +141,9 @@ impl ImportResume {
             specifier,
             attributes,
         )?;
-        Ok(ImportStep::Complete(Completion::Return(
-            runtime.into_jsvalue(Value::Object(self.capability.promise))?,
-        )))
+        Ok(ImportStep::Complete(Completion::Return(JsValue::Object(
+            self.capability.promise.clone().into_handle(),
+        ))))
     }
     pub(crate) fn resume(
         mut self: Box<Self>,
@@ -135,9 +152,12 @@ impl ImportResume {
     ) -> Result<ImportStep, RuntimeError> {
         if matches!(self.phase, Phase::Reject) {
             return match completion {
-                Completion::Return(_) => Ok(ImportStep::Complete(Completion::Return(
-                    runtime.into_jsvalue(Value::Object(self.capability.promise))?,
-                ))),
+                Completion::Return(value) => {
+                    runtime.release_jsvalue(value)?;
+                    Ok(ImportStep::Complete(Completion::Return(JsValue::Object(
+                        self.capability.promise.clone().into_handle(),
+                    ))))
+                }
                 Completion::Throw(value) => {
                     runtime.release_jsvalue(value)?;
                     Err(RuntimeError::Invariant(
@@ -148,39 +168,41 @@ impl ImportResume {
         }
         let value = match completion {
             Completion::Throw(reason) => {
-                let reason = runtime.root_and_release_jsvalue(reason)?;
                 return self.reject(runtime, reason);
             }
-            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Return(value) => value,
         };
+        let old = std::mem::replace(&mut self.reply, value);
+        runtime.release_jsvalue(old)?;
         match std::mem::replace(&mut self.phase, Phase::With) {
-            Phase::Specifier(options) => {
-                let Value::String(specifier) = value else {
+            Phase::Specifier => {
+                let JsValue::String(id) = &self.reply else {
                     return Err(RuntimeError::Invariant(
                         "dynamic import conversion returned a non-string",
                     ));
                 };
-                self.specifier = Some(specifier);
-                if matches!(options, Value::Undefined) {
+                self.specifier = Some(runtime.0.state.borrow().heap.string(*id)?.clone());
+                if matches!(self.options, JsValue::Undefined) {
                     return self.enqueue(runtime, ModuleImportAttributes::Absent);
                 }
-                let Value::Object(object) = options else {
+                let JsValue::Object(id) = &self.options else {
                     return self.type_error(runtime, "options must be an object");
                 };
                 Ok(ImportStep::Read {
-                    object,
+                    object: ObjectRef::from_borrowed_handle(runtime.clone(), *id)?,
                     key: runtime
                         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::With)?,
                     resume: self,
                 })
             }
             Phase::With => {
-                if matches!(value, Value::Undefined) {
+                if matches!(self.reply, JsValue::Undefined) {
                     return self.enqueue(runtime, ModuleImportAttributes::Absent);
                 }
-                let Value::Object(object) = value else {
+                let JsValue::Object(id) = &self.reply else {
                     return self.type_error(runtime, "options.with must be an object");
                 };
+                let object = ObjectRef::from_borrowed_handle(runtime.clone(), *id)?;
                 self.attributes = Some(object.clone());
                 self.phase = Phase::Descriptors;
                 Ok(ImportStep::Keys {
@@ -189,12 +211,13 @@ impl ImportResume {
                 })
             }
             Phase::Values => {
-                let Value::String(value) = value else {
+                let JsValue::String(id) = &self.reply else {
                     return self.type_error(runtime, "module attribute values must be strings");
                 };
                 let name = self.pending_name.take().ok_or(RuntimeError::Invariant(
                     "dynamic import lost attribute name",
                 ))?;
+                let value = runtime.0.state.borrow().heap.string(*id)?.clone();
                 self.entries
                     .push(ModuleImportAttribute { key: name, value });
                 self.index += 1;

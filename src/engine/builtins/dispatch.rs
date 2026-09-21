@@ -49,7 +49,7 @@ impl Runtime {
             for argument in bound_arguments.into_iter().chain(call_arguments) {
                 let _ = self.release_jsvalue(argument);
             }
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Internal,
                 "stack overflow",
@@ -242,7 +242,7 @@ impl Runtime {
                         )? {
                             NativeConversion::Value(arguments) => arguments,
                             NativeConversion::Throw(value) => {
-                                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                                return Ok(Completion::Throw(value));
                             }
                         };
                         argument_start = 0;

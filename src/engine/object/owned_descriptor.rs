@@ -42,11 +42,11 @@ impl OwnedPropertyDescriptor {
     ) -> Result<Self, RuntimeError> {
         runtime.validate_descriptor_domains(source)?;
         let mut result = Self::new(runtime);
-        result.writable = source.writable.clone();
+        result.writable = source.writable;
         result.get = source.get.clone();
         result.set = source.set.clone();
-        result.enumerable = source.enumerable.clone();
-        result.configurable = source.configurable.clone();
+        result.enumerable = source.enumerable;
+        result.configurable = source.configurable;
         if let DescriptorField::Present(value) = &source.value {
             result.value = DescriptorField::Present(runtime.unroot_value(value)?);
         }
@@ -71,11 +71,11 @@ impl OwnedPropertyDescriptor {
     pub(crate) fn attributes_public(&self) -> OrdinaryPropertyDescriptor {
         OrdinaryPropertyDescriptor {
             value: DescriptorField::Absent,
-            writable: self.writable.clone(),
+            writable: self.writable,
             get: self.get.clone(),
             set: self.set.clone(),
-            enumerable: self.enumerable.clone(),
-            configurable: self.configurable.clone(),
+            enumerable: self.enumerable,
+            configurable: self.configurable,
         }
     }
     pub(crate) fn is_mixed_descriptor(&self) -> bool {

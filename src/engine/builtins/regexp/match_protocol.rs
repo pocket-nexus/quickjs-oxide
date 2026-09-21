@@ -141,9 +141,7 @@ impl RegExpMatchResume {
         let key =
             runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
         if let Some(value) = runtime.finish_set_property_or_throw(self.0.realm, &key, result)? {
-            return Ok(RegExpMatchStep::Complete(Completion::Throw(
-                runtime.into_jsvalue(value)?,
-            )));
+            return Ok(RegExpMatchStep::Complete(Completion::Throw(value)));
         }
         match std::mem::replace(&mut self.0.phase, MatchPhase::Single) {
             MatchPhase::InitialSet { input, unicode } => {
@@ -196,9 +194,7 @@ impl RegExpMatchResume {
                     match runtime.string_from_primitive_jsvalue(self.0.realm, &self.0.converted)? {
                         NativeConversion::Value(value) => value,
                         NativeConversion::Throw(value) => {
-                            return Ok(RegExpMatchStep::Complete(Completion::Throw(
-                                runtime.into_jsvalue(value)?,
-                            )));
+                            return Ok(RegExpMatchStep::Complete(Completion::Throw(value)));
                         }
                     };
                 self.0.input_value = if matches!(self.0.converted, JsValue::String(_)) {
@@ -230,9 +226,7 @@ impl RegExpMatchResume {
                     match runtime.string_from_primitive_jsvalue(self.0.realm, &self.0.converted)? {
                         NativeConversion::Value(value) => value,
                         NativeConversion::Throw(value) => {
-                            return Ok(RegExpMatchStep::Complete(Completion::Throw(
-                                runtime.into_jsvalue(value)?,
-                            )));
+                            return Ok(RegExpMatchStep::Complete(Completion::Throw(value)));
                         }
                     };
                 if !flags.utf16_units().any(|unit| unit == u16::from(b'g')) {
@@ -309,9 +303,7 @@ impl RegExpMatchResume {
                     match runtime.string_from_primitive_jsvalue(self.0.realm, &self.0.converted)? {
                         NativeConversion::Value(value) => value,
                         NativeConversion::Throw(value) => {
-                            return Ok(RegExpMatchStep::Complete(Completion::Throw(
-                                runtime.into_jsvalue(value)?,
-                            )));
+                            return Ok(RegExpMatchStep::Complete(Completion::Throw(value)));
                         }
                     };
                 let empty = matched.is_empty();
@@ -379,9 +371,7 @@ impl RegExpMatchResume {
                     match runtime.number_from_primitive_jsvalue(self.0.realm, &self.0.converted)? {
                         NativeConversion::Value(value) => Runtime::length_from_number(value),
                         NativeConversion::Throw(value) => {
-                            return Ok(RegExpMatchStep::Complete(Completion::Throw(
-                                runtime.into_jsvalue(value)?,
-                            )));
+                            return Ok(RegExpMatchStep::Complete(Completion::Throw(value)));
                         }
                     };
                 let next = advance_string_index(&state.input, current, state.unicode);

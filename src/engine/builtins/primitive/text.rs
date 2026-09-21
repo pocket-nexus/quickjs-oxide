@@ -160,9 +160,7 @@ impl ScalarTextResume {
         let string = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(ScalarTextStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(ScalarTextStep::Complete(Completion::Throw(value)));
             }
         };
         match self.0.phase {
@@ -237,6 +235,9 @@ impl ScalarTextResume {
         result: NativeConversion<f64>,
     ) -> Result<ScalarTextStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Index) {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "String scalar index phase mismatch",
             ));
@@ -244,9 +245,7 @@ impl ScalarTextResume {
         let number = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(ScalarTextStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(ScalarTextStep::Complete(Completion::Throw(value)));
             }
         };
         let mut index = crate::engine::value::number::to_int32_sat(number);

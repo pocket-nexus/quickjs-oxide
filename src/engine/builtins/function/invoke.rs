@@ -97,17 +97,15 @@ impl InvokeStep {
                     "Reflect.construct newTarget argv was not readable",
                 ))?;
                 if !matches!(value, JsValue::Object(_)) {
-                    return Ok(Self::Complete(Completion::Throw(runtime.into_jsvalue(
+                    return Ok(Self::Complete(Completion::Throw(
                         runtime.new_not_constructor_error_jsvalue(realm, value)?,
-                    )?)));
+                    )));
                 }
                 Some(
                     match runtime.constructor_from_jsvalue(realm, runtime.dup_jsvalue(value)?)? {
                         NativeConversion::Value(target) => ConstructNewTarget::Validated(target),
                         NativeConversion::Throw(value) => {
-                            return Ok(Self::Complete(Completion::Throw(
-                                runtime.into_jsvalue(value)?,
-                            )));
+                            return Ok(Self::Complete(Completion::Throw(value)));
                         }
                     },
                 )
@@ -313,9 +311,7 @@ impl InvokeResume {
         let arguments = match result {
             NativeConversion::Throw(value) => {
                 self.0.target.release_pending_new_target(runtime)?;
-                return Ok(InvokeStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(InvokeStep::Complete(Completion::Throw(value)));
             }
             NativeConversion::Value(arguments) => arguments,
         };
@@ -356,9 +352,7 @@ impl InvokeResume {
                         if let Some(ConstructNewTarget::Raw(new_target)) = new_target {
                             runtime.release_jsvalue(new_target)?;
                         }
-                        return Ok(InvokeStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(InvokeStep::Complete(Completion::Throw(value)));
                     }
                 };
                 let new_target =

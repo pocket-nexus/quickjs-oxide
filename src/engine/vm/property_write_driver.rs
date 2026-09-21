@@ -72,9 +72,6 @@ pub(super) fn write_progress(
         {
             NativeConversion::Value(key) => key,
             NativeConversion::Throw(value) => {
-                let value = runtime
-                    .into_jsvalue(value)
-                    .map_err(runtime_error_to_vm_error)?;
                 return Ok(PropertyProgress::Deferred(CallStep::Complete(
                     Completion::Throw(value),
                 )));
@@ -128,11 +125,7 @@ pub(super) fn converted(
     {
         NativeConversion::Value(key) => key,
         NativeConversion::Throw(value) => {
-            return Ok(CallStep::Complete(Completion::Throw(
-                runtime
-                    .into_jsvalue(value)
-                    .map_err(runtime_error_to_vm_error)?,
-            )));
+            return Ok(CallStep::Complete(Completion::Throw(value)));
         }
     };
     let base = input.base.take().expect("converted write base");

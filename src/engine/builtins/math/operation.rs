@@ -197,13 +197,13 @@ impl MathResumeState {
     /// One numerical accumulation kernel for immediate and suspended inputs.
     fn accept_number(
         &mut self,
-        runtime: &Runtime,
+        _runtime: &Runtime,
         result: NativeConversion<f64>,
     ) -> Result<Option<Completion>, RuntimeError> {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(Some(Completion::Throw(runtime.into_jsvalue(value)?)));
+                return Ok(Some(Completion::Throw(value)));
             }
         };
         self.result = Some(match self.kind {

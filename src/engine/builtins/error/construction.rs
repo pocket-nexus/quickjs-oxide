@@ -23,6 +23,7 @@ impl Runtime {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn new_native_error(
         &self,
         realm: ContextId,
@@ -77,11 +78,15 @@ impl Runtime {
             .is_none_or(|frame| matches!(frame.kind, ActiveFrameKind::Native { .. }));
         if capture_now {
             let JsValue::Object(_) = &value else {
+                let _ = self.release_jsvalue(value);
                 return Err(RuntimeError::Invariant(
                     "native Error construction did not produce an object",
                 ));
             };
-            self.ensure_error_backtrace_jsvalue(&value, false, None)?;
+            if let Err(error) = self.ensure_error_backtrace_jsvalue(&value, false, None) {
+                let _ = self.release_jsvalue(value);
+                return Err(error);
+            }
         }
         Ok(value)
     }
@@ -106,17 +111,29 @@ impl Runtime {
         Ok(value)
     }
 
+    #[cfg(test)]
     pub(crate) fn new_native_error_without_backtrace_from_error(
         &self,
         realm: ContextId,
         kind: NativeErrorKind,
         error: &Error,
     ) -> Result<Value, RuntimeError> {
+        let value =
+            self.new_native_error_without_backtrace_from_error_jsvalue(realm, kind, error)?;
+        self.root_and_release_jsvalue(value)
+    }
+
+    pub(crate) fn new_native_error_without_backtrace_from_error_jsvalue(
+        &self,
+        realm: ContextId,
+        kind: NativeErrorKind,
+        error: &Error,
+    ) -> Result<JsValue, RuntimeError> {
         let message = error
             .native_message()
             .cloned()
             .unwrap_or_else(|| NativeErrorMessage::from_utf8(error.message()));
-        self.new_native_error_without_backtrace_from_message(realm, kind, message)
+        self.new_native_error_without_backtrace_from_message_jsvalue(realm, kind, message)
     }
 
     /// Internal-value form of

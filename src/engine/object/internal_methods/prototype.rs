@@ -176,7 +176,7 @@ fn completed(prototype: Option<ObjectRef>, setting: bool) -> ProxyPrototypeStep 
 fn inconsistent(runtime: &Runtime, realm: ContextId) -> Result<ProxyPrototypeStep, RuntimeError> {
     Ok(ProxyPrototypeStep::Complete(
         match runtime.proxy_invariant_throw::<Value>(realm, "prototype")? {
-            NativeConversion::Throw(value) => Completion::Throw(runtime.unroot_value(&value)?),
+            NativeConversion::Throw(value) => Completion::Throw(value),
             NativeConversion::Value(_) => {
                 return Err(RuntimeError::Invariant(
                     "Proxy invariant rejection returned a value",
@@ -256,9 +256,7 @@ impl ProxyPrototypeResume {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(ProxyPrototypeStep::Complete(Completion::Throw(
-                    runtime.unroot_value(&value)?,
-                )));
+                return Ok(ProxyPrototypeStep::Complete(Completion::Throw(value)));
             }
         };
         match self.0.phase {
@@ -302,9 +300,7 @@ impl ProxyPrototypeResume {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(ProxyPrototypeStep::Complete(Completion::Throw(
-                    runtime.unroot_value(&value)?,
-                )));
+                return Ok(ProxyPrototypeStep::Complete(Completion::Throw(value)));
             }
         };
         match self.0.phase {
@@ -339,27 +335,23 @@ pub(super) fn finish(
             ProxyPrototypeStep::Read { mut resume } => {
                 let object = resume.take_read_object();
                 let key = resume.take_read_key();
-                let receiver = runtime.root_and_release_jsvalue(resume.take_read_receiver())?;
+                let receiver = resume.take_read_receiver();
                 resume.resume(
                     runtime,
-                    runtime.internal_get(realm, &object, &key, receiver)?,
+                    runtime.internal_get_jsvalue(realm, &object, &key, receiver)?,
                 )?
             }
             ProxyPrototypeStep::Call { mut resume } => {
                 let target = resume.take_call_target();
-                let receiver = runtime.root_and_release_jsvalue(resume.take_call_receiver())?;
-                let arguments = resume
-                    .take_call_arguments()
-                    .into_iter()
-                    .map(|value| runtime.root_and_release_jsvalue(value))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let receiver = resume.take_call_receiver();
+                let arguments = resume.take_call_arguments();
                 {
                     let result = match target {
                         DirectCallTarget::Callable(callable) => {
-                            runtime.call_internal(realm, &callable, receiver, &arguments)?
+                            runtime.call_internal_jsvalue(realm, &callable, receiver, arguments)?
                         }
                         DirectCallTarget::NonCallableProxy(object) => {
-                            runtime.call_proxy(realm, &object, receiver, &arguments)?
+                            runtime.call_proxy_jsvalue(realm, &object, receiver, arguments)?
                         }
                     };
                     resume.resume(runtime, result)?

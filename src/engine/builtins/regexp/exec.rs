@@ -115,7 +115,7 @@ impl Runtime {
             if updates_last_index
                 && let Some(exception) = self.set_regexp_last_index(realm, object, 0)?
             {
-                return Ok(Completion::Throw(self.into_jsvalue(exception)?));
+                return Ok(Completion::Throw(exception));
             }
             return Ok(Completion::Return(JsValue::Null));
         };
@@ -129,7 +129,7 @@ impl Runtime {
             })?;
             // This write happens before any result/indices allocation.
             if let Some(exception) = self.set_regexp_last_index(realm, object, end)? {
-                return Ok(Completion::Throw(self.into_jsvalue(exception)?));
+                return Ok(Completion::Throw(exception));
             }
         }
 
@@ -168,7 +168,7 @@ impl Runtime {
         realm: ContextId,
         object: &ObjectRef,
         value: i32,
-    ) -> Result<Option<Value>, RuntimeError> {
+    ) -> Result<Option<JsValue>, RuntimeError> {
         let key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
         self.set_property_or_throw(realm, object, &key, Value::Int(value))
     }
@@ -426,14 +426,13 @@ impl RegExpExecResume {
                         "RegExp input conversion returned an object",
                     ));
                 }
-                let input = match runtime
-                    .string_from_primitive_jsvalue(self.0.realm, &self.converted)?
-                {
-                    NativeConversion::Value(input) => input,
-                    NativeConversion::Throw(value) => {
-                        return Ok(self.complete(Completion::Throw(runtime.into_jsvalue(value)?)));
-                    }
-                };
+                let input =
+                    match runtime.string_from_primitive_jsvalue(self.0.realm, &self.converted)? {
+                        NativeConversion::Value(input) => input,
+                        NativeConversion::Throw(value) => {
+                            return Ok(self.complete(Completion::Throw(value)));
+                        }
+                    };
                 self.string_input = if matches!(self.converted, JsValue::String(_)) {
                     std::mem::replace(&mut self.converted, JsValue::Undefined)
                 } else {
@@ -473,9 +472,7 @@ impl RegExpExecResume {
                     match runtime.number_from_primitive_jsvalue(self.0.realm, &self.converted)? {
                         NativeConversion::Value(index) => Runtime::length_from_number(index),
                         NativeConversion::Throw(value) => {
-                            return Ok(RegExpExecStep::Complete(Completion::Throw(
-                                runtime.into_jsvalue(value)?,
-                            )));
+                            return Ok(RegExpExecStep::Complete(Completion::Throw(value)));
                         }
                     };
                 let JsValue::Object(object) = &self.0.regexp else {

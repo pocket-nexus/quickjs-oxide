@@ -132,9 +132,7 @@ impl BuiltinPrototypeStep {
             match runtime.native_to_object_jsvalue(realm, runtime.dup_jsvalue(receiver)?)? {
                 NativeConversion::Value(object) => object,
                 NativeConversion::Throw(value) => {
-                    return Ok(Self::Complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
+                    return Ok(Self::Complete(Completion::Throw(value)));
                 }
             };
         Ok(Self::Get {
@@ -179,9 +177,7 @@ impl BuiltinPrototypeStep {
                 match runtime.native_to_object_jsvalue(realm, runtime.dup_jsvalue(target)?)? {
                     NativeConversion::Value(object) => object,
                     NativeConversion::Throw(value) => {
-                        return Ok(Self::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(Self::Complete(Completion::Throw(value)));
                     }
                 };
             return Ok(Self::Get {
@@ -225,7 +221,7 @@ fn not_object(runtime: &Runtime, realm: ContextId) -> Result<BuiltinPrototypeSte
 impl BuiltinPrototypeResume {
     pub(crate) fn prototype(
         self,
-        runtime: &Runtime,
+        _runtime: &Runtime,
         result: NativeConversion<Option<ObjectRef>>,
     ) -> Result<BuiltinPrototypeStep, RuntimeError> {
         if !matches!(
@@ -235,6 +231,9 @@ impl BuiltinPrototypeResume {
                 | BuiltinPrototypeKind::Getter
                 | BuiltinPrototypeKind::IsPrototype
         ) {
+            if let NativeConversion::Throw(value) = result {
+                let _ = _runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "prototype builtin received a Get reply for Set",
             ));
@@ -242,7 +241,7 @@ impl BuiltinPrototypeResume {
         if matches!(self.0.kind, BuiltinPrototypeKind::IsPrototype) {
             return Ok(match result {
                 NativeConversion::Throw(value) => {
-                    BuiltinPrototypeStep::Complete(Completion::Throw(runtime.into_jsvalue(value)?))
+                    BuiltinPrototypeStep::Complete(Completion::Throw(value))
                 }
                 NativeConversion::Value(None) => {
                     BuiltinPrototypeStep::Complete(Completion::Return(JsValue::Bool(false)))
@@ -262,7 +261,7 @@ impl BuiltinPrototypeResume {
                     JsValue::Object(object.into_handle())
                 }))
             }
-            NativeConversion::Throw(value) => Completion::Throw(runtime.into_jsvalue(value)?),
+            NativeConversion::Throw(value) => Completion::Throw(value),
         }))
     }
     pub(crate) fn boolean(
@@ -273,11 +272,11 @@ impl BuiltinPrototypeResume {
         Ok(BuiltinPrototypeStep::Complete(match self.0.kind {
             BuiltinPrototypeKind::ReflectSet => match result {
                 NativeConversion::Value(value) => Completion::Return(JsValue::Bool(value)),
-                NativeConversion::Throw(value) => Completion::Throw(runtime.into_jsvalue(value)?),
+                NativeConversion::Throw(value) => Completion::Throw(value),
             },
             BuiltinPrototypeKind::ObjectSet | BuiltinPrototypeKind::Setter => {
                 match runtime.finish_set_prototype_or_throw(self.0.realm, &self.0.object, result)? {
-                    Some(value) => Completion::Throw(runtime.into_jsvalue(value)?),
+                    Some(value) => Completion::Throw(value),
                     None => {
                         Completion::Return(if matches!(self.0.kind, BuiltinPrototypeKind::Setter) {
                             JsValue::Undefined

@@ -385,17 +385,6 @@ impl Runtime {
     /// QuickJS `JS_DefineObjectName`: define a configurable, non-writable,
     /// non-enumerable own `name` only when the object does not already carry a
     /// non-empty (or otherwise authoritative) own name.
-    pub(crate) fn define_object_name(
-        &self,
-        value: &Value,
-        name: &JsString,
-    ) -> Result<(), RuntimeError> {
-        let Value::Object(object) = value else {
-            return Ok(());
-        };
-        self.define_object_name_for_object(object, name)
-    }
-
     pub(crate) fn define_object_name_for_object(
         &self,
         object: &ObjectRef,

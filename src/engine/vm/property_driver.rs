@@ -269,9 +269,6 @@ pub(super) fn read_progress_selected(
             {
                 NativeConversion::Value(key) => key,
                 NativeConversion::Throw(value) => {
-                    let value = runtime
-                        .into_jsvalue(value)
-                        .map_err(runtime_error_to_vm_error)?;
                     return Ok(PropertyProgress::Deferred(CallStep::Complete(
                         Completion::Throw(value),
                     )));
@@ -392,9 +389,6 @@ pub(super) fn read_converted(
     {
         NativeConversion::Value(key) => key,
         NativeConversion::Throw(value) => {
-            let value = runtime
-                .into_jsvalue(value)
-                .map_err(runtime_error_to_vm_error)?;
             return Ok(CallStep::Complete(Completion::Throw(value)));
         }
     };
@@ -701,11 +695,7 @@ fn read_pending(
                 )? {
                     NativeConversion::Value(call) => call,
                     NativeConversion::Throw(value) => {
-                        return Ok(CallStep::Complete(Completion::Throw(
-                            runtime
-                                .into_jsvalue(value)
-                                .map_err(runtime_error_to_vm_error)?,
-                        )));
+                        return Ok(CallStep::Complete(Completion::Throw(value)));
                     }
                 };
                 let normal = match &classification {

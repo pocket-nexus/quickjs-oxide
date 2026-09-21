@@ -5,7 +5,7 @@ use super::{
 };
 use crate::engine::{
     api::{Error, ErrorKind, runtime::Runtime},
-    value::{JsValue, Value, conversion::NativeConversion},
+    value::{JsValue, conversion::NativeConversion},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -156,9 +156,6 @@ pub(super) fn converted(
     let key = match conversion {
         Ok(NativeConversion::Value(key)) => key,
         Ok(NativeConversion::Throw(thrown)) => {
-            let thrown = runtime
-                .into_jsvalue(thrown)
-                .map_err(runtime_error_to_vm_error)?;
             release_abandoned_operands(runtime, receiver, base, value)?;
             return Ok(CallStep::Complete(Completion::Throw(thrown)));
         }
@@ -182,7 +179,7 @@ pub(super) fn converted(
         if kind == Kind::Call {
             let frame = execution.frames.current_mut(id)?;
             execution.slots.push(&mut frame.window, receiver)?;
-            let getter_receiver = Value::Object(object.clone());
+            let getter_receiver = JsValue::Object(object.clone().into_handle());
             return super::proxy_get_driver::start_owned_read(
                 runtime,
                 execution,
@@ -193,9 +190,7 @@ pub(super) fn converted(
                 depth,
             );
         }
-        let getter_receiver = runtime
-            .root_and_release_jsvalue(receiver)
-            .map_err(runtime_error_to_vm_error)?;
+        let getter_receiver = receiver;
         return super::proxy_get_driver::start_owned_read(
             runtime,
             execution,

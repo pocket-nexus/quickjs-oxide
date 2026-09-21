@@ -98,7 +98,7 @@ impl ArrayNextStep {
                 "array_next_dense_immediate_leaf",
             );
             return Ok(Self::Complete(NativeInvokeOutcome::IteratorNextRaw {
-                value: runtime.into_jsvalue(value)?,
+                value,
                 done: false,
             }));
         }
@@ -120,9 +120,7 @@ impl ArrayNextStep {
             let action = match runtime.typed_array_validated_length(realm, &resume.source)? {
                 NativeConversion::Value(length) => resume.length(runtime, length)?,
                 NativeConversion::Throw(value) => {
-                    NextAction::Complete(NativeInvokeOutcome::Completion(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )))
+                    NextAction::Complete(NativeInvokeOutcome::Completion(Completion::Throw(value)))
                 }
             };
             return resume.drive(runtime, action);
@@ -203,6 +201,9 @@ impl ArrayNextResume {
         reply: NativeConversion<f64>,
     ) -> Result<NextAction, RuntimeError> {
         if !matches!(self.0.phase, Phase::Number) {
+            if let NativeConversion::Throw(value) = reply {
+                runtime.release_jsvalue(value)?;
+            }
             return Err(RuntimeError::Invariant(
                 "Array Iterator numeric reply has wrong phase",
             ));
@@ -212,7 +213,7 @@ impl ArrayNextResume {
                 self.length(runtime, Runtime::to_uint32_number(value))
             }
             NativeConversion::Throw(value) => Ok(NextAction::Complete(
-                NativeInvokeOutcome::Completion(Completion::Throw(runtime.into_jsvalue(value)?)),
+                NativeInvokeOutcome::Completion(Completion::Throw(value)),
             )),
         }
     }
@@ -379,9 +380,7 @@ pub(crate) fn finish(
                     NativeConversion::Value(value) => {
                         Completion::Return(runtime.into_jsvalue(value.unwrap_or(Value::Undefined))?)
                     }
-                    NativeConversion::Throw(value) => {
-                        Completion::Throw(runtime.into_jsvalue(value)?)
-                    }
+                    NativeConversion::Throw(value) => Completion::Throw(value),
                 };
                 resume.resume(runtime, completion)?
             }
@@ -393,8 +392,8 @@ pub(crate) fn finish(
                 )?
             }
             ArrayNextStep::Number { mut resume } => {
-                let value = runtime.root_and_release_jsvalue(resume.take_number())?;
-                resume.number(runtime, runtime.native_to_number(realm, &value)?)?
+                let value = resume.take_number();
+                resume.number(runtime, runtime.native_to_number_jsvalue(realm, value)?)?
             }
         };
     }

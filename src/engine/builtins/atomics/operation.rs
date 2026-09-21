@@ -135,10 +135,8 @@ impl AtomicsResume {
             "Atomics conversion lost its access",
         ))
     }
-    fn abrupt(self, runtime: &Runtime, value: Value) -> Result<AtomicsStep, RuntimeError> {
-        Ok(AtomicsStep::Complete(Completion::Throw(
-            runtime.into_jsvalue(value)?,
-        )))
+    fn abrupt(self, __runtime: &Runtime, value: JsValue) -> Result<AtomicsStep, RuntimeError> {
+        Ok(AtomicsStep::Complete(Completion::Throw(value)))
     }
     fn modify(
         self,
@@ -261,7 +259,8 @@ impl AtomicsResume {
                     runtime.dup_jsvalue(&self.stored)?,
                 )? {
                     NativeConversion::Value(value) => value,
-                    NativeConversion::Throw(_) => {
+                    NativeConversion::Throw(thrown) => {
+                        runtime.release_jsvalue(thrown)?;
                         return Err(RuntimeError::Invariant(
                             "primitive Atomics.store value failed its second conversion",
                         ));

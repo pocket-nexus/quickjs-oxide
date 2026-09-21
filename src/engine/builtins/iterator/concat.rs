@@ -87,11 +87,13 @@ impl Runtime {
         };
         match snapshot {
             Ok(snapshot) => Ok(NativeConversion::Value(snapshot)),
-            Err(HeapError::Invariant(_)) => Ok(NativeConversion::Throw(self.new_native_error(
-                realm,
-                NativeErrorKind::Type,
-                "not an Iterator Concat",
-            )?)),
+            Err(HeapError::Invariant(_)) => {
+                Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
+                    realm,
+                    NativeErrorKind::Type,
+                    "not an Iterator Concat",
+                )?))
+            }
             Err(error) => Err(error.into()),
         }
     }
@@ -352,7 +354,7 @@ impl ConcatStep {
             NativeConversion::Value(concat) => concat,
             NativeConversion::Throw(value) => {
                 return Ok(Self::Complete(NativeInvokeOutcome::Completion(
-                    Completion::Throw(runtime.into_jsvalue(value)?),
+                    Completion::Throw(value),
                 )));
             }
         };
@@ -360,7 +362,7 @@ impl ConcatStep {
             NativeConversion::Value(snapshot) => snapshot,
             NativeConversion::Throw(value) => {
                 return Ok(Self::Complete(NativeInvokeOutcome::Completion(
-                    Completion::Throw(runtime.into_jsvalue(value)?),
+                    Completion::Throw(value),
                 )));
             }
         };
@@ -504,7 +506,8 @@ impl ConcatResume {
         runtime.release_jsvalue(method)?;
         let callable = match callable? {
             NativeConversion::Value(callable) => callable,
-            NativeConversion::Throw(_) => {
+            NativeConversion::Throw(discarded) => {
+                runtime.release_jsvalue(discarded)?;
                 return Err(RuntimeError::Invariant(
                     "Iterator Concat captured method lost its callable brand",
                 ));
@@ -580,9 +583,8 @@ impl ConcatResume {
                     Ok(NativeConversion::Value(_)) => owner.inputs.push((current, value)),
                     Ok(NativeConversion::Throw(error)) => {
                         runtime.release_jsvalue(value)?;
-                        return self.complete(NativeInvokeOutcome::Completion(Completion::Throw(
-                            runtime.into_jsvalue(error)?,
-                        )));
+                        return self
+                            .complete(NativeInvokeOutcome::Completion(Completion::Throw(error)));
                     }
                     Err(error) => {
                         let _ = runtime.release_jsvalue(value);
@@ -626,9 +628,8 @@ impl ConcatResume {
                 let callable = match callable? {
                     NativeConversion::Value(callable) => callable,
                     NativeConversion::Throw(value) => {
-                        return self.complete(NativeInvokeOutcome::Completion(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return self
+                            .complete(NativeInvokeOutcome::Completion(Completion::Throw(value)));
                     }
                 };
                 self.0.phase = ConcatPhase::ReturnResult;
@@ -687,21 +688,21 @@ pub(crate) fn finish(
             }
             ConcatStep::Call { mut resume } => {
                 let callable = resume.take_call_callable();
-                let receiver = runtime.root_and_release_jsvalue(resume.take_call_receiver())?;
+                let receiver = resume.take_call_receiver();
                 resume.resume(
                     runtime,
-                    runtime.call_internal(realm, &callable, receiver, &[])?,
+                    runtime.call_internal_jsvalue(realm, &callable, receiver, Vec::new())?,
                 )?
             }
             ConcatStep::Next { mut resume } => {
                 let iterator = resume.take_next_iterator();
-                let method = runtime.root_and_release_jsvalue(resume.take_next_method())?;
+                let method = resume.take_next_method();
                 resume.next(
                     runtime,
                     super::step::finish_next(
                         runtime,
                         realm,
-                        super::step::NextStep::start(runtime, realm, iterator, method)?,
+                        super::step::NextStep::start_jsvalue(runtime, realm, iterator, method)?,
                     )?,
                 )?
             }

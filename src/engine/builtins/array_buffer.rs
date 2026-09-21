@@ -239,18 +239,6 @@ impl Runtime {
 
     /// Pinned QuickJS `JS_ToInt64`: number-hint coercion followed by its
     /// representation-level modulo-2^64 conversion.
-    pub(crate) fn native_to_int64(
-        &self,
-        realm: ContextId,
-        value: &Value,
-    ) -> Result<NativeConversion<i64>, RuntimeError> {
-        let number = match self.native_to_number(realm, value)? {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        Ok(NativeConversion::Value(quickjs_to_int64_free(number)))
-    }
-
     fn call_array_buffer_constructor(
         &self,
         realm: ContextId,
@@ -358,7 +346,7 @@ impl Runtime {
         let object = match self.require_array_buffer_jsvalue(realm, this_value)? {
             NativeConversion::Value(object) => object,
             NativeConversion::Throw(value) => {
-                return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                return Ok(Completion::Throw(value));
             }
         };
         let snapshot = self.array_buffer_snapshot(&object)?;
@@ -477,7 +465,7 @@ impl Runtime {
         value: &JsValue,
     ) -> Result<NativeConversion<(ObjectRef, i64)>, RuntimeError> {
         let JsValue::Object(id) = value else {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "ArrayBuffer object expected",
@@ -485,7 +473,7 @@ impl Runtime {
         };
         let source = ObjectRef::from_borrowed_handle(self.clone(), *id)?;
         if self.array_buffer_snapshot_if_branded(&source)?.is_none() {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "ArrayBuffer object expected",
@@ -493,7 +481,7 @@ impl Runtime {
         }
         let initial = self.array_buffer_snapshot(&source)?;
         if initial.detached {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "ArrayBuffer is detached",
@@ -511,7 +499,7 @@ impl Runtime {
     ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
         let prototype = self.array_buffer_default_prototype(realm)?;
         let Some(object) = self.new_array_buffer_object(&prototype, new_length, None)? else {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Internal,
                 "out of memory",
@@ -691,24 +679,13 @@ impl Runtime {
         Ok(ObjectRef::from_borrowed_handle(self.clone(), prototype)?)
     }
 
-    fn require_array_buffer(
-        &self,
-        realm: ContextId,
-        value: Value,
-    ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
-        self.require_array_buffer_borrowed(realm, &value)
-            .map(|result| match result {
-                NativeConversion::Value(object) => NativeConversion::Value(object.clone()),
-                NativeConversion::Throw(value) => NativeConversion::Throw(value),
-            })
-    }
     fn require_array_buffer_jsvalue(
         &self,
         realm: ContextId,
         value: &JsValue,
     ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
         let JsValue::Object(id) = value else {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "ArrayBuffer object expected",
@@ -716,32 +693,7 @@ impl Runtime {
         };
         let object = ObjectRef::from_borrowed_handle(self.clone(), *id)?;
         if self.array_buffer_snapshot_if_branded(&object)?.is_none() {
-            return Ok(NativeConversion::Throw(self.new_native_error(
-                realm,
-                NativeErrorKind::Type,
-                "ArrayBuffer object expected",
-            )?));
-        }
-        Ok(NativeConversion::Value(object))
-    }
-
-    fn require_array_buffer_borrowed<'a>(
-        &self,
-        realm: ContextId,
-        value: &'a Value,
-    ) -> Result<NativeConversion<&'a ObjectRef>, RuntimeError> {
-        let Value::Object(object) = value else {
-            return Ok(NativeConversion::Throw(self.new_native_error(
-                realm,
-                NativeErrorKind::Type,
-                "ArrayBuffer object expected",
-            )?));
-        };
-        if !object.belongs_to(self) {
-            return Err(RuntimeError::WrongRuntime("ArrayBuffer"));
-        }
-        if self.array_buffer_snapshot_if_branded(object)?.is_none() {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "ArrayBuffer object expected",

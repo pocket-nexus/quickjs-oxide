@@ -242,6 +242,9 @@ impl ProxyGetResume {
     ) -> Result<ProxyGetStep, RuntimeError> {
         let mut state = self.0.into_inner();
         let Phase::Invariant { _rooted } = state.phase else {
+            if let NativeConversion::Throw(value) = descriptor {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "Proxy Get value continuation received a descriptor reply",
             ));
@@ -294,9 +297,7 @@ fn complete_get_invariant(
         NativeConversion::Value(descriptor) => descriptor,
         NativeConversion::Throw(value) => {
             let _ = runtime.release_jsvalue(result);
-            return Ok(ProxyGetStep::Complete(Completion::Throw(
-                runtime.unroot_value(&value)?,
-            )));
+            return Ok(ProxyGetStep::Complete(Completion::Throw(value)));
         }
     };
     if get_invariant_violation(runtime, &result, &descriptor) {

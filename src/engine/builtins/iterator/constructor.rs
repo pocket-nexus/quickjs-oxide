@@ -156,9 +156,7 @@ impl ConstructorResume {
     ) -> Result<ConstructorStep, RuntimeError> {
         let prototype = match reply {
             NativeConversion::Throw(value) => {
-                return Ok(ConstructorStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(ConstructorStep::Complete(Completion::Throw(value)));
             }
             NativeConversion::Value(ConstructorPrototypeSource::Explicit(prototype)) => prototype,
             NativeConversion::Value(ConstructorPrototypeSource::Realm(realm)) => {

@@ -105,9 +105,7 @@ impl SortStep {
         let comparator = match runtime.native_sort_comparator(realm, arguments)? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(Self::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(Self::Complete(Completion::Throw(value)));
             }
         };
         let NativeInvocation::Call { this_value } = invocation else {
@@ -119,9 +117,7 @@ impl SortStep {
             match runtime.native_to_object_jsvalue(realm, runtime.dup_jsvalue(this_value)?)? {
                 NativeConversion::Value(value) => value,
                 NativeConversion::Throw(value) => {
-                    return Ok(Self::Complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
+                    return Ok(Self::Complete(Completion::Throw(value)));
                 }
             };
         Ok(Self::request_read(
@@ -196,9 +192,7 @@ impl SortResume {
         let number = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(SortStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(SortStep::Complete(Completion::Throw(value)));
             }
         };
         match self.0.phase {
@@ -212,9 +206,7 @@ impl SortResume {
                     )? {
                         NativeConversion::Value(values) => values,
                         NativeConversion::Throw(value) => {
-                            return Ok(SortStep::Complete(Completion::Throw(
-                                runtime.into_jsvalue(value)?,
-                            )));
+                            return Ok(SortStep::Complete(Completion::Throw(value)));
                         }
                     };
                 }
@@ -286,9 +278,7 @@ impl SortResume {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(SortStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(SortStep::Complete(Completion::Throw(value)));
             }
         };
         match self.0.phase {
@@ -421,9 +411,7 @@ impl SortResume {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(SortStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(SortStep::Complete(Completion::Throw(value)));
             }
         };
         let index = match self.0.phase {
@@ -495,12 +483,13 @@ impl SortResume {
         result: NativeConversion<InternalSetResult>,
     ) -> Result<SortStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Write) {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant("Array sort set phase mismatch"));
         }
         if let Some(value) = runtime.finish_set_property_or_throw(self.0.realm, &key, result)? {
-            return Ok(SortStep::Complete(Completion::Throw(
-                runtime.into_jsvalue(value)?,
-            )));
+            return Ok(SortStep::Complete(Completion::Throw(value)));
         }
         self.0.cursor += 1;
         self.write_next(runtime)
@@ -532,12 +521,12 @@ pub(crate) fn finish(
                 )?
             }
             SortStep::Number { mut resume } => {
-                let value = runtime.root_and_release_jsvalue(resume.take_number_value())?;
-                resume.number(runtime, runtime.native_to_number(realm, &value)?)?
+                let value = resume.take_number_value();
+                resume.number(runtime, runtime.native_to_number_jsvalue(realm, value)?)?
             }
             SortStep::String { mut resume } => {
-                let value = runtime.root_and_release_jsvalue(resume.take_string_value())?;
-                resume.string(runtime, runtime.native_to_js_string(realm, &value)?)?
+                let value = resume.take_string_value();
+                resume.string(runtime, runtime.native_to_js_string_jsvalue(realm, value)?)?
             }
             SortStep::Has { mut resume } => {
                 let object = resume.take_has_object();
@@ -549,27 +538,28 @@ pub(crate) fn finish(
             }
             SortStep::Call { mut resume } => {
                 let callable = resume.take_call_callable();
-                let arguments = resume
-                    .take_call_arguments()
-                    .into_iter()
-                    .map(|value| runtime.root_and_release_jsvalue(value))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let arguments = resume.take_call_arguments();
                 resume.resume(
                     runtime,
-                    runtime.call_internal(realm, &callable, Value::Undefined, &arguments)?,
+                    runtime.call_internal_jsvalue(
+                        realm,
+                        &callable,
+                        JsValue::Undefined,
+                        arguments,
+                    )?,
                 )?
             }
             SortStep::Set { mut resume } => {
                 let object = resume.take_set_object();
                 let key = resume.take_set_key();
-                let value = runtime.root_and_release_jsvalue(resume.take_set_value())?;
+                let value = resume.take_set_value();
                 {
-                    let result = runtime.internal_set(
+                    let result = runtime.internal_set_jsvalue(
                         realm,
                         &object,
                         &key,
                         value,
-                        Value::Object(object.clone()),
+                        JsValue::Object(object.clone().into_handle()),
                     )?;
                     resume.set(runtime, key, result)?
                 }

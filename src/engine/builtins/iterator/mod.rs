@@ -322,7 +322,7 @@ impl Runtime {
             ));
         };
         let JsValue::Object(id) = this_value else {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "not an object",
@@ -399,7 +399,7 @@ impl Runtime {
                 return Ok(NativeConversion::Value(callable));
             }
         }
-        Ok(NativeConversion::Throw(self.new_native_error(
+        Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
             realm,
             NativeErrorKind::Type,
             "not a function",

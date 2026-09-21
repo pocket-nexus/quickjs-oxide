@@ -4,12 +4,14 @@ use crate::engine::heap::ContextId;
 use crate::engine::object::{
     AccessorValue, DescriptorField, ObjectRef, OwnedPropertyDescriptor, PropertyKey,
 };
-use crate::engine::value::{JsValue, Value, conversion::NativeConversion};
+#[cfg(test)]
+use crate::engine::value::Value;
+use crate::engine::value::{JsValue, conversion::NativeConversion};
 use crate::engine::vm::Completion;
 
 pub(crate) enum DescriptorStep {
     Complete(DescriptorResume),
-    Throw(Value),
+    Throw(JsValue),
     Has { resume: DescriptorResume },
     Read { resume: DescriptorResume },
 }
@@ -104,7 +106,7 @@ fn invalid(
     realm: ContextId,
     message: &'static str,
 ) -> Result<DescriptorStep, RuntimeError> {
-    Ok(DescriptorStep::Throw(runtime.new_native_error(
+    Ok(DescriptorStep::Throw(runtime.new_native_error_jsvalue(
         realm,
         NativeErrorKind::Type,
         message,
@@ -140,6 +142,9 @@ impl DescriptorResume {
         result: NativeConversion<bool>,
     ) -> Result<DescriptorStep, RuntimeError> {
         let Phase::Has(key) = std::mem::replace(&mut self.0.phase, Phase::Read) else {
+            if let NativeConversion::Throw(value) = result {
+                runtime.release_jsvalue(value)?;
+            }
             return Err(RuntimeError::Invariant(
                 "descriptor Get continuation received a Has reply",
             ));
@@ -150,6 +155,9 @@ impl DescriptorResume {
         if matches!(result, NativeConversion::Value(false)) {
             state.field += 1;
             return self.next(runtime);
+        }
+        if let NativeConversion::Throw(value) = result {
+            runtime.release_jsvalue(value)?;
         }
         let object = state.object.clone();
         let receiver = JsValue::Object(state.object.clone().into_handle());
@@ -162,6 +170,8 @@ impl DescriptorResume {
         completion: Completion,
     ) -> Result<DescriptorStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Read) {
+            let (Completion::Return(value) | Completion::Throw(value)) = completion;
+            runtime.release_jsvalue(value)?;
             return Err(RuntimeError::Invariant(
                 "descriptor Has continuation received a Get reply",
             ));
@@ -171,7 +181,7 @@ impl DescriptorResume {
             Completion::Return(value) => value,
             Completion::Throw(value) => {
                 if state.field >= 4 {
-                    drop(runtime.root_and_release_jsvalue(value)?);
+                    runtime.release_jsvalue(value)?;
                     return invalid(
                         runtime,
                         state.realm,
@@ -182,9 +192,7 @@ impl DescriptorResume {
                         },
                     );
                 }
-                return Ok(DescriptorStep::Throw(
-                    runtime.root_and_release_jsvalue(value)?,
-                ));
+                return Ok(DescriptorStep::Throw(value));
             }
         };
         match state.field {

@@ -116,9 +116,7 @@ impl ConsumeStep {
         let source = match runtime.iterator_receiver(realm, invocation)? {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(Self::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(Self::Complete(Completion::Throw(value)));
             }
         };
         let callback = if matches!(kind, ConsumeKind::Array) {
@@ -132,7 +130,7 @@ impl ConsumeStep {
                 NativeConversion::Throw(value) => {
                     return Ok(Self::Close {
                         iterator: source,
-                        completion: Completion::Throw(runtime.into_jsvalue(value)?),
+                        completion: Completion::Throw(value),
                     });
                 }
             }
@@ -345,9 +343,7 @@ impl ConsumeResume {
                     ));
                 }
                 crate::engine::object::operations::PropertyDefineOutcome::Throw(value) => {
-                    return Ok(ConsumeStep::Complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
+                    return Ok(ConsumeStep::Complete(Completion::Throw(value)));
                 }
             }
             self.0.index = u32::try_from(self.0.index)

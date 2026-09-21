@@ -227,19 +227,23 @@ impl Runtime {
         arguments: &NativeArguments,
     ) -> Result<GeneratorStep, RuntimeError> {
         let NativeInvocation::Call { this_value } = invocation else {
+            invocation.release(self)?;
             return Err(RuntimeError::Invariant(
                 "Generator resume did not receive an iterator-next invocation",
             ));
         };
-        let argument = arguments
-            .readable
-            .first()
-            .map(|value| self.dup_jsvalue(value))
-            .transpose()?
-            .ok_or(RuntimeError::Invariant(
-                "Generator resume has no readable argument slot",
-            ))?;
-        let Value::Object(generator) = self.root_and_release_jsvalue(this_value)? else {
+        let argument = arguments.readable.first().ok_or(RuntimeError::Invariant(
+            "Generator resume has no readable argument slot",
+        ));
+        let argument = match argument {
+            Ok(argument) => argument,
+            Err(error) => {
+                self.release_jsvalue(this_value)?;
+                return Err(error);
+            }
+        };
+        let JsValue::Object(generator) = this_value else {
+            self.release_jsvalue(this_value)?;
             return Ok(GeneratorStep::Complete(NativeInvokeOutcome::Completion(
                 Completion::Throw(self.new_native_error_jsvalue(
                     realm,
@@ -248,6 +252,7 @@ impl Runtime {
                 )?),
             )));
         };
+        let generator = ObjectRef::from_owned_handle(self.clone(), generator);
         let snapshot = {
             let state = self.0.state.borrow();
             if !matches!(
@@ -276,7 +281,12 @@ impl Runtime {
                     ));
                 }
                 return Ok(GeneratorStep::Complete(Self::completed_generator_outcome(
-                    kind, argument,
+                    kind,
+                    if kind == GeneratorResumeKind::Next {
+                        JsValue::Undefined
+                    } else {
+                        self.dup_jsvalue(argument)?
+                    },
                 )));
             }
             GeneratorState::Executing => {
@@ -346,7 +356,8 @@ impl Runtime {
             self.complete_executing_generator(&generator)?;
             drop(rooted);
             return Ok(GeneratorStep::Complete(Self::completed_generator_outcome(
-                kind, argument,
+                kind,
+                self.dup_jsvalue(argument)?,
             )));
         }
 
@@ -354,9 +365,9 @@ impl Runtime {
             GeneratorState::SuspendedStart => VmActivationResume::Initial,
             GeneratorState::SuspendedYield | GeneratorState::SuspendedYieldStar => {
                 VmActivationResume::Generator(match kind {
-                    GeneratorResumeKind::Next => VmResume::Next(argument),
-                    GeneratorResumeKind::Return => VmResume::Return(argument),
-                    GeneratorResumeKind::Throw => VmResume::Throw(argument),
+                    GeneratorResumeKind::Next => VmResume::Next(self.dup_jsvalue(argument)?),
+                    GeneratorResumeKind::Return => VmResume::Return(self.dup_jsvalue(argument)?),
+                    GeneratorResumeKind::Throw => VmResume::Throw(self.dup_jsvalue(argument)?),
                 })
             }
             GeneratorState::Executing | GeneratorState::Completed => unreachable!(),

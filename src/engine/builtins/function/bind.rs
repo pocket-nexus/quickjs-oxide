@@ -92,26 +92,38 @@ impl BindResume {
         result: NativeConversion<bool>,
     ) -> Result<BindStep, RuntimeError> {
         match result {
-            NativeConversion::Throw(value) => Ok(BindStep::Complete(Completion::Throw(
-                runtime.into_jsvalue(value)?,
-            ))),
+            NativeConversion::Throw(value) => Ok(BindStep::Complete(Completion::Throw(value))),
             NativeConversion::Value(true) => Ok(BindStep::Read {
                 object: self.0.target.clone(),
                 key: runtime
                     .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
                 resume: self,
             }),
-            NativeConversion::Value(false) => self.length(runtime, Value::Int(0)),
+            NativeConversion::Value(false) => self.length(runtime, JsValue::Int(0)),
         }
     }
-    fn length(mut self, runtime: &Runtime, value: Value) -> Result<BindStep, RuntimeError> {
-        runtime.define_function_data_property(
-            self.0.bound.as_object(),
-            "length",
-            value,
-            false,
-            true,
-        )?;
+    fn length(mut self, runtime: &Runtime, value: JsValue) -> Result<BindStep, RuntimeError> {
+        let defined = (|| {
+            let key =
+                runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
+            runtime.define_raw_property(
+                self.0.bound.as_object(),
+                &key,
+                &crate::engine::object::property::PropertyDescriptor {
+                    value: Some(value.as_raw()),
+                    writable: Some(false),
+                    enumerable: Some(false),
+                    configurable: Some(true),
+                    ..Default::default()
+                },
+            )
+        })();
+        runtime.release_jsvalue(value)?;
+        if !defined? {
+            return Err(RuntimeError::Invariant(
+                "bound function length definition rejected",
+            ));
+        }
         self.0.name = true;
         Ok(BindStep::Read {
             object: self.0.target.clone(),
@@ -125,18 +137,24 @@ impl BindResume {
         result: Completion,
     ) -> Result<BindStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Return(value) => value,
             result @ Completion::Throw(_) => return Ok(BindStep::Complete(result)),
         };
         if !self.0.name {
-            let length = bound_function_length(&value, self.0.count)?;
-            return self.length(runtime, length);
+            let length = bound_function_length(&value, self.0.count);
+            runtime.release_jsvalue(value)?;
+            return self.length(runtime, length?);
         }
-        let name = match value {
-            Value::String(name) => name,
-            _ => JsString::from_static(""),
-        };
-        let name = JsString::from_static("bound ").try_concat(&name)?;
+        let name = (|| {
+            let state = runtime.0.state.borrow();
+            let name = match &value {
+                JsValue::String(id) => state.heap.string(*id)?,
+                _ => &JsString::from_static(""),
+            };
+            Ok::<_, RuntimeError>(JsString::from_static("bound ").try_concat(name)?)
+        })();
+        runtime.release_jsvalue(value)?;
+        let name = name?;
         runtime.define_function_data_property(
             self.0.bound.as_object(),
             "name",

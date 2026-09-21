@@ -6,7 +6,6 @@ use crate::engine::builtins::native::{DynamicFunctionKind, FunctionDebugPosition
 use crate::engine::code::function::metadata::FunctionKind;
 
 use crate::engine::heap::{ContextId, ObjectPayload};
-use crate::engine::object::CallableRef;
 use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
@@ -269,39 +268,27 @@ impl Runtime {
             )
         })
     }
-    pub(crate) fn ordinary_is_instance_of(
-        &self,
-        realm: ContextId,
-        target: &CallableRef,
-        candidate: Value,
-    ) -> Result<Completion, RuntimeError> {
-        instance::finish(
-            self,
-            realm,
-            instance::InstanceStep::ordinary(self, realm, target, self.into_jsvalue(candidate)?)?,
-        )
-    }
 }
 
 pub(crate) fn bound_function_length(
-    value: &Value,
+    value: &JsValue,
     bound_argument_count: usize,
-) -> Result<Value, RuntimeError> {
+) -> Result<JsValue, RuntimeError> {
     let count = u32::try_from(bound_argument_count)
         .map_err(|_| RuntimeError::Invariant("bound argument count does not fit u32"))?;
     Ok(match value {
-        Value::Int(length) => {
+        JsValue::Int(length) => {
             let length = i64::from(*length);
             let count = i64::from(count);
             if length <= count {
-                Value::Int(0)
+                JsValue::Int(0)
             } else {
-                Value::Int(i32::try_from(length - count).map_err(|_| {
+                JsValue::Int(i32::try_from(length - count).map_err(|_| {
                     RuntimeError::Invariant("bound function integer length does not fit i32")
                 })?)
             }
         }
-        Value::Float(length) => {
+        JsValue::Float(length) => {
             let length = if length.is_nan() {
                 0.0
             } else {
@@ -312,14 +299,14 @@ pub(crate) fn bound_function_length(
                     length - f64::from(count)
                 }
             };
-            Value::number(length)
+            crate::engine::value::number::operations::Number::compact(length).into()
         }
-        Value::Undefined
-        | Value::Null
-        | Value::Bool(_)
-        | Value::BigInt(_)
-        | Value::String(_)
-        | Value::Symbol(_)
-        | Value::Object(_) => Value::Int(0),
+        JsValue::Undefined
+        | JsValue::Null
+        | JsValue::Bool(_)
+        | JsValue::BigInt(_)
+        | JsValue::String(_)
+        | JsValue::Symbol(_)
+        | JsValue::Object(_) => JsValue::Int(0),
     })
 }

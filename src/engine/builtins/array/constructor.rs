@@ -144,9 +144,7 @@ impl ConstructorResume {
                         {
                             NativeConversion::Value(realm) => realm,
                             NativeConversion::Throw(value) => {
-                                return Ok(ConstructorStep::Complete(Completion::Throw(
-                                    runtime.into_jsvalue(value)?,
-                                )));
+                                return Ok(ConstructorStep::Complete(Completion::Throw(value)));
                             }
                         }
                     };
@@ -175,9 +173,7 @@ impl ConstructorResume {
             } {
                 ArrayLengthConversion::Length(length) => length,
                 ArrayLengthConversion::Throw(value) => {
-                    return Ok(ConstructorStep::Complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
+                    return Ok(ConstructorStep::Complete(Completion::Throw(value)));
                 }
             };
             let key =
@@ -200,9 +196,7 @@ impl ConstructorResume {
                     ));
                 }
                 PropertyDefineOutcome::Throw(value) => {
-                    return Ok(ConstructorStep::Complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
+                    return Ok(ConstructorStep::Complete(Completion::Throw(value)));
                 }
             }
             return Ok(ConstructorStep::Complete(Completion::Return(
@@ -237,14 +231,15 @@ impl ConstructorResume {
         result: NativeConversion<InternalSetResult>,
     ) -> Result<ConstructorStep, RuntimeError> {
         if self.0.array.is_none() {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "Array constructor set before allocation",
             ));
         }
         if let Some(value) = runtime.finish_set_property_or_throw(self.0.realm, &key, result)? {
-            return Ok(ConstructorStep::Complete(Completion::Throw(
-                runtime.into_jsvalue(value)?,
-            )));
+            return Ok(ConstructorStep::Complete(Completion::Throw(value)));
         }
         self.0.index += 1;
         self.next(runtime)

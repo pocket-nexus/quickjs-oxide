@@ -8,7 +8,7 @@ use crate::engine::heap::{
 };
 use crate::engine::object::ObjectRef;
 
-use crate::engine::value::Value;
+use crate::engine::value::JsValue;
 
 impl Runtime {
     fn allocate_for_in_iterator(
@@ -154,24 +154,28 @@ impl Runtime {
     fn for_in_object(
         &self,
         realm: ContextId,
-        value: Value,
+        value: JsValue,
     ) -> Result<Option<ObjectRef>, RuntimeError> {
         let kind = match &value {
-            Value::Undefined | Value::Null => return Ok(None),
-            Value::Object(object) => {
-                if !object.belongs_to(self) {
-                    return Err(RuntimeError::WrongRuntime("for-in source"));
-                }
-                return Ok(Some(object.clone()));
+            JsValue::Undefined | JsValue::Null => return Ok(None),
+            JsValue::Object(object) => {
+                return Ok(Some(ObjectRef::from_owned_handle(self.clone(), *object)));
             }
-            Value::Bool(_) => PrimitiveKind::Boolean,
-            Value::Int(_) | Value::Float(_) => PrimitiveKind::Number,
-            Value::String(_) => PrimitiveKind::String,
-            Value::Symbol(_) => PrimitiveKind::Symbol,
-            Value::BigInt(_) => PrimitiveKind::BigInt,
+            JsValue::Bool(_) => PrimitiveKind::Boolean,
+            JsValue::Int(_) | JsValue::Float(_) => PrimitiveKind::Number,
+            JsValue::String(_) => PrimitiveKind::String,
+            JsValue::Symbol(_) => PrimitiveKind::Symbol,
+            JsValue::BigInt(_) => PrimitiveKind::BigInt,
         };
-        let prototype = self.primitive_prototype_for_realm(realm, kind)?;
-        self.new_primitive_object(&prototype, kind, value).map(Some)
+        let prototype = match self.primitive_prototype_for_realm(realm, kind) {
+            Ok(prototype) => prototype,
+            Err(error) => {
+                let _ = self.release_jsvalue(value);
+                return Err(error);
+            }
+        };
+        self.new_primitive_object_jsvalue(&prototype, kind, value)
+            .map(Some)
     }
 
     fn store_for_in_level(

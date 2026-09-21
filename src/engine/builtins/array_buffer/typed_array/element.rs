@@ -113,9 +113,9 @@ fn from_primitive(
     step: PrimitiveStep,
 ) -> Result<ElementStep, RuntimeError> {
     Ok(match step {
-        PrimitiveStep::Complete(Completion::Throw(value)) => ElementStep::Complete(
-            NativeConversion::Throw(runtime.root_and_release_jsvalue(value)?),
-        ),
+        PrimitiveStep::Complete(Completion::Throw(value)) => {
+            ElementStep::Complete(NativeConversion::Throw(value))
+        }
         PrimitiveStep::Complete(Completion::Return(value)) => {
             let bytes = encode_primitive(runtime, realm, element, value)?;
             ElementStep::Complete(bytes)

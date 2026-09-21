@@ -102,9 +102,7 @@ fn method(
     step: MethodStep,
 ) -> Result<ProxySetStep, RuntimeError> {
     Ok(match step {
-        MethodStep::Throw(value) => ProxySetStep::Complete(NativeConversion::Throw(
-            runtime.root_and_release_jsvalue(value.take())?,
-        )),
+        MethodStep::Throw(value) => ProxySetStep::Complete(NativeConversion::Throw(value.take())),
         MethodStep::Read { mut resume } => {
             let object = resume.take_read_object();
             let method_key = resume.take_read_key();
@@ -181,9 +179,7 @@ impl ProxySetResume {
     ) -> Result<ProxySetStep, RuntimeError> {
         let result = match completion {
             Completion::Throw(value) => {
-                return Ok(ProxySetStep::Complete(NativeConversion::Throw(
-                    runtime.root_and_release_jsvalue(value)?,
-                )));
+                return Ok(ProxySetStep::Complete(NativeConversion::Throw(value)));
             }
             Completion::Return(value) => value,
         };
@@ -234,6 +230,9 @@ impl ProxySetResume {
         result: NativeConversion<InternalSetResult>,
     ) -> Result<ProxySetStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Forward { .. }) {
+            if let NativeConversion::Throw(value) = result {
+                let _ = self.0.pending_effect.runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "Proxy Set continuation received a Set reply",
             ));
@@ -246,6 +245,9 @@ impl ProxySetResume {
         result: NativeConversion<Option<OwnedCompletePropertyDescriptor>>,
     ) -> Result<ProxySetStep, RuntimeError> {
         let Phase::Invariant { _rooted, inputs } = self.0.phase else {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "Proxy Set continuation received a descriptor reply",
             ));

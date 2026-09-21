@@ -4,7 +4,7 @@ use crate::engine::{
     builtins::native::TypedArrayElementKind,
     heap::ContextId,
     object::{CallableRef, ObjectRef, PropertyKey, WellKnownSymbol},
-    value::{JsValue, Value, conversion::NativeConversion},
+    value::{JsValue, conversion::NativeConversion},
     vm::Completion,
 };
 
@@ -36,7 +36,11 @@ impl TypedIteratorMethodStep {
     ) -> Result<Self, RuntimeError> {
         if matches!(source, JsValue::Null | JsValue::Undefined) {
             return Ok(Self::Complete(NativeConversion::Throw(
-                runtime.new_native_error(realm, NativeErrorKind::Type, "cannot get iterator")?,
+                runtime.new_native_error_jsvalue(
+                    realm,
+                    NativeErrorKind::Type,
+                    "cannot get iterator",
+                )?,
             )));
         }
         Ok(Self::Read {
@@ -62,7 +66,7 @@ impl TypedIteratorMethodResume {
             Completion::Return(value) => value,
             Completion::Throw(value) => {
                 return Ok(TypedIteratorMethodStep::Complete(NativeConversion::Throw(
-                    runtime.root_and_release_jsvalue(value)?,
+                    value,
                 )));
             }
         };
@@ -79,7 +83,7 @@ impl TypedIteratorMethodResume {
         let callable = callable?;
         Ok(TypedIteratorMethodStep::Complete(match callable {
             Some(value) => NativeConversion::Value(Some(value)),
-            None => NativeConversion::Throw(runtime.new_native_error(
+            None => NativeConversion::Throw(runtime.new_native_error_jsvalue(
                 self.0.realm,
                 NativeErrorKind::Type,
                 "value is not iterable",
@@ -96,10 +100,10 @@ pub(crate) fn finish_method(
         step = match step {
             TypedIteratorMethodStep::Complete(result) => return Ok(result),
             TypedIteratorMethodStep::Read { key, mut resume } => {
-                let receiver = runtime.root_and_release_jsvalue(resume.take_receiver())?;
+                let receiver = resume.take_receiver();
                 resume.resume(
                     runtime,
-                    runtime.get_value_property_in_realm(realm, receiver, &key)?,
+                    runtime.get_value_property_in_realm_jsvalue(realm, receiver, &key)?,
                 )?
             }
         };
@@ -193,11 +197,12 @@ impl TypedCollectResume {
     pub(crate) fn take_receiver(&mut self) -> JsValue {
         self.0.receiver.take().expect("typed collection receiver")
     }
-    fn abrupt(self, value: Value) -> TypedCollectStep {
+    fn abrupt(self, value: JsValue) -> TypedCollectStep {
         TypedCollectStep::Complete(NativeConversion::Throw(value))
     }
     fn fail(self, runtime: &Runtime, message: &str) -> Result<TypedCollectStep, RuntimeError> {
-        let error = runtime.new_native_error(self.0.realm, NativeErrorKind::Type, message)?;
+        let error =
+            runtime.new_native_error_jsvalue(self.0.realm, NativeErrorKind::Type, message)?;
         Ok(self.abrupt(error))
     }
     fn next(mut self) -> Result<TypedCollectStep, RuntimeError> {
@@ -233,7 +238,7 @@ impl TypedCollectResume {
         let value = match reply {
             Completion::Return(value) => value,
             Completion::Throw(value) => {
-                return Ok(self.abrupt(runtime.root_and_release_jsvalue(value)?));
+                return Ok(self.abrupt(value));
             }
         };
         match self.0.phase {
@@ -326,7 +331,7 @@ impl TypedCollectResume {
             Phase::Value => {
                 if self.0.values.try_reserve(1).is_err() {
                     runtime.release_jsvalue(value)?;
-                    let error = runtime.new_native_error(
+                    let error = runtime.new_native_error_jsvalue(
                         self.0.realm,
                         NativeErrorKind::Internal,
                         "out of memory",

@@ -28,14 +28,6 @@ pub(crate) struct NumberResumeState {
     primitive: PrimitiveResume,
 }
 impl NumberStep {
-    pub(crate) fn start(
-        runtime: &Runtime,
-        realm: ContextId,
-        value: Value,
-    ) -> Result<Self, RuntimeError> {
-        Self::start_jsvalue(runtime, realm, runtime.into_jsvalue(value)?)
-    }
-
     pub(crate) fn start_jsvalue(
         runtime: &Runtime,
         realm: ContextId,
@@ -54,9 +46,9 @@ fn from_primitive(
     step: PrimitiveStep,
 ) -> Result<NumberStep, RuntimeError> {
     Ok(match step {
-        PrimitiveStep::Complete(Completion::Throw(value)) => NumberStep::Complete(
-            NativeConversion::Throw(runtime.root_and_release_jsvalue(value)?),
-        ),
+        PrimitiveStep::Complete(Completion::Throw(value)) => {
+            NumberStep::Complete(NativeConversion::Throw(value))
+        }
         PrimitiveStep::Complete(Completion::Return(value)) => {
             let converted = runtime.number_from_primitive_jsvalue(realm, &value);
             runtime.release_jsvalue(value)?;

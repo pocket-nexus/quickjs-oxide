@@ -333,9 +333,7 @@ impl ParseResume {
         let source = match reply {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(ParseStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(ParseStep::Complete(Completion::Throw(value)));
             }
         };
         let Phase::Source(reviver) = std::mem::replace(&mut self.0.phase, Phase::Read) else {
@@ -364,9 +362,7 @@ impl ParseResume {
             match runtime.parse_json_text(state.realm, &state.source, state.reviver.is_some())? {
                 NativeConversion::Value(value) => value,
                 NativeConversion::Throw(value) => {
-                    return Ok(ParseStep::Complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
+                    return Ok(ParseStep::Complete(Completion::Throw(value)));
                 }
             };
         let Some(root) = root else {
@@ -381,9 +377,7 @@ impl ParseResume {
                 ));
             }
             PropertyDefineOutcome::Throw(value) => {
-                return Ok(ParseStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(ParseStep::Complete(Completion::Throw(value)));
             }
         }
         let record = record.map(Rc::new);
@@ -444,9 +438,7 @@ impl ParseResume {
                         match runtime.internal_is_array_jsvalue(realm, &JsValue::Object(id))? {
                             NativeConversion::Value(value) => value,
                             NativeConversion::Throw(value) => {
-                                return Ok(ParseStep::Complete(Completion::Throw(
-                                    runtime.into_jsvalue(value)?,
-                                )));
+                                return Ok(ParseStep::Complete(Completion::Throw(value)));
                             }
                         };
                     if array {
@@ -489,9 +481,7 @@ impl ParseResume {
                                 ));
                             }
                             PropertyDefineOutcome::Throw(value) => {
-                                return Ok(ParseStep::Complete(Completion::Throw(
-                                    runtime.into_jsvalue(value)?,
-                                )));
+                                return Ok(ParseStep::Complete(Completion::Throw(value)));
                             }
                         }
                     }
@@ -518,6 +508,9 @@ impl ParseResume {
         reply: NativeConversion<f64>,
     ) -> Result<ParseStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Number) {
+            if let NativeConversion::Throw(value) = reply {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "JSON reviver unexpected number reply",
             ));
@@ -525,9 +518,7 @@ impl ParseResume {
         let number = match reply {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(ParseStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(ParseStep::Complete(Completion::Throw(value)));
             }
         };
         self.0.top()?.children = Children::Array {
@@ -542,6 +533,9 @@ impl ParseResume {
         reply: NativeConversion<Vec<PropertyKey>>,
     ) -> Result<ParseStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Keys) {
+            if let NativeConversion::Throw(value) = reply {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "JSON reviver unexpected keys reply",
             ));
@@ -550,9 +544,7 @@ impl ParseResume {
             NativeConversion::Value(keys) => {
                 self.0.enumerate(runtime, keys.into_iter(), Vec::new())
             }
-            NativeConversion::Throw(value) => Ok(ParseStep::Complete(Completion::Throw(
-                runtime.into_jsvalue(value)?,
-            ))),
+            NativeConversion::Throw(value) => Ok(ParseStep::Complete(Completion::Throw(value))),
         }
     }
     pub(crate) fn boolean(
@@ -563,9 +555,7 @@ impl ParseResume {
         let value = match reply {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(ParseStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(ParseStep::Complete(Completion::Throw(value)));
             }
         };
         match std::mem::replace(&mut self.0.phase, Phase::Read) {

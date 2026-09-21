@@ -138,9 +138,7 @@ impl StringFactoryStep {
                 {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(Self::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(Self::Complete(Completion::Throw(value)));
                     }
                 };
                 resume.cooked = Some(cooked.clone());
@@ -254,7 +252,7 @@ impl StringFactoryResume {
         let number = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(self.abrupt(runtime.into_jsvalue(value)?));
+                return Ok(self.abrupt(value));
             }
         };
         match self.0.phase {
@@ -340,7 +338,7 @@ impl StringFactoryResume {
                 let raw = match runtime.native_to_object_jsvalue(self.0.realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(self.abrupt(runtime.into_jsvalue(value)?));
+                        return Ok(self.abrupt(value));
                     }
                 };
                 self.0.raw = Some(raw.clone());
@@ -384,7 +382,7 @@ impl StringFactoryResume {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(self.abrupt(runtime.into_jsvalue(value)?));
+                return Ok(self.abrupt(value));
             }
         };
         match self.0.phase {

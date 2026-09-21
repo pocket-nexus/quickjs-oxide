@@ -6,7 +6,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::ContextId,
     object::{ObjectRef, PropertyKey},
-    value::{JsString, JsStringError, JsValue, Value, conversion::NativeConversion},
+    value::{JsString, JsStringError, JsValue, conversion::NativeConversion},
     vm::Completion,
 };
 
@@ -194,7 +194,7 @@ impl Runtime {
         realm: ContextId,
         buffer: &mut ReplacementStringBuffer,
         substitution: SubstitutionInput<'_>,
-    ) -> Result<Result<SubstitutionStatus, Value>, RuntimeError> {
+    ) -> Result<Result<SubstitutionStatus, JsValue>, RuntimeError> {
         let mut cursor = 0;
         loop {
             let key = match self.advance_get_substitution(buffer, substitution, &mut cursor)? {
@@ -212,7 +212,7 @@ impl Runtime {
             )? {
                 Completion::Return(value) => value,
                 Completion::Throw(value) => {
-                    return Ok(Err(self.root_and_release_jsvalue(value)?));
+                    return Ok(Err(value));
                 }
             };
             match named_substitution_capture(buffer, &capture) {
@@ -250,7 +250,7 @@ impl Runtime {
                     JsStringError::TooLong => "string too long",
                     JsStringError::OutOfMemory => "out of memory",
                 };
-                Ok(NativeConversion::Throw(self.new_native_error(
+                Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                     realm,
                     NativeErrorKind::Internal,
                     message,

@@ -12,12 +12,12 @@ use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::atom::AtomError;
 use crate::engine::heap::{ContextId, HeapError, ObjectPayload, PrimitiveObjectData};
 use crate::engine::object::{CallableRef, ObjectRef, PropertyKey};
-use crate::engine::value::{JsString, JsStringBuilder, JsStringError, JsValue, Value};
+use crate::engine::value::{JsString, JsStringBuilder, JsStringError, JsValue};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::NativeArguments;
 
 enum JsonStringifyFailure {
-    Throw(Value),
+    Throw(JsValue),
     Runtime(RuntimeError),
 }
 

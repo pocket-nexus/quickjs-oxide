@@ -24,9 +24,10 @@ fn reduced_flatten_target_limit_preserves_prefix_and_exact_error() {
             16,
         )
         .unwrap();
-    let NativeConversion::Throw(Value::Object(error)) = result else {
+    let NativeConversion::Throw(JsValue::Object(error)) = result else {
         panic!("reduced flatten limit did not return an Error object");
     };
+    let error = ObjectRef::from_owned_handle(runtime.clone(), error);
     assert_eq!(
         string_property(&runtime, &mut context, &error, "name"),
         "TypeError"
@@ -86,9 +87,10 @@ fn reduced_flatten_frame_limit_is_catchable_without_rust_recursion() {
             3,
         )
         .unwrap();
-    let NativeConversion::Throw(Value::Object(error)) = result else {
+    let NativeConversion::Throw(JsValue::Object(error)) = result else {
         panic!("reduced flatten frame limit did not return an Error object");
     };
+    let error = ObjectRef::from_owned_handle(runtime.clone(), error);
     assert_eq!(
         string_property(&runtime, &mut context, &error, "name"),
         "InternalError",

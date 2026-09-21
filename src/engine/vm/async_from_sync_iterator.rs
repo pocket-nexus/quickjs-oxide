@@ -38,9 +38,7 @@ impl Runtime {
             match self.get_value_property_in_realm(realm, iterable.clone(), &async_key)? {
                 Completion::Return(value) => self.root_and_release_jsvalue(value)?,
                 Completion::Throw(value) => {
-                    return Ok(NativeConversion::Throw(
-                        self.root_and_release_jsvalue(value)?,
-                    ));
+                    return Ok(NativeConversion::Throw(value));
                 }
             };
 
@@ -50,9 +48,7 @@ impl Runtime {
                 match self.get_value_property_in_realm(realm, iterable.clone(), &sync_key)? {
                     Completion::Return(value) => self.root_and_release_jsvalue(value)?,
                     Completion::Throw(value) => {
-                        return Ok(NativeConversion::Throw(
-                            self.root_and_release_jsvalue(value)?,
-                        ));
+                        return Ok(NativeConversion::Throw(value));
                     }
                 };
             let sync_method =
@@ -64,7 +60,7 @@ impl Runtime {
                 Completion::Return(value) => match self.root_and_release_jsvalue(value)? {
                     Value::Object(iterator) => iterator,
                     _ => {
-                        return Ok(NativeConversion::Throw(self.new_native_error(
+                        return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                             realm,
                             NativeErrorKind::Type,
                             "not an object",
@@ -72,9 +68,7 @@ impl Runtime {
                     }
                 },
                 Completion::Throw(value) => {
-                    return Ok(NativeConversion::Throw(
-                        self.root_and_release_jsvalue(value)?,
-                    ));
+                    return Ok(NativeConversion::Throw(value));
                 }
             };
             let next_key =
@@ -82,9 +76,7 @@ impl Runtime {
             let next = match self.get_property_in_realm(realm, &sync_iterator, &next_key)? {
                 Completion::Return(value) => self.root_and_release_jsvalue(value)?,
                 Completion::Throw(value) => {
-                    return Ok(NativeConversion::Throw(
-                        self.root_and_release_jsvalue(value)?,
-                    ));
+                    return Ok(NativeConversion::Throw(value));
                 }
             };
             Value::Object(self.new_async_from_sync_iterator(realm, &sync_iterator, &next)?)
@@ -101,7 +93,7 @@ impl Runtime {
                 Completion::Return(value) => match self.root_and_release_jsvalue(value)? {
                     Value::Object(iterator) => Value::Object(iterator),
                     _ => {
-                        return Ok(NativeConversion::Throw(self.new_native_error(
+                        return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                             realm,
                             NativeErrorKind::Type,
                             "not an object",
@@ -109,9 +101,7 @@ impl Runtime {
                     }
                 },
                 Completion::Throw(value) => {
-                    return Ok(NativeConversion::Throw(
-                        self.root_and_release_jsvalue(value)?,
-                    ));
+                    return Ok(NativeConversion::Throw(value));
                 }
             }
         };
@@ -120,9 +110,7 @@ impl Runtime {
         let next = match self.get_value_property_in_realm(realm, iterator.clone(), &next_key)? {
             Completion::Return(value) => self.root_and_release_jsvalue(value)?,
             Completion::Throw(value) => {
-                return Ok(NativeConversion::Throw(
-                    self.root_and_release_jsvalue(value)?,
-                ));
+                return Ok(NativeConversion::Throw(value));
             }
         };
         Ok(NativeConversion::Value((iterator, next)))
@@ -139,7 +127,7 @@ impl Runtime {
                 return Ok(NativeConversion::Value(callable));
             }
         }
-        Ok(NativeConversion::Throw(self.new_native_error(
+        Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
             realm,
             NativeErrorKind::Type,
             "not a function",
@@ -154,14 +142,14 @@ impl Runtime {
         message: &'static str,
     ) -> Result<NativeConversion<CallableRef>, RuntimeError> {
         let Value::Object(object) = value else {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 message,
             )?));
         };
         let Some(callable) = self.as_callable(&object)? else {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 message,

@@ -288,9 +288,6 @@ pub(super) fn step(
                         ));
                     }
                     PropertyDefineOutcome::Throw(value) => {
-                        let value = runtime
-                            .into_jsvalue(value)
-                            .map_err(runtime_error_to_vm_error)?;
                         return Ok(CallStep::Complete(Completion::Throw(value)));
                     }
                 }
@@ -450,9 +447,6 @@ pub(super) fn step(
                             .push(&mut frame.window, JsValue::Object(id))?
                     }
                     NativeConversion::Throw(value) => {
-                        let value = runtime
-                            .into_jsvalue(value)
-                            .map_err(runtime_error_to_vm_error)?;
                         return Ok(CallStep::Complete(Completion::Throw(value)));
                     }
                 }

@@ -226,9 +226,7 @@ impl TypedCreateStep {
             let length = match primitive_index(runtime, realm, runtime.dup_jsvalue(first)?)? {
                 NativeConversion::Value(value) => value,
                 NativeConversion::Throw(value) => {
-                    return Ok(Self::Complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
+                    return Ok(Self::Complete(Completion::Throw(value)));
                 }
             };
             ProtoPurpose::Length(length)
@@ -364,9 +362,7 @@ impl TypedCreateResume {
         let method = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(TypedCreateStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(TypedCreateStep::Complete(Completion::Throw(value)));
             }
         };
         let Phase::Iterator { mut factory } = self.0.phase else {
@@ -396,9 +392,7 @@ impl TypedCreateResume {
             )? {
                 NativeConversion::Value(value) => value,
                 NativeConversion::Throw(value) => {
-                    return Ok(TypedCreateStep::Complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
+                    return Ok(TypedCreateStep::Complete(Completion::Throw(value)));
                 }
             };
             let key =
@@ -431,9 +425,7 @@ impl TypedCreateResume {
                 runtime.typed_array_default_prototype(realm, element)?
             }
             NativeConversion::Throw(value) => {
-                return Ok(TypedCreateStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(TypedCreateStep::Complete(Completion::Throw(value)));
             }
         };
         match purpose {
@@ -497,9 +489,7 @@ impl TypedCreateResume {
         let values = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(TypedCreateStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(TypedCreateStep::Complete(Completion::Throw(value)));
             }
         };
         let length = values.len() as u64;
@@ -527,9 +517,7 @@ impl TypedCreateResume {
                     match runtime.new_typed_array_for_length(realm, prototype, *element, length)? {
                         NativeConversion::Value(value) => value,
                         NativeConversion::Throw(value) => {
-                            return Ok(TypedCreateStep::Complete(Completion::Throw(
-                                runtime.into_jsvalue(value)?,
-                            )));
+                            return Ok(TypedCreateStep::Complete(Completion::Throw(value)));
                         }
                     };
                 Population {
@@ -577,9 +565,7 @@ impl TypedCreateResume {
         let target = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(TypedCreateStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(TypedCreateStep::Complete(Completion::Throw(value)));
             }
         };
         let Phase::Create {
@@ -611,9 +597,7 @@ impl TypedCreateResume {
         let bytes = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(TypedCreateStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(TypedCreateStep::Complete(Completion::Throw(value)));
             }
         };
         let Phase::Element(mut population) = self.0.phase else {
@@ -646,9 +630,7 @@ impl TypedCreateResume {
                 let offset = match primitive_index(runtime, self.0.realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(TypedCreateStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(TypedCreateStep::Complete(Completion::Throw(value)));
                     }
                 };
                 if offset % u64::from(element.byte_length()) != 0 {
@@ -697,9 +679,7 @@ impl TypedCreateResume {
                 let length = match primitive_index(runtime, self.0.realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
-                        return Ok(TypedCreateStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(TypedCreateStep::Complete(Completion::Throw(value)));
                     }
                 };
                 complete_object(
@@ -728,9 +708,7 @@ impl TypedCreateResume {
                 let length = match number? {
                     NativeConversion::Value(value) => Runtime::length_from_number(value),
                     NativeConversion::Throw(value) => {
-                        return Ok(TypedCreateStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
+                        return Ok(TypedCreateStep::Complete(Completion::Throw(value)));
                     }
                 };
                 Self::allocate(
@@ -863,7 +841,7 @@ fn complete_object(
         NativeConversion::Value(value) => {
             Completion::Return(runtime.into_jsvalue(Value::Object(value))?)
         }
-        NativeConversion::Throw(value) => Completion::Throw(runtime.into_jsvalue(value)?),
+        NativeConversion::Throw(value) => Completion::Throw(value),
     }))
 }
 fn out_of_memory(runtime: &Runtime, realm: ContextId) -> Result<TypedCreateStep, RuntimeError> {
@@ -902,11 +880,11 @@ pub(super) fn finish(
                 )?
             }
             TypedCreateStep::Read { mut resume } => {
-                let receiver = runtime.root_and_release_jsvalue(resume.take_read_receiver())?;
+                let receiver = resume.take_read_receiver();
                 let key = resume.take_read_key();
                 resume.resume(
                     runtime,
-                    runtime.get_value_property_in_realm(realm, receiver, &key)?,
+                    runtime.get_value_property_in_realm_jsvalue(realm, receiver, &key)?,
                 )?
             }
             TypedCreateStep::Method { mut resume } => {

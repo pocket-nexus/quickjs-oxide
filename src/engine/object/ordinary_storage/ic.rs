@@ -681,7 +681,9 @@ mod tests {
                 .unwrap();
         let hint = native.take().unwrap();
         drop(context.eval("icNative.x=Math.max").unwrap());
-        let data = hint.into_parts(&first_object).unwrap();
+        let data = hint
+            .into_parts_jsvalue(first_object.runtime(), first_object.object_id())
+            .unwrap();
         assert_eq!(
             data.target,
             crate::engine::builtins::native::NativeFunctionId::MathMinMax(
@@ -693,7 +695,10 @@ mod tests {
             .unwrap()
             .unwrap();
         let hint = native.take().unwrap();
-        assert!(hint.into_parts(&first_object).is_none());
+        assert!(
+            hint.into_parts_jsvalue(first_object.runtime(), first_object.object_id())
+                .is_none()
+        );
         assert_ne!(first, second);
         runtime.release_jsvalue(first).unwrap();
         runtime.release_jsvalue(second).unwrap();

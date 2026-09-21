@@ -44,9 +44,7 @@ impl PromiseResume {
     ) -> Result<PromiseStep, RuntimeError> {
         let capability = match result {
             NativeConversion::Throw(value) => {
-                return Ok(PromiseStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(PromiseStep::Complete(Completion::Throw(value)));
             }
             NativeConversion::Value(capability) => capability,
         };

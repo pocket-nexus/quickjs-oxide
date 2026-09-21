@@ -40,23 +40,11 @@ impl Runtime {
         })
     }
 
-    pub(crate) fn new_not_constructor_error(
-        &self,
-        realm: ContextId,
-        target: &Value,
-    ) -> Result<Value, RuntimeError> {
-        let object = match target {
-            Value::Object(object) => Some(object),
-            _ => None,
-        };
-        self.new_not_constructor_error_object(realm, object)
-    }
-
     pub(crate) fn new_not_constructor_error_jsvalue(
         &self,
         realm: ContextId,
         target: &JsValue,
-    ) -> Result<Value, RuntimeError> {
+    ) -> Result<JsValue, RuntimeError> {
         let object = match target {
             JsValue::Object(id) => Some(crate::engine::object::ObjectRef::from_borrowed_handle(
                 self.clone(),
@@ -71,7 +59,7 @@ impl Runtime {
         &self,
         realm: ContextId,
         object: Option<&crate::engine::object::ObjectRef>,
-    ) -> Result<Value, RuntimeError> {
+    ) -> Result<JsValue, RuntimeError> {
         let name = if let Some(object) = object
             && self.as_callable(object)?.is_some()
         {
@@ -88,7 +76,7 @@ impl Runtime {
         } else {
             message.push_utf8("not a constructor");
         }
-        self.new_native_error_from_message(realm, NativeErrorKind::Type, message)
+        self.new_native_error_from_message_jsvalue(realm, NativeErrorKind::Type, message)
     }
 
     pub(crate) fn call_global_number_parse(
@@ -211,41 +199,37 @@ impl Runtime {
                     ObjectPayload::Primitive(PrimitiveObjectData::Number(v))
                         if kind == PrimitiveKind::Number =>
                     {
-                        Some(Ok(Value::number(*v)))
+                        Some(match Value::number(*v) {
+                            Value::Int(v) => JsValue::Int(v),
+                            Value::Float(v) => JsValue::Float(v),
+                            _ => unreachable!(),
+                        })
                     }
                     ObjectPayload::Primitive(PrimitiveObjectData::String(v))
                         if kind == PrimitiveKind::String =>
                     {
-                        Some(Ok(Value::String(v.clone())))
+                        Some(JsValue::String(*v))
                     }
                     ObjectPayload::Primitive(PrimitiveObjectData::Boolean(v))
                         if kind == PrimitiveKind::Boolean =>
                     {
-                        Some(Ok(Value::Bool(*v)))
+                        Some(JsValue::Bool(*v))
                     }
                     ObjectPayload::Primitive(PrimitiveObjectData::BigInt(v))
                         if kind == PrimitiveKind::BigInt =>
                     {
-                        Some(Ok(Value::BigInt(v.clone())))
+                        Some(JsValue::BigInt(*v))
                     }
                     ObjectPayload::Primitive(PrimitiveObjectData::Symbol(atom))
                         if kind == PrimitiveKind::Symbol =>
                     {
-                        Some(Err(*atom))
+                        Some(JsValue::Symbol(state.atoms.unbrand(*atom)?))
                     }
                     _ => None,
                 }
             };
             if let Some(payload) = payload {
-                // Wrapper payloads are specialized storage, so extraction creates a value once.
-                return match payload {
-                    Ok(value) => self.into_jsvalue(value).map(NativeConversion::Value),
-                    Err(atom) => {
-                        let index = self.0.state.borrow().atoms.unbrand(atom)?;
-                        self.dup_jsvalue(&JsValue::Symbol(index))
-                            .map(NativeConversion::Value)
-                    }
-                };
+                return self.dup_jsvalue(&payload).map(NativeConversion::Value);
             }
         }
         let message = match kind {
@@ -255,7 +239,7 @@ impl Runtime {
             PrimitiveKind::Symbol => "not a symbol",
             PrimitiveKind::BigInt => "not a BigInt",
         };
-        Ok(NativeConversion::Throw(self.new_native_error(
+        Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
             realm,
             NativeErrorKind::Type,
             message,
@@ -732,7 +716,7 @@ impl Runtime {
                     ));
                 }
                 NativeConversion::Throw(value) => {
-                    return Ok(Completion::Throw(self.into_jsvalue(value)?));
+                    return Ok(Completion::Throw(value));
                 }
             };
         Ok(Completion::Return(
@@ -756,7 +740,7 @@ impl Runtime {
         };
         match self.primitive_this_value_jsvalue(realm, kind, this_value)? {
             NativeConversion::Value(value) => Ok(Completion::Return(value)),
-            NativeConversion::Throw(value) => Ok(Completion::Throw(self.into_jsvalue(value)?)),
+            NativeConversion::Throw(value) => Ok(Completion::Throw(value)),
         }
     }
 

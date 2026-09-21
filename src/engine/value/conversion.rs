@@ -26,9 +26,7 @@ impl Runtime {
             match self.to_primitive(realm, value, ToPrimitiveHint::String)? {
                 Completion::Return(value) => self.root_and_release_jsvalue(value)?,
                 Completion::Throw(value) => {
-                    return Ok(NativeConversion::Throw(
-                        self.root_and_release_jsvalue(value)?,
-                    ));
+                    return Ok(NativeConversion::Throw(value));
                 }
             }
         } else {
@@ -47,11 +45,7 @@ impl Runtime {
             match self.to_primitive_jsvalue(realm, value, ToPrimitiveHint::String)? {
                 Completion::Return(value) => value,
                 Completion::Throw(value) => {
-                    // The callback boundary throws public roots; hand the host
-                    // adapter its owned root back and release the internal edge.
-                    return Ok(NativeConversion::Throw(
-                        self.root_and_release_jsvalue(value)?,
-                    ));
+                    return Ok(NativeConversion::Throw(value));
                 }
             }
         } else {
@@ -92,7 +86,7 @@ impl Runtime {
                         return Err(RuntimeError::Engine(error));
                     };
                     return Ok(NativeConversion::Throw(
-                        self.new_native_error_from_error(realm, kind, &error)?,
+                        self.new_native_error_from_error_jsvalue(realm, kind, &error)?,
                     ));
                 }
             };
@@ -103,7 +97,11 @@ impl Runtime {
         match (result, self.release_jsvalue(value)) {
             (Ok(conversion), Ok(())) => Ok(conversion),
             (Err(error), _) => Err(error),
-            (Ok(_), Err(error)) => Err(error),
+            (Ok(NativeConversion::Throw(thrown)), Err(error)) => {
+                let _ = self.release_jsvalue(thrown);
+                Err(error)
+            }
+            (Ok(NativeConversion::Value(_)), Err(error)) => Err(error),
         }
     }
 
@@ -138,7 +136,7 @@ impl Runtime {
                     return Err(RuntimeError::Engine(error));
                 };
                 return Ok(NativeConversion::Throw(
-                    self.new_native_error_from_error(realm, kind, &error)?,
+                    self.new_native_error_from_error_jsvalue(realm, kind, &error)?,
                 ));
             }
         };
@@ -188,19 +186,7 @@ impl Runtime {
         realm: ContextId,
         value: &Value,
     ) -> Result<NativeConversion<JsString>, RuntimeError> {
-        let value = if matches!(value, Value::Object(_)) {
-            match self.to_primitive(realm, value.clone(), ToPrimitiveHint::String)? {
-                Completion::Return(value) => self.root_and_release_jsvalue(value)?,
-                Completion::Throw(value) => {
-                    return Ok(NativeConversion::Throw(
-                        self.root_and_release_jsvalue(value)?,
-                    ));
-                }
-            }
-        } else {
-            value.clone()
-        };
-        self.string_from_primitive(realm, &value)
+        self.native_to_js_string_jsvalue(realm, self.unroot_value(value)?)
     }
 
     /// Consume an internal ToString input without rebuilding an arena node.
@@ -213,40 +199,20 @@ impl Runtime {
             match self.to_primitive_jsvalue(realm, value, ToPrimitiveHint::String)? {
                 Completion::Return(value) => value,
                 Completion::Throw(value) => {
-                    return Ok(NativeConversion::Throw(
-                        self.root_and_release_jsvalue(value)?,
-                    ));
+                    return Ok(NativeConversion::Throw(value));
                 }
             }
         } else {
             value
         };
         let result = self.string_from_primitive_jsvalue(realm, &value);
-        self.release_jsvalue(value)?;
-        result
-    }
-
-    pub(crate) fn string_from_primitive(
-        &self,
-        realm: ContextId,
-        value: &Value,
-    ) -> Result<NativeConversion<JsString>, RuntimeError> {
-        if matches!(value, Value::Object(_)) {
-            return Err(RuntimeError::Invariant(
-                "ToString primitive reply contained an object",
-            ));
-        }
-        match value.to_js_string() {
-            Ok(value) => Ok(NativeConversion::Value(value)),
-            Err(error) => {
-                let Some(kind) = NativeErrorKind::from_javascript_error(error.kind()) else {
-                    return Err(RuntimeError::Engine(error));
-                };
-                Ok(NativeConversion::Throw(
-                    self.new_native_error_from_error(realm, kind, &error)?,
-                ))
+        if let Err(error) = self.release_jsvalue(value) {
+            if let Ok(NativeConversion::Throw(thrown)) = result {
+                let _ = self.release_jsvalue(thrown);
             }
+            return Err(error);
         }
+        result
     }
 
     pub(crate) fn native_to_number(
@@ -302,7 +268,7 @@ impl Runtime {
                     return Err(RuntimeError::Engine(error));
                 };
                 Ok(NativeConversion::Throw(
-                    self.new_native_error_from_error(realm, kind, &error)?,
+                    self.new_native_error_from_error_jsvalue(realm, kind, &error)?,
                 ))
             }
         }
@@ -326,7 +292,7 @@ impl Runtime {
                     return Err(RuntimeError::Engine(error));
                 };
                 Ok(NativeConversion::Throw(
-                    self.new_native_error_from_error(realm, kind, &error)?,
+                    self.new_native_error_from_error_jsvalue(realm, kind, &error)?,
                 ))
             }
         }
@@ -352,7 +318,7 @@ impl Runtime {
             JsValue::Object(_) => Err(RuntimeError::Invariant(
                 "ToBigInt primitive completion received an object",
             )),
-            _ => Ok(NativeConversion::Throw(self.new_native_error(
+            _ => Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Type,
                 "cannot convert to bigint",
@@ -380,7 +346,7 @@ impl Runtime {
     ) -> Result<NativeConversion<crate::engine::value::bigint::JsBigInt>, RuntimeError> {
         let units = value.utf16_units().collect::<Vec<_>>();
         let Ok(value) = String::from_utf16(&units) else {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Syntax,
                 "invalid bigint literal",
@@ -389,7 +355,7 @@ impl Runtime {
         match crate::engine::value::bigint::JsBigInt::parse_js_string(&value) {
             Ok(value) => Ok(NativeConversion::Value(value)),
             Err(crate::engine::value::bigint::BigIntError::InvalidSyntax) => {
-                Ok(NativeConversion::Throw(self.new_native_error(
+                Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                     realm,
                     NativeErrorKind::Syntax,
                     "invalid bigint literal",
@@ -398,12 +364,12 @@ impl Runtime {
             Err(
                 crate::engine::value::bigint::BigIntError::BigIntTooLarge
                 | crate::engine::value::bigint::BigIntError::AllocationTooLarge,
-            ) => Ok(NativeConversion::Throw(self.new_native_error(
+            ) => Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Range,
                 "BigInt is too large to allocate",
             )?)),
-            Err(error) => Ok(NativeConversion::Throw(self.new_native_error(
+            Err(error) => Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Range,
                 &error.to_string(),
@@ -433,14 +399,14 @@ impl Runtime {
                 self.0.state.borrow().heap.bigint(*id)?.clone(),
             )),
             JsValue::Float(value) if !value.is_finite() => {
-                Ok(NativeConversion::Throw(self.new_native_error(
+                Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                     realm,
                     NativeErrorKind::Range,
                     "cannot convert NaN or Infinity to BigInt",
                 )?))
             }
             JsValue::Float(value) if value.fract() != 0.0 => {
-                Ok(NativeConversion::Throw(self.new_native_error(
+                Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                     realm,
                     NativeErrorKind::Range,
                     "cannot convert to BigInt: not an integer",
@@ -458,7 +424,7 @@ impl Runtime {
                 self.native_bigint_from_string(realm, &value)
             }
             JsValue::Undefined | JsValue::Null | JsValue::Symbol(_) | JsValue::Object(_) => {
-                Ok(NativeConversion::Throw(self.new_native_error(
+                Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                     realm,
                     NativeErrorKind::Type,
                     "cannot convert to BigInt",
@@ -469,17 +435,6 @@ impl Runtime {
 
     /// Pinned QuickJS `JS_ToIndex`: saturating ToInt64 followed by the
     /// non-negative MAX_SAFE_INTEGER range check.
-    pub(crate) fn native_to_index(
-        &self,
-        realm: ContextId,
-        value: &Value,
-    ) -> Result<NativeConversion<u64>, RuntimeError> {
-        let number = match self.native_to_number(realm, value)? {
-            NativeConversion::Value(number) => number,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
-        };
-        self.index_from_number(realm, number)
-    }
     pub(crate) fn index_from_number(
         &self,
         realm: ContextId,
@@ -488,7 +443,7 @@ impl Runtime {
         const MAX_SAFE_INTEGER: i64 = (1_i64 << 53) - 1;
         let value = Self::int64_from_number(number);
         if !(0..=MAX_SAFE_INTEGER).contains(&value) {
-            return Ok(NativeConversion::Throw(self.new_native_error(
+            return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                 realm,
                 NativeErrorKind::Range,
                 "invalid array index",
@@ -511,19 +466,6 @@ impl Runtime {
         }
     }
 
-    pub(crate) fn native_to_length(
-        &self,
-        realm: ContextId,
-        value: &Value,
-    ) -> Result<NativeConversion<u64>, RuntimeError> {
-        match self.native_to_number(realm, value)? {
-            NativeConversion::Value(number) => {
-                Ok(NativeConversion::Value(Self::length_from_number(number)))
-            }
-            NativeConversion::Throw(value) => Ok(NativeConversion::Throw(value)),
-        }
-    }
-
     pub(crate) fn length_from_number(number: f64) -> u64 {
         const MAX_SAFE_INTEGER: u64 = (1_u64 << 53) - 1;
         if number.is_nan() || number <= 0.0 {
@@ -535,6 +477,7 @@ impl Runtime {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn to_primitive(
         &self,
         realm: ContextId,
@@ -556,32 +499,6 @@ impl Runtime {
         self.finish_primitive_steps(realm, step)
     }
 
-    pub(crate) fn native_to_object(
-        &self,
-        realm: ContextId,
-        value: Value,
-    ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
-        let (kind, value) = match value {
-            Value::Object(object) => return Ok(NativeConversion::Value(object)),
-            Value::Undefined | Value::Null => {
-                return Ok(NativeConversion::Throw(self.new_native_error(
-                    realm,
-                    NativeErrorKind::Type,
-                    "cannot convert to object",
-                )?));
-            }
-            value @ Value::Bool(_) => (PrimitiveKind::Boolean, value),
-            value @ (Value::Int(_) | Value::Float(_)) => (PrimitiveKind::Number, value),
-            value @ Value::String(_) => (PrimitiveKind::String, value),
-            value @ Value::BigInt(_) => (PrimitiveKind::BigInt, value),
-            value @ Value::Symbol(_) => (PrimitiveKind::Symbol, value),
-        };
-        let prototype = self.primitive_prototype_for_realm(realm, kind)?;
-        Ok(NativeConversion::Value(
-            self.new_primitive_object(&prototype, kind, value)?,
-        ))
-    }
-
     /// Internal-value form of [`Runtime::native_to_object`]: consumes the value.
     pub(crate) fn native_to_object_jsvalue(
         &self,
@@ -597,7 +514,7 @@ impl Runtime {
                 )));
             }
             JsValue::Undefined | JsValue::Null => {
-                return Ok(NativeConversion::Throw(self.new_native_error(
+                return Ok(NativeConversion::Throw(self.new_native_error_jsvalue(
                     realm,
                     NativeErrorKind::Type,
                     "cannot convert to object",
@@ -624,5 +541,5 @@ impl Runtime {
 
 pub(crate) enum NativeConversion<T> {
     Value(T),
-    Throw(Value),
+    Throw(JsValue),
 }

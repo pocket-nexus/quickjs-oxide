@@ -149,9 +149,7 @@ impl SliceStep {
             match runtime.native_to_object_jsvalue(realm, runtime.dup_jsvalue(this_value)?)? {
                 NativeConversion::Value(value) => value,
                 NativeConversion::Throw(value) => {
-                    return Ok(Self::complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
+                    return Ok(Self::complete(Completion::Throw(value)));
                 }
             };
         let mut resume = SliceResume(Box::new(SliceResumeState {
@@ -299,11 +297,13 @@ impl SliceResume {
                 Ok(SliceStep::make_number(value, self))
             }
             Phase::Species => {
-                let Value::Object(object) = runtime.root_and_release_jsvalue(value)? else {
+                let JsValue::Object(object) = value else {
+                    runtime.release_jsvalue(value)?;
                     return Err(RuntimeError::Invariant(
                         "ArraySpeciesCreate returned primitive",
                     ));
                 };
+                let object = ObjectRef::from_owned_handle(runtime.clone(), object);
                 if matches!(self.0.kind, SliceKind::Slice)
                     && runtime.try_copy_dense_slice(
                         &self.0.object,
@@ -361,9 +361,7 @@ impl SliceResume {
         let number = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(SliceStep::complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(SliceStep::complete(Completion::Throw(value)));
             }
         };
         match self.0.phase {
@@ -445,9 +443,7 @@ impl SliceResume {
             )? {
                 NativeConversion::Value(value) => value,
                 NativeConversion::Throw(value) => {
-                    return Ok(SliceStep::complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
+                    return Ok(SliceStep::complete(Completion::Throw(value)));
                 }
             };
             self.collect(runtime)
@@ -525,11 +521,12 @@ impl SliceResume {
                     }
                 }
                 self.0.phase = Phase::Read;
-                let receiver = Value::Object(self.0.object.clone());
-                let value = match runtime.prepare_ordinary_read_borrowed(
+                let receiver = JsValue::Object(self.0.object.object_id());
+                let value = match runtime.prepare_ordinary_read_selected(
                     &self.0.object,
                     &key,
                     &receiver,
+                    None,
                 )? {
                     OrdinaryRead::Complete(value) => {
                         #[cfg(feature = "profiling")]
@@ -542,9 +539,7 @@ impl SliceResume {
                         return Ok(SliceStep::make_preparedread(read, key, self));
                     }
                 };
-                // End the read receiver before the following Define, as in the
-                // ordinary Read adapter. The cursor alone keeps source alive.
-                drop(receiver);
+                // The cursor owns the borrowed receiver throughout the read.
                 drop(key);
                 if matches!(self.0.kind, SliceKind::ToSpliced) {
                     let previous =
@@ -562,9 +557,7 @@ impl SliceResume {
                             self.0.cursor,
                             result,
                         )? {
-                            return Ok(SliceStep::complete(Completion::Throw(
-                                runtime.into_jsvalue(error)?,
-                            )));
+                            return Ok(SliceStep::complete(Completion::Throw(error)));
                         }
                         self.0.cursor += 1;
                         continue;
@@ -596,9 +589,7 @@ impl SliceResume {
                     self.0.cursor,
                     result,
                 )? {
-                    return Ok(SliceStep::complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
+                    return Ok(SliceStep::complete(Completion::Throw(value)));
                 }
                 self.0.cursor += 1;
                 #[cfg(feature = "profiling")]
@@ -616,9 +607,7 @@ impl SliceResume {
         let value = match result {
             NativeConversion::Value(value) => value,
             NativeConversion::Throw(value) => {
-                return Ok(SliceStep::complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(SliceStep::complete(Completion::Throw(value)));
             }
         };
         match self.0.phase {
@@ -657,14 +646,15 @@ impl SliceResume {
         result: NativeConversion<InternalDefineResult>,
     ) -> Result<SliceStep, RuntimeError> {
         if !matches!(self.0.phase, Phase::Define) {
+            if let NativeConversion::Throw(value) = result {
+                let _ = runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant("Array slice define phase mismatch"));
         }
         if let Some(value) =
             runtime.finish_create_indexed_data_property(self.0.realm, self.0.cursor, result)?
         {
-            return Ok(SliceStep::complete(Completion::Throw(
-                runtime.into_jsvalue(value)?,
-            )));
+            return Ok(SliceStep::complete(Completion::Throw(value)));
         }
         self.0.cursor += 1;
         self.collect(runtime)
@@ -725,9 +715,7 @@ impl SliceResume {
         result: NativeConversion<InternalSetResult>,
     ) -> Result<SliceStep, RuntimeError> {
         if let Some(value) = runtime.finish_set_property_or_throw(self.0.realm, &key, result)? {
-            return Ok(SliceStep::complete(Completion::Throw(
-                runtime.into_jsvalue(value)?,
-            )));
+            return Ok(SliceStep::complete(Completion::Throw(value)));
         }
         match self.0.phase {
             Phase::ResultLength => self.mutate(runtime),
@@ -762,9 +750,7 @@ pub(crate) fn finish(
                         NativeConversion::Value(value) => Completion::Return(
                             runtime.into_jsvalue(value.unwrap_or(Value::Undefined))?,
                         ),
-                        NativeConversion::Throw(value) => {
-                            Completion::Throw(runtime.into_jsvalue(value)?)
-                        }
+                        NativeConversion::Throw(value) => Completion::Throw(value),
                     };
                     resume.resume(runtime, completion)?
                 }
@@ -782,8 +768,7 @@ pub(crate) fn finish(
             }
             SliceStep::Number { mut resume } => {
                 let (value,) = resume.take_number();
-                let value = runtime.root_and_release_jsvalue(value)?;
-                resume.number(runtime, runtime.native_to_number(realm, &value)?)?
+                resume.number(runtime, runtime.native_to_number_jsvalue(realm, value)?)?
             }
             SliceStep::Species { mut resume } => {
                 let (source, length) = resume.take_species();
@@ -805,14 +790,13 @@ pub(crate) fn finish(
             }
             SliceStep::Set { mut resume } => {
                 let (object, key, value) = resume.take_set();
-                let value = runtime.root_and_release_jsvalue(value)?;
                 {
-                    let result = runtime.internal_set(
+                    let result = runtime.internal_set_jsvalue(
                         realm,
                         &object,
                         &key,
                         value,
-                        Value::Object(object.clone()),
+                        JsValue::Object(object.clone().into_handle()),
                     )?;
                     resume.set(runtime, key, result)?
                 }

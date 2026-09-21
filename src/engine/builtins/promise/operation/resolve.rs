@@ -119,9 +119,7 @@ fn create(
         JsValue::Object(state.constructor.clone().into_handle()),
     )? {
         NativeConversion::Throw(value) => {
-            return Ok(PromiseStep::Complete(Completion::Throw(
-                runtime.into_jsvalue(value)?,
-            )));
+            return Ok(PromiseStep::Complete(Completion::Throw(value)));
         }
         NativeConversion::Value(constructor) => constructor,
     };

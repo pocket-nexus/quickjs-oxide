@@ -30,9 +30,7 @@ impl PromiseStep {
         let constructor =
             match runtime.constructor_from_jsvalue(realm, JsValue::Object(object.into_handle()))? {
                 NativeConversion::Throw(value) => {
-                    return Ok(Self::Complete(Completion::Throw(
-                        runtime.into_jsvalue(value)?,
-                    )));
+                    return Ok(Self::Complete(Completion::Throw(value)));
                 }
                 NativeConversion::Value(constructor) => constructor,
             };
@@ -116,12 +114,9 @@ pub(super) fn ready(
                 let _ = runtime.release_jsvalue(value);
             }
             return match other {
-                Ok(NativeConversion::Throw(reason)) => settle(
-                    runtime,
-                    realm,
-                    capability,
-                    Completion::Throw(runtime.into_jsvalue(reason)?),
-                ),
+                Ok(NativeConversion::Throw(reason)) => {
+                    settle(runtime, realm, capability, Completion::Throw(reason))
+                }
                 Err(error) => Err(error),
                 Ok(NativeConversion::Value(_)) => unreachable!(),
             };

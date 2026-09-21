@@ -288,18 +288,19 @@ impl InstanceResume {
     }
     pub(crate) fn prototype(
         self,
-        runtime: &Runtime,
+        _runtime: &Runtime,
         result: NativeConversion<Option<ObjectRef>>,
     ) -> Result<InstanceStep, RuntimeError> {
         let Phase::Walk(expected) = &self.0.phase else {
+            if let NativeConversion::Throw(value) = result {
+                let _ = _runtime.release_jsvalue(value);
+            }
             return Err(RuntimeError::Invariant(
                 "instanceof received unexpected prototype",
             ));
         };
         Ok(match result {
-            NativeConversion::Throw(value) => {
-                InstanceStep::Complete(Completion::Throw(runtime.into_jsvalue(value)?))
-            }
+            NativeConversion::Throw(value) => InstanceStep::Complete(Completion::Throw(value)),
             NativeConversion::Value(None) => {
                 InstanceStep::Complete(Completion::Return(JsValue::Bool(false)))
             }
@@ -314,7 +315,7 @@ impl InstanceResume {
         })
     }
 }
-pub(super) fn finish(
+pub(crate) fn finish(
     runtime: &Runtime,
     mut realm: ContextId,
     mut step: InstanceStep,

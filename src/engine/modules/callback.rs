@@ -8,7 +8,7 @@ use crate::engine::heap::{
     ContextId, InternalCallableData, ModuleId, RawModuleRef, RawModuleTransition, RawValue,
 };
 use crate::engine::object::CallableRef;
-use crate::engine::value::{JsValue, Value};
+use crate::engine::value::JsValue;
 use crate::engine::vm::{
     Completion,
     call::{NativeArguments, NativeInvocation},
@@ -59,6 +59,17 @@ pub(crate) struct CallbackResume {
     mode: Mode,
 }
 impl CallbackStep {
+    pub(crate) fn release(self, runtime: &Runtime) {
+        match self {
+            Self::Complete(Completion::Return(value) | Completion::Throw(value))
+            | Self::Call { value, .. } => {
+                let _ = runtime.release_jsvalue(value);
+            }
+            Self::Body { step, .. } => (*step).release(runtime),
+            Self::Nested { step, .. } => (*step).release(runtime),
+        }
+    }
+
     pub(crate) fn start(
         runtime: &Runtime,
         realm: ContextId,
@@ -140,7 +151,7 @@ impl CallbackStep {
         };
         invocation.release(runtime)?;
         let argument = match arguments.readable.first() {
-            Some(value) => runtime.root_value(value)?,
+            Some(value) => value,
             None => {
                 return Err(RuntimeError::Invariant(
                     "dynamic import handler argv was not padded",
@@ -175,22 +186,33 @@ impl CallbackStep {
         }
 
         let (target, value) = match target_kind {
-            DynamicImportHandlerKind::Reject => (reject, argument),
+            DynamicImportHandlerKind::Reject => (reject, runtime.dup_jsvalue(argument)?),
             DynamicImportHandlerKind::Fulfill => {
                 match runtime.get_module_namespace_raw(module, realm) {
-                    Ok(namespace) => (resolve, Value::Object(namespace)),
+                    Ok(namespace) => (resolve, JsValue::Object(namespace.into_handle())),
                     Err(error) => (reject, runtime.dynamic_import_error_reason(realm, error)?),
                 }
             }
         };
-        let callable = runtime.dynamic_import_settler(target)?;
+        let preparation = (|| {
+            let callable = runtime.dynamic_import_settler(target)?;
+            let root = runtime.root_module(module)?;
+            Ok::<_, RuntimeError>((callable, root))
+        })();
+        let (callable, root) = match preparation {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                runtime.release_jsvalue(value)?;
+                return Err(error);
+            }
+        };
         Ok(Self::Call {
             callable,
-            value: runtime.into_jsvalue(value)?,
+            value,
             resume: Box::new(CallbackResume {
                 runtime: runtime.clone(),
                 realm,
-                root: runtime.root_module(module)?,
+                root,
                 mode: Mode::DynamicSettled,
             }),
         })

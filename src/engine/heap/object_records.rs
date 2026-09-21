@@ -68,14 +68,13 @@ pub enum AutoInitProperty {
 #[derive(Clone, Debug)]
 pub enum PrimitiveObjectData {
     Number(f64),
-    /// Exact UTF-16 backing store for a genuine String wrapper. Unlike Symbol,
-    /// the reference-counted string payload owns no atom or heap edge.
-    String(JsString),
+    /// One owned edge to the normalized String primitive.
+    String(StringId),
     Boolean(bool),
     /// One owned atom reference for a genuine local, global, or well-known
     /// Symbol. `object_atoms` returns it during wrapper finalization.
     Symbol(Atom),
-    BigInt(JsBigInt),
+    BigInt(BigIntId),
 }
 
 impl PrimitiveObjectData {
