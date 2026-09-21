@@ -17,7 +17,7 @@ pub(in crate::engine::vm) struct PreparedNativeCall {
 }
 
 pub(in crate::engine::vm) struct NativeActivation {
-    runtime: Runtime,
+    runtime: Option<Runtime>,
     // Retire the non-owning diagnostic descriptor before callable roots on unwind.
     active_frame: Option<ActiveFrameGuard>,
     pub callable: CallableRef,
@@ -217,7 +217,7 @@ impl Runtime {
         crate::engine::api::profiling::record_owned_execution_event("native_activation_prepared");
         Ok(PreparedNativeCall {
             activation: NativeActivation {
-                runtime: self.clone(),
+                runtime: Some(self.clone()),
                 callable,
                 realm,
                 target,
@@ -416,7 +416,7 @@ impl Runtime {
         crate::engine::api::profiling::record_owned_execution_event("native_activation_prepared");
         Ok(PreparedNativeCall {
             activation: NativeActivation {
-                runtime: self.clone(),
+                runtime: Some(self.clone()),
                 callable: callable_input.into_owned(),
                 realm,
                 target,
@@ -440,7 +440,12 @@ impl PreparedNativeCall {
                 this_value: JsValue::Undefined,
             },
         );
-        invocation.release(&self.activation.runtime)
+        invocation.release(
+            self.activation
+                .runtime
+                .as_ref()
+                .expect("native runtime present"),
+        )
     }
 }
 
@@ -450,8 +455,12 @@ impl Drop for NativeActivation {
     /// completed activation drops an empty vector. Releases are defer-safe and
     /// never run JavaScript.
     fn drop(&mut self) {
-        for value in self.arguments.readable.drain(..) {
-            let _ = self.runtime.release_jsvalue(value);
+        if let Some(runtime) = self.runtime.as_ref() {
+            for value in self.arguments.readable.drain(..) {
+                let _ = runtime.release_jsvalue(value);
+            }
+        } else {
+            debug_assert!(self.arguments.readable.is_empty());
         }
     }
 }
@@ -501,48 +510,91 @@ impl NativeActivation {
         })
     }
 
+    #[inline]
     fn finish_reusing_with<T>(
-        mut self,
+        self,
         result: Result<T, RuntimeError>,
         throw: impl FnOnce(JsValue) -> T,
         into_owned_value: impl FnOnce(T) -> JsValue,
     ) -> (Result<T, RuntimeError>, Vec<JsValue>) {
-        let runtime = self.runtime.clone();
-        let result = (|| match result {
-            Err(RuntimeError::Engine(error))
-                if NativeErrorKind::from_javascript_error(error.kind()).is_some() =>
-            {
-                let kind = NativeErrorKind::from_javascript_error(error.kind())
-                    .expect("guard proved this is a JavaScript-visible native error");
-                let value = runtime.new_native_error_from_error(self.realm, kind, &error)?;
-                let value = runtime.into_jsvalue(value)?;
-                Ok(throw(value))
-            }
-            result => result,
-        })();
-        let result = match self
+        match result {
+            Ok(value) => self.finish_value(value, into_owned_value),
+            Err(error) => self.finish_error(error, throw, into_owned_value),
+        }
+    }
+
+    // Keep the wide RuntimeError transport out of the successful owner handoff.
+    fn finish_value<T>(
+        mut self,
+        value: T,
+        into_owned_value: impl FnOnce(T) -> JsValue,
+    ) -> (Result<T, RuntimeError>, Vec<JsValue>) {
+        if let Err(error) = self
             .active_frame
             .take()
             .expect("native activation lost its active frame")
             .finish()
         {
-            Ok(()) => result,
-            Err(error) => {
-                if let Ok(outcome) = result {
-                    let _ = runtime.release_jsvalue(into_owned_value(outcome));
+            let _ = self
+                .runtime
+                .as_ref()
+                .expect("native runtime present")
+                .release_jsvalue(into_owned_value(value));
+            return (Err(error), self.release_arguments_reusing());
+        }
+        (Ok(value), self.release_arguments_reusing())
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn finish_error<T>(
+        mut self,
+        error: RuntimeError,
+        throw: impl FnOnce(JsValue) -> T,
+        into_owned_value: impl FnOnce(T) -> JsValue,
+    ) -> (Result<T, RuntimeError>, Vec<JsValue>) {
+        // Error construction must still see the active native frame and realm.
+        let error = match error {
+            RuntimeError::Engine(error)
+                if NativeErrorKind::from_javascript_error(error.kind()).is_some() =>
+            {
+                let kind = NativeErrorKind::from_javascript_error(error.kind())
+                    .expect("guard proved this is a JavaScript-visible native error");
+                match self
+                    .runtime
+                    .as_ref()
+                    .expect("native runtime present")
+                    .new_native_error_from_error_jsvalue(self.realm, kind, &error)
+                {
+                    Ok(value) => return self.finish_value(throw(value), into_owned_value),
+                    Err(error) => error,
                 }
-                Err(error)
             }
+            error => error,
         };
-        // Keep the original field cleanup order: the callable owner is released
-        // before the readable argument owners. Taking the buffer first leaves
-        // the activation Drop with nothing to release.
+        let error = match self
+            .active_frame
+            .take()
+            .expect("native activation lost its active frame")
+            .finish()
+        {
+            Ok(()) => error,
+            Err(frame_error) => frame_error,
+        };
+        (Err(error), self.release_arguments_reusing())
+    }
+
+    fn release_arguments_reusing(mut self) -> Vec<JsValue> {
+        // Transfer the existing Runtime owner only after no fallible preparation
+        // remains. Until then Drop can release arguments on every unwind path.
         let mut readable = std::mem::take(&mut self.arguments.readable);
+        let runtime = self.runtime.take().expect("native runtime present");
+        // Callable roots retire before argument roots, as on the public path.
         drop(self);
         for value in readable.drain(..) {
             let _ = runtime.release_jsvalue(value);
         }
-        (result, readable)
+        readable
     }
 }
 

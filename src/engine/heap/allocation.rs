@@ -142,12 +142,7 @@ impl Heap {
     /// [`Heap::release_string`].  String nodes have no outgoing heap edges, so
     /// publication cannot fail after the slot is reserved.
     pub fn allocate_string(&mut self, value: JsString) -> Result<StringId, HeapError> {
-        let (index, generation) = self.reserve(HeapNodeKind::String)?;
-        if let Err(error) = self.publish(index, NodeData::String(value)) {
-            self.abort_initializing(index)?;
-            return Err(error);
-        }
-        Ok(StringId { index, generation })
+        self.allocate_string_leaf(value)
     }
 
     /// Allocate and publish a BigInt node owning one `JsBigInt` payload.
@@ -156,12 +151,7 @@ impl Heap {
     /// [`Heap::release_bigint`].  BigInt nodes have no outgoing heap edges, so
     /// publication cannot fail after the slot is reserved.
     pub fn allocate_bigint(&mut self, value: JsBigInt) -> Result<BigIntId, HeapError> {
-        let (index, generation) = self.reserve(HeapNodeKind::BigInt)?;
-        if let Err(error) = self.publish(index, NodeData::BigInt(value)) {
-            self.abort_initializing(index)?;
-            return Err(error);
-        }
-        Ok(BigIntId { index, generation })
+        self.allocate_bigint_leaf(value)
     }
 
     /// Allocate and publish a realm/context node, retaining all realm roots.

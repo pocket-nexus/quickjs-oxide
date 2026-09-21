@@ -79,6 +79,16 @@ impl Heap {
         &mut self,
         kind: HeapNodeKind,
     ) -> Result<(u32, u32), HeapError> {
+        let (index, generation) = self.reserve_vacant()?;
+        self.slots[index as usize].state = SlotState::Initializing { kind, strong: 1 };
+        #[cfg(debug_assertions)]
+        self.record_alloc_site(index, generation, kind);
+        Ok((index, generation))
+    }
+
+    /// Reserve storage without transporting a wide node payload. Callers must
+    /// publish immediately or install Initializing before any fallible work.
+    fn reserve_vacant(&mut self) -> Result<(u32, u32), HeapError> {
         let index = if let Some(index) = self.free.pop() {
             index
         } else {
@@ -107,11 +117,38 @@ impl Heap {
                 "free list referenced a linked weak-collection slot",
             ));
         }
-        slot.state = SlotState::Initializing { kind, strong: 1 };
-        let generation = slot.generation;
+        Ok((index, slot.generation))
+    }
+
+    // Leaf payloads own no outgoing heap edges. Keep their concrete variants at
+    // the final slot assignment: passing NodeData through publish caused two
+    // arena-sized memcpy operations even with publish inlined in release builds.
+    pub(in crate::engine::heap) fn allocate_string_leaf(
+        &mut self,
+        value: JsString,
+    ) -> Result<StringId, HeapError> {
+        let (index, generation) = self.reserve_vacant()?;
+        self.slots[index as usize].state = SlotState::Live(Node {
+            strong: Cell::new(1),
+            data: NodeData::String(value),
+        });
         #[cfg(debug_assertions)]
-        self.record_alloc_site(index, generation, kind);
-        Ok((index, generation))
+        self.record_alloc_site(index, generation, HeapNodeKind::String);
+        Ok(StringId { index, generation })
+    }
+
+    pub(in crate::engine::heap) fn allocate_bigint_leaf(
+        &mut self,
+        value: JsBigInt,
+    ) -> Result<BigIntId, HeapError> {
+        let (index, generation) = self.reserve_vacant()?;
+        self.slots[index as usize].state = SlotState::Live(Node {
+            strong: Cell::new(1),
+            data: NodeData::BigInt(value),
+        });
+        #[cfg(debug_assertions)]
+        self.record_alloc_site(index, generation, HeapNodeKind::BigInt);
+        Ok(BigIntId { index, generation })
     }
 
     pub(in crate::engine::heap) fn abort_initializing(

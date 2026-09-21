@@ -1303,10 +1303,15 @@ impl Runtime {
         };
         // Decoding backing bytes creates a new numeric value. Publish BigInt
         // once here; subsequent callback buffers retain this exact node.
-        Ok(Some(self.into_jsvalue(typed_array_decode(
+        if snapshot.element.is_bigint() {
+            return Ok(Some(
+                self.into_jsvalue(typed_array_decode(snapshot.element, bytes))?,
+            ));
+        }
+        Ok(Some(typed_array_decode_number_jsvalue(
             snapshot.element,
             bytes,
-        ))?))
+        )))
     }
 
     pub(crate) fn typed_array_get_index_descriptor(
@@ -1462,11 +1467,7 @@ impl Runtime {
         else {
             return None;
         };
-        Some(match typed_array_decode(snapshot.element, bytes) {
-            Value::Int(value) => JsValue::Int(value),
-            Value::Float(value) => JsValue::Float(value),
-            _ => unreachable!("typed array decode always yields a number"),
-        })
+        Some(typed_array_decode_number_jsvalue(snapshot.element, bytes))
     }
 
     /// Resident VM leaf: every decline precedes the only byte write. The
@@ -1669,40 +1670,69 @@ fn typed_array_encode_number(element: TypedArrayElementKind, number: f64) -> [u8
 }
 
 fn typed_array_decode(element: TypedArrayElementKind, bytes: [u8; 8]) -> Value {
+    use crate::engine::value::number::operations::Number;
     match element {
-        TypedArrayElementKind::Uint8Clamped | TypedArrayElementKind::Uint8 => {
-            Value::Int(i32::from(bytes[0]))
-        }
-        TypedArrayElementKind::Int8 => Value::Int(i32::from(bytes[0] as i8)),
-        TypedArrayElementKind::Int16 => {
-            Value::Int(i32::from(i16::from_ne_bytes([bytes[0], bytes[1]])))
-        }
-        TypedArrayElementKind::Uint16 => {
-            Value::Int(i32::from(u16::from_ne_bytes([bytes[0], bytes[1]])))
-        }
-        TypedArrayElementKind::Int32 => {
-            Value::Int(i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
-        }
-        TypedArrayElementKind::Uint32 => Runtime::array_length_value(u32::from_ne_bytes([
-            bytes[0], bytes[1], bytes[2], bytes[3],
-        ])),
         TypedArrayElementKind::BigInt64 => Value::BigInt(
             crate::engine::value::bigint::JsBigInt::from(i64::from_ne_bytes(bytes)),
         ),
         TypedArrayElementKind::BigUint64 => Value::BigInt(
             crate::engine::value::bigint::JsBigInt::from(u64::from_ne_bytes(bytes)),
         ),
+        _ => match typed_array_decode_number(element, bytes) {
+            Number::Int(value) => Value::Int(value),
+            Number::Float(value) => Value::Float(value),
+        },
+    }
+}
+
+#[inline]
+fn typed_array_decode_number_jsvalue(element: TypedArrayElementKind, bytes: [u8; 8]) -> JsValue {
+    use crate::engine::value::number::operations::Number;
+    match typed_array_decode_number(element, bytes) {
+        Number::Int(value) => JsValue::Int(value),
+        Number::Float(value) => JsValue::Float(value),
+    }
+}
+
+#[inline]
+fn typed_array_decode_number(
+    element: TypedArrayElementKind,
+    bytes: [u8; 8],
+) -> crate::engine::value::number::operations::Number {
+    use crate::engine::value::number::operations::Number;
+    match element {
+        TypedArrayElementKind::Uint8Clamped | TypedArrayElementKind::Uint8 => {
+            Number::Int(i32::from(bytes[0]))
+        }
+        TypedArrayElementKind::Int8 => Number::Int(i32::from(bytes[0] as i8)),
+        TypedArrayElementKind::Int16 => {
+            Number::Int(i32::from(i16::from_ne_bytes([bytes[0], bytes[1]])))
+        }
+        TypedArrayElementKind::Uint16 => {
+            Number::Int(i32::from(u16::from_ne_bytes([bytes[0], bytes[1]])))
+        }
+        TypedArrayElementKind::Int32 => {
+            Number::Int(i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+        }
+        TypedArrayElementKind::Uint32 => Number::compact(f64::from(u32::from_ne_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3],
+        ]))),
+        TypedArrayElementKind::BigInt64 | TypedArrayElementKind::BigUint64 => {
+            unreachable!("BigInt TypedArray values use the BigInt decoder")
+        }
         TypedArrayElementKind::Float16 => {
-            Value::number(crate::engine::value::number::from_float16_bits(
+            Number::compact(crate::engine::value::number::from_float16_bits(
                 u16::from_ne_bytes([bytes[0], bytes[1]]),
             ))
         }
         TypedArrayElementKind::Float32 => {
-            Value::number(f64::from(f32::from_bits(u32::from_ne_bytes([
+            Number::compact(f64::from(f32::from_bits(u32::from_ne_bytes([
                 bytes[0], bytes[1], bytes[2], bytes[3],
             ]))))
         }
-        TypedArrayElementKind::Float64 => Value::number(f64::from_bits(u64::from_ne_bytes(bytes))),
+        TypedArrayElementKind::Float64 => {
+            Number::compact(f64::from_bits(u64::from_ne_bytes(bytes)))
+        }
     }
 }
 

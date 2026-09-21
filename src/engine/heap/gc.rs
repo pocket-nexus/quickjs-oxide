@@ -1246,6 +1246,15 @@ impl Heap {
             let traced = false;
             let index = self.validate_slot_identity(id)?;
             if !traced
+                && let SlotState::Live(node) = &self.slots[index].state
+                && node.strong.get() > 1
+            {
+                // The live leaf and its identity are already validated. With
+                // no queued work this decrement cannot trigger finalization.
+                node.strong.set(node.strong.get() - 1);
+                return Ok(None);
+            }
+            if !traced
                 && matches!(&self.slots[index].state, SlotState::Live(node) if node.strong.get() == 1)
             {
                 // Identity validation also checked the payload kind. Assignment
@@ -1564,9 +1573,7 @@ pub(super) fn object_edges(object: &ObjectData) -> Edges {
         ) => {}
         ObjectPayload::Array { dense } => {
             if let Some(dense) = dense {
-                for value in dense {
-                    edges.extend(raw_value_edges(value));
-                }
+                edges.extend(dense.iter().filter_map(raw_value_edge));
             }
         }
         ObjectPayload::Ordinary
@@ -1896,11 +1903,14 @@ pub(super) fn property_slot_edges(slot: &PropertySlot) -> Edges {
 }
 
 pub(super) fn raw_value_edges(value: &RawValue) -> Edges {
-    let mut edges = Edges::new();
+    raw_value_edge(value).into_iter().collect()
+}
+
+fn raw_value_edge(value: &RawValue) -> Option<RawId> {
     match value {
-        RawValue::Object(object) => edges.push(RawId::Object(*object)),
-        RawValue::String(id) => edges.push(RawId::String(*id)),
-        RawValue::BigInt(id) => edges.push(RawId::BigInt(*id)),
+        RawValue::Object(object) => Some(RawId::Object(*object)),
+        RawValue::String(id) => Some(RawId::String(*id)),
+        RawValue::BigInt(id) => Some(RawId::BigInt(*id)),
         RawValue::Undefined
         | RawValue::Null
         | RawValue::Bool(_)
@@ -1910,9 +1920,8 @@ pub(super) fn raw_value_edges(value: &RawValue) -> Edges {
         | RawValue::Symbol(_)
         | RawValue::Private(_)
         | RawValue::Uninitialized
-        | RawValue::Exception => {}
+        | RawValue::Exception => None,
     }
-    edges
 }
 
 pub(super) fn context_edges(context: &ContextData) -> Vec<RawId> {
