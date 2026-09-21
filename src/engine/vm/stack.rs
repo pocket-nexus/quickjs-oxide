@@ -336,7 +336,6 @@ impl SlotStore {
         Ok(())
     }
 
-    #[cfg(all(test, feature = "profiling"))]
     pub(in crate::engine::vm) fn take_native_argument_buffer(
         &mut self,
         count: usize,
@@ -379,10 +378,7 @@ impl SlotStore {
         count: usize,
         method: bool,
     ) -> Result<(Vec<JsValue>, JsValue), Error> {
-        let mut arguments: Vec<JsValue> = Vec::new();
-        arguments
-            .try_reserve_exact(count)
-            .map_err(|_| Error::internal("native call arguments allocation failed"))?;
+        let mut arguments = self.take_native_argument_buffer(count)?;
         for offset in 0..count + 1 + usize::from(method) {
             self.peek_current(window, offset)?;
         }

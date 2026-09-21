@@ -157,6 +157,7 @@ impl JsValue {
     /// of both sides. Heap-private payloads (`Private`, `Uninitialized`,
     /// `Exception`) have no internal-value form and return `None`.
     #[must_use]
+    #[inline]
     pub(crate) fn from_raw(raw: RawValue) -> Option<Self> {
         Some(match raw {
             RawValue::Undefined => Self::Undefined,
@@ -379,6 +380,7 @@ impl Runtime {
     /// # Errors
     ///
     /// Returns a heap/atom error when an edge cannot be duplicated.
+    #[inline]
     pub(crate) fn dup_jsvalue(&self, value: &JsValue) -> Result<JsValue, RuntimeError> {
         Ok(match value {
             JsValue::Undefined => JsValue::Undefined,
@@ -429,6 +431,7 @@ impl Runtime {
     /// Returns a heap/atom error when an edge fails validation; releases
     /// requested at trusted internal sites keep the engine-wide discipline
     /// that invariant violations surface at the deferred-drain boundary.
+    #[inline]
     pub(crate) fn release_jsvalue(&self, value: JsValue) -> Result<(), RuntimeError> {
         match value {
             JsValue::Undefined
