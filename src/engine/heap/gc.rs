@@ -8,7 +8,7 @@ use super::Edges;
 use super::{
     AsyncGeneratorRequestData, AtomIdx, AutoInitProperty, BigIntId, BytecodeConstant, ContextData,
     ContextId, FinalizationRegistryEntry, FunctionBytecodeData, FunctionBytecodeId,
-    GeneratorActivationData, GeneratorFrameBinding, Hash, HashMap, Heap, HeapError,
+    GeneratorActivationData, GeneratorFrameBinding, Hash, HashMap, Heap, HeapError, HeapNodeKind,
     InternalCallableData, NativeErrorKind, Node, NodeData, ObjectData, ObjectId, ObjectPayload,
     PrimitiveKind, PrimitiveObjectData, PromiseCapabilityData, PromiseReaction, PropertySlot,
     RawId, RawModuleEvaluationState, RawModuleLinkRealm, RawModuleNamespaceState, RawModuleRecord,
@@ -1499,6 +1499,8 @@ impl Heap {
         } else {
             slot.state = SlotState::Retired;
         }
+        #[cfg(debug_assertions)]
+        self.clear_alloc_site(index);
         Ok(())
     }
 }
@@ -2325,8 +2327,102 @@ fn var_ref_atoms(var_ref: &VarRefData) -> impl Iterator<Item = AtomIdx> + '_ {
     raw_value_atom(&var_ref.value).into_iter()
 }
 
+/// Debug-only creation-site provenance for one live heap slot.
+///
+/// This is the §7.1 edge ledger's storage half: `reserve` records the call
+/// stack that created a slot, and the slot's own strong counter supplies the
+/// residual edge count, so retain/release stay unmodified.
+#[cfg(debug_assertions)]
+pub(crate) struct AllocSite {
+    pub(crate) generation: u32,
+    pub(crate) kind: HeapNodeKind,
+    pub(crate) backtrace: String,
+}
+
+/// Debug-only edge-ledger reporting for a heap that survived teardown.
 #[cfg(debug_assertions)]
 impl Heap {
+    pub(super) fn record_alloc_site(&mut self, index: u32, generation: u32, kind: HeapNodeKind) {
+        if !super::ownership::alloc_site_capture_enabled() {
+            return;
+        }
+        let backtrace = super::ownership::compact_backtrace();
+        let index = index as usize;
+        if self.alloc_sites.len() <= index {
+            self.alloc_sites.resize_with(index + 1, || None);
+        }
+        self.alloc_sites[index] = Some(AllocSite {
+            generation,
+            kind,
+            backtrace,
+        });
+    }
+
+    pub(super) fn clear_alloc_site(&mut self, index: u32) {
+        if let Some(site) = self.alloc_sites.get_mut(index as usize) {
+            *site = None;
+        }
+    }
+
+    /// Print the edge ledger for every node that survived runtime teardown.
+    ///
+    /// Survivors are the externally rooted nodes; each line carries its
+    /// residual strong count and, when capture was enabled, the call stack
+    /// that created it.  This runs only on the teardown failure path.
+    pub(crate) fn debug_leak_report(&self) {
+        let live = self.counts().live;
+        if live == 0 {
+            return;
+        }
+        let roots = self.debug_external_roots();
+        eprintln!(
+            "[ledger] live={live} external_roots={} recorded_sites={}",
+            roots.len(),
+            self.alloc_sites
+                .iter()
+                .filter(|site| site.is_some())
+                .count(),
+        );
+        let shown = roots.len().min(8);
+        for (kind, index, residual, detail) in &roots[..shown] {
+            self.print_alloc_site(*index, *kind, *residual, detail);
+        }
+        if roots.len() > shown {
+            eprintln!("[ledger] ... {} more roots", roots.len() - shown);
+        }
+        if roots.is_empty() {
+            let mut printed = 0;
+            for (index, slot) in self.slots.iter().enumerate() {
+                if printed == 8 {
+                    break;
+                }
+                if let SlotState::Live(node) = &slot.state {
+                    self.print_alloc_site(index, node.data.kind(), node.strong.get(), "");
+                    printed += 1;
+                }
+            }
+        }
+    }
+
+    fn print_alloc_site(&self, index: usize, kind: HeapNodeKind, residual: u32, detail: &str) {
+        eprintln!("[ledger] #{index} {kind:?} residual={residual} {detail}");
+        let generation = self.slots.get(index).map(|slot| slot.generation);
+        let site = self
+            .alloc_sites
+            .get(index)
+            .and_then(|site| site.as_ref())
+            .filter(|site| Some(site.generation) == generation);
+        match site {
+            Some(site) => eprintln!(
+                "[ledger] #{index} created {:?} at {}",
+                site.kind, site.backtrace
+            ),
+            None => eprintln!(
+                "[ledger] #{index} no creation backtrace recorded (set QJS_EDGE_LEDGER=1)"
+            ),
+        }
+    }
+
     /// Debug-only: list live nodes whose strong count exceeds internal
     /// incoming edges, i.e. nodes retained by external roots.
     pub(crate) fn debug_external_roots(

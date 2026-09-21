@@ -14,6 +14,8 @@ impl Heap {
             zero_queue: VecDeque::new(),
             weak_head: None,
             weak_tail: None,
+            #[cfg(debug_assertions)]
+            alloc_sites: Vec::new(),
         }
     }
 
@@ -106,7 +108,10 @@ impl Heap {
             ));
         }
         slot.state = SlotState::Initializing { kind, strong: 1 };
-        Ok((index, slot.generation))
+        let generation = slot.generation;
+        #[cfg(debug_assertions)]
+        self.record_alloc_site(index, generation, kind);
+        Ok((index, generation))
     }
 
     pub(in crate::engine::heap) fn abort_initializing(
@@ -124,6 +129,8 @@ impl Heap {
         }
         slot.state = SlotState::Vacant;
         self.free.push(index);
+        #[cfg(debug_assertions)]
+        self.clear_alloc_site(index);
         Ok(())
     }
 

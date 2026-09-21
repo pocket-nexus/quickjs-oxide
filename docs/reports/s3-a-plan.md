@@ -303,6 +303,24 @@ current-source receipt，不改 `current.conf`）→
 创建调用栈；全绿时账本为空；`cargo test --lib` 在 debug 下时长不回退超过
 实测阈值的 2×（超了就把回溯采样改为仅创建点）。
 
+### 7.1 实现记录（2026-09-21）
+
+- 账本落在 `Heap`（`alloc_sites: Vec<Option<AllocSite>>`）与 `AtomTable`
+  （`alloc_sites: Vec<Option<AtomAllocSite>>`），而不是 `RuntimeState`：
+  挂点 `reserve`/`allocate` 与 retain/release 都在 arena/atom 表内部，放进
+  `RuntimeState` 需要把借用穿过每个挂点，反而扩大改动面。
+- 残余边数直接读节点自带的 `strong` 计数，retain/release 零改动；因此
+  「计数核销」不落账本，只在创建点写一条记录（`O(1)` 槽位索引，槽位回收
+  时清除）。
+- 创建点回溯仅在显式诊断环境变量（`QJS_EDGE_LEDGER` / `QJS_TEARDOWN_PROBE`
+  / `QJS_TRACE_ROOTS`）下采样，保证 debug 测试时长不回退：实测全量 lib
+  套件 54.7s（基线 54.5s）。
+- teardown 报告：`live != 0` 时打印 `[ledger]`（外部根 + 残余边数 + 创建
+  调用栈）与 `[atom-ledger]`（非 pinned 且 refs > 0 的 atom，最多 8 条），
+  随后照常 assert；`QJS_TEARDOWN_PROBE` 保留「只打印不 panic」的诊断语义。
+- 首次实战：oracle 套件 `math_values_match_pinned_quickjs` 的 529 节点
+  泄漏被直接定位到测试嵌入路径创建的 realm/context 根。
+
 ### 7.2 边界边守卫（scoped edge guard）——用编译器消灭「忘释放生产者边」
 
 **事实**：§2 的真创建点（边界转换）产生带一条生产者边的值，目前每个调用点

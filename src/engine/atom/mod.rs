@@ -372,6 +372,20 @@ pub struct AtomTable {
     released_string_cleanup_budget: u16,
     global_symbols: HashMap<JsString, Atom>,
     live_table_atoms: usize,
+    /// Debug-only edge ledger: creation-site provenance for non-pinned atom
+    /// slots.  See [`AtomTable::debug_leak_report`].
+    #[cfg(debug_assertions)]
+    alloc_sites: Vec<Option<AtomAllocSite>>,
+}
+
+/// Debug-only creation-site provenance for one atom slot.
+#[cfg(debug_assertions)]
+#[derive(Debug)]
+pub(crate) struct AtomAllocSite {
+    generation: u32,
+    kind: AtomKind,
+    summary: String,
+    backtrace: String,
 }
 
 impl Default for AtomTable {
@@ -396,6 +410,8 @@ impl AtomTable {
             released_string_cleanup_budget: 256,
             global_symbols: HashMap::new(),
             live_table_atoms: 0,
+            #[cfg(debug_assertions)]
+            alloc_sites: Vec::new(),
         }
     }
 
@@ -995,6 +1011,10 @@ impl AtomTable {
             self.generations[index_usize] = generation;
             self.free.push(raw);
         }
+        #[cfg(debug_assertions)]
+        if let Some(site) = self.alloc_sites.get_mut(index_usize) {
+            *site = None;
+        }
         Ok(())
     }
 
@@ -1217,6 +1237,10 @@ impl AtomTable {
             generation: self.generations[index_usize],
             table_id: self.table_id,
         };
+        #[cfg(debug_assertions)]
+        if !pinned && crate::engine::heap::ownership::alloc_site_capture_enabled() {
+            self.record_alloc_site(index, self.generations[index_usize], kind, text.as_ref());
+        }
         self.entries[index_usize] = Some(Entry {
             kind,
             text,
@@ -1225,6 +1249,77 @@ impl AtomTable {
         });
         self.live_table_atoms += 1;
         Ok(atom)
+    }
+
+    /// Record the creation site of one non-pinned atom slot for the debug
+    /// edge ledger.
+    #[cfg(debug_assertions)]
+    fn record_alloc_site(
+        &mut self,
+        index: u32,
+        generation: u32,
+        kind: AtomKind,
+        text: Option<&JsString>,
+    ) {
+        let summary = text
+            .map(|text| text.to_utf8_lossy().chars().take(60).collect::<String>())
+            .unwrap_or_default();
+        let backtrace = crate::engine::heap::ownership::compact_backtrace();
+        let index = index as usize;
+        if self.alloc_sites.len() <= index {
+            self.alloc_sites.resize_with(index + 1, || None);
+        }
+        self.alloc_sites[index] = Some(AtomAllocSite {
+            generation,
+            kind,
+            summary,
+            backtrace,
+        });
+    }
+
+    /// Print the debug edge ledger for every atom that still holds a reference.
+    ///
+    /// Pinned atoms are permanent by design and are skipped; a non-pinned
+    /// entry with a nonzero counter at teardown is a leak.  Runs only on the
+    /// teardown failure/diagnosis path.
+    #[cfg(debug_assertions)]
+    pub(crate) fn debug_leak_report(&self) {
+        let mut leaked = 0usize;
+        let mut shown = 0usize;
+        for (index, entry) in self.entries.iter().enumerate() {
+            let Some(entry) = entry else {
+                continue;
+            };
+            if entry.pinned || entry.ref_count.get() == 0 {
+                continue;
+            }
+            leaked += 1;
+            if shown == 8 {
+                continue;
+            }
+            shown += 1;
+            let site = self
+                .alloc_sites
+                .get(index)
+                .and_then(|site| site.as_ref())
+                .filter(|site| site.generation == self.generations[index]);
+            match site {
+                Some(site) => eprintln!(
+                    "[atom-ledger] #{index} {:?} refs={} text={:?} created at {}",
+                    site.kind,
+                    entry.ref_count.get(),
+                    site.summary,
+                    site.backtrace
+                ),
+                None => eprintln!(
+                    "[atom-ledger] #{index} refs={} no creation backtrace recorded",
+                    entry.ref_count.get()
+                ),
+            }
+        }
+        if leaked != 0 {
+            eprintln!("[atom-ledger] leaked_atoms={leaked} shown={shown}");
+        }
     }
 
     fn valid_index(&self, atom: Atom) -> Result<usize, AtomError> {
