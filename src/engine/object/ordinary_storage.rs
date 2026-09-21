@@ -503,7 +503,10 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
     ) -> Result<ReadProbe, RuntimeError> {
-        self.ordinary_read_probe_atom(object, key.atom(), false, None)
+        if !object.belongs_to(self) {
+            return Err(RuntimeError::WrongRuntime("property object"));
+        }
+        self.ordinary_read_probe_atom(object.object_id(), key.atom(), false, None)
     }
 
     pub(super) fn ordinary_read_probe_selected(
@@ -512,12 +515,17 @@ impl Runtime {
         key: &PropertyKey,
         native: Option<&mut Option<LinkedNativeSelection>>,
     ) -> Result<ReadProbe, RuntimeError> {
-        self.ordinary_read_probe_atom(object, key.atom(), false, native)
+        if !object.belongs_to(self) {
+            return Err(RuntimeError::WrongRuntime("property object"));
+        }
+        self.ordinary_read_probe_atom(object.object_id(), key.atom(), false, native)
     }
 
+    // The caller owns the receiver throughout this non-reentrant probe.
+    // Output values/getters/prototypes acquire their own edges below.
     fn ordinary_read_probe_atom(
         &self,
-        object: &ObjectRef,
+        id: ObjectId,
         atom: Atom,
         own_only: bool,
         mut native: Option<&mut Option<LinkedNativeSelection>>,
@@ -532,7 +540,6 @@ impl Runtime {
         let mut native_data = None;
         let selected = {
             let state = self.0.state.borrow();
-            let id = object.object_id();
             let data = state.heap.object(id)?;
             let is_array = matches!(
                 (data.kind, &data.payload),
@@ -1047,9 +1054,9 @@ impl Runtime {
             return Ok(None);
         };
         let _operation = self.operation();
-        let object = crate::engine::object::ObjectRef::from_borrowed_handle(self.clone(), *object)?;
+        // The borrowed base already pins this object until probing finishes.
         Ok(
-            match self.ordinary_read_probe_atom(&object, atom, true, native)? {
+            match self.ordinary_read_probe_atom(*object, atom, true, native)? {
                 ReadProbe::Value(value) => {
                     Some(crate::engine::object::OrdinaryRead::Complete(Some(value)))
                 }

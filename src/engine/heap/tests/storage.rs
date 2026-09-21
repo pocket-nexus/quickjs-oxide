@@ -1444,3 +1444,30 @@ fn property_slot_transaction_keeps_new_symbol_owned_after_post_publish_failure()
     drop(object);
     drop(old);
 }
+
+#[test]
+fn shared_value_leaves_release_once_and_drain_older_queued_work() {
+    let mut heap = Heap::new();
+    let string = heap
+        .allocate_string(JsString::from_static("shared"))
+        .unwrap();
+    let bigint = heap.allocate_bigint(JsBigInt::one()).unwrap();
+    for id in [RawId::String(string), RawId::BigInt(bigint)] {
+        heap.retain_raw(id, 1).unwrap();
+        assert_eq!(heap.release_reference(id).unwrap(), None);
+        assert_eq!(heap.live_node(id).unwrap().strong.get(), 1);
+    }
+    heap.release_raw_no_drain(RawId::String(string)).unwrap();
+    heap.retain_raw(RawId::BigInt(bigint), 1).unwrap();
+    let cleanup = heap
+        .release_reference(RawId::BigInt(bigint))
+        .unwrap()
+        .unwrap();
+    assert_eq!(cleanup.finalized_strings, 1);
+    assert_eq!(
+        heap.live_node(RawId::BigInt(bigint)).unwrap().strong.get(),
+        1
+    );
+    assert_eq!(heap.release_bigint(bigint).unwrap().finalized_bigints, 1);
+    assert_eq!(heap.counts().live, 0);
+}

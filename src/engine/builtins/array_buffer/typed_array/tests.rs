@@ -1619,3 +1619,66 @@ fn scoped_typed_words_keep_only_view_root_and_conversion_error_realm() {
     drop(runtime);
     assert!(weak.upgrade().is_none());
 }
+
+#[test]
+fn internal_numeric_decode_preserves_integer_boundary_and_float_payloads() {
+    use crate::engine::value::number::operations::Number;
+    fn word<const N: usize>(bytes: [u8; N]) -> [u8; 8] {
+        let mut word = [0; 8];
+        word[..N].copy_from_slice(&bytes);
+        word
+    }
+    let cases = [
+        (
+            TypedArrayElementKind::Uint32,
+            word(0x7fff_ffff_u32.to_ne_bytes()),
+            Number::Int(i32::MAX),
+        ),
+        (
+            TypedArrayElementKind::Uint32,
+            word(u32::MAX.to_ne_bytes()),
+            Number::Float(f64::from(u32::MAX)),
+        ),
+        (
+            TypedArrayElementKind::Float16,
+            word(0x8000_u16.to_ne_bytes()),
+            Number::Float(-0.0),
+        ),
+        (
+            TypedArrayElementKind::Float32,
+            word((-0.0_f32).to_ne_bytes()),
+            Number::Float(-0.0),
+        ),
+        (
+            TypedArrayElementKind::Float64,
+            (-0.0_f64).to_ne_bytes(),
+            Number::Float(-0.0),
+        ),
+        (
+            TypedArrayElementKind::Float64,
+            7.0_f64.to_ne_bytes(),
+            Number::Int(7),
+        ),
+        (
+            TypedArrayElementKind::Float64,
+            f64::INFINITY.to_ne_bytes(),
+            Number::Float(f64::INFINITY),
+        ),
+        (
+            TypedArrayElementKind::Float64,
+            0x7ff8_0000_0000_0042_u64.to_ne_bytes(),
+            Number::Float(f64::from_bits(0x7ff8_0000_0000_0042)),
+        ),
+    ];
+    for (kind, bytes, expected) in cases {
+        match (typed_array_decode_number_jsvalue(kind, bytes), expected) {
+            (JsValue::Int(actual), Number::Int(expected)) => assert_eq!(actual, expected),
+            (JsValue::Float(actual), Number::Float(expected)) => {
+                assert_eq!(actual.to_bits(), expected.to_bits())
+            }
+            (actual, expected) => {
+                panic!("{kind:?} lost numeric representation: {actual:?}, expected {expected:?}")
+            }
+        }
+    }
+}

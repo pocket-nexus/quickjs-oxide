@@ -46,8 +46,29 @@ impl std::ops::Deref for Edges {
 }
 impl Extend<RawId> for Edges {
     fn extend<I: IntoIterator<Item = RawId>>(&mut self, values: I) {
-        for value in values {
-            self.push(value);
+        let mut values = values.into_iter();
+        if let Self::Inline {
+            values: inline,
+            len,
+        } = self
+        {
+            while *len < inline.len() {
+                let Some(value) = values.next() else {
+                    return;
+                };
+                inline[*len] = value;
+                *len += 1;
+            }
+            let Some(first) = values.next() else {
+                return;
+            };
+            let mut heap = Vec::with_capacity(8.max(5usize.saturating_add(values.size_hint().0)));
+            heap.extend_from_slice(inline);
+            heap.push(first);
+            *self = Self::Heap(heap);
+        }
+        if let Self::Heap(heap) = self {
+            heap.extend(values);
         }
     }
 }
@@ -112,6 +133,12 @@ mod tests {
             assert_eq!(&*edges, &expected);
             assert_eq!(matches!(edges, Edges::Inline { .. }), len <= 4);
             assert_eq!(edges.into_iter().collect::<Vec<_>>(), expected);
+            for split in 0..=expected.len() {
+                let mut extended: Edges = expected[..split].iter().copied().collect();
+                extended.extend(expected[split..].iter().copied().filter(|_| true));
+                assert_eq!(&*extended, &expected);
+                assert_eq!(matches!(extended, Edges::Inline { .. }), len <= 4);
+            }
         }
     }
     #[test]

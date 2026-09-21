@@ -57,6 +57,112 @@ pub(in crate::engine::vm) fn bigint_value_payload(
     }
 }
 
+/// Run a pure BigInt kernel while the original operand edges keep its borrowed
+/// payloads alive. The kernel must not access Runtime: publication and owner
+/// release happen after this shared heap borrow ends. Inline pairs need no heap.
+fn with_bigint_operands(
+    runtime: &Runtime,
+    left: &JsValue,
+    right: &JsValue,
+    kernel: impl FnOnce(&JsBigInt, &JsBigInt) -> Result<JsBigInt, Error>,
+) -> Result<JsBigInt, Error> {
+    if let (JsValue::ShortBigInt(left), JsValue::ShortBigInt(right)) = (left, right) {
+        return kernel(&JsBigInt::from(*left), &JsBigInt::from(*right));
+    }
+    let state = runtime.0.state.borrow();
+    let left_short;
+    let right_short;
+    let left = match left {
+        JsValue::ShortBigInt(value) => {
+            left_short = JsBigInt::from(*value);
+            &left_short
+        }
+        JsValue::BigInt(id) => state
+            .heap
+            .bigint(*id)
+            .map_err(|error| Error::internal(error.to_string()))?,
+        _ => return Err(Error::internal("BigInt kernel received another type")),
+    };
+    let right = match right {
+        JsValue::ShortBigInt(value) => {
+            right_short = JsBigInt::from(*value);
+            &right_short
+        }
+        JsValue::BigInt(id) => state
+            .heap
+            .bigint(*id)
+            .map_err(|error| Error::internal(error.to_string()))?,
+        _ => return Err(Error::internal("BigInt kernel received another type")),
+    };
+    kernel(left, right)
+}
+
+/// Finish an operation that consumes both input edges. Only this consuming
+/// boundary may transfer a unique operand node to the newly computed result;
+/// the borrowed add kernel must leave its caller's values unchanged.
+fn finish_bigint_operands(
+    runtime: &Runtime,
+    left: JsValue,
+    right: JsValue,
+    result: Result<JsBigInt, Error>,
+) -> Result<JsValue, Error> {
+    let mut result = match result {
+        Ok(result) => Some(result),
+        Err(error) => {
+            let released_left = release_primitive_operand(runtime, left);
+            let released_right = release_primitive_operand(runtime, right);
+            released_left?;
+            released_right?;
+            return Err(error);
+        }
+    };
+    let reuse: Result<Option<bool>, Error> = if result.as_ref().and_then(JsBigInt::as_i64).is_none()
+    {
+        (|| {
+            let mut state = runtime.0.state.borrow_mut();
+            for (is_left, value) in [(true, &left), (false, &right)] {
+                if let JsValue::BigInt(id) = value {
+                    if let Some(slot) = state
+                        .heap
+                        .unique_bigint_mut(*id)
+                        .map_err(|error| Error::internal(error.to_string()))?
+                    {
+                        *slot = result.take().expect("fresh BigInt result");
+                        return Ok(Some(is_left));
+                    }
+                }
+            }
+            Ok(None)
+        })()
+    } else {
+        Ok(None)
+    };
+    match reuse {
+        Ok(Some(true)) => {
+            if let Err(error) = release_primitive_operand(runtime, right) {
+                let _ = release_primitive_operand(runtime, left);
+                return Err(error);
+            }
+            Ok(left)
+        }
+        Ok(Some(false)) => {
+            if let Err(error) = release_primitive_operand(runtime, left) {
+                let _ = release_primitive_operand(runtime, right);
+                return Err(error);
+            }
+            Ok(right)
+        }
+        reuse => {
+            let released_left = release_primitive_operand(runtime, left);
+            let released_right = release_primitive_operand(runtime, right);
+            released_left?;
+            released_right?;
+            reuse?;
+            allocate_bigint_jsvalue(runtime, result.expect("unpublished BigInt result"))
+        }
+    }
+}
+
 /// Publish a freshly produced string payload as an owned internal value.
 /// Concatenation and primitive formatting are genuine string creation points.
 pub(in crate::engine::vm) fn allocate_string_jsvalue(
@@ -285,6 +391,12 @@ pub(in crate::engine::vm) fn add_primitives(
     left: JsValue,
     right: JsValue,
 ) -> Result<JsValue, Error> {
+    if left.is_bigint() && right.is_bigint() {
+        let result = with_bigint_operands(runtime, &left, &right, |left, right| {
+            left.add(right).map_err(bigint_error)
+        });
+        return finish_bigint_operands(runtime, left, right, result);
+    }
     let result = if matches!(left, JsValue::String(_)) || matches!(right, JsValue::String(_)) {
         (|| {
             let left = match &left {
@@ -331,9 +443,10 @@ pub(in crate::engine::vm) fn add_primitives_ref(
     }
     match (left, right) {
         (left, right) if left.is_bigint() && right.is_bigint() => {
-            let left = bigint_value_payload(runtime, left)?;
-            let right = bigint_value_payload(runtime, right)?;
-            allocate_bigint_jsvalue(runtime, left.add(&right).map_err(bigint_error)?)
+            let result = with_bigint_operands(runtime, left, right, |left, right| {
+                left.add(right).map_err(bigint_error)
+            })?;
+            allocate_bigint_jsvalue(runtime, result)
         }
         (left, right) if left.is_bigint() => {
             to_number_jsvalue(runtime, right)?;

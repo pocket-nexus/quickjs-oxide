@@ -125,6 +125,13 @@ pub(in crate::engine::vm) fn primitive_output(
     if kind == NumericKind::Add {
         return add_primitives(runtime, left, right).map(NumericOutput::value);
     }
+    if left.is_bigint() && right.is_bigint() {
+        let result = super::with_bigint_operands(runtime, &left, &right, |left, right| {
+            bigint_binary(kind, left, right)
+        });
+        return super::finish_bigint_operands(runtime, left, right, result)
+            .map(NumericOutput::value);
+    }
     let converted_left = to_numeric_primitive(runtime, &left);
     let converted_right = to_numeric_primitive(runtime, &right);
     super::release_primitive_operand(runtime, left)?;
@@ -466,6 +473,36 @@ fn unary_output(
         }
     }
 }
+fn bigint_binary(
+    kind: NumericKind,
+    left: &crate::engine::value::bigint::JsBigInt,
+    right: &crate::engine::value::bigint::JsBigInt,
+) -> Result<crate::engine::value::bigint::JsBigInt, Error> {
+    match kind {
+        NumericKind::Sub => left.sub(right),
+        NumericKind::Mul => left.mul(right),
+        NumericKind::Div => left.div(right),
+        NumericKind::Mod => left.rem(right),
+        NumericKind::Pow => left.pow(right),
+        NumericKind::Shl => left.shl(right),
+        NumericKind::Sar => left.shr(right),
+        NumericKind::BitAnd => left.bit_and(right),
+        NumericKind::BitOr => left.bit_or(right),
+        NumericKind::BitXor => left.bit_xor(right),
+        NumericKind::Shr => {
+            return Err(Error::new(
+                ErrorKind::Type,
+                "bigint operands are forbidden for >>>",
+            ));
+        }
+        _ => {
+            return Err(Error::internal(
+                "non-arithmetic operator entered binary Numeric",
+            ));
+        }
+    }
+    .map_err(bigint_error)
+}
 fn binary(
     runtime: &Runtime,
     kind: NumericKind,
@@ -485,27 +522,7 @@ fn binary(
     }
     Ok(match (left, right) {
         (NumericValue::BigInt(left), NumericValue::BigInt(right)) => {
-            super::allocate_bigint_jsvalue(
-                runtime,
-                match kind {
-                    NumericKind::Sub => left.sub(&right),
-                    NumericKind::Mul => left.mul(&right),
-                    NumericKind::Div => left.div(&right),
-                    NumericKind::Mod => left.rem(&right),
-                    NumericKind::Pow => left.pow(&right),
-                    NumericKind::Shl => left.shl(&right),
-                    NumericKind::Sar => left.shr(&right),
-                    NumericKind::BitAnd => left.bit_and(&right),
-                    NumericKind::BitOr => left.bit_or(&right),
-                    NumericKind::BitXor => left.bit_xor(&right),
-                    _ => {
-                        return Err(Error::internal(
-                            "non-arithmetic operator entered binary Numeric",
-                        ));
-                    }
-                }
-                .map_err(bigint_error)?,
-            )?
+            super::allocate_bigint_jsvalue(runtime, bigint_binary(kind, &left, &right)?)?
         }
         (NumericValue::Number(left), NumericValue::Number(right)) => jsvalue_number(match kind {
             NumericKind::Sub => left - right,
@@ -842,5 +859,151 @@ mod tests {
             );
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
+    }
+}
+
+#[cfg(test)]
+mod borrowed_bigint_tests {
+    use super::*;
+    use crate::engine::value::{Value, bigint::JsBigInt};
+
+    #[test]
+    fn consuming_bigint_reuses_only_unique_edges_without_mutating_public_payloads() {
+        let runtime = Runtime::new();
+        let payload = JsBigInt::parse_js_string("170141183460469231731687303715884105729").unwrap();
+        let public = payload.clone();
+        let input = runtime
+            .into_jsvalue(Value::BigInt(payload.clone()))
+            .unwrap();
+        let JsValue::BigInt(original_id) = input else {
+            panic!("expected heap BigInt")
+        };
+        let output = primitive_output(
+            &runtime,
+            NumericKind::Mul,
+            input,
+            Some(JsValue::ShortBigInt(2)),
+        )
+        .unwrap();
+        assert!(matches!(output.value, JsValue::BigInt(id) if id == original_id));
+        let actual = runtime.root_and_release_jsvalue(output.value).unwrap();
+        assert!(
+            matches!(actual, Value::BigInt(value) if value == payload.mul(&JsBigInt::from(2_i32)).unwrap())
+        );
+        assert_eq!(
+            public.to_string(),
+            "170141183460469231731687303715884105729"
+        );
+
+        // A borrowed add cannot repurpose even a sole arena edge.
+        let input = runtime
+            .into_jsvalue(Value::BigInt(payload.clone()))
+            .unwrap();
+        let output =
+            super::super::add_primitives_ref(&runtime, &input, &JsValue::ShortBigInt(1)).unwrap();
+        let original = runtime.root_and_release_jsvalue(input).unwrap();
+        runtime.release_jsvalue(output).unwrap();
+        assert!(matches!(original, Value::BigInt(value) if value == payload));
+
+        // An external arena edge prohibits reuse and must retain the old value.
+        let input = runtime
+            .into_jsvalue(Value::BigInt(payload.clone()))
+            .unwrap();
+        let saved = runtime.dup_jsvalue(&input).unwrap();
+        let output = primitive_output(
+            &runtime,
+            NumericKind::Mul,
+            input,
+            Some(JsValue::ShortBigInt(2)),
+        )
+        .unwrap();
+        assert!(
+            !matches!((&saved, &output.value), (JsValue::BigInt(a), JsValue::BigInt(b)) if a == b)
+        );
+        runtime.release_jsvalue(output.value).unwrap();
+        let saved = runtime.root_and_release_jsvalue(saved).unwrap();
+        assert!(matches!(saved, Value::BigInt(value) if value == payload));
+    }
+
+    #[test]
+    fn borrowed_bigint_kernels_preserve_values_tags_errors_and_operand_owners() {
+        let runtime = Runtime::new();
+        for source in [
+            "7",
+            "9223372036854775808",
+            "-170141183460469231731687303715884105729",
+        ] {
+            let left = JsBigInt::parse_js_string(source).unwrap();
+            for right in [
+                JsBigInt::from(2_i32),
+                JsBigInt::from(0_i32),
+                JsBigInt::from(-1_i32),
+            ] {
+                for kind in [
+                    NumericKind::Add,
+                    NumericKind::Sub,
+                    NumericKind::Mul,
+                    NumericKind::Div,
+                    NumericKind::Mod,
+                    NumericKind::Pow,
+                    NumericKind::Shl,
+                    NumericKind::Sar,
+                    NumericKind::Shr,
+                    NumericKind::BitAnd,
+                    NumericKind::BitOr,
+                    NumericKind::BitXor,
+                ] {
+                    let expected = if kind == NumericKind::Add {
+                        left.add(&right).map_err(bigint_error)
+                    } else {
+                        bigint_binary(kind, &left, &right)
+                    };
+                    let input_left = runtime.into_jsvalue(Value::BigInt(left.clone())).unwrap();
+                    let input_right = runtime.into_jsvalue(Value::BigInt(right.clone())).unwrap();
+                    let actual = primitive_output(&runtime, kind, input_left, Some(input_right));
+                    match (actual, expected) {
+                        (Ok(actual), Ok(expected)) => {
+                            assert!(actual.previous.is_none());
+                            let actual = runtime.root_and_release_jsvalue(actual.value).unwrap();
+                            let Value::BigInt(actual) = actual else {
+                                panic!("non-BigInt result")
+                            };
+                            assert_eq!(actual, expected, "{source} {kind:?} {right}");
+                            assert_eq!(actual.as_i64(), expected.as_i64());
+                        }
+                        (Err(actual), Err(expected)) => {
+                            assert_eq!(actual.kind(), expected.kind());
+                            assert_eq!(actual.to_string(), expected.to_string());
+                        }
+                        (actual, expected) => {
+                            if let Ok(actual) = actual {
+                                runtime.release_jsvalue(actual.value).unwrap();
+                            }
+                            panic!(
+                                "result mismatch: {source} {kind:?} {right}; expected {expected:?}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        // Both operands may be separate owned edges to exactly the same node.
+        let payload = JsBigInt::parse_js_string("170141183460469231731687303715884105729").unwrap();
+        for kind in [NumericKind::Add, NumericKind::Mul] {
+            let left = runtime
+                .into_jsvalue(Value::BigInt(payload.clone()))
+                .unwrap();
+            let right = runtime.dup_jsvalue(&left).unwrap();
+            let actual = primitive_output(&runtime, kind, left, Some(right)).unwrap();
+            let actual = runtime.root_and_release_jsvalue(actual.value).unwrap();
+            let expected = if kind == NumericKind::Add {
+                payload.add(&payload)
+            } else {
+                payload.mul(&payload)
+            }
+            .unwrap();
+            assert!(matches!(actual, Value::BigInt(actual) if actual == expected));
+        }
+        // Runtime teardown checks that successful and abrupt paths drained all edges.
     }
 }

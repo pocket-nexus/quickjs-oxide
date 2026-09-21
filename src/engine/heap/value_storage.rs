@@ -43,6 +43,25 @@ impl Heap {
         }
     }
 
+    /// Replace a consumed operand's payload only when its arena edge is unique.
+    /// Callers must own (not merely borrow) that edge and transfer it to the result.
+    /// The old Rc payload may still be shared by public values or other nodes;
+    /// replacing the payload does not mutate any such shared BigInt.
+    pub(crate) fn unique_bigint_mut(
+        &mut self,
+        id: BigIntId,
+    ) -> Result<Option<&mut JsBigInt>, HeapError> {
+        if self.strong_count(RawId::BigInt(id))? != 1 {
+            return Ok(None);
+        }
+        match &mut self.live_node_mut(RawId::BigInt(id))?.data {
+            NodeData::BigInt(value) => Ok(Some(value)),
+            _ => Err(HeapError::Invariant(
+                "typed bigint mutation reached another node payload",
+            )),
+        }
+    }
+
     /// Read one live BigInt node payload.
     pub fn bigint(&self, id: BigIntId) -> Result<&JsBigInt, HeapError> {
         match self.live_node(RawId::BigInt(id))?.data {
