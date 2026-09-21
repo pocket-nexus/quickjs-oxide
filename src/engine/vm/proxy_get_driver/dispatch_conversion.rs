@@ -49,13 +49,13 @@ pub(super) fn primitive(
                 continue;
             }
             Step::Arguments { value, resume } => {
-                let value = value.take().expect("selected Step field");
-                let resume = resume.take().expect("selected Step field");
-
                 query
                     .parents
                     .try_reserve(1)
                     .map_err(|_| Error::internal("argument continuation allocation failed"))?;
+                let value = value.take().expect("selected Step field");
+                let resume = resume.take().expect("selected Step field");
+
                 query.parents.push(resume);
                 *step = crate::engine::builtins::ArgumentsStep::start(runtime, realm, value)
                     .map_err(runtime_error_to_vm_error)?
@@ -63,18 +63,10 @@ pub(super) fn primitive(
                 continue;
             }
             Step::ArgumentsComplete(result) => {
-                let result = result.take().expect("selected Step field");
-
                 let Some(parent) = query.parents.pop() else {
-                    if let crate::engine::value::conversion::NativeConversion::Value(values) =
-                        result
-                    {
-                        for value in values {
-                            let _ = runtime.release_jsvalue(value);
-                        }
-                    }
                     return Err(Error::internal("argument list lost its continuation"));
                 };
+                let result = result.take().expect("selected Step field");
                 *step = parent
                     .arguments(runtime, result)
                     .map_err(runtime_error_to_vm_error)?;
@@ -99,9 +91,14 @@ pub(super) fn primitive(
                         .resume(runtime, result)
                         .map_err(runtime_error_to_vm_error)?,
                     next => {
-                        query.parents.try_reserve(1).map_err(|_| {
-                            Error::internal("primitive continuation allocation failed")
-                        })?;
+                        if query.parents.try_reserve(1).is_err() {
+                            let mut abandoned: Step = next.into();
+                            abandoned.release_owned(runtime);
+                            resume.release_owned();
+                            return Err(Error::internal(
+                                "primitive continuation allocation failed",
+                            ));
+                        }
                         query.parents.push(resume);
                         next.into()
                     }
@@ -110,7 +107,6 @@ pub(super) fn primitive(
             }
             Step::Number { value, resume } => {
                 let value = value.take().expect("selected Step field");
-                let resume = resume.take().expect("selected Step field");
 
                 // Only a request which can suspend needs a parent owner. Complete
                 // results (including JS throws) use the same typed reply consumer.
@@ -118,6 +114,7 @@ pub(super) fn primitive(
                     runtime, realm, value,
                 )
                 .map_err(runtime_error_to_vm_error)?;
+                let resume = resume.take().expect("selected Step field");
                 *step = match next {
                     crate::engine::value::conversion::number::NumberStep::Complete(result) => {
                         #[cfg(feature = "profiling")]
@@ -129,9 +126,12 @@ pub(super) fn primitive(
                             .map_err(runtime_error_to_vm_error)?
                     }
                     next => {
-                        query.parents.try_reserve(1).map_err(|_| {
-                            Error::internal("property continuation allocation failed")
-                        })?;
+                        if query.parents.try_reserve(1).is_err() {
+                            let mut abandoned: Step = next.into();
+                            abandoned.release_owned(runtime);
+                            resume.release_owned();
+                            return Err(Error::internal("property continuation allocation failed"));
+                        }
                         query.parents.push(resume);
                         next.into()
                     }
@@ -139,25 +139,23 @@ pub(super) fn primitive(
                 continue;
             }
             Step::NumberComplete(result) => {
-                let result = result.take().expect("selected Step field");
-
                 let Some(resume) = query.parents.pop() else {
                     return Err(Error::internal(
                         "ToNumber result has no matching continuation",
                     ));
                 };
+                let result = result.take().expect("selected Step field");
                 *step = resume
                     .number(runtime, result)
                     .map_err(runtime_error_to_vm_error)?;
                 continue;
             }
             Step::LengthComplete(result) => {
-                let result = result.take().expect("selected Step field");
-
                 let resume = query
                     .parents
                     .pop()
                     .ok_or_else(|| Error::internal("Array length result has no parent"))?;
+                let result = result.take().expect("selected Step field");
                 *step = resume
                     .length(runtime, result)
                     .map_err(runtime_error_to_vm_error)?;
@@ -170,21 +168,24 @@ pub(super) fn primitive(
             } => {
                 let element = element.take().expect("selected Step field");
                 let value = value.take().expect("selected Step field");
-                let resume = resume.take().expect("selected Step field");
 
                 // Only a request which can suspend needs a parent owner. Complete
                 // results (including JS throws) use the same typed reply consumer.
                 let next =
                     crate::engine::builtins::ElementStep::start(runtime, realm, element, value)
                         .map_err(runtime_error_to_vm_error)?;
+                let resume = resume.take().expect("selected Step field");
                 *step = match next {
                     crate::engine::builtins::ElementStep::Complete(result) => resume
                         .element(runtime, result)
                         .map_err(runtime_error_to_vm_error)?,
                     next => {
-                        query.parents.try_reserve(1).map_err(|_| {
-                            Error::internal("property continuation allocation failed")
-                        })?;
+                        if query.parents.try_reserve(1).is_err() {
+                            let mut abandoned: Step = next.into();
+                            abandoned.release_owned(runtime);
+                            resume.release_owned();
+                            return Err(Error::internal("property continuation allocation failed"));
+                        }
                         query.parents.push(resume);
                         next.into()
                     }
@@ -192,25 +193,23 @@ pub(super) fn primitive(
                 continue;
             }
             Step::ElementComplete(result) => {
-                let result = result.take().expect("selected Step field");
-
                 let Some(resume) = query.parents.pop() else {
                     return Err(Error::internal(
                         "element result has no matching continuation",
                     ));
                 };
+                let result = result.take().expect("selected Step field");
                 *step = resume
                     .element(runtime, result)
                     .map_err(runtime_error_to_vm_error)?;
                 continue;
             }
             Step::TypedComplete(result) => {
-                let result = result.take().expect("selected Step field");
-
                 let resume = query
                     .parents
                     .pop()
                     .ok_or_else(|| Error::internal("TypedArray result has no parent"))?;
+                let result = result.take().expect("selected Step field");
                 *step = resume
                     .typed(runtime, result)
                     .map_err(runtime_error_to_vm_error)?;
@@ -257,12 +256,11 @@ pub(super) fn constructor(
                 continue;
             }
             Step::ConstructorSourceComplete(result) => {
-                let result = result.take().expect("selected Step field");
-
                 let parent = query
                     .parents
                     .pop()
                     .ok_or_else(|| Error::internal("constructor source has no parent"))?;
+                let result = result.take().expect("selected Step field");
                 *step = parent
                     .constructor_source(runtime, result)
                     .map_err(runtime_error_to_vm_error)?;
@@ -276,6 +274,9 @@ pub(super) fn constructor(
                 length,
                 resume,
             } => {
+                query.parents.try_reserve(1).map_err(|_| {
+                    Error::internal("typed species view continuation allocation failed")
+                })?;
                 let source = source.take().expect("selected Step field");
                 let element = element.take().expect("selected Step field");
                 let buffer = buffer.take().expect("selected Step field");
@@ -283,9 +284,6 @@ pub(super) fn constructor(
                 let length = length.take().expect("selected Step field");
                 let resume = resume.take().expect("selected Step field");
 
-                query.parents.try_reserve(1).map_err(|_| {
-                    Error::internal("typed species view continuation allocation failed")
-                })?;
                 query.parents.push(resume);
                 *step = crate::engine::builtins::TypedSpeciesStep::start_view(
                     runtime, realm, source, element, buffer, offset, length,
@@ -309,12 +307,11 @@ pub(super) fn constructor(
                 continue;
             }
             Step::TypedIteratorMethodComplete(result) => {
-                let result = result.take().expect("selected Step field");
-
                 let resume = query
                     .parents
                     .pop()
                     .ok_or_else(|| Error::internal("typed iterator method lost parent"))?;
+                let result = result.take().expect("selected Step field");
                 *step = resume
                     .typed_iterator_method(runtime, result)
                     .map_err(runtime_error_to_vm_error)?;
@@ -343,18 +340,10 @@ pub(super) fn constructor(
                 continue;
             }
             Step::TypedCollectComplete(result) => {
-                let result = result.take().expect("selected Step field");
-
                 let Some(resume) = query.parents.pop() else {
-                    if let crate::engine::value::conversion::NativeConversion::Value(values) =
-                        result
-                    {
-                        for value in values {
-                            let _ = runtime.release_jsvalue(value);
-                        }
-                    }
                     return Err(Error::internal("typed collection lost parent"));
                 };
+                let result = result.take().expect("selected Step field");
                 *step = resume
                     .typed_collected(runtime, result)
                     .map_err(runtime_error_to_vm_error)?;
@@ -393,14 +382,14 @@ pub(super) fn constructor(
                 length,
                 resume,
             } => {
+                query.parents.try_reserve(1).map_err(|_| {
+                    Error::internal("TypedArray species continuation allocation failed")
+                })?;
                 let source = source.take().expect("selected Step field");
                 let element = element.take().expect("selected Step field");
                 let length = length.take().expect("selected Step field");
                 let resume = resume.take().expect("selected Step field");
 
-                query.parents.try_reserve(1).map_err(|_| {
-                    Error::internal("TypedArray species continuation allocation failed")
-                })?;
                 query.parents.push(resume);
                 *step = crate::engine::builtins::TypedSpeciesStep::start(
                     runtime, realm, source, element, length,
@@ -410,12 +399,11 @@ pub(super) fn constructor(
                 continue;
             }
             Step::TypedSpeciesComplete(result) => {
-                let result = result.take().expect("selected Step field");
-
                 let parent = query
                     .parents
                     .pop()
                     .ok_or_else(|| Error::internal("TypedArray species has no parent"))?;
+                let result = result.take().expect("selected Step field");
                 *step = parent
                     .typed_species(runtime, result)
                     .map_err(runtime_error_to_vm_error)?;

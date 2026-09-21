@@ -157,10 +157,12 @@ impl Query {
         slots: &mut super::stack::SlotStore,
         result: Result<super::call::NativeInvokeOutcome, Error>,
     ) -> Result<Step, Error> {
-        let scope = self
-            .natives
-            .pop()
-            .ok_or_else(|| Error::internal("native result has no scope"))?;
+        let Some(scope) = self.natives.pop() else {
+            if let Ok(result) = result {
+                Step::NativeRawComplete(Some(result)).release_owned(runtime);
+            }
+            return Err(Error::internal("native result has no scope"));
+        };
         self.saved_native_depth -= 1 + scope.parents.len() as u128;
         while let Some(resume) = self.parents.pop() {
             resume.release_owned();
@@ -232,24 +234,27 @@ fn finish_numeric(
     previous: Option<JsValue>,
     _depth: usize,
 ) -> Result<CallStep, Error> {
-    let _ = runtime;
-    super::frame_operations::commit_numeric_output(execution, frame, value, previous, _depth)?;
+    super::frame_operations::commit_numeric_output(
+        runtime, execution, frame, value, previous, _depth,
+    )?;
     Ok(CallStep::Entered)
 }
 
 fn finish_instruction(
+    runtime: &Runtime,
     execution: &mut RunningExecution,
     owner: ReturnOwner,
     completion: Completion,
     push: bool,
     depth: usize,
 ) -> Result<Progress, Error> {
-    finish_instruction_call(execution, owner, completion, push, depth).map(Progress::Call)
+    finish_instruction_call(runtime, execution, owner, completion, push, depth).map(Progress::Call)
 }
 
 // Shared instruction completion keeps the broad conversion transport outside
 // callers that already know they are completing an ordinary property opcode.
 fn finish_instruction_call(
+    runtime: &Runtime,
     execution: &mut RunningExecution,
     owner: ReturnOwner,
     completion: Completion,
@@ -257,18 +262,27 @@ fn finish_instruction_call(
     _depth: usize,
 ) -> Result<CallStep, Error> {
     match completion {
-        Completion::Return(value) => {
-            let parent = execution.frames.current_mut(owner.frame()?)?;
-            if push {
-                execution.slots.push(&mut parent.window, value)?;
-            }
-            parent.resume_pc = parent
-                .fault_pc
-                .checked_add(1)
-                .ok_or_else(|| Error::internal("property resume PC overflow"))?;
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_instruction(_depth);
-            Ok(CallStep::Entered)
+        Completion::Return(mut value) => {
+            let result: Result<CallStep, Error> = (|| {
+                let parent = execution.frames.current_mut(owner.frame()?)?;
+                let resume_pc = parent
+                    .fault_pc
+                    .checked_add(1)
+                    .ok_or_else(|| Error::internal("property resume PC overflow"))?;
+                if push {
+                    execution.slots.push_owned(&mut parent.window, &mut value)?;
+                }
+                parent.resume_pc = resume_pc;
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_instruction(_depth);
+                Ok(CallStep::Entered)
+            })();
+            let released = runtime
+                .release_jsvalue(value)
+                .map_err(runtime_error_to_vm_error);
+            let result = result?;
+            released?;
+            Ok(result)
         }
         completion => Ok(CallStep::Complete(completion)),
     }
@@ -411,6 +425,7 @@ pub(super) fn start_boolean(
                     "delete_completed_without_query",
                 );
                 finish_instruction_call(
+                    runtime,
                     execution,
                     ReturnOwner::Frame(frame),
                     completion,
@@ -677,6 +692,7 @@ pub(super) fn start_native_with_classification(
                 )?
             };
             let result = finish_call_instruction_call(
+                runtime,
                 execution,
                 ReturnOwner::Frame(frame),
                 completion,
@@ -734,6 +750,7 @@ pub(super) fn start_waitable_native_call(
         if !execution.frames.can_push_with_continuations(0) || runtime.host_stack_would_overflow() {
             release_call_operands(runtime, receiver, arguments);
             return finish_call_instruction_call(
+                runtime,
                 execution,
                 owner,
                 overflow(runtime, realm)?,
@@ -761,7 +778,7 @@ pub(super) fn start_waitable_native_call(
                 crate::engine::api::profiling::record_owned_execution_event(
                     "native_call_completed_without_query",
                 );
-                finish_call_instruction_call(execution, owner, completion, depth, tail)
+                finish_call_instruction_call(runtime, execution, owner, completion, depth, tail)
             }
             native::LocalNativeResult::Waiting(mut records) => {
                 // Take individual live fields, never pop/move the wide record.
@@ -812,7 +829,9 @@ pub(super) fn start_waitable_native_call(
                         execution.query_storage.recycle_native_wait(records);
                         query.recycle(&mut execution.query_storage);
                         return result.and_then(|completion| {
-                            finish_call_instruction_call(execution, owner, completion, depth, tail)
+                            finish_call_instruction_call(
+                                runtime, execution, owner, completion, depth, tail,
+                            )
                         });
                     }
                 };
@@ -846,16 +865,19 @@ pub(super) fn start_waitable_native_call(
 }
 
 fn finish_call_instruction(
+    runtime: &Runtime,
     execution: &mut RunningExecution,
     owner: ReturnOwner,
     completion: Completion,
     depth: usize,
     tail: bool,
 ) -> Result<Progress, Error> {
-    finish_call_instruction_call(execution, owner, completion, depth, tail).map(Progress::Call)
+    finish_call_instruction_call(runtime, execution, owner, completion, depth, tail)
+        .map(Progress::Call)
 }
 
 fn finish_call_instruction_call(
+    runtime: &Runtime,
     execution: &mut RunningExecution,
     owner: ReturnOwner,
     completion: Completion,
@@ -867,7 +889,7 @@ fn finish_call_instruction_call(
         crate::engine::api::profiling::record_owned_instruction(depth);
         return Ok(CallStep::Complete(completion));
     }
-    finish_instruction_call(execution, owner, completion, true, depth)
+    finish_instruction_call(runtime, execution, owner, completion, true, depth)
 }
 
 #[inline(never)]
@@ -1252,6 +1274,7 @@ fn finish_write_action(
     crate::engine::api::profiling::record_owned_execution_event("write_completed_without_query");
     use super::property_driver::PropertyProgress;
     match finish_instruction_call(
+        runtime,
         execution,
         ReturnOwner::Frame(frame),
         completion,
@@ -3044,6 +3067,7 @@ pub(super) fn start_object_copy(
                     .map_err(runtime_error_to_vm_error)?;
             }
             return finish_instruction_call(
+                runtime,
                 execution,
                 ReturnOwner::Frame(frame),
                 completion,
@@ -3376,7 +3400,7 @@ pub(super) fn start_for_in_query(
                 "for_in_completed_without_query",
             );
             // The for-in machine now produces internal values directly.
-            finish_for_in(execution, frame, value, done, depth)
+            finish_for_in(runtime, execution, frame, value, done, depth)
         }
         ForInStep::Throw(value) => Ok(CallStep::Complete(Completion::Throw(value))),
         step => {
@@ -3420,27 +3444,37 @@ fn start_for_in_pending(
 }
 
 fn finish_for_in(
+    runtime: &Runtime,
     execution: &mut RunningExecution,
     frame: FrameId,
     value: crate::engine::value::JsValue,
     done: Option<bool>,
     _depth: usize,
 ) -> Result<CallStep, Error> {
-    let parent = execution.frames.current_mut(frame)?;
-    execution.slots.push(&mut parent.window, value)?;
-    if let Some(done) = done {
-        execution.slots.push(
-            &mut parent.window,
-            crate::engine::value::JsValue::Bool(done),
-        )?;
-    }
-    parent.resume_pc = parent
-        .fault_pc
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("for-in resume PC overflow"))?;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_instruction(_depth);
-    Ok(CallStep::Entered)
+    let mut value = value;
+    let result: Result<CallStep, Error> = (|| {
+        let parent = execution.frames.current_mut(frame)?;
+        let resume_pc = parent
+            .fault_pc
+            .checked_add(1)
+            .ok_or_else(|| Error::internal("for-in resume PC overflow"))?;
+        execution.slots.push_owned(&mut parent.window, &mut value)?;
+        if let Some(done) = done {
+            execution
+                .slots
+                .push(&mut parent.window, JsValue::Bool(done))?;
+        }
+        parent.resume_pc = resume_pc;
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_instruction(_depth);
+        Ok(CallStep::Entered)
+    })();
+    let released = runtime
+        .release_jsvalue(value)
+        .map_err(runtime_error_to_vm_error);
+    let result = result?;
+    released?;
+    Ok(result)
 }
 
 pub(super) fn start_literal_definition(

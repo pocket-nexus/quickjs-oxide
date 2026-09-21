@@ -23,8 +23,6 @@ pub(super) fn finish(
         );
         match &mut *step {
             Step::RootDescriptor(result) => {
-                let result = result.take().expect("selected Step field");
-
                 if !matches!(owner, ReturnOwner::Root)
                     || !query.parents.is_empty()
                     || !query.natives.is_empty()
@@ -35,21 +33,22 @@ pub(super) fn finish(
                         "root descriptor reached a non-root continuation",
                     ));
                 }
-                execution.root_descriptor = Some(result);
+                execution.root_descriptor = result.take();
                 return Ok(Next::Done(Progress::Call(CallStep::Entered)));
             }
-
             Step::Complete(completion) => {
-                let completion = completion.take().expect("selected Step field");
-
                 if let Some(parent) = query.parents.pop() {
                     *step = parent
-                        .resume(runtime, completion)
+                        .resume(runtime, completion.take().expect("selected Step field"))
                         .map_err(runtime_error_to_vm_error)?;
                     continue;
                 }
                 if !query.natives.is_empty() {
-                    *step = query.finish_native(runtime, &mut execution.slots, Ok(completion))?;
+                    *step = query.finish_native(
+                        runtime,
+                        &mut execution.slots,
+                        Ok(completion.take().expect("selected Step field")),
+                    )?;
                     continue;
                 }
                 let (_depth, push) = match query
@@ -58,26 +57,35 @@ pub(super) fn finish(
                     .ok_or_else(|| Error::internal("query lost its final continuation"))?
                 {
                     Finish::Root => {
-                        return Ok(Next::Done(Progress::Call(CallStep::Complete(completion))));
+                        return Ok(Next::Done(Progress::Call(CallStep::Complete(
+                            completion.take().expect("selected Step field"),
+                        ))));
                     }
                     Finish::Class(pending) => {
                         return super::super::construct_driver::finish_class_reply(
-                            runtime, execution, *pending, completion,
+                            runtime,
+                            execution,
+                            *pending,
+                            completion.take().expect("selected Step field"),
                         )
                         .map(Progress::Call)
                         .map(Next::Done);
                     }
                     Finish::VmCall(value_use) => {
-                        return match completion {
+                        if matches!(completion.as_ref(), Some(Completion::Return(_)))
+                            && matches!(value_use, ReturnValue::Push)
+                        {
+                            let parent = execution.frames.current_mut(owner.frame()?)?;
+                            let Some(Completion::Return(value)) = completion.as_mut() else {
+                                unreachable!()
+                            };
+                            execution.slots.push_owned(&mut parent.window, value)?;
+                        }
+                        return match completion.take().expect("selected Step field") {
                             Completion::Return(value) => {
-                                if matches!(value_use, ReturnValue::Push) {
-                                    let parent = execution.frames.current_mut(owner.frame()?)?;
-                                    execution.slots.push(&mut parent.window, value)?;
-                                } else {
-                                    runtime
-                                        .release_jsvalue(value)
-                                        .map_err(runtime_error_to_vm_error)?;
-                                }
+                                runtime
+                                    .release_jsvalue(value)
+                                    .map_err(runtime_error_to_vm_error)?;
                                 Ok(Next::Done(Progress::Call(CallStep::Entered)))
                             }
                             completion => {
@@ -87,7 +95,7 @@ pub(super) fn finish(
                     }
                     Finish::Iterator(id) => {
                         let mut pending = super::take_iterator_finish(execution, id)?;
-                        let action = pending.advance_query(runtime, Some(completion))?;
+                        let action = pending.advance_query(runtime, completion.take())?;
                         match continue_iterator(runtime, execution, query, pending, action)? {
                             IteratorProgress::Step(next) => {
                                 *step = next;
@@ -108,62 +116,80 @@ pub(super) fn finish(
                     Finish::PropertyRead(depth) => (depth, true),
                     Finish::Call { depth, tail } => {
                         return super::finish_call_instruction(
-                            execution, owner, completion, depth, tail,
+                            runtime,
+                            execution,
+                            owner,
+                            completion.take().expect("selected Step field"),
+                            depth,
+                            tail,
                         )
                         .map(Next::Done);
                     }
                     Finish::Conversion(wait) => {
+                        let frame = owner.frame()?;
                         return super::super::conversion_driver::ConversionTask::from_wait(
                             runtime,
-                            owner.frame()?,
+                            frame,
                             wait,
-                            completion,
+                            completion.take().expect("selected Step field"),
                         )
                         .map(Progress::Conversion)
                         .map(Next::Done);
                     }
                 };
-                return super::finish_instruction(execution, owner, completion, push, _depth)
-                    .map(Next::Done);
+                return super::finish_instruction(
+                    runtime,
+                    execution,
+                    owner,
+                    completion.take().expect("selected Step field"),
+                    push,
+                    _depth,
+                )
+                .map(Next::Done);
             }
             Step::ForInComplete { value, done } => {
-                let value = value.take().expect("selected Step field");
-                let done = done.take().expect("selected Step field");
-
-                let Some(Finish::ForIn(_depth)) = query.finish.take() else {
+                let Some(Finish::ForIn(depth)) = query.finish.take() else {
                     return Err(Error::internal("for-in result lost its instruction"));
                 };
-                return super::finish_for_in(execution, owner.frame()?, value, done, _depth)
-                    .map(Progress::Call)
-                    .map(Next::Done);
+                let frame = owner.frame()?;
+                return super::finish_for_in(
+                    runtime,
+                    execution,
+                    frame,
+                    value.take().expect("selected Step field"),
+                    done.take().expect("selected Step field"),
+                    depth,
+                )
+                .map(Progress::Call)
+                .map(Next::Done);
             }
             Step::NumericComplete { value, previous } => {
-                let value = value.take().expect("selected Step field");
-                let previous = previous.take().expect("selected Step field");
-
-                let Some(Finish::Numeric(_depth)) = query.finish.take() else {
+                let Some(Finish::Numeric(depth)) = query.finish.take() else {
                     return Err(Error::internal("numeric result lost its instruction"));
                 };
+                let frame = owner.frame()?;
                 return super::finish_numeric(
                     runtime,
                     execution,
-                    owner.frame()?,
-                    value,
-                    previous,
-                    _depth,
+                    frame,
+                    value.take().expect("selected Step field"),
+                    previous.take().expect("selected Step field"),
+                    depth,
                 )
                 .map(Progress::Call)
                 .map(Next::Done);
             }
             Step::NativeRawComplete(result) => {
-                let result = result.take().expect("selected Step field");
-
                 if !query.parents.is_empty() {
                     return Err(Error::internal(
                         "raw native result escaped a child operation",
                     ));
                 }
-                *step = query.finish_native_outcome(runtime, &mut execution.slots, Ok(result))?;
+                *step = query.finish_native_outcome(
+                    runtime,
+                    &mut execution.slots,
+                    Ok(result.take().expect("selected Step field")),
+                )?;
                 continue;
             }
             _ => return Ok(Next::Continue),
@@ -193,22 +219,23 @@ pub(super) fn activation(
                 input,
                 resume,
             } => {
-                let activation = activation.take().expect("selected Step field");
-                let input = input.take().expect("selected Step field");
-                let resume = resume.take().expect("selected Step field");
-
                 if !execution
                     .frames
                     .can_push_with_continuations(query.continuation_depth())
                     || runtime.bytecode_call_would_overflow()
                 {
+                    let completion = overflow(runtime, realm)?;
+                    let resume = resume.take().expect("selected Step field");
+                    step.release_owned(runtime);
                     *step = resume
-                        .resume(runtime, overflow(runtime, realm)?)
+                        .resume(runtime, completion)
                         .map_err(runtime_error_to_vm_error)?;
                     continue;
                 }
                 let mut prepared = activation
-                    .prepare_owned(runtime, input)
+                    .take()
+                    .expect("selected Step field")
+                    .prepare_owned(runtime, input.take().expect("selected Step field"))
                     .map_err(runtime_error_to_vm_error)?;
                 prepared.entry.cold.return_to = Some(ReturnTarget {
                     owner,
@@ -219,7 +246,7 @@ pub(super) fn activation(
                 return Ok(Next::Call {
                     entry: Box::new(prepared.entry),
                     pc: prepared.pc,
-                    resume,
+                    resume: resume.take().expect("selected Step field"),
                 });
             }
             Step::ConstructorReady {
@@ -306,24 +333,22 @@ pub(super) fn prepare(
                 step: callback,
                 resume,
             } => {
-                let callback = callback.take().expect("selected Step field");
-                let resume = resume.take().expect("selected Step field");
-
                 query.parents.try_reserve(1).map_err(|_| {
                     Error::internal("module callback continuation allocation failed")
                 })?;
+                let callback = callback.take().expect("selected Step field");
+                let resume = resume.take().expect("selected Step field");
                 query.parents.push(resume);
                 *step = (*callback).into();
             }
 
             Step::ModuleBodyOperation { step: body, resume } => {
-                let body = body.take().expect("selected Step field");
-                let resume = resume.take().expect("selected Step field");
-
                 query
                     .parents
                     .try_reserve(1)
                     .map_err(|_| Error::internal("module body continuation allocation failed"))?;
+                let body = body.take().expect("selected Step field");
+                let resume = resume.take().expect("selected Step field");
                 query.parents.push(resume);
                 *step = (*body).into();
             }
@@ -335,7 +360,6 @@ pub(super) fn prepare(
             } => {
                 let realm = realm.take().expect("selected Step field");
                 let callable = callable.take().expect("selected Step field");
-                let resume = resume.take().expect("selected Step field");
 
                 let super::CallableExecution::Bytecode {
                     bytecode,
@@ -369,6 +393,8 @@ pub(super) fn prepare(
                         .bytecode_stack_overflow_completion(realm, &bytecode)
                         .map_err(runtime_error_to_vm_error)?;
                     *step = resume
+                        .take()
+                        .expect("selected Step field")
                         .resume(runtime, completion)
                         .map_err(runtime_error_to_vm_error)?;
                     continue;
@@ -392,7 +418,7 @@ pub(super) fn prepare(
                 return Ok(Next::Call {
                     entry: Box::new(entry),
                     pc: 0,
-                    resume,
+                    resume: resume.take().expect("selected Step field"),
                 });
             }
 
@@ -400,13 +426,12 @@ pub(super) fn prepare(
                 step: operation,
                 resume,
             } => {
-                let operation = operation.take().expect("selected Step field");
-                let resume = resume.take().expect("selected Step field");
-
                 query
                     .parents
                     .try_reserve(1)
                     .map_err(|_| Error::internal("Promise continuation allocation failed"))?;
+                let operation = operation.take().expect("selected Step field");
+                let resume = resume.take().expect("selected Step field");
                 query.parents.push(resume);
                 *step = (*operation).into();
                 continue;
@@ -416,18 +441,12 @@ pub(super) fn prepare(
                 realm: resolve_realm,
                 resume,
             } => {
+                query.parents.try_reserve(1).map_err(|_| {
+                    Error::internal("await resolution continuation allocation failed")
+                })?;
                 let value = value.take().expect("selected Step field");
                 let resolve_realm = resolve_realm.take().expect("selected Step field");
                 let resume = resume.take().expect("selected Step field");
-
-                if query.parents.try_reserve(1).is_err() {
-                    runtime
-                        .release_jsvalue(value)
-                        .map_err(runtime_error_to_vm_error)?;
-                    return Err(Error::internal(
-                        "await resolution continuation allocation failed",
-                    ));
-                }
                 query.parents.push(resume);
                 *step = runtime
                     .prepare_intrinsic_promise_resolve(resolve_realm, value)
@@ -457,17 +476,15 @@ pub(super) fn prepare(
                 arguments,
                 resume,
             } => {
-                let target = target.take().expect("selected Step field");
-                let new_target = new_target.take().expect("selected Step field");
-                let arguments = arguments.take().expect("selected Step field");
-                let resume = resume.take().expect("selected Step field");
-
                 if !execution
                     .frames
                     .can_push_with_continuations(query.continuation_depth())
                 {
+                    let completion = overflow(runtime, realm)?;
+                    let resume = resume.take().expect("selected Step field");
+                    step.release_owned(runtime);
                     *step = resume
-                        .resume(runtime, overflow(runtime, realm)?)
+                        .resume(runtime, completion)
                         .map_err(runtime_error_to_vm_error)?;
                     continue;
                 }
@@ -475,6 +492,10 @@ pub(super) fn prepare(
                     .parents
                     .try_reserve(1)
                     .map_err(|_| Error::internal("constructor continuation allocation failed"))?;
+                let target = target.take().expect("selected Step field");
+                let new_target = new_target.take().expect("selected Step field");
+                let arguments = arguments.take().expect("selected Step field");
+                let resume = resume.take().expect("selected Step field");
                 query.parents.push(resume);
                 *step = crate::engine::object::ProxyConstructStep::start(
                     runtime, realm, target, new_target, arguments,
@@ -485,13 +506,14 @@ pub(super) fn prepare(
             }
             Step::IndirectEval { source, resume } => {
                 let source = source.take().expect("selected Step field");
-                let resume = resume.take().expect("selected Step field");
 
                 *step = match runtime
                     .prepare_indirect_string_eval(realm, &source)
                     .map_err(runtime_error_to_vm_error)?
                 {
                     crate::engine::builtins::DirectEvalPreparation::Complete(completion) => resume
+                        .take()
+                        .expect("selected Step field")
                         .resume(runtime, completion)
                         .map_err(runtime_error_to_vm_error)?,
                     crate::engine::builtins::DirectEvalPreparation::Ready {
@@ -501,7 +523,7 @@ pub(super) fn prepare(
                         target: Some(DirectCallTarget::Callable(callable)),
                         receiver: Some(invocation.take_this()),
                         arguments: Some(Vec::new()),
-                        resume: Some(resume),
+                        resume: resume.take(),
                     },
                 };
                 continue;

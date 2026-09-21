@@ -55,10 +55,13 @@ impl OwnedSuspension {
         }
         let mut frame = execution.frames.pop(id)?;
         let storage = execution.slots.take_frame(&runtime, frame.window.take())?;
-        if let Some(guard) = frame.cold.entry_guard.take() {
-            guard
-                .finish()
-                .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
+        if let Some(guard) = frame.cold.entry_guard.take()
+            && let Err(error) = guard.finish()
+        {
+            crate::engine::vm::stack::release_frame_storage(&runtime, storage);
+            return Err(crate::engine::vm::exception::runtime_error_to_vm_error(
+                error,
+            ));
         }
         let return_to = frame.cold.return_to.take();
         Ok(Self {
@@ -86,14 +89,11 @@ impl OwnedSuspension {
         let _profile_phase =
             crate::engine::api::profiling::PhaseTimer::start_vm("freeze.owned_export");
         let mut this = *self;
-        let entry = this.entry.take();
         let pc = this.pc;
         let kind = this.kind;
-        let Some(mut entry) = entry else {
-            return Err(RuntimeError::Invariant(
-                "owned suspension lost its frame entry",
-            ));
-        };
+        let entry = this.entry.as_mut().ok_or(RuntimeError::Invariant(
+            "owned suspension lost its frame entry",
+        ))?;
         let value = if kind == VmSuspendKind::Initial {
             JsValue::Undefined
         } else {
@@ -106,40 +106,38 @@ impl OwnedSuspension {
                 JsValue::Undefined,
             )
         };
+        let entry = this.entry.take().expect("validated suspension entry");
+        let activation = match super::freeze_entry(&runtime, entry, kind, pc) {
+            Ok(activation) => activation,
+            Err(error) => {
+                let _ = runtime.release_jsvalue(value);
+                return Err(error);
+            }
+        };
         Ok(VmRunOutcome::Suspend {
             value,
-            activation: Box::new(super::freeze_entry(&runtime, entry, kind, pc)?),
+            activation: Box::new(activation),
         })
     }
 }
 
 pub(super) fn prepare(
-    _runtime: &Runtime,
-    mut entry: FrameEntry,
+    entry: &mut FrameEntry,
     kind: VmSuspendKind,
-    pc: usize,
-    resume: VmActivationResume,
-) -> Result<PreparedResume, RuntimeError> {
-    let mut abrupt = None;
-    let injection = match (kind, resume) {
-        (VmSuspendKind::Initial, VmActivationResume::Initial) => None,
-        (VmSuspendKind::Await, VmActivationResume::AwaitFulfill(value)) => Some((value, None)),
-        (VmSuspendKind::Await, VmActivationResume::AwaitReject(value))
-        | (VmSuspendKind::Yield, VmActivationResume::Generator(VmResume::Throw(value))) => {
-            abrupt = Some(value);
-            None
-        }
+    pending: &mut Option<VmActivationResume>,
+) -> Result<(), RuntimeError> {
+    let resume = pending.as_ref().expect("owned resume input");
+    let needs_magic = match (kind, resume) {
+        (VmSuspendKind::Initial, VmActivationResume::Initial)
+        | (
+            VmSuspendKind::Await,
+            VmActivationResume::AwaitFulfill(_) | VmActivationResume::AwaitReject(_),
+        )
+        | (VmSuspendKind::Yield, VmActivationResume::Generator(VmResume::Throw(_))) => false,
         (
             VmSuspendKind::Yield | VmSuspendKind::YieldStar | VmSuspendKind::AsyncYieldStar,
-            VmActivationResume::Generator(resume),
-        ) => {
-            let (value, magic) = match resume {
-                VmResume::Next(value) => (value, 0),
-                VmResume::Return(value) => (value, 1),
-                VmResume::Throw(value) => (value, 2),
-            };
-            Some((value, Some(magic)))
-        }
+            VmActivationResume::Generator(_),
+        ) => true,
         _ => {
             return Err(RuntimeError::Invariant(
                 "resume operation disagrees with the suspended VM state",
@@ -153,24 +151,48 @@ pub(super) fn prepare(
             "suspension resume operand was not cleared",
         ));
     }
+    if needs_magic {
+        entry
+            .storage
+            .operands
+            .try_reserve(1)
+            .map_err(|_| RuntimeError::Invariant("resume operand allocation failed"))?;
+    }
+    // The original frame and pending input still own every edge above. Once
+    // moved below, publication into the reserved slots is infallible.
+    let resume = pending.take().expect("validated resume input");
+    let mut abrupt = None;
+    let injection = match (kind, resume) {
+        (VmSuspendKind::Initial, VmActivationResume::Initial) => None,
+        (VmSuspendKind::Await, VmActivationResume::AwaitFulfill(value)) => Some((value, None)),
+        (VmSuspendKind::Await, VmActivationResume::AwaitReject(value))
+        | (VmSuspendKind::Yield, VmActivationResume::Generator(VmResume::Throw(value))) => {
+            abrupt = Some(value);
+            None
+        }
+        (_, VmActivationResume::Generator(resume)) => {
+            let (value, magic) = match resume {
+                VmResume::Next(value) => (value, 0),
+                VmResume::Return(value) => (value, 1),
+                VmResume::Throw(value) => (value, 2),
+            };
+            Some((value, Some(magic)))
+        }
+        _ => unreachable!("resume input validated before transfer"),
+    };
     if let Some((value, magic)) = injection {
         *entry
             .storage
             .operands
             .last_mut()
-            .ok_or(RuntimeError::Invariant("suspension has no resume operand"))? = value;
+            .expect("validated resume operand") = value;
         if let Some(magic) = magic {
-            entry
-                .storage
-                .operands
-                .try_reserve(1)
-                .map_err(|_| RuntimeError::Invariant("resume operand allocation failed"))?;
             entry.storage.operands.push(JsValue::Int(magic));
         }
     }
     entry.cold.release_resume_throw();
     entry.cold.resume_throw = abrupt;
-    Ok(PreparedResume { entry, pc })
+    Ok(())
 }
 
 pub(in crate::engine::vm) struct PreparedResume {

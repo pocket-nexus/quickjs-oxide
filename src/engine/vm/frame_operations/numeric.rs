@@ -23,29 +23,40 @@ impl NumericProgress {
 /// Commit in the original previous/value order. Pending owners remain outside
 /// RunSlots even if authentication or a later push fails.
 pub(in crate::engine::vm) fn commit_output(
+    runtime: &Runtime,
     execution: &mut RunningExecution,
     id: FrameId,
     value: crate::engine::value::JsValue,
     previous: Option<crate::engine::value::JsValue>,
     _depth: usize,
 ) -> Result<(), Error> {
-    let frame = execution.frames.current_mut(id)?;
     let mut value = Some(value);
     let mut previous = previous;
-    {
-        let mut slots = execution.slots.run_window(&mut frame.window)?;
-        if previous.is_some() {
-            slots.push_pending(&mut previous)?;
+    let result = (|| {
+        let frame = execution.frames.current_mut(id)?;
+        let resume_pc = frame
+            .fault_pc
+            .checked_add(1)
+            .ok_or_else(|| Error::internal("numeric resume PC overflow"))?;
+        {
+            let mut slots = execution.slots.run_window(&mut frame.window)?;
+            if previous.is_some() {
+                slots.push_pending(&mut previous)?;
+            }
+            slots.push_pending(&mut value)?;
         }
-        slots.push_pending(&mut value)?;
+        frame.resume_pc = resume_pc;
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_instruction(_depth);
+        Ok(())
+    })();
+    if let Some(value) = value {
+        let _ = runtime.release_jsvalue(value);
     }
-    frame.resume_pc = frame
-        .fault_pc
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("numeric resume PC overflow"))?;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_instruction(_depth);
-    Ok(())
+    if let Some(value) = previous {
+        let _ = runtime.release_jsvalue(value);
+    }
+    result
 }
 
 pub(in crate::engine::vm) fn try_complete_primitive(
@@ -58,6 +69,7 @@ pub(in crate::engine::vm) fn try_complete_primitive(
     let frame = execution.frames.current_mut(id)?;
     let realm = frame.executable.realm;
     let depth = execution.slots.depth(&frame.window);
+    let fault_pc = frame.fault_pc;
     let mut transaction = execution.slots.frame_transaction(&mut frame.window)?;
     let (left, right) = {
         let mut slots = transaction.slots();
@@ -100,17 +112,26 @@ pub(in crate::engine::vm) fn try_complete_primitive(
     crate::engine::api::profiling::record_owned_execution_event("numeric_completed_without_query");
     let mut value = Some(output.value);
     let mut previous = output.previous;
-    {
-        let mut slots = transaction.slots();
-        if previous.is_some() {
-            slots.push_pending(&mut previous)?;
+    let result: Result<usize, Error> = (|| {
+        let resume_pc = fault_pc
+            .checked_add(1)
+            .ok_or_else(|| Error::internal("numeric resume PC overflow"))?;
+        {
+            let mut slots = transaction.slots();
+            if previous.is_some() {
+                slots.push_pending(&mut previous)?;
+            }
+            slots.push_pending(&mut value)?;
         }
-        slots.push_pending(&mut value)?;
+        Ok(resume_pc)
+    })();
+    if let Some(value) = value {
+        let _ = runtime.release_jsvalue(value);
     }
-    frame.resume_pc = frame
-        .fault_pc
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("numeric resume PC overflow"))?;
+    if let Some(value) = previous {
+        let _ = runtime.release_jsvalue(value);
+    }
+    frame.resume_pc = result?;
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_instruction(depth);
     Ok(Some(NumericProgress::Completed))
@@ -259,6 +280,7 @@ mod tests {
         let resume = frame.resume_pc;
         assert!(
             commit_output(
+                &runtime,
                 &mut execution,
                 id,
                 JsValue::Int(99),

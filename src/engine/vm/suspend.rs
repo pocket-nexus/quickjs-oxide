@@ -332,44 +332,77 @@ impl RootedVmActivation {
         runtime: &Runtime,
         resume: VmActivationResume,
     ) -> Result<PreparedResume, RuntimeError> {
-        self.validate_resume(runtime, &resume)?;
-        let mut entry = self
-            .entry
-            .take()
-            .expect("rooted activation entry is prepared once");
-        let kind = self.kind;
-        let saved_pc = self.saved_pc;
-        let root = entry
-            .executable
-            .root()
-            .ok_or(RuntimeError::Invariant(
-                "resumable frame has no published root",
-            ))?
-            .clone();
-        let guard = runtime.push_bytecode_active_frame(
-            (*entry.cold.function).clone(),
-            root,
-            entry.executable.realm,
-            entry.executable.frame_layout().is_strict(),
-        )?;
-        entry.active_frame = guard.token();
-        runtime.update_active_bytecode_pc(
-            guard.token(),
-            BytecodePc::new(saved_pc.saturating_sub(1)),
-        )?;
-        entry.cold.entry_guard = Some(guard);
-        owned::prepare(runtime, entry, kind, saved_pc, resume)
+        let mut pending_resume = Some(resume);
+        let prepared = (|| {
+            self.validate_resume(
+                runtime,
+                pending_resume.as_ref().expect("owned resume input"),
+            )?;
+            let entry = self
+                .entry
+                .as_mut()
+                .expect("rooted activation entry is prepared once");
+            let root = entry
+                .executable
+                .root()
+                .ok_or(RuntimeError::Invariant(
+                    "resumable frame has no published root",
+                ))?
+                .clone();
+            let guard = runtime.push_bytecode_active_frame(
+                (*entry.cold.function).clone(),
+                root,
+                entry.executable.realm,
+                entry.executable.frame_layout().is_strict(),
+            )?;
+            entry.active_frame = guard.token();
+            runtime.update_active_bytecode_pc(
+                guard.token(),
+                BytecodePc::new(self.saved_pc.saturating_sub(1)),
+            )?;
+            entry.cold.entry_guard = Some(guard);
+            // Both frame storage and the resume input retain their original
+            // owners through validation and the final fallible reservation.
+            owned::prepare(entry, self.kind, &mut pending_resume)
+        })();
+        if let Err(error) = prepared {
+            if let Some(resume) = pending_resume {
+                match resume {
+                    VmActivationResume::Initial => {}
+                    VmActivationResume::Generator(
+                        VmResume::Next(value) | VmResume::Return(value) | VmResume::Throw(value),
+                    )
+                    | VmActivationResume::AwaitFulfill(value)
+                    | VmActivationResume::AwaitReject(value) => {
+                        let _ = runtime.release_jsvalue(value);
+                    }
+                }
+            }
+            return Err(error);
+        }
+        Ok(PreparedResume {
+            entry: self.entry.take().expect("prepared activation entry"),
+            pc: self.saved_pc,
+        })
     }
 }
 
 pub(super) fn freeze_entry(
     runtime: &Runtime,
-    mut entry: super::frame::FrameEntry,
+    entry: super::frame::FrameEntry,
     kind: VmSuspendKind,
     pc: usize,
 ) -> Result<EncodedVmActivation, RuntimeError> {
     #[cfg(feature = "profiling")]
     let _profile_phase = crate::engine::api::profiling::PhaseTimer::start_vm("freeze.encode");
+    // Encoding has not yet published or balanced any conversion edges. Keep
+    // the ordinary frame owner until the complete encoded record exists.
+    let mut source = RootedVmActivation {
+        entry: Some(entry),
+        kind,
+        saved_pc: pc,
+    };
+    let entry = source.entry.as_mut().expect("owned encoding source");
     entry
         .cold
         .input
@@ -413,24 +446,25 @@ pub(super) fn freeze_entry(
         strict: entry.executable.frame_layout().is_strict(),
         callee_global: global.object_id(),
     };
+    let data = GeneratorActivationData {
+        bytecode: bytecode.bytecode_id(),
+        vm,
+        actual_argument_count: storage.original_arguments.len(),
+        original_arguments: storage
+            .original_arguments
+            .iter()
+            .map(|value| value.as_raw())
+            .collect(),
+        arguments,
+        locals,
+        reusable_captured_locals: entry.cold.reusable_captured_locals.clone(),
+    };
     Ok(EncodedVmActivation {
         kind,
-        data: GeneratorActivationData {
-            bytecode: bytecode.bytecode_id(),
-            vm,
-            actual_argument_count: storage.original_arguments.len(),
-            original_arguments: storage
-                .original_arguments
-                .iter()
-                .map(|value| value.as_raw())
-                .collect(),
-            arguments,
-            locals,
-            reusable_captured_locals: entry.cold.reusable_captured_locals.clone(),
-        },
+        data,
         _entry: EncodedActivationEntry {
             runtime: runtime.clone(),
-            entry: Some(entry),
+            entry: source.entry.take(),
         },
     })
 }

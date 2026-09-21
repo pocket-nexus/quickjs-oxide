@@ -31,14 +31,15 @@ impl BytecodeCallRequest {
         &mut self,
         runtime: &Runtime,
     ) -> Result<(), crate::engine::api::runtime_error::RuntimeError> {
-        for argument in self.arguments.drain(..) {
-            runtime.release_jsvalue(argument)?;
-        }
+        let mut first_error = None;
         let new_target = std::mem::replace(&mut self.new_target, JsValue::Undefined);
-        runtime.release_jsvalue(new_target)?;
         let receiver = std::mem::replace(&mut self.receiver, JsValue::Undefined);
-        runtime.release_jsvalue(receiver)?;
-        Ok(())
+        for value in self.arguments.drain(..).chain([new_target, receiver]) {
+            if let Err(error) = runtime.release_jsvalue(value) {
+                first_error.get_or_insert(error);
+            }
+        }
+        first_error.map_or(Ok(()), Err)
     }
 
     pub(in crate::engine::vm) fn prepare(
