@@ -1,4 +1,6 @@
+#[cfg(feature = "test262-host")]
 use crate::engine::builtins::native::NativeCProto;
+#[cfg(feature = "test262-host")]
 use crate::engine::object::CompleteOrdinaryPropertyDescriptor;
 
 #[cfg(feature = "test262-host")]

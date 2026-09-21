@@ -1,9 +1,14 @@
 //! Same-frame slot ownership transitions outside the resident RunSlots borrow.
+#[cfg(feature = "profiling")]
 use crate::engine::api::error::Error;
+#[cfg(feature = "profiling")]
 use crate::engine::vm::execution::RunningExecution;
+#[cfg(feature = "profiling")]
 use crate::engine::vm::frame::FrameId;
+#[cfg(feature = "profiling")]
 use crate::engine::vm::run::RunExit;
 
+#[cfg(feature = "profiling")]
 pub(in crate::engine::vm) fn complete(
     execution: &mut RunningExecution,
     id: FrameId,
@@ -26,7 +31,7 @@ pub(in crate::engine::vm) fn complete(
             released
         };
         // Publish the surviving stack before dropping the last temporary root.
-        drop(released);
+        let _ = released;
         frame.resume_pc = frame
             .fault_pc
             .checked_add(1)

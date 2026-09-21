@@ -91,7 +91,7 @@ impl RegExpMatchAllStep {
             ))?)?,
             ToPrimitiveHint::String,
             RegExpMatchAllResume(Box::new(RegExpMatchAllResumeState {
-                step_pending: RegExpMatchAllStepPending::default(),
+                step_pending: RegExpMatchAllStepPending::new(runtime),
                 realm,
                 regexp,
                 phase: Phase::Input,
@@ -368,8 +368,8 @@ pub(super) fn finish(
     }
 }
 
-#[derive(Default)]
 pub(crate) struct RegExpMatchAllStepPending {
+    runtime: Runtime,
     value: Option<JsValue>,
     hint: Option<ToPrimitiveHint>,
     object: Option<ObjectRef>,
@@ -377,6 +377,36 @@ pub(crate) struct RegExpMatchAllStepPending {
     regexp: Option<ObjectRef>,
     constructor: Option<ConstructorRef>,
     arguments: Option<Vec<JsValue>>,
+}
+impl RegExpMatchAllStepPending {
+    fn new(runtime: &Runtime) -> Self {
+        Self {
+            runtime: runtime.clone(),
+            value: None,
+            hint: None,
+            object: None,
+            key: None,
+            regexp: None,
+            constructor: None,
+            arguments: None,
+        }
+    }
+
+    /// Release the internal edges still owned when the request is abandoned
+    /// before its step consumed them. Taken fields are empty here.
+    fn release_owned(&mut self) {
+        if let Some(value) = self.value.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        for argument in self.arguments.take().into_iter().flatten() {
+            let _ = self.runtime.release_jsvalue(argument);
+        }
+    }
+}
+impl Drop for RegExpMatchAllStepPending {
+    fn drop(&mut self) {
+        self.release_owned();
+    }
 }
 impl RegExpMatchAllStep {
     pub(crate) fn make_primitive(

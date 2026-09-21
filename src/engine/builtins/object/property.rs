@@ -1145,87 +1145,6 @@ pub(in crate::engine::builtins) fn finish(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn entries_keep_unpublished_pair_and_target_alive_until_reply_or_abandonment() {
-        let runtime = Runtime::new();
-        let weak = std::rc::Rc::downgrade(&runtime.0);
-        let context = runtime.new_context();
-        let target = runtime.new_object(None).unwrap();
-        let target_id = target.object_id();
-        let arguments = NativeArguments {
-            actual_arg_count: 1,
-            readable: vec![runtime.into_jsvalue(Value::Object(target)).unwrap()],
-        };
-        let PropertyStep::Keys { mut resume } = PropertyStep::start(
-            &runtime,
-            context.realm,
-            PropertyKind::ObjectKeys(ObjectKeysKind::Entries),
-            &arguments,
-        )
-        .unwrap() else {
-            panic!("expected key request")
-        };
-        let _ = resume.take_keys_object();
-
-        for value in arguments.readable {
-            runtime.release_jsvalue(value).unwrap();
-        }
-        let key = runtime.intern_property_key("x").unwrap();
-        let PropertyStep::Descriptor { mut resume } = resume
-            .keys(&runtime, NativeConversion::Value(vec![key]))
-            .unwrap()
-        else {
-            panic!("expected descriptor")
-        };
-        let _ = resume.take_descriptor_object();
-        let _ = resume.take_descriptor_key();
-
-        let PropertyStep::Read { mut resume } = resume
-            .descriptor(
-                &runtime,
-                NativeConversion::Value(Some(CompleteOrdinaryPropertyDescriptor::Data {
-                    value: Value::Undefined,
-                    writable: true,
-                    enumerable: true,
-                    configurable: true,
-                })),
-            )
-            .unwrap()
-        else {
-            panic!("expected value request")
-        };
-        let _ = resume.take_read_object();
-        let _ = resume.take_read_key();
-        runtime
-            .release_jsvalue(resume.take_read_receiver())
-            .unwrap();
-
-        let Phase::Entry {
-            state,
-            pair: Some(pair),
-        } = &resume.phase
-        else {
-            panic!("expected retained pair")
-        };
-        let ids = [target_id, state.result.object_id(), pair.object_id()];
-        runtime.run_gc().unwrap();
-        for id in ids {
-            assert!(runtime.0.state.borrow().heap.object(id).is_ok());
-        }
-        drop(resume);
-        runtime.run_gc().unwrap();
-        for id in ids {
-            assert!(runtime.0.state.borrow().heap.object(id).is_err());
-        }
-        drop(context);
-        drop(runtime);
-        assert!(weak.upgrade().is_none());
-    }
-}
-
 struct PropertyStepPending {
     runtime: Runtime,
     keys_object: Option<ObjectRef>,
@@ -1537,3 +1456,84 @@ const _: () = assert!(std::mem::size_of::<PropertyStep>() <= 64);
 
 // S11 all-domain protocol bound; inline completion stays allocation-free.
 const _: () = assert!(std::mem::size_of::<PropertyStep>() <= 64);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn entries_keep_unpublished_pair_and_target_alive_until_reply_or_abandonment() {
+        let runtime = Runtime::new();
+        let weak = std::rc::Rc::downgrade(&runtime.0);
+        let context = runtime.new_context();
+        let target = runtime.new_object(None).unwrap();
+        let target_id = target.object_id();
+        let arguments = NativeArguments {
+            actual_arg_count: 1,
+            readable: vec![runtime.into_jsvalue(Value::Object(target)).unwrap()],
+        };
+        let PropertyStep::Keys { mut resume } = PropertyStep::start(
+            &runtime,
+            context.realm,
+            PropertyKind::ObjectKeys(ObjectKeysKind::Entries),
+            &arguments,
+        )
+        .unwrap() else {
+            panic!("expected key request")
+        };
+        let _ = resume.take_keys_object();
+
+        for value in arguments.readable {
+            runtime.release_jsvalue(value).unwrap();
+        }
+        let key = runtime.intern_property_key("x").unwrap();
+        let PropertyStep::Descriptor { mut resume } = resume
+            .keys(&runtime, NativeConversion::Value(vec![key]))
+            .unwrap()
+        else {
+            panic!("expected descriptor")
+        };
+        let _ = resume.take_descriptor_object();
+        let _ = resume.take_descriptor_key();
+
+        let PropertyStep::Read { mut resume } = resume
+            .descriptor(
+                &runtime,
+                NativeConversion::Value(Some(CompleteOrdinaryPropertyDescriptor::Data {
+                    value: Value::Undefined,
+                    writable: true,
+                    enumerable: true,
+                    configurable: true,
+                })),
+            )
+            .unwrap()
+        else {
+            panic!("expected value request")
+        };
+        let _ = resume.take_read_object();
+        let _ = resume.take_read_key();
+        runtime
+            .release_jsvalue(resume.take_read_receiver())
+            .unwrap();
+
+        let Phase::Entry {
+            state,
+            pair: Some(pair),
+        } = &resume.phase
+        else {
+            panic!("expected retained pair")
+        };
+        let ids = [target_id, state.result.object_id(), pair.object_id()];
+        runtime.run_gc().unwrap();
+        for id in ids {
+            assert!(runtime.0.state.borrow().heap.object(id).is_ok());
+        }
+        drop(resume);
+        runtime.run_gc().unwrap();
+        for id in ids {
+            assert!(runtime.0.state.borrow().heap.object(id).is_err());
+        }
+        drop(context);
+        drop(runtime);
+        assert!(weak.upgrade().is_none());
+    }
+}

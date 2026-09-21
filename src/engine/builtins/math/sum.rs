@@ -48,6 +48,35 @@ pub(crate) struct SumResumeState {
     iterator: Option<ObjectRef>,
     next: JsValue,
     sum: SumPrecise,
+    runtime: Runtime,
+}
+impl Drop for SumResumeState {
+    /// Release the internal edges still owned when the request is abandoned.
+    /// Drained fields are `None`/`Undefined` here; releases are defer-safe.
+    fn drop(&mut self) {
+        for value in [
+            self.pending_effect.read_receiver.take(),
+            self.pending_effect.call_receiver.take(),
+            self.pending_effect.next_next.take(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        if let Some(completion) = self.pending_effect.close_completion.take() {
+            let value = match completion {
+                Completion::Return(value) | Completion::Throw(value) => value,
+            };
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        for value in [
+            std::mem::replace(&mut self.iterable, JsValue::Undefined),
+            std::mem::replace(&mut self.next, JsValue::Undefined),
+        ] {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
 }
 impl SumStep {
     pub(crate) fn start(
@@ -93,6 +122,7 @@ impl SumStep {
                 iterator: None,
                 next: JsValue::Undefined,
                 sum: SumPrecise::new(),
+                runtime: runtime.clone(),
             }));
             Self::request_read(
                 __pending_field_receiver,
@@ -149,7 +179,8 @@ impl SumResume {
                         )?,
                     )));
                 };
-                self.0.iterable = JsValue::Undefined;
+                runtime
+                    .release_jsvalue(std::mem::replace(&mut self.0.iterable, JsValue::Undefined))?;
                 self.0.iterator = Some(iterator.clone());
                 self.0.phase = Phase::NextMethod;
                 Ok({
@@ -165,7 +196,8 @@ impl SumResume {
                 })
             }
             Phase::NextMethod => {
-                self.0.next = runtime.into_jsvalue(value)?;
+                let next = runtime.into_jsvalue(value)?;
+                runtime.release_jsvalue(std::mem::replace(&mut self.0.next, next))?;
                 self.next()
             }
             _ => Err(RuntimeError::Invariant("Math sum value phase mismatch")),
@@ -179,7 +211,7 @@ impl SumResume {
                 .iterator
                 .clone()
                 .ok_or(RuntimeError::Invariant("Math sum iterator missing"))?;
-            let __pending_field_next = std::mem::replace(&mut self.0.next, JsValue::Undefined);
+            let __pending_field_next = self.0.runtime.dup_jsvalue(&self.0.next)?;
             let __pending_field_resume = self;
             SumStep::request_next(
                 __pending_field_iterator,
@@ -199,8 +231,9 @@ impl SumResume {
         let item = match result {
             ObjectIteratorStep::Yield(value) => value,
             ObjectIteratorStep::Done => {
+                let sum = std::mem::replace(&mut self.0.sum, SumPrecise::new());
                 return Ok(SumStep::Complete(Completion::Return(JsValue::Float(
-                    self.0.sum.result(),
+                    sum.result(),
                 ))));
             }
             ObjectIteratorStep::Throw(value) => {
@@ -306,7 +339,9 @@ fn sum_resume_keeps_one_resident_owner_across_iterator_transitions() {
     else {
         panic!("method read")
     };
-    drop(resume.take_read_receiver());
+    runtime
+        .release_jsvalue(resume.take_read_receiver())
+        .unwrap();
     drop(resume.take_read_key());
     let address = &*resume.0 as *const SumResumeState;
     let SumStep::Call { mut resume } = resume
@@ -319,7 +354,9 @@ fn sum_resume_keeps_one_resident_owner_across_iterator_transitions() {
         panic!("iterator call")
     };
     drop(resume.take_call_callable());
-    drop(resume.take_call_receiver());
+    runtime
+        .release_jsvalue(resume.take_call_receiver())
+        .unwrap();
     assert_eq!(&*resume.0 as *const SumResumeState, address);
     let SumStep::Read { mut resume } = resume
         .resume(
@@ -330,8 +367,8 @@ fn sum_resume_keeps_one_resident_owner_across_iterator_transitions() {
     else {
         panic!("next read")
     };
-    drop(resume.take_read_receiver());
-    drop(resume.take_read_key());
+    let _ = resume.take_read_receiver();
+    let _ = resume.take_read_key();
     assert_eq!(&*resume.0 as *const SumResumeState, address);
 }
 

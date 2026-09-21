@@ -27,20 +27,22 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        let mut step = RegExpCompileStep::start(self, realm, &invocation, arguments)?;
-        loop {
-            step = match step {
-                RegExpCompileStep::Complete(result) => return Ok(result),
-                RegExpCompileStep::Primitive { value, resume } => {
-                    let result = if matches!(value, JsValue::Object(_)) {
-                        self.to_primitive_jsvalue(realm, value, ToPrimitiveHint::String)?
-                    } else {
-                        Completion::Return(value)
-                    };
-                    resume.resume(self, result)?
-                }
-            };
-        }
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            let mut step = RegExpCompileStep::start(self, realm, invocation, arguments)?;
+            loop {
+                step = match step {
+                    RegExpCompileStep::Complete(result) => return Ok(result),
+                    RegExpCompileStep::Primitive { value, resume } => {
+                        let result = if matches!(value, JsValue::Object(_)) {
+                            self.to_primitive_jsvalue(realm, value, ToPrimitiveHint::String)?
+                        } else {
+                            Completion::Return(value)
+                        };
+                        resume.resume(self, result)?
+                    }
+                };
+            }
+        })
     }
     fn finish_regexp_compile(
         &self,

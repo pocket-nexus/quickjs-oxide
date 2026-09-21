@@ -204,7 +204,7 @@ impl TraversalState {
                 .map(|value| runtime.into_jsvalue(value))
                 .collect::<Result<Vec<_>, _>>()?,
             TypedTraversalResume(Box::new(TypedTraversalResumeState {
-                pending_effect: TypedTraversalStepPending::default(),
+                pending_effect: TypedTraversalStepPending::new(runtime),
                 state: self,
                 phase: TraversalPhase::Find { value, index },
             })),
@@ -245,7 +245,7 @@ impl TraversalState {
                 .map(|value| runtime.into_jsvalue(value))
                 .collect::<Result<Vec<_>, _>>()?,
             TypedTraversalResume(Box::new(TypedTraversalResumeState {
-                pending_effect: TypedTraversalStepPending::default(),
+                pending_effect: TypedTraversalStepPending::new(runtime),
                 state: self,
                 phase: TraversalPhase::Reduce,
             })),
@@ -321,11 +321,37 @@ pub(super) fn finish(
     }
 }
 
-#[derive(Default)]
 struct TypedTraversalStepPending {
+    runtime: Runtime,
     call_target: Option<DirectCallTarget>,
     call_receiver: Option<JsValue>,
     call_arguments: Option<Vec<JsValue>>,
+}
+impl TypedTraversalStepPending {
+    fn new(runtime: &Runtime) -> Self {
+        Self {
+            runtime: runtime.clone(),
+            call_target: None,
+            call_receiver: None,
+            call_arguments: None,
+        }
+    }
+
+    /// Release the internal edges still owned when the request is abandoned
+    /// before its step consumed them. Taken fields are empty here.
+    fn release_owned(&mut self) {
+        if let Some(receiver) = self.call_receiver.take() {
+            let _ = self.runtime.release_jsvalue(receiver);
+        }
+        for argument in self.call_arguments.take().into_iter().flatten() {
+            let _ = self.runtime.release_jsvalue(argument);
+        }
+    }
+}
+impl Drop for TypedTraversalStepPending {
+    fn drop(&mut self) {
+        self.release_owned();
+    }
 }
 impl TypedTraversalStep {
     pub(crate) fn request_call(

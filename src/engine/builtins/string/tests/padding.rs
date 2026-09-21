@@ -93,6 +93,10 @@ fn string_pad_small_limit_preserves_filler_order_and_range_error_kind() {
             })()"#,
         )
         .unwrap();
+    let arguments = NativeArguments {
+        actual_arg_count: 2,
+        readable: vec![JsValue::Int(4), runtime.into_jsvalue(filler).unwrap()],
+    };
     let completion = runtime
         .call_string_prototype_pad_with_limit(
             context.realm,
@@ -100,13 +104,11 @@ fn string_pad_small_limit_preserves_filler_order_and_range_error_kind() {
             NativeInvocation::Call {
                 this_value: js(&runtime, Value::String(JsString::from_static("a"))),
             },
-            &NativeArguments {
-                actual_arg_count: 2,
-                readable: vec![JsValue::Int(4), runtime.into_jsvalue(filler).unwrap()],
-            },
+            &arguments,
             3,
         )
         .unwrap();
+    release_arguments(&runtime, arguments);
     let Value::Object(error) = thrown(&runtime, completion) else {
         panic!("small String pad limit did not throw an Error object");
     };
@@ -125,49 +127,49 @@ fn string_pad_small_limit_preserves_filler_order_and_range_error_kind() {
         "pad checked its output bound before converting the filler",
     );
 
+    let arguments = NativeArguments {
+        actual_arg_count: 2,
+        readable: vec![
+            JsValue::Int(4),
+            js(&runtime, Value::String(JsString::from_static(""))),
+        ],
+    };
+    let completion = runtime
+        .call_string_prototype_pad_with_limit(
+            context.realm,
+            StringPadKind::Start,
+            NativeInvocation::Call {
+                this_value: js(&runtime, Value::String(JsString::from_static("a"))),
+            },
+            &arguments,
+            3,
+        )
+        .unwrap();
+    release_arguments(&runtime, arguments);
     assert_eq!(
-        returned(
-            &runtime,
-            runtime
-                .call_string_prototype_pad_with_limit(
-                    context.realm,
-                    StringPadKind::Start,
-                    NativeInvocation::Call {
-                        this_value: js(&runtime, Value::String(JsString::from_static("a")),),
-                    },
-                    &NativeArguments {
-                        actual_arg_count: 2,
-                        readable: vec![
-                            JsValue::Int(4),
-                            js(&runtime, Value::String(JsString::from_static(""))),
-                        ],
-                    },
-                    3,
-                )
-                .unwrap(),
-        ),
+        returned(&runtime, completion),
         Value::String(JsString::from_static("a")),
         "empty filler must bypass even an otherwise invalid output length",
     );
 
+    let arguments = NativeArguments {
+        actual_arg_count: 1,
+        readable: vec![JsValue::Int(3)],
+    };
+    let completion = runtime
+        .call_string_prototype_pad_with_limit(
+            context.realm,
+            StringPadKind::End,
+            NativeInvocation::Call {
+                this_value: js(&runtime, Value::String(JsString::from_static("a"))),
+            },
+            &arguments,
+            3,
+        )
+        .unwrap();
+    release_arguments(&runtime, arguments);
     assert_eq!(
-        returned(
-            &runtime,
-            runtime
-                .call_string_prototype_pad_with_limit(
-                    context.realm,
-                    StringPadKind::End,
-                    NativeInvocation::Call {
-                        this_value: js(&runtime, Value::String(JsString::from_static("a")),),
-                    },
-                    &NativeArguments {
-                        actual_arg_count: 1,
-                        readable: vec![JsValue::Int(3)],
-                    },
-                    3,
-                )
-                .unwrap(),
-        ),
+        returned(&runtime, completion),
         Value::String(JsString::from_static("a  ")),
         "the length-one native ABI read a nonexistent filler argument",
     );

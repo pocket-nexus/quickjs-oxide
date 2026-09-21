@@ -173,6 +173,7 @@ impl Drop for Query {
         // activation; release them before proceeding to the next outer scope.
         while self.parents.pop().is_some() {}
         while let Some(mut scope) = self.natives.pop() {
+            let _ = scope.call.release_invocation();
             drop(scope.call);
             drop(scope.resume);
             while scope.parents.pop().is_some() {}
@@ -456,7 +457,7 @@ pub(super) fn start_boolean(
 }
 
 /// The query entry is also used to validate the protocol before native entry migration.
-#[cfg(test)]
+#[cfg(all(test, feature = "profiling"))]
 pub(super) fn start_prototype(
     runtime: &Runtime,
     execution: &mut RunningExecution,
@@ -1818,6 +1819,14 @@ fn advance_inner(
     }
 }
 
+// A call abandoned before frame installation still owns its raw operands.
+fn release_call_operands(runtime: &Runtime, receiver: JsValue, arguments: Vec<JsValue>) {
+    let _ = runtime.release_jsvalue(receiver);
+    for argument in arguments {
+        let _ = runtime.release_jsvalue(argument);
+    }
+}
+
 #[inline(never)]
 // Transfer the selected callable and its reply ownership directly; a bundled request would add a second transport.
 #[allow(clippy::too_many_arguments)]
@@ -1881,6 +1890,7 @@ fn invoke(
             .can_push_with_continuations(query.continuation_depth())
             || runtime.bytecode_call_would_overflow()
         {
+            release_call_operands(runtime, receiver, arguments);
             call.executable()
                 .ensure_root(runtime)
                 .map_err(runtime_error_to_vm_error)?;
@@ -1952,6 +1962,7 @@ fn invoke(
             .frames
             .can_push_with_continuations(query.continuation_depth())
         {
+            release_call_operands(runtime, receiver, arguments);
             step = resume
                 .resume(runtime, overflow(runtime, realm)?)
                 .map_err(runtime_error_to_vm_error)?;
@@ -2038,6 +2049,7 @@ fn invoke(
                 .can_push_with_continuations(query.continuation_depth())
                 || runtime.bytecode_call_would_overflow()
             {
+                release_call_operands(runtime, receiver, arguments);
                 let completion = runtime
                     .bytecode_stack_overflow_completion(realm, &bytecode)
                     .map_err(runtime_error_to_vm_error)?;
@@ -2121,7 +2133,16 @@ fn invoke(
     // Internal values carry no runtime branding; the slot authentication
     // above already proved every operand owner.
     let completion = if runtime.native_call_would_overflow(target) {
-        overflow(runtime, realm)?
+        let overflowed = overflow(runtime, realm);
+        runtime
+            .release_jsvalue(receiver)
+            .map_err(runtime_error_to_vm_error)?;
+        for argument in arguments {
+            runtime
+                .release_jsvalue(argument)
+                .map_err(runtime_error_to_vm_error)?;
+        }
+        overflowed?
     } else {
         let execution_realm = if target.uses_calling_realm() {
             realm
@@ -2333,7 +2354,10 @@ mod native_scope_tests {
                 0,
             )
             .unwrap();
-            assert!(matches!(result, CallStep::Complete(Completion::Throw(_))));
+            let CallStep::Complete(Completion::Throw(thrown)) = result else {
+                panic!("expected a rejected native call");
+            };
+            runtime.release_jsvalue(thrown).unwrap();
             let parent = execution.frames.current_mut(frame).unwrap();
             assert_eq!(parent.property_generation, 0);
             assert_eq!(parent.resume_pc, 0);
@@ -2460,10 +2484,10 @@ mod native_scope_tests {
                 0,
             )
             .unwrap_or_else(|error| panic!("{name}: {error:?}"));
-            assert!(
-                matches!(result, CallStep::Complete(Completion::Return(_))),
-                "{name}"
-            );
+            let CallStep::Complete(Completion::Return(value)) = result else {
+                panic!("{name}: expected a completed native call");
+            };
+            runtime.release_jsvalue(value).unwrap();
             assert_eq!(
                 execution
                     .frames
@@ -2931,8 +2955,6 @@ fn install_iterator_finish(
     if frame.cold.iterator_wait.is_some() {
         return Err(Error::internal("iterator resident record already occupied"));
     }
-    #[cfg(debug_assertions)]
-    super::iterator_driver::trace_pending("install-wait", &pending);
     frame.cold.iterator_wait = Some(pending);
     Ok(if next {
         Finish::IteratorNext(id)
@@ -3237,15 +3259,17 @@ fn continue_iterator(
             false,
         ),
         IteratorAction::Next(callable, receiver) => {
-            let JsValue::Object(iterator) = receiver else {
+            let Value::Object(iterator) = runtime
+                .root_and_release_jsvalue(receiver)
+                .map_err(runtime_error_to_vm_error)?
+            else {
                 return Err(Error::internal("iterator record lost object receiver"));
             };
             (
                 crate::engine::builtins::IteratorNextStep::start_callable(
                     runtime,
                     pending.realm(),
-                    ObjectRef::from_borrowed_handle(runtime.clone(), iterator)
-                        .map_err(super::exception::heap_error_to_vm_error)?,
+                    iterator,
                     callable,
                 )
                 .map_err(runtime_error_to_vm_error)?

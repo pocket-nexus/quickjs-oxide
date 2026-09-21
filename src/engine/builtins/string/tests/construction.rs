@@ -63,16 +63,14 @@ fn string_raw_latched_overflow_preserves_pinned_observable_order() {
     else {
         panic!("String.raw overflow fixture was not an object");
     };
+    let arguments = NativeArguments {
+        actual_arg_count: 1,
+        readable: vec![js(&runtime, Value::Object(cooked))],
+    };
     let completion = runtime
-        .call_string_raw_with_limit(
-            context.realm,
-            &NativeArguments {
-                actual_arg_count: 1,
-                readable: vec![js(&runtime, Value::Object(cooked))],
-            },
-            1,
-        )
+        .call_string_raw_with_limit(context.realm, &arguments, 1)
         .unwrap();
+    release_arguments(&runtime, arguments);
     assert!(matches!(completion, Completion::Throw(JsValue::Int(77))));
     assert_eq!(
         context.eval("stringRawOverflowLog").unwrap(),
@@ -96,19 +94,17 @@ fn string_raw_latched_overflow_preserves_pinned_observable_order() {
             r#"(function(){var value=Object();value.toString=function(){stringRawOverflowLog+="s";return "x"};return value})()"#,
         )
         .unwrap();
+    let arguments = NativeArguments {
+        actual_arg_count: 2,
+        readable: vec![
+            js(&runtime, Value::Object(cooked)),
+            js(&runtime, substitution),
+        ],
+    };
     let error = runtime
-        .call_string_raw_with_limit(
-            context.realm,
-            &NativeArguments {
-                actual_arg_count: 2,
-                readable: vec![
-                    js(&runtime, Value::Object(cooked)),
-                    js(&runtime, substitution),
-                ],
-            },
-            1,
-        )
+        .call_string_raw_with_limit(context.realm, &arguments, 1)
         .unwrap_err();
+    release_arguments(&runtime, arguments);
     assert!(matches!(
         error,
         RuntimeError::Engine(ref error)

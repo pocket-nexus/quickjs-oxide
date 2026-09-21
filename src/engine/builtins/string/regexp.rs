@@ -176,7 +176,7 @@ impl StringProtocolStep {
         )?;
         let key = PropertyKey::from(runtime.well_known_symbol(kind.symbol()));
         let resume = StringProtocolResume(Box::new(StringProtocolResumeState {
-            step_pending: StringProtocolStepPending::default(),
+            step_pending: StringProtocolStepPending::new(runtime),
             realm,
             kind,
             receiver: this_value,
@@ -507,8 +507,8 @@ fn finish(
     }
 }
 
-#[derive(Default)]
 pub(crate) struct StringProtocolStepPending {
+    runtime: Runtime,
     object: Option<ObjectRef>,
     key: Option<PropertyKey>,
     value: Option<JsValue>,
@@ -516,6 +516,39 @@ pub(crate) struct StringProtocolStepPending {
     receiver: Option<JsValue>,
     arguments: Option<Vec<JsValue>>,
     constructor: Option<ConstructorRef>,
+}
+impl StringProtocolStepPending {
+    fn new(runtime: &Runtime) -> Self {
+        Self {
+            runtime: runtime.clone(),
+            object: None,
+            key: None,
+            value: None,
+            target: None,
+            receiver: None,
+            arguments: None,
+            constructor: None,
+        }
+    }
+
+    /// Release the internal edges still owned when the request is abandoned
+    /// before its step consumed them. Taken fields are empty here.
+    fn release_owned(&mut self) {
+        for value in [self.value.take(), self.receiver.take()]
+            .into_iter()
+            .flatten()
+        {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        for argument in self.arguments.take().into_iter().flatten() {
+            let _ = self.runtime.release_jsvalue(argument);
+        }
+    }
+}
+impl Drop for StringProtocolStepPending {
+    fn drop(&mut self) {
+        self.release_owned();
+    }
 }
 impl StringProtocolStep {
     pub(crate) fn make_read(

@@ -56,10 +56,21 @@ impl std::ops::DerefMut for GlobalResume {
 }
 const _: () = assert!(std::mem::size_of::<GlobalResume>() <= 8);
 pub(crate) struct GlobalResumeState {
+    runtime: Runtime,
     realm: ContextId,
     kind: GlobalKind,
     radix: JsValue,
     input: Option<JsString>,
+}
+
+impl Drop for GlobalResumeState {
+    /// The radix argument edge is duplicated into the later number stage but
+    /// the state keeps its own copy; surrender it whenever the request is
+    /// consumed or abandoned.
+    fn drop(&mut self) {
+        let radix = std::mem::replace(&mut self.radix, JsValue::Undefined);
+        let _ = self.runtime.release_jsvalue(radix);
+    }
 }
 impl GlobalStep {
     pub(crate) fn start(
@@ -74,18 +85,22 @@ impl GlobalStep {
                 "global builtin requires generic invocation",
             ));
         }
+        let radix = match arguments.readable.get(1) {
+            Some(value) => runtime.dup_jsvalue(value)?,
+            None => JsValue::Undefined,
+        };
+        let resume = GlobalResume(Box::new(GlobalResumeState {
+            runtime: runtime.clone(),
+            realm,
+            kind,
+            radix,
+            input: None,
+        }));
+        // The resume owns the radix edge, so a failed input dup drops it on
+        // the error path instead of leaking it.
         let value = runtime.dup_jsvalue(arguments.readable.first().ok_or(
             RuntimeError::Invariant("global builtin argv was not padded"),
         )?)?;
-        let resume = GlobalResume(Box::new(GlobalResumeState {
-            realm,
-            kind,
-            radix: match arguments.readable.get(1) {
-                Some(value) => runtime.dup_jsvalue(value)?,
-                None => JsValue::Undefined,
-            },
-            input: None,
-        }));
         Ok(if matches!(kind, GlobalKind::Predicate(_)) {
             Self::Number { value, resume }
         } else {
@@ -171,7 +186,7 @@ impl GlobalResume {
         }
     }
     pub(crate) fn number(
-        self,
+        mut self,
         runtime: &Runtime,
         result: NativeConversion<f64>,
     ) -> Result<GlobalStep, RuntimeError> {
@@ -185,11 +200,13 @@ impl GlobalResume {
         };
         let value = match self.0.kind {
             GlobalKind::Parse(NumberParseKind::ParseInt) => {
+                let input = self
+                    .0
+                    .input
+                    .take()
+                    .ok_or(RuntimeError::Invariant("parseInt converted input missing"))?;
                 Value::number(crate::engine::value::number_parse::parse_int(
-                    &self
-                        .0
-                        .input
-                        .ok_or(RuntimeError::Invariant("parseInt converted input missing"))?,
+                    &input,
                     crate::engine::value::number::to_int32(number),
                 ))
             }

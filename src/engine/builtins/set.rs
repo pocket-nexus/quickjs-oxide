@@ -690,7 +690,8 @@ impl Runtime {
                 "Set Iterator next did not receive an iterator-next invocation",
             ));
         };
-        let JsValue::Object(iterator_id) = this_value else {
+        let this_value = self.root_and_release_jsvalue(this_value)?;
+        let Value::Object(iterator) = this_value else {
             return Ok(NativeInvokeOutcome::Completion(Completion::Throw(
                 self.new_native_error_jsvalue(
                     realm,
@@ -699,6 +700,7 @@ impl Runtime {
                 )?,
             )));
         };
+        let iterator_id = iterator.object_id();
         let state = self
             .0
             .state

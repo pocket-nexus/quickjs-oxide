@@ -57,6 +57,26 @@ enum NativeArgumentInput<'a> {
     Owned(Vec<Value>),
 }
 
+/// Owns the internal edges preparation took until the activation exists.
+/// `NativeActivation`'s Drop covers readable arguments after publication;
+/// before that, this guard releases both halves on every early return.
+struct PendingNativeOwners<'a> {
+    runtime: &'a Runtime,
+    invocation: Option<NativeInvocation>,
+    readable: Vec<JsValue>,
+}
+
+impl Drop for PendingNativeOwners<'_> {
+    fn drop(&mut self) {
+        if let Some(invocation) = self.invocation.take() {
+            let _ = invocation.release(self.runtime);
+        }
+        for value in self.readable.drain(..) {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
+}
+
 impl Runtime {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::engine::vm) fn prepare_native_invocation(
@@ -220,6 +240,14 @@ impl Runtime {
         #[cfg(feature = "profiling")]
         let _profile_phase = crate::engine::api::profiling::PhaseTimer::start_vm("native.prepare");
         let callable = callable_input.as_ref();
+        // Every early return below abandons an already-owned invocation or a
+        // partially materialized readable buffer. Keep them under one owner so
+        // failure paths release exactly what preparation took.
+        let mut owners = PendingNativeOwners {
+            runtime: self,
+            invocation: Some(invocation),
+            readable: Vec::new(),
+        };
 
         let publication = match selected.as_ref() {
             Some(selected) => super::super::frames::NativePublicationWitness::from_classification(
@@ -247,37 +275,43 @@ impl Runtime {
             NativeArgumentInput::Owned(values) => values.len(),
         };
         let available_arg_count = actual_arg_count.max(usize::from(min_readable_args));
-        let (mut readable, _copied, _before) = match arguments {
+        let (_copied, _before) = match arguments {
             NativeArgumentInput::Borrowed(values) => {
-                let mut readable: Vec<crate::engine::value::JsValue> = Vec::new();
-                readable.try_reserve(available_arg_count).map_err(|_| {
-                    RuntimeError::Invariant("native readable arguments allocation failed")
-                })?;
+                owners
+                    .readable
+                    .try_reserve(available_arg_count)
+                    .map_err(|_| {
+                        RuntimeError::Invariant("native readable arguments allocation failed")
+                    })?;
                 for value in values {
-                    readable.push(self.unroot_value(value)?);
+                    let converted = self.unroot_value(value)?;
+                    owners.readable.push(converted);
                 }
-                (readable, true, 0)
+                (true, 0)
             }
 
             NativeArgumentInput::Owned(values) => {
                 let before = values.capacity();
-                let mut readable: Vec<crate::engine::value::JsValue> =
-                    Vec::with_capacity(values.len());
+                owners.readable = Vec::with_capacity(values.len());
                 for value in values {
-                    readable.push(self.into_jsvalue(value)?);
+                    let converted = self.into_jsvalue(value)?;
+                    owners.readable.push(converted);
                 }
                 // All padding allocation precedes publication. Actual arity
                 // and every extra argument survive this owning handoff.
-                readable
+                owners
+                    .readable
                     .try_reserve(available_arg_count - actual_arg_count)
                     .map_err(|_| {
                         RuntimeError::Invariant("native readable arguments allocation failed")
                     })?;
-                (readable, false, before)
+                (false, before)
             }
         };
-        while readable.len() < available_arg_count {
-            readable.push(crate::engine::value::JsValue::Undefined);
+        while owners.readable.len() < available_arg_count {
+            owners
+                .readable
+                .push(crate::engine::value::JsValue::Undefined);
         }
         #[cfg(feature = "profiling")]
         {
@@ -288,20 +322,20 @@ impl Runtime {
             record_call_buffer_capacity(
                 "native.readable",
                 _before,
-                readable.capacity(),
+                owners.readable.capacity(),
                 size_of::<Value>(),
             );
             if _copied {
                 record_call_buffer_js_value_copies(
                     "native.readable",
-                    &readable[..actual_arg_count],
+                    &owners.readable[..actual_arg_count],
                 );
             } else {
-                record_call_buffer_observed("native.incoming_argv", _before, size_of::<Value>());
+                record_call_buffer_observed("native.inbound_argv", _before, size_of::<Value>());
                 // Moving Vec ownership into NativeArguments does not move elements.
                 record_call_buffer_observed(
                     "native.readable",
-                    readable.capacity(),
+                    owners.readable.capacity(),
                     size_of::<Value>(),
                 );
             }
@@ -310,12 +344,19 @@ impl Runtime {
                 available_arg_count - actual_arg_count,
             );
         }
-        let arguments = NativeArguments {
+        let mut arguments = NativeArguments {
             actual_arg_count,
-            readable,
+            readable: std::mem::take(&mut owners.readable),
         };
+        // Reservation happens before installing the native scope.
         let active_frame =
-            publication.publish(actual_arg_count, available_arg_count, continuation)?;
+            match publication.publish(actual_arg_count, available_arg_count, continuation) {
+                Ok(active_frame) => active_frame,
+                Err(error) => {
+                    owners.readable = std::mem::take(&mut arguments.readable);
+                    return Err(error);
+                }
+            };
 
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("native_activation_prepared");
@@ -329,8 +370,23 @@ impl Runtime {
                 arguments,
                 active_frame: Some(active_frame),
             },
-            invocation,
+            invocation: owners.invocation.take().expect("prepared invocation owner"),
         })
+    }
+}
+
+impl PreparedNativeCall {
+    /// Release the owned invocation edge when a prepared call is abandoned
+    /// before its dispatcher consumes it. `NativeActivation`'s own Drop already
+    /// releases the readable argument edges.
+    pub(in crate::engine::vm) fn release_invocation(&mut self) -> Result<(), RuntimeError> {
+        let invocation = std::mem::replace(
+            &mut self.invocation,
+            NativeInvocation::Getter {
+                this_value: JsValue::Undefined,
+            },
+        );
+        invocation.release(&self.activation.runtime)
     }
 }
 
@@ -548,6 +604,8 @@ mod tests {
                         std::mem::discriminant(&owned)
                     );
                     assert_eq!(native_input(&borrowed), native_input(&owned));
+                    borrowed.release(&runtime).unwrap();
+                    owned.release(&runtime).unwrap();
                 }
                 (
                     NativeInvocationAdaptation::Complete(Completion::Throw(throw_a)),
@@ -597,6 +655,7 @@ mod tests {
                     "active native frame disagrees with handler arguments"
                 ))
             ));
+            prepared.invocation.release(&runtime).unwrap();
             prepared
                 .activation
                 .finish(Ok(NativeInvokeOutcome::Completion(Completion::Return(

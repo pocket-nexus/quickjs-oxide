@@ -199,6 +199,9 @@ impl Drop for AsyncResume {
         if self.active {
             let _ = self.runtime.complete_async_function_state(&self.state);
         }
+        let output = std::mem::replace(&mut self.output, JsValue::Undefined);
+        let _ = self.runtime.release_jsvalue(output);
+        self.pending_effect.release_owned(&self.runtime);
     }
 }
 impl AsyncStep {
@@ -256,6 +259,22 @@ struct AsyncStepPending {
     resolve_realm: Option<ContextId>,
     call_callable: Option<CallableRef>,
     call_value: Option<JsValue>,
+}
+impl AsyncStepPending {
+    fn release_owned(&mut self, runtime: &Runtime) {
+        if let Some(value) = self.resolve_value.take() {
+            let _ = runtime.release_jsvalue(value);
+        }
+        if let Some(value) = self.call_value.take() {
+            let _ = runtime.release_jsvalue(value);
+        }
+        if let Some(
+            VmActivationResume::AwaitFulfill(value) | VmActivationResume::AwaitReject(value),
+        ) = self.run_input.take()
+        {
+            let _ = runtime.release_jsvalue(value);
+        }
+    }
 }
 impl AsyncStep {
     pub(crate) fn request_run(

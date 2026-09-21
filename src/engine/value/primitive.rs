@@ -79,7 +79,7 @@ thread_local! {
     static FAIL_NEXT_REPLACEMENT_RESERVATION: Cell<bool> = const { Cell::new(false) };
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "profiling"))]
 pub fn fail_next_concat_reservation_for_test() {
     FAIL_NEXT_CONCAT_RESERVATION.with(|armed| {
         assert!(

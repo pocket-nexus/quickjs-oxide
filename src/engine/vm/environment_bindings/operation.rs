@@ -320,11 +320,16 @@ impl EnvironmentResume {
                 Ok(EnvironmentStep::set(realm, object, key, value, strict))
             }
             Phase::Reference { object } => {
-                Ok(EnvironmentStep::Complete(Completion::Return(if present {
-                    JsValue::Object(object.object_id())
-                } else {
-                    JsValue::Undefined
-                })))
+                if !present {
+                    return Ok(EnvironmentStep::Complete(Completion::Return(
+                        JsValue::Undefined,
+                    )));
+                }
+                let id = object.object_id();
+                runtime.retain_object_handle(id)?;
+                Ok(EnvironmentStep::Complete(Completion::Return(
+                    JsValue::Object(id),
+                )))
             }
             Phase::DeleteGlobal { object, key } => Ok(if present {
                 EnvironmentStep::delete(realm, object, key)

@@ -134,22 +134,6 @@ pub struct StringId {
     pub(in crate::engine::heap) generation: u32,
 }
 
-impl StringId {
-    /// Arena index, intended for diagnostics and serialized debug traces only.
-    #[must_use]
-    #[cfg(test)]
-    pub const fn debug_index(self) -> u32 {
-        self.index
-    }
-
-    /// Slot generation, intended for diagnostics and serialized debug traces.
-    #[must_use]
-    #[cfg(test)]
-    pub const fn debug_generation(self) -> u32 {
-        self.generation
-    }
-}
-
 impl fmt::Debug for StringId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter

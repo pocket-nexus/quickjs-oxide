@@ -241,7 +241,7 @@ impl TypedSliceStep {
                 "TypedArray slice start argv was not padded",
             ))?)?,
             TypedSliceResume(Box::new(TypedSliceResumeState {
-                pending_effect: TypedSliceStepPending::default(),
+                pending_effect: TypedSliceStepPending::new(runtime),
                 realm,
                 source,
                 length,
@@ -432,8 +432,8 @@ fn finish(
     }
 }
 
-#[derive(Default)]
 struct TypedSliceStepPending {
+    runtime: Runtime,
     primitive_value: Option<JsValue>,
     species_source: Option<ObjectRef>,
     species_element: Option<TypedArrayElementKind>,
@@ -443,6 +443,35 @@ struct TypedSliceStepPending {
     species_view_buffer: Option<ObjectRef>,
     species_view_offset: Option<u64>,
     species_view_length: Option<Option<u64>>,
+}
+impl TypedSliceStepPending {
+    fn new(runtime: &Runtime) -> Self {
+        Self {
+            runtime: runtime.clone(),
+            primitive_value: None,
+            species_source: None,
+            species_element: None,
+            species_length: None,
+            species_view_source: None,
+            species_view_element: None,
+            species_view_buffer: None,
+            species_view_offset: None,
+            species_view_length: None,
+        }
+    }
+
+    /// Release the internal edges still owned when the request is abandoned
+    /// before its step consumed them. Taken fields are empty here.
+    fn release_owned(&mut self) {
+        if let Some(value) = self.primitive_value.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
+}
+impl Drop for TypedSliceStepPending {
+    fn drop(&mut self) {
+        self.release_owned();
+    }
 }
 impl TypedSliceStep {
     pub(crate) fn request_primitive(value: JsValue, mut resume: TypedSliceResume) -> Self {

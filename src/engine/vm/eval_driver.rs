@@ -638,10 +638,14 @@ mod capture_tests {
                 .cold
                 .eval_arguments = Some(vec![input]);
             let outcome = prepare_and_enter(&runtime, &mut execution, id, 0, environment).unwrap();
-            assert_eq!(
-                matches!(outcome, CallStep::Complete(Completion::Throw(_))),
-                throws
-            );
+            let threw = match outcome {
+                CallStep::Complete(Completion::Throw(value)) => {
+                    runtime.release_jsvalue(value).unwrap();
+                    true
+                }
+                _ => false,
+            };
+            assert_eq!(threw, throws);
             if captured {
                 // Preparation entered the compiled child. Retire it without running
                 // it so the caller's cell representation can be inspected in place.

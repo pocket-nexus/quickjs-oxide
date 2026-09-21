@@ -10,9 +10,25 @@ use crate::engine::heap::{
 
 #[cfg(debug_assertions)]
 pub(crate) fn trace_object_matches(id: ObjectId) -> bool {
-    std::env::var("QJS_TRACE_OBJECT_ID")
-        .ok()
-        .and_then(|value| value.parse::<u32>().ok())
+    static WANTED: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+    WANTED
+        .get_or_init(|| {
+            std::env::var("QJS_TRACE_OBJECT_ID")
+                .ok()
+                .and_then(|value| value.parse::<u32>().ok())
+        })
+        .is_some_and(|wanted| wanted == id.index)
+}
+
+#[cfg(debug_assertions)]
+pub(crate) fn trace_string_matches(id: StringId) -> bool {
+    static WANTED: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+    WANTED
+        .get_or_init(|| {
+            std::env::var("QJS_TRACE_STRING_ID")
+                .ok()
+                .and_then(|value| value.parse::<u32>().ok())
+        })
         .is_some_and(|wanted| wanted == id.index)
 }
 
@@ -161,14 +177,19 @@ impl Runtime {
         if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
             eprintln!("[retain] {id:?} at {}", std::panic::Location::caller());
             if trace_object_matches(id) {
+                let strong = self
+                    .0
+                    .state
+                    .try_borrow()
+                    .ok()
+                    .and_then(|state| state.heap.object_strong_count(id).ok());
+                eprintln!("[o-retain] {id:?} strong_before={strong:?}");
                 eprintln!(
                     "[retain-o-backtrace]\n{}",
                     std::backtrace::Backtrace::force_capture()
                 );
             }
         }
-        #[cfg(debug_assertions)]
-        // record_object_retain(id);
         if let Ok(mut state) = self.0.state.try_borrow_mut() {
             return state.heap.retain_object(id);
         }
@@ -187,14 +208,19 @@ impl Runtime {
         if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
             eprintln!("[release] {id:?} at {}", std::panic::Location::caller());
             if trace_object_matches(id) {
+                let strong = self
+                    .0
+                    .state
+                    .try_borrow()
+                    .ok()
+                    .and_then(|state| state.heap.object_strong_count(id).ok());
+                eprintln!("[o-release] {id:?} strong_before={strong:?}");
                 eprintln!(
                     "[release-o-backtrace]\n{}",
                     std::backtrace::Backtrace::force_capture()
                 );
             }
         }
-        #[cfg(debug_assertions)]
-        // record_object_release(id);
         self.release_or_defer(DeferredRefOp::Object(id));
     }
 

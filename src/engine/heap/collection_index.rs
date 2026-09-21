@@ -347,7 +347,7 @@ mod tests {
 
     #[test]
     fn collision_candidates_are_compared_and_removal_preserves_the_others() {
-        let mut heap = Heap::new();
+        let heap = Heap::new();
         let mut index = CollectionIndex::default();
         let records = record_store(&heap, vec![RawValue::Int(1), RawValue::Int(2)]);
         // Force a collision to exercise the bucket path deterministically,
@@ -362,7 +362,7 @@ mod tests {
 
     #[test]
     fn publication_rejects_missing_or_stale_index_entries() {
-        let mut heap = Heap::new();
+        let heap = Heap::new();
         let mut index = CollectionIndex::default();
         let mut records = record_store(&heap, vec![RawValue::Int(1)]);
         assert!(index.validate(&heap, &records).is_err());

@@ -30,11 +30,26 @@ impl std::ops::DerefMut for StringSplitResume {
 const _: () = assert!(std::mem::size_of::<StringSplitResume>() <= 8);
 pub(crate) struct StringSplitResumeState {
     step_pending: StringSplitStepPending,
+    runtime: Runtime,
     realm: ContextId,
     receiver: JsValue,
     separator: JsValue,
     limit: JsValue,
     phase: SplitPhase,
+}
+impl Drop for StringSplitResumeState {
+    /// Release the internal edges still owned when the request is abandoned.
+    /// Drained fields are `Undefined` here; releases are defer-safe.
+    fn drop(&mut self) {
+        for value in [
+            std::mem::replace(&mut self.receiver, JsValue::Undefined),
+            std::mem::replace(&mut self.separator, JsValue::Undefined),
+            std::mem::replace(&mut self.limit, JsValue::Undefined),
+        ] {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        self.step_pending.release_owned(&self.runtime);
+    }
 }
 enum SplitPhase {
     Method,
@@ -80,6 +95,7 @@ impl StringSplitStep {
         )?)?;
         let resume = StringSplitResume(Box::new(StringSplitResumeState {
             step_pending: StringSplitStepPending::default(),
+            runtime: runtime.clone(),
             realm,
             receiver: this_value,
             separator,
@@ -143,7 +159,8 @@ impl StringSplitResume {
             }
         };
         let realm = self.0.realm;
-        match self.0.phase {
+        let phase = std::mem::replace(&mut self.0.phase, SplitPhase::Method);
+        match phase {
             SplitPhase::Method => {
                 if matches!(value, Value::Undefined | Value::Null) {
                     return self.source(runtime);
@@ -328,6 +345,24 @@ pub(crate) struct StringSplitStepPending {
     target: Option<DirectCallTarget>,
     receiver: Option<JsValue>,
     arguments: Option<Vec<JsValue>>,
+}
+impl StringSplitStepPending {
+    /// Release every edge that was not consumed by a completed step.
+    fn release_owned(&mut self, runtime: &Runtime) {
+        let _ = self.object.take();
+        let _ = self.key.take();
+        let _ = self.hint.take();
+        let _ = self.target.take();
+        for value in [self.value.take(), self.receiver.take()]
+            .into_iter()
+            .flatten()
+        {
+            let _ = runtime.release_jsvalue(value);
+        }
+        for value in self.arguments.take().into_iter().flatten() {
+            let _ = runtime.release_jsvalue(value);
+        }
+    }
 }
 impl StringSplitStep {
     pub(crate) fn make_read(

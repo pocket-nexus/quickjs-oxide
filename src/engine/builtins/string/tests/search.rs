@@ -167,25 +167,22 @@ fn string_includes_preserves_pinned_values_utf16_and_shared_magic_kernel() {
         if let Some(position) = position {
             readable.push(JsValue::Int(position));
         }
-        assert_eq!(
-            returned(
-                &runtime,
-                runtime
-                    .call_string_prototype_includes(
-                        context.realm,
-                        selector,
-                        NativeInvocation::Call {
-                            this_value: js(&runtime, Value::String(JsString::from_static("abc")),),
-                        },
-                        &NativeArguments {
-                            actual_arg_count: readable.len(),
-                            readable,
-                        },
-                    )
-                    .unwrap(),
-            ),
-            Value::Bool(expected),
-        );
+        let arguments = NativeArguments {
+            actual_arg_count: readable.len(),
+            readable,
+        };
+        let completion = runtime
+            .call_string_prototype_includes(
+                context.realm,
+                selector,
+                NativeInvocation::Call {
+                    this_value: js(&runtime, Value::String(JsString::from_static("abc"))),
+                },
+                &arguments,
+            )
+            .unwrap();
+        release_arguments(&runtime, arguments);
+        assert_eq!(returned(&runtime, completion), Value::Bool(expected));
     }
 }
 

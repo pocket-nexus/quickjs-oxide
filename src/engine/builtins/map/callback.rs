@@ -120,6 +120,7 @@ impl CallbackStep {
                 )));
             }
             if let Some(callable) = callback {
+                runtime.release_jsvalue(second)?;
                 let call_key = runtime.dup_jsvalue(&key)?;
                 return Ok(Self::request_call(
                     callable,

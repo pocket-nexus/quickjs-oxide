@@ -573,7 +573,7 @@ mod tests {
         let mut slots = SlotStore::new(0);
         let window = slots
             .push_frame(
-                &runtime,
+                runtime,
                 &executable.frame_layout(),
                 FrameStorage {
                     original_arguments: Vec::new(),
@@ -589,7 +589,7 @@ mod tests {
             return_to: None,
             entry_guard: None,
             input: (CallInput::new(
-                &runtime,
+                runtime,
                 JsValue::Undefined,
                 JsValue::Undefined,
                 Some(function.clone()),

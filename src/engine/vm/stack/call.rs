@@ -311,7 +311,7 @@ mod tests {
         let stale = slots
             .replace_operand(&parent, 0, JsValue::Undefined)
             .unwrap();
-        drop(stale);
+        let _ = stale;
         slots.clear_frame(&runtime, parent).unwrap();
     }
 }

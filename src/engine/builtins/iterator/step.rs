@@ -478,6 +478,7 @@ mod raw_completion_tests {
             panic!("yield lost");
         };
         assert_eq!(runtime.root_value(&value).unwrap(), marker);
+        runtime.release_jsvalue(value).unwrap();
         let Ok(ObjectIteratorStep::Throw(value)) = resume
             .raw_completion(
                 &runtime,
@@ -490,6 +491,8 @@ mod raw_completion_tests {
             panic!("throw lost");
         };
         assert_eq!(runtime.root_value(&value).unwrap(), marker);
+        runtime.release_jsvalue(value).unwrap();
+        runtime.release_jsvalue(marker_internal).unwrap();
     }
 
     #[test]
@@ -524,6 +527,7 @@ mod raw_completion_tests {
                 panic!("result lost");
             };
             assert_eq!(runtime.root_value(&value).unwrap(), marker);
+            runtime.release_jsvalue(value).unwrap();
             assert_eq!(
                 context.eval("trace").unwrap(),
                 Value::String(crate::engine::value::JsString::from_static("dv"))

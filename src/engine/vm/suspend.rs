@@ -263,9 +263,19 @@ impl Drop for EncodedActivationEntry {
 /// are detached. `host.active_frame_token` remains a sentinel until the
 /// short-lived bytecode active frame is pushed for the actual resume.
 pub(crate) struct RootedVmActivation {
-    entry: super::frame::FrameEntry,
+    entry: Option<super::frame::FrameEntry>,
     kind: VmSuspendKind,
     saved_pc: usize,
+}
+
+impl Drop for RootedVmActivation {
+    fn drop(&mut self) {
+        let Some(entry) = self.entry.take() else {
+            return;
+        };
+        let runtime = entry.cold.function.runtime().clone();
+        super::stack::release_frame_storage(&runtime, entry.storage);
+    }
 }
 
 pub(crate) enum VmActivationResume {
@@ -292,7 +302,11 @@ impl RootedVmActivation {
         // Authenticate the resume input before installing any active frame or
         // invoking an unwinder. The dormant owner remains with the language
         // state machine until thaw has produced this single-use rooted value.
-        if self.entry.cold.function.runtime().domain_id() != runtime.domain_id() {
+        let entry = self
+            .entry
+            .as_ref()
+            .expect("rooted activation entry is present before prepare");
+        if entry.cold.function.runtime().domain_id() != runtime.domain_id() {
             return Err(RuntimeError::WrongRuntime("suspended execution"));
         }
         // Internal resume values are handle-only and carry no runtime tag, so
@@ -319,16 +333,17 @@ impl RootedVmActivation {
     }
 
     pub(super) fn prepare_owned(
-        self,
+        mut self,
         runtime: &Runtime,
         resume: VmActivationResume,
     ) -> Result<PreparedResume, RuntimeError> {
         self.validate_resume(runtime, &resume)?;
-        let Self {
-            mut entry,
-            kind,
-            saved_pc,
-        } = self;
+        let mut entry = self
+            .entry
+            .take()
+            .expect("rooted activation entry is prepared once");
+        let kind = self.kind;
+        let saved_pc = self.saved_pc;
         let root = entry
             .executable
             .root()
@@ -574,7 +589,7 @@ pub(crate) fn thaw(
     entry.cold.regions = data.vm.regions.clone();
     entry.cold.normalized_this = normalized_this;
     Ok(RootedVmActivation {
-        entry,
+        entry: Some(entry),
         kind,
         saved_pc: data.vm.pc,
     })
@@ -656,7 +671,7 @@ mod tests {
         // `RawValue`), so equality is checked through the debug rendering.
         assert_eq!(
             after.as_ref().map(|entry| format!("{entry:?}")),
-            Some(format!("{:?}", data))
+            Some(format!("{data:?}"))
         );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }

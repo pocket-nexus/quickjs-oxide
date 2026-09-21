@@ -265,7 +265,7 @@ fn async_from_sync_iterator_owns_source_cached_next_and_symbol_atom() {
     assert_eq!(heap.object_strong_count(next), Ok(2));
     assert!(matches!(
         heap.async_from_sync_iterator_state(wrapper),
-        Ok((source, RawValue::Object(next_id))) if next_id == next
+        Ok((_source, RawValue::Object(next_id))) if next_id == next
     ));
     heap.release_object(wrapper).unwrap();
     assert_eq!(heap.object_strong_count(source), Ok(1));
@@ -465,7 +465,7 @@ fn iterator_intrinsics_attach_transactionally_and_form_a_collectable_realm_cycle
             "Iterator Helper prototype is not an ordinary child of the realm's Iterator prototype",
         ))
     );
-    assert!(matches!(heap.context(realm).unwrap().iterator, None));
+    assert!(heap.context(realm).unwrap().iterator.is_none());
 
     heap.live_node_mut(RawId::Object(wrap_prototype))
         .unwrap()
@@ -477,7 +477,7 @@ fn iterator_intrinsics_attach_transactionally_and_form_a_collectable_realm_cycle
             operation: "retaining outgoing heap edges",
         })
     );
-    assert!(matches!(heap.context(realm).unwrap().iterator, None));
+    assert!(heap.context(realm).unwrap().iterator.is_none());
     assert_eq!(
         heap.object_strong_count(constructor),
         Ok(constructor_strong)
@@ -708,10 +708,14 @@ fn regexp_intrinsics_attach_transactionally_once_and_finalize_with_realm() {
             operation: "retaining outgoing heap edges",
         })
     );
-    assert!(matches!(
-        fixture.heap.context(fixture.realm).unwrap().regexp,
-        None
-    ));
+    assert!(
+        fixture
+            .heap
+            .context(fixture.realm)
+            .unwrap()
+            .regexp
+            .is_none()
+    );
     assert_eq!(
         fixture.heap.object_strong_count(fixture.prototype).unwrap(),
         prototype_strong
@@ -972,10 +976,14 @@ fn regexp_intrinsics_reject_mismatched_constructor_prototype_and_shape() {
             .attach_regexp_intrinsics(fixture.realm, realm_data, wrong_atom)
             .is_err()
     );
-    assert!(matches!(
-        fixture.heap.context(fixture.realm).unwrap().regexp,
-        None
-    ));
+    assert!(
+        fixture
+            .heap
+            .context(fixture.realm)
+            .unwrap()
+            .regexp
+            .is_none()
+    );
     fixture.dispose();
 }
 

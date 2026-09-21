@@ -107,7 +107,7 @@ pub(super) enum RunExit {
         source: u8,
         excluded: Option<u8>,
     },
-    #[cfg(test)]
+    #[cfg(all(test, feature = "profiling"))]
     ReleaseOperand {
         keep_top: bool,
     },
@@ -172,7 +172,7 @@ impl RunExit {
             Self::Numeric(..) => "run_exit.Numeric",
             Self::ForIn(..) => "run_exit.ForIn",
             Self::CopyData { .. } => "run_exit.CopyData",
-            #[cfg(test)]
+            #[cfg(all(test, feature = "profiling"))]
             Self::ReleaseOperand { .. } => "run_exit.ReleaseOperand",
             Self::Complete => "run_exit.Complete",
             Self::Suspend(..) => "run_exit.Suspend",

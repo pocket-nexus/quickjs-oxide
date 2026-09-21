@@ -109,7 +109,7 @@ fn property_key_primitive(runtime: &Runtime, value: JsValue) -> Result<JsValue, 
                 Ok(text) => text,
                 Err(error) => {
                     let _ = runtime.release_jsvalue(primitive);
-                    return Err(error.into());
+                    return Err(error);
                 }
             };
             runtime

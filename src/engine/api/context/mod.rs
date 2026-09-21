@@ -9,7 +9,7 @@ use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 
 use crate::engine::api::compile::Compilation;
-#[cfg(any(test, feature = "test262-host"))]
+#[cfg(feature = "test262-host")]
 use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::builtins::native::PrimitiveKind;
 use crate::engine::code::rooted::FunctionBytecodeRef;

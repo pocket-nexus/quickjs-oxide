@@ -138,9 +138,12 @@ impl ImportResume {
                 Completion::Return(_) => Ok(ImportStep::Complete(Completion::Return(
                     runtime.into_jsvalue(Value::Object(self.capability.promise))?,
                 ))),
-                Completion::Throw(_) => Err(RuntimeError::Invariant(
-                    "intrinsic dynamic import reject function threw",
-                )),
+                Completion::Throw(value) => {
+                    runtime.release_jsvalue(value)?;
+                    Err(RuntimeError::Invariant(
+                        "intrinsic dynamic import reject function threw",
+                    ))
+                }
             };
         }
         let value = match completion {

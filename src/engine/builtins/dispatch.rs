@@ -344,6 +344,7 @@ impl Runtime {
             readable_arg_count,
         } = frame.kind
         else {
+            invocation.release(self)?;
             return Err(RuntimeError::Invariant(
                 "native handler was not the top active frame",
             ));
@@ -353,6 +354,7 @@ impl Runtime {
             || actual_arg_count != arguments.actual_arg_count
             || readable_arg_count != arguments.readable.len()
         {
+            invocation.release(self)?;
             return Err(RuntimeError::Invariant(
                 "active native frame disagrees with handler arguments",
             ));
@@ -436,7 +438,11 @@ impl Runtime {
                     this_value: native_invocation_input(invocation),
                 }
             }
-            (_, NativeInvocation::Getter { .. } | NativeInvocation::Setter { .. }) => {
+            (
+                _,
+                invocation @ (NativeInvocation::Getter { .. } | NativeInvocation::Setter { .. }),
+            ) => {
+                invocation.release(self)?;
                 return Err(RuntimeError::Invariant(
                     "native invocation was adapted more than once",
                 ));

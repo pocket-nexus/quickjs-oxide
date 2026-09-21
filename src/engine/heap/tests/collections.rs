@@ -324,7 +324,7 @@ fn map_intrinsics_attach_transactionally_and_root_the_realm_graph() {
             operation: "retaining outgoing heap edges",
         })
     );
-    assert!(matches!(heap.context(realm).unwrap().map, None));
+    assert!(heap.context(realm).unwrap().map.is_none());
     assert_eq!(heap.object_strong_count(prototype), Ok(prototype_strong));
     assert_eq!(
         heap.object_strong_count(constructor),
@@ -696,7 +696,7 @@ fn set_intrinsics_attach_transactionally_and_root_the_realm_graph() {
             operation: "retaining outgoing heap edges",
         })
     );
-    assert!(matches!(heap.context(realm).unwrap().set, None));
+    assert!(heap.context(realm).unwrap().set.is_none());
     assert_eq!(heap.object_strong_count(prototype), Ok(prototype_strong));
     assert_eq!(
         heap.object_strong_count(constructor),

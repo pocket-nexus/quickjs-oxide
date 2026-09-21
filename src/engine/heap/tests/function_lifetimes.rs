@@ -550,7 +550,7 @@ fn async_function_intrinsic_root_is_a_function_prototype_child() {
             "AsyncFunction prototype does not inherit from Function.prototype"
         ))
     );
-    assert!(matches!(heap.context(realm).unwrap().async_function, None));
+    assert!(heap.context(realm).unwrap().async_function.is_none());
 
     let roots = AsyncFunctionRealmData {
         function_prototype: async_function_prototype,

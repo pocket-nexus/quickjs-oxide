@@ -20,31 +20,38 @@ impl Runtime {
         kind: RegExpNativeKind,
         invocation: NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
-        let NativeInvocation::Getter { this_value } = invocation else {
+        let NativeInvocation::Getter { .. } = invocation else {
             return Err(RuntimeError::Invariant(
                 "RegExp accessor did not receive a getter invocation",
             ));
         };
-        let this_value = self.root_value(&this_value)?;
-        match kind {
-            RegExpNativeKind::Source => self.call_regexp_source(realm, &this_value),
-            RegExpNativeKind::Flags => self.call_regexp_flags(realm, &this_value),
-            RegExpNativeKind::Flag(flag) => self.call_regexp_flag(realm, &this_value, flag),
-            RegExpNativeKind::Constructor
-            | RegExpNativeKind::Escape
-            | RegExpNativeKind::Species
-            | RegExpNativeKind::Exec
-            | RegExpNativeKind::Compile
-            | RegExpNativeKind::Test
-            | RegExpNativeKind::ToString
-            | RegExpNativeKind::Replace
-            | RegExpNativeKind::Match
-            | RegExpNativeKind::MatchAll
-            | RegExpNativeKind::Search
-            | RegExpNativeKind::Split => Err(RuntimeError::Invariant(
-                "non-accessor RegExp selector reached accessor dispatch",
-            )),
-        }
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            let NativeInvocation::Getter { this_value } = invocation else {
+                return Err(RuntimeError::Invariant(
+                    "RegExp accessor lost its getter invocation",
+                ));
+            };
+            let this_value = self.root_value(this_value)?;
+            match kind {
+                RegExpNativeKind::Source => self.call_regexp_source(realm, &this_value),
+                RegExpNativeKind::Flags => self.call_regexp_flags(realm, &this_value),
+                RegExpNativeKind::Flag(flag) => self.call_regexp_flag(realm, &this_value, flag),
+                RegExpNativeKind::Constructor
+                | RegExpNativeKind::Escape
+                | RegExpNativeKind::Species
+                | RegExpNativeKind::Exec
+                | RegExpNativeKind::Compile
+                | RegExpNativeKind::Test
+                | RegExpNativeKind::ToString
+                | RegExpNativeKind::Replace
+                | RegExpNativeKind::Match
+                | RegExpNativeKind::MatchAll
+                | RegExpNativeKind::Search
+                | RegExpNativeKind::Split => Err(RuntimeError::Invariant(
+                    "non-accessor RegExp selector reached accessor dispatch",
+                )),
+            }
+        })
     }
 
     pub(crate) fn call_regexp_to_string(
@@ -52,11 +59,13 @@ impl Runtime {
         realm: ContextId,
         invocation: NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
-        finish_presentation(
-            self,
-            realm,
-            RegExpPresentationStep::start(self, realm, RegExpNativeKind::ToString, &invocation)?,
-        )
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            finish_presentation(
+                self,
+                realm,
+                RegExpPresentationStep::start(self, realm, RegExpNativeKind::ToString, invocation)?,
+            )
+        })
     }
 
     fn call_regexp_source(

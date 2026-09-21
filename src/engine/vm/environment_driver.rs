@@ -228,7 +228,10 @@ pub(super) fn step(
                 };
                 let value = execution.slots.pop(&mut frame.window)?;
                 if matches!(source, WriteTarget::Reference) {
-                    execution.slots.pop(&mut frame.window)?;
+                    let base = execution.slots.pop(&mut frame.window)?;
+                    runtime
+                        .release_jsvalue(base)
+                        .map_err(runtime_error_to_vm_error)?;
                 }
                 let step = if check_presence {
                     EnvironmentStep::put(

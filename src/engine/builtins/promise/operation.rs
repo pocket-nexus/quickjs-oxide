@@ -412,7 +412,9 @@ impl PromiseResume {
                         return Ok(PromiseStep::Complete(Completion::Throw(value)));
                     }
                 };
-                match runtime.promise_callable(realm, &value)? {
+                let callable = runtime.promise_callable(realm, &value);
+                runtime.release_jsvalue(value)?;
+                match callable? {
                     NativeConversion::Throw(value) => Ok(PromiseStep::Complete(Completion::Throw(
                         runtime.into_jsvalue(value)?,
                     ))),
@@ -453,12 +455,14 @@ impl PromiseResume {
                     }
                     Completion::Return(value) => value,
                 };
-                let callable = if let JsValue::Object(id) = method {
-                    runtime.as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), id)?)?
-                } else {
-                    None
+                let callable = match &method {
+                    JsValue::Object(id) => ObjectRef::from_borrowed_handle(runtime.clone(), *id)
+                        .map_err(RuntimeError::from)
+                        .and_then(|object| runtime.as_callable(&object)),
+                    _ => Ok(None),
                 };
-                let Some(callable) = callable else {
+                runtime.release_jsvalue(method)?;
+                let Some(callable) = callable? else {
                     return capability::error(runtime, realm, "not a function");
                 };
                 Ok({
@@ -560,15 +564,16 @@ impl PromiseResume {
                         runtime.root_and_release_jsvalue(reason)?,
                     )?,
                     Completion::Return(then) => {
-                        let then = if let JsValue::Object(id) = then {
-                            runtime.as_callable(&ObjectRef::from_borrowed_handle(
-                                runtime.clone(),
-                                id,
-                            )?)?
-                        } else {
-                            None
+                        let callable = match &then {
+                            JsValue::Object(id) => {
+                                ObjectRef::from_borrowed_handle(runtime.clone(), *id)
+                                    .map_err(RuntimeError::from)
+                                    .and_then(|object| runtime.as_callable(&object))
+                            }
+                            _ => Ok(None),
                         };
-                        if let Some(then) = then {
+                        runtime.release_jsvalue(then)?;
+                        if let Some(then) = callable? {
                             runtime.enqueue_promise_resolve_thenable_job(
                                 realm,
                                 promise.object_id(),

@@ -7,10 +7,23 @@ use crate::engine::vm::frame::{FrameEntry, FrameId};
 use crate::engine::vm::{VmResume, VmSuspendKind};
 
 pub(in crate::engine::vm) struct OwnedSuspension {
-    entry: FrameEntry,
+    entry: Option<FrameEntry>,
     pub(in crate::engine::vm) return_to: Option<crate::engine::vm::frame::ReturnTarget>,
     pc: usize,
     kind: VmSuspendKind,
+}
+
+impl Drop for OwnedSuspension {
+    /// Release the storage of a suspended frame abandoned before freeze or
+    /// resume. `freeze` takes the entry first, so a completed suspension drops
+    /// an empty slot. Releases are defer-safe and never run JavaScript.
+    fn drop(&mut self) {
+        let Some(entry) = self.entry.take() else {
+            return;
+        };
+        let runtime = entry.cold.function.runtime().clone();
+        crate::engine::vm::stack::release_frame_storage(&runtime, entry.storage);
+    }
 }
 
 impl OwnedSuspension {
@@ -50,7 +63,7 @@ impl OwnedSuspension {
         let return_to = frame.cold.return_to.take();
         Ok(Self {
             return_to,
-            entry: FrameEntry {
+            entry: Some(FrameEntry {
                 initialize_bindings: false,
                 property_generation: frame.property_generation,
                 iterator_generation: frame.iterator_generation,
@@ -59,7 +72,7 @@ impl OwnedSuspension {
                 executable: frame.executable.take(),
                 cold: frame.cold,
                 storage,
-            },
+            }),
             pc: frame.resume_pc,
             kind,
         })
@@ -72,13 +85,15 @@ impl OwnedSuspension {
         #[cfg(feature = "profiling")]
         let _profile_phase =
             crate::engine::api::profiling::PhaseTimer::start_vm("freeze.owned_export");
-        let Self {
-            entry,
-            pc,
-            kind,
-            return_to: _,
-        } = *self;
-        let mut entry = entry;
+        let mut this = *self;
+        let entry = this.entry.take();
+        let pc = this.pc;
+        let kind = this.kind;
+        let Some(mut entry) = entry else {
+            return Err(RuntimeError::Invariant(
+                "owned suspension lost its frame entry",
+            ));
+        };
         let value = if kind == VmSuspendKind::Initial {
             JsValue::Undefined
         } else {

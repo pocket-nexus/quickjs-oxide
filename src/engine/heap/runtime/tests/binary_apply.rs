@@ -1012,17 +1012,19 @@ fn construct_only_proxy_and_new_target_do_not_require_call_capability() {
     assert!(runtime.is_constructor(&proxy).unwrap());
     assert!(runtime.as_callable(&proxy).unwrap().is_none());
 
-    assert!(matches!(
-        runtime
-            .construct_value_with_raw_new_target_internal(
-                context.realm,
-                Value::Object(proxy.clone()),
-                Value::Int(17),
-                &[Value::Int(42)],
-            )
-            .unwrap(),
-        Completion::Return(JsValue::Object(_))
-    ));
+    let result = runtime
+        .construct_value_with_raw_new_target_internal(
+            context.realm,
+            Value::Object(proxy.clone()),
+            Value::Int(17),
+            &[Value::Int(42)],
+        )
+        .unwrap();
+    let Completion::Return(value) = result else {
+        panic!("construct-only Proxy did not complete");
+    };
+    assert!(matches!(value, JsValue::Object(_)));
+    runtime.release_jsvalue(value).unwrap();
     assert_eq!(
         expect_string_value(context.eval("__qjo_construct_only_log").unwrap()),
         JsString::from_static("true:42:17")

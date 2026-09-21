@@ -104,6 +104,32 @@ pub(super) struct PendingIteratorState {
     abrupt: Option<JsValue>,
     argument: JsValue,
     sync_fallback: bool,
+    runtime: Option<Runtime>,
+}
+impl Drop for PendingIteratorState {
+    /// Release edges still owned when a suspended iterator operation is
+    /// abandoned. Drained fields are `Undefined`/`None` here, so the releases
+    /// are idempotent with `release_pending_edges`.
+    fn drop(&mut self) {
+        let Some(runtime) = self.runtime.as_ref() else {
+            return;
+        };
+        if let Some(values) = self.fast.take() {
+            for value in values {
+                let _ = runtime.release_jsvalue(value);
+            }
+        }
+        for value in [
+            std::mem::replace(&mut self.iterable, JsValue::Undefined),
+            std::mem::replace(&mut self.iterator, JsValue::Undefined),
+            std::mem::replace(&mut self.next, JsValue::Undefined),
+            std::mem::replace(&mut self.yielded, JsValue::Undefined),
+            std::mem::replace(&mut self.argument, JsValue::Undefined),
+            self.abrupt.take().unwrap_or(JsValue::Undefined),
+        ] {
+            let _ = runtime.release_jsvalue(value);
+        }
+    }
 }
 
 /// A query driver consumes these actions in its existing dispatch loop.
@@ -157,7 +183,7 @@ pub(super) fn start(
     let iterable = runtime
         .dup_jsvalue(execution.slots.peek(&frame.window, 0)?)
         .map_err(runtime_error_to_vm_error)?;
-    let mut pending = PendingIteratorState::new(frame, id, Mode::Append)?;
+    let mut pending = PendingIteratorState::new(runtime, frame, id, Mode::Append)?;
     pending.array = Some(array);
     pending.position = position;
     pending.iterable = iterable;
@@ -178,6 +204,7 @@ pub(super) fn operation(
         }
         Operation::Start => {
             let mut pending = PendingIteratorState::new(
+                runtime,
                 frame,
                 id,
                 Mode::Start {
@@ -266,7 +293,8 @@ pub(super) fn operation(
                     iterator,
                 );
             }
-            let mut pending = PendingIteratorState::new(frame, id, Mode::Next { record_base })?;
+            let mut pending =
+                PendingIteratorState::new(runtime, frame, id, Mode::Next { record_base })?;
             pending.iterator = runtime
                 .dup_jsvalue(execution.slots.peek(&frame.window, offset + 1)?)
                 .map_err(runtime_error_to_vm_error)?;
@@ -275,8 +303,6 @@ pub(super) fn operation(
                 .map_err(runtime_error_to_vm_error)?;
             pending.stage = if enabled { Stage::Next } else { Stage::Finish };
             pending.done = !enabled;
-            #[cfg(debug_assertions)]
-            trace_pending("built-next", &pending);
             pending
         }
         _ => {
@@ -290,6 +316,7 @@ pub(super) fn operation(
                 ));
             }
             let mut pending = PendingIteratorState::new(
+                runtime,
                 frame,
                 id,
                 Mode::Close {
@@ -333,6 +360,7 @@ fn close_unwind(
 ) -> Result<CallStep, Error> {
     let frame = execution.frames.current_mut(id)?;
     let mut pending = PendingIteratorState::new(
+        runtime,
         frame,
         id,
         Mode::Close {
@@ -355,6 +383,7 @@ pub(super) fn finish(
     execution: &mut RunningExecution,
     mut pending: PendingIterator,
 ) -> Result<CallStep, Error> {
+    pending.attach_runtime(runtime);
     finish_local(runtime, execution, &mut pending.0)
 }
 
@@ -363,8 +392,6 @@ fn finish_local(
     execution: &mut RunningExecution,
     pending: &mut PendingIteratorState,
 ) -> Result<CallStep, Error> {
-    #[cfg(debug_assertions)]
-    trace_pending("finish-local", pending);
     let frame = execution.frames.current_mut(pending.frame)?;
     #[cfg(feature = "profiling")]
     let depth = match pending.mode {
@@ -505,30 +532,7 @@ fn finish_local(
 
 /// Release a suspended wait abandoned by an abruptly exiting frame.
 pub(super) fn release_wait(runtime: &Runtime, pending: &mut PendingIterator) -> Result<(), Error> {
-    #[cfg(debug_assertions)]
-    trace_pending("release-wait", pending);
     release_pending_edges(runtime, pending)
-}
-
-#[cfg(debug_assertions)]
-pub(super) fn trace_pending(label: &str, pending: &PendingIteratorState) {
-    if std::env::var_os("QJS_TRACE_PENDING").is_none() {
-        return;
-    }
-    let id = |value: &JsValue| match value {
-        JsValue::Object(id) => format!("obj:{id:?}"),
-        JsValue::String(id) => format!("str:{id:?}"),
-        other => format!("{other:?}"),
-    };
-    eprintln!(
-        "[pending] {label} gen={} iterator={} next={} iterable={} yielded={} argument={}",
-        pending.generation,
-        id(&pending.iterator),
-        id(&pending.next),
-        id(&pending.iterable),
-        id(&pending.yielded),
-        id(&pending.argument),
-    );
 }
 
 /// Release owned edges the suspended state still holds after its mode-specific
@@ -611,7 +615,7 @@ pub(super) fn next_wait(
     record_base: usize,
 ) -> Result<PendingIterator, Error> {
     let frame = execution.frames.current_mut(id)?;
-    let mut pending = PendingIteratorState::new(frame, id, Mode::Next { record_base })?;
+    let mut pending = PendingIteratorState::new_resident(frame, id, Mode::Next { record_base })?;
     pending.stage = Stage::Next;
     // The live stack record and the native activation retain the receiver and
     // method. The suspended finish only consumes a raw value/done reply.
@@ -670,6 +674,7 @@ fn drive(
     mut pending: PendingIterator,
     response: Option<Completion>,
 ) -> Result<CallStep, Error> {
+    pending.attach_runtime(runtime);
     let action = pending.advance_query(runtime, response)?;
     dispatch_action(runtime, execution, pending, action)
 }
@@ -784,7 +789,37 @@ impl PendingIteratorState {
         self.realm
     }
 
-    fn new(frame: &mut super::frame::Frame, id: FrameId, mode: Mode) -> Result<Self, Error> {
+    pub(super) fn attach_runtime(&mut self, runtime: &Runtime) {
+        if self.runtime.is_none() {
+            self.runtime = Some(runtime.clone());
+        }
+    }
+
+    fn new(
+        runtime: &Runtime,
+        frame: &mut super::frame::Frame,
+        id: FrameId,
+        mode: Mode,
+    ) -> Result<Self, Error> {
+        Self::new_inner(Some(runtime), frame, id, mode)
+    }
+
+    /// Resident wait states created by `next_wait` own no edges until a native
+    /// reply reaches `drive` or `finish`, which attach the runtime for `Drop`.
+    fn new_resident(
+        frame: &mut super::frame::Frame,
+        id: FrameId,
+        mode: Mode,
+    ) -> Result<Self, Error> {
+        Self::new_inner(None, frame, id, mode)
+    }
+
+    fn new_inner(
+        runtime: Option<&Runtime>,
+        frame: &mut super::frame::Frame,
+        id: FrameId,
+        mode: Mode,
+    ) -> Result<Self, Error> {
         frame.iterator_generation = frame
             .iterator_generation
             .checked_add(1)
@@ -809,6 +844,7 @@ impl PendingIteratorState {
             abrupt: None,
             argument: JsValue::Undefined,
             sync_fallback: false,
+            runtime: runtime.cloned(),
         };
         Ok(pending)
     }
@@ -831,6 +867,9 @@ impl PendingIteratorState {
         let value = match response {
             Some(Completion::Throw(value)) => {
                 if self.abrupt.is_some() {
+                    runtime
+                        .release_jsvalue(value)
+                        .map_err(runtime_error_to_vm_error)?;
                     return Ok(Action::Finish);
                 }
                 self.abrupt = Some(value);
@@ -850,8 +889,16 @@ impl PendingIteratorState {
             None => return Err(Error::internal("iterator stage lost its reply")),
         };
         match self.stage {
-            Stage::Finish => Ok(Action::Finish),
+            Stage::Finish => {
+                runtime
+                    .release_jsvalue(value)
+                    .map_err(runtime_error_to_vm_error)?;
+                Ok(Action::Finish)
+            }
             Stage::Close => {
+                runtime
+                    .release_jsvalue(value)
+                    .map_err(runtime_error_to_vm_error)?;
                 self.stage = Stage::ReturnMethod;
                 Ok(Action::Read(
                     runtime
@@ -954,9 +1001,12 @@ impl PendingIteratorState {
                 let JsValue::Object(iterator) = self.iterator else {
                     return Err(Error::internal("async fallback lost its iterator"));
                 };
-                let wrapper = runtime
-                    .new_async_from_sync_iterator_jsvalue(self.realm, iterator, &value)
+                let wrapper =
+                    runtime.new_async_from_sync_iterator_jsvalue(self.realm, iterator, &value);
+                runtime
+                    .release_jsvalue(value)
                     .map_err(runtime_error_to_vm_error)?;
+                let wrapper = wrapper.map_err(runtime_error_to_vm_error)?;
                 runtime
                     .release_jsvalue(std::mem::replace(&mut self.iterator, JsValue::Undefined))
                     .map_err(runtime_error_to_vm_error)?;
@@ -1096,8 +1146,14 @@ impl PendingIteratorState {
             // With an exception pending, even a primitive return result is ignored.
             Stage::ReturnResult => {
                 if self.abrupt.is_none() && !matches!(value, JsValue::Object(_)) {
+                    runtime
+                        .release_jsvalue(value)
+                        .map_err(runtime_error_to_vm_error)?;
                     return Err(Error::new(ErrorKind::Type, "not an object"));
                 }
+                runtime
+                    .release_jsvalue(value)
+                    .map_err(runtime_error_to_vm_error)?;
                 Ok(Action::Finish)
             }
         }

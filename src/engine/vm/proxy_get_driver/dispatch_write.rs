@@ -279,10 +279,10 @@ pub(super) fn set(
                 let resume = resume.take().expect("selected Step field");
 
                 let rooted_value = runtime
-                    .root_value(&value)
+                    .root_and_release_jsvalue(value)
                     .map_err(runtime_error_to_vm_error)?;
                 let rooted_receiver = runtime
-                    .root_value(&receiver)
+                    .root_and_release_jsvalue(receiver)
                     .map_err(runtime_error_to_vm_error)?;
                 match runtime
                     .prepare_typed_array_set(&object, &key, &rooted_value, &rooted_receiver)
@@ -370,15 +370,21 @@ pub(super) fn set(
                     .frames
                     .can_push_with_continuations(query.continuation_depth())
                 {
-                    let Completion::Throw(value) = overflow(runtime, realm)? else {
+                    let Completion::Throw(error) = overflow(runtime, realm)? else {
                         unreachable!()
                     };
+                    runtime
+                        .release_jsvalue(value)
+                        .map_err(runtime_error_to_vm_error)?;
+                    runtime
+                        .release_jsvalue(receiver)
+                        .map_err(runtime_error_to_vm_error)?;
                     *step = resume
                         .set(
                             runtime,
                             crate::engine::object::operations::PropertySetAction::Throw(
                                 runtime
-                                    .root_and_release_jsvalue(value)
+                                    .root_and_release_jsvalue(error)
                                     .map_err(runtime_error_to_vm_error)?,
                             ),
                         )
@@ -428,15 +434,21 @@ pub(super) fn set(
                     .frames
                     .can_push_with_continuations(query.continuation_depth())
                 {
-                    let Completion::Throw(value) = overflow(runtime, realm)? else {
+                    let Completion::Throw(error) = overflow(runtime, realm)? else {
                         unreachable!()
                     };
+                    runtime
+                        .release_jsvalue(value)
+                        .map_err(runtime_error_to_vm_error)?;
+                    runtime
+                        .release_jsvalue(receiver)
+                        .map_err(runtime_error_to_vm_error)?;
                     *step = resume
                         .set(
                             runtime,
                             crate::engine::object::operations::PropertySetAction::Throw(
                                 runtime
-                                    .root_and_release_jsvalue(value)
+                                    .root_and_release_jsvalue(error)
                                     .map_err(runtime_error_to_vm_error)?,
                             ),
                         )
@@ -682,10 +694,10 @@ mod local_set_tests {
             .unwrap(),
             Next::Continue
         ));
-        assert!(matches!(
-            pending,
-            Step::Complete(Some(Completion::Throw(_)))
-        ));
+        let Step::Complete(Some(Completion::Throw(value))) = pending else {
+            panic!("expected an abrupt local set");
+        };
+        runtime.release_jsvalue(value).unwrap();
         assert!(query.parents.is_empty());
         assert!(runtime.get_own_property(&array, &key).unwrap().is_none());
         assert_eq!(

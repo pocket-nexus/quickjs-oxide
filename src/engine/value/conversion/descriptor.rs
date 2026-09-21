@@ -208,6 +208,100 @@ impl DescriptorResume {
     }
 }
 
+struct DescriptorStepPending {
+    runtime: Runtime,
+    has_object: Option<ObjectRef>,
+    has_key: Option<PropertyKey>,
+    read_object: Option<ObjectRef>,
+    read_key: Option<PropertyKey>,
+    read_receiver: Option<JsValue>,
+}
+impl DescriptorStepPending {
+    fn new(runtime: &Runtime) -> Self {
+        Self {
+            runtime: runtime.clone(),
+            has_object: None,
+            has_key: None,
+            read_object: None,
+            read_key: None,
+            read_receiver: None,
+        }
+    }
+}
+impl Drop for DescriptorStepPending {
+    /// Release the internal edges still held when the descriptor request is
+    /// abandoned before conversion. Consumption goes through `Option::take`;
+    /// releases are defer-safe and nothrow, and never run JavaScript.
+    fn drop(&mut self) {
+        if let Some(value) = self.read_receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
+}
+impl DescriptorStep {
+    pub(crate) fn request_has(
+        object: ObjectRef,
+        key: PropertyKey,
+        mut resume: DescriptorResume,
+    ) -> Self {
+        resume.0.pending_effect.has_object = Some(object);
+        resume.0.pending_effect.has_key = Some(key);
+        Self::Has { resume }
+    }
+    pub(crate) fn request_read(
+        object: ObjectRef,
+        key: PropertyKey,
+        receiver: JsValue,
+        mut resume: DescriptorResume,
+    ) -> Self {
+        resume.0.pending_effect.read_object = Some(object);
+        resume.0.pending_effect.read_key = Some(key);
+        resume.0.pending_effect.read_receiver = Some(receiver);
+        Self::Read { resume }
+    }
+}
+impl DescriptorResume {
+    pub(crate) fn take_has_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .has_object
+            .take()
+            .expect("DescriptorStep Has object")
+    }
+    pub(crate) fn take_has_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .has_key
+            .take()
+            .expect("DescriptorStep Has key")
+    }
+    pub(crate) fn take_read_object(&mut self) -> ObjectRef {
+        self.0
+            .pending_effect
+            .read_object
+            .take()
+            .expect("DescriptorStep Read object")
+    }
+    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
+        self.0
+            .pending_effect
+            .read_key
+            .take()
+            .expect("DescriptorStep Read key")
+    }
+    pub(crate) fn take_read_receiver(&mut self) -> JsValue {
+        self.0
+            .pending_effect
+            .read_receiver
+            .take()
+            .expect("DescriptorStep Read receiver")
+    }
+}
+const _: () = assert!(std::mem::size_of::<DescriptorStep>() <= 64);
+
+// S11 all-domain protocol bound; inline completion stays allocation-free.
+const _: () = assert!(std::mem::size_of::<DescriptorStep>() <= 64);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -324,97 +418,3 @@ mod tests {
         assert!(runtime.0.state.borrow().heap.object(id).is_err());
     }
 }
-
-struct DescriptorStepPending {
-    runtime: Runtime,
-    has_object: Option<ObjectRef>,
-    has_key: Option<PropertyKey>,
-    read_object: Option<ObjectRef>,
-    read_key: Option<PropertyKey>,
-    read_receiver: Option<JsValue>,
-}
-impl DescriptorStepPending {
-    fn new(runtime: &Runtime) -> Self {
-        Self {
-            runtime: runtime.clone(),
-            has_object: None,
-            has_key: None,
-            read_object: None,
-            read_key: None,
-            read_receiver: None,
-        }
-    }
-}
-impl Drop for DescriptorStepPending {
-    /// Release the internal edges still held when the descriptor request is
-    /// abandoned before conversion. Consumption goes through `Option::take`;
-    /// releases are defer-safe and nothrow, and never run JavaScript.
-    fn drop(&mut self) {
-        if let Some(value) = self.read_receiver.take() {
-            let _ = self.runtime.release_jsvalue(value);
-        }
-    }
-}
-impl DescriptorStep {
-    pub(crate) fn request_has(
-        object: ObjectRef,
-        key: PropertyKey,
-        mut resume: DescriptorResume,
-    ) -> Self {
-        resume.0.pending_effect.has_object = Some(object);
-        resume.0.pending_effect.has_key = Some(key);
-        Self::Has { resume }
-    }
-    pub(crate) fn request_read(
-        object: ObjectRef,
-        key: PropertyKey,
-        receiver: JsValue,
-        mut resume: DescriptorResume,
-    ) -> Self {
-        resume.0.pending_effect.read_object = Some(object);
-        resume.0.pending_effect.read_key = Some(key);
-        resume.0.pending_effect.read_receiver = Some(receiver);
-        Self::Read { resume }
-    }
-}
-impl DescriptorResume {
-    pub(crate) fn take_has_object(&mut self) -> ObjectRef {
-        self.0
-            .pending_effect
-            .has_object
-            .take()
-            .expect("DescriptorStep Has object")
-    }
-    pub(crate) fn take_has_key(&mut self) -> PropertyKey {
-        self.0
-            .pending_effect
-            .has_key
-            .take()
-            .expect("DescriptorStep Has key")
-    }
-    pub(crate) fn take_read_object(&mut self) -> ObjectRef {
-        self.0
-            .pending_effect
-            .read_object
-            .take()
-            .expect("DescriptorStep Read object")
-    }
-    pub(crate) fn take_read_key(&mut self) -> PropertyKey {
-        self.0
-            .pending_effect
-            .read_key
-            .take()
-            .expect("DescriptorStep Read key")
-    }
-    pub(crate) fn take_read_receiver(&mut self) -> JsValue {
-        self.0
-            .pending_effect
-            .read_receiver
-            .take()
-            .expect("DescriptorStep Read receiver")
-    }
-}
-const _: () = assert!(std::mem::size_of::<DescriptorStep>() <= 64);
-
-// S11 all-domain protocol bound; inline completion stays allocation-free.
-const _: () = assert!(std::mem::size_of::<DescriptorStep>() <= 64);

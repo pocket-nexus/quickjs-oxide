@@ -353,7 +353,7 @@ mod local_completion_tests {
         let PrimitiveConstructorStep::Complete(Completion::Return(value)) = result else {
             panic!("primitive constructor must complete");
         };
-        let value = runtime.root_value(&value).unwrap();
+        let value = runtime.root_and_release_jsvalue(value).unwrap();
         assert!(matches!(value, Value::String(value) if value == JsString::from_static("42")));
     }
 

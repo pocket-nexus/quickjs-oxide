@@ -292,12 +292,18 @@ impl CallbackResume {
         match &mut self.mode {
             Mode::DynamicSettled => {
                 return match completion {
-                    Completion::Return(_) => Ok(CallbackStep::Complete(Completion::Return(
-                        JsValue::Undefined,
-                    ))),
-                    Completion::Throw(_) => Err(RuntimeError::Invariant(
-                        "intrinsic dynamic import resolving function threw",
-                    )),
+                    Completion::Return(value) => {
+                        self.runtime.release_jsvalue(value)?;
+                        Ok(CallbackStep::Complete(Completion::Return(
+                            JsValue::Undefined,
+                        )))
+                    }
+                    Completion::Throw(value) => {
+                        self.runtime.release_jsvalue(value)?;
+                        Err(RuntimeError::Invariant(
+                            "intrinsic dynamic import resolving function threw",
+                        ))
+                    }
                 };
             }
             Mode::Reject {

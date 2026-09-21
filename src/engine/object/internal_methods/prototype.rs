@@ -380,103 +380,6 @@ pub(super) fn finish(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    fn take_read(step: ProxyPrototypeStep) -> ProxyPrototypeResume {
-        let ProxyPrototypeStep::Read { resume, .. } = step else {
-            panic!("expected read")
-        };
-        resume
-    }
-    fn take_call(step: ProxyPrototypeStep) -> ProxyPrototypeResume {
-        let ProxyPrototypeStep::Call { resume, .. } = step else {
-            panic!("expected call")
-        };
-        resume
-    }
-    fn take_extensible(step: ProxyPrototypeStep) -> ProxyPrototypeResume {
-        let ProxyPrototypeStep::Extensible { resume, .. } = step else {
-            panic!("expected extensibility")
-        };
-        resume
-    }
-    fn take_get(step: ProxyPrototypeStep) -> ProxyPrototypeResume {
-        let ProxyPrototypeStep::Get { resume, .. } = step else {
-            panic!("expected prototype")
-        };
-        resume
-    }
-    #[test]
-    fn prototypes_are_owned_across_requests_and_released_on_abandonment() {
-        for setting in [false, true] {
-            for compare in [false, true] {
-                let runtime = Runtime::new();
-                let weak = std::rc::Rc::downgrade(&runtime.0);
-                let mut context = runtime.new_context();
-                let Value::Object(proxy) = context.eval("new Proxy({}, {})").unwrap() else {
-                    panic!("expected Proxy")
-                };
-                let rooted = runtime.proxy_snapshot_if_any(&proxy).unwrap().unwrap();
-                let ids = [proxy.object_id(), rooted.target, rooted.handler];
-                let prototype = runtime.new_object(None).unwrap();
-                let prototype_id = prototype.object_id();
-                let callable = context.eval("(function(){return true})").unwrap();
-                let kind = if setting {
-                    ProxyPrototypeKind::Set(Some(prototype.clone()))
-                } else {
-                    ProxyPrototypeKind::Get
-                };
-                let resume = take_read(
-                    ProxyPrototypeStep::start(&runtime, context.realm, proxy, kind).unwrap(),
-                );
-                let resume = take_call(
-                    resume
-                        .resume(
-                            &runtime,
-                            Completion::Return(runtime.into_jsvalue(callable).unwrap()),
-                        )
-                        .unwrap(),
-                );
-                let reply = if setting {
-                    drop(prototype);
-                    Value::Bool(true)
-                } else {
-                    Value::Object(prototype)
-                };
-                let mut resume = take_extensible(
-                    resume
-                        .resume(
-                            &runtime,
-                            Completion::Return(runtime.into_jsvalue(reply).unwrap()),
-                        )
-                        .unwrap(),
-                );
-                if compare {
-                    resume = take_get(
-                        resume
-                            .boolean(&runtime, NativeConversion::Value(false))
-                            .unwrap(),
-                    );
-                }
-                runtime.run_gc().unwrap();
-                for id in ids.into_iter().chain([prototype_id]) {
-                    assert!(runtime.0.state.borrow().heap.object(id).is_ok());
-                }
-                drop(resume);
-                runtime.run_gc().unwrap();
-                for id in ids.into_iter().chain([prototype_id]) {
-                    assert!(runtime.0.state.borrow().heap.object(id).is_err());
-                }
-                assert_eq!(runtime.0.proxy_method_depth.get(), 0);
-                drop(context);
-                drop(runtime);
-                assert!(weak.upgrade().is_none());
-            }
-        }
-    }
-}
-
 struct ProxyPrototypeStepPending {
     runtime: Runtime,
     read_object: Option<ObjectRef>,
@@ -642,3 +545,100 @@ const _: () = assert!(std::mem::size_of::<ProxyPrototypeStep>() <= 64);
 
 // S11 all-domain protocol bound; inline completion stays allocation-free.
 const _: () = assert!(std::mem::size_of::<ProxyPrototypeStep>() <= 64);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn take_read(step: ProxyPrototypeStep) -> ProxyPrototypeResume {
+        let ProxyPrototypeStep::Read { resume, .. } = step else {
+            panic!("expected read")
+        };
+        resume
+    }
+    fn take_call(step: ProxyPrototypeStep) -> ProxyPrototypeResume {
+        let ProxyPrototypeStep::Call { resume, .. } = step else {
+            panic!("expected call")
+        };
+        resume
+    }
+    fn take_extensible(step: ProxyPrototypeStep) -> ProxyPrototypeResume {
+        let ProxyPrototypeStep::Extensible { resume, .. } = step else {
+            panic!("expected extensibility")
+        };
+        resume
+    }
+    fn take_get(step: ProxyPrototypeStep) -> ProxyPrototypeResume {
+        let ProxyPrototypeStep::Get { resume, .. } = step else {
+            panic!("expected prototype")
+        };
+        resume
+    }
+    #[test]
+    fn prototypes_are_owned_across_requests_and_released_on_abandonment() {
+        for setting in [false, true] {
+            for compare in [false, true] {
+                let runtime = Runtime::new();
+                let weak = std::rc::Rc::downgrade(&runtime.0);
+                let mut context = runtime.new_context();
+                let Value::Object(proxy) = context.eval("new Proxy({}, {})").unwrap() else {
+                    panic!("expected Proxy")
+                };
+                let rooted = runtime.proxy_snapshot_if_any(&proxy).unwrap().unwrap();
+                let ids = [proxy.object_id(), rooted.target, rooted.handler];
+                let prototype = runtime.new_object(None).unwrap();
+                let prototype_id = prototype.object_id();
+                let callable = context.eval("(function(){return true})").unwrap();
+                let kind = if setting {
+                    ProxyPrototypeKind::Set(Some(prototype.clone()))
+                } else {
+                    ProxyPrototypeKind::Get
+                };
+                let resume = take_read(
+                    ProxyPrototypeStep::start(&runtime, context.realm, proxy, kind).unwrap(),
+                );
+                let resume = take_call(
+                    resume
+                        .resume(
+                            &runtime,
+                            Completion::Return(runtime.into_jsvalue(callable).unwrap()),
+                        )
+                        .unwrap(),
+                );
+                let reply = if setting {
+                    drop(prototype);
+                    Value::Bool(true)
+                } else {
+                    Value::Object(prototype)
+                };
+                let mut resume = take_extensible(
+                    resume
+                        .resume(
+                            &runtime,
+                            Completion::Return(runtime.into_jsvalue(reply).unwrap()),
+                        )
+                        .unwrap(),
+                );
+                if compare {
+                    resume = take_get(
+                        resume
+                            .boolean(&runtime, NativeConversion::Value(false))
+                            .unwrap(),
+                    );
+                }
+                runtime.run_gc().unwrap();
+                for id in ids.into_iter().chain([prototype_id]) {
+                    assert!(runtime.0.state.borrow().heap.object(id).is_ok());
+                }
+                drop(resume);
+                runtime.run_gc().unwrap();
+                for id in ids.into_iter().chain([prototype_id]) {
+                    assert!(runtime.0.state.borrow().heap.object(id).is_err());
+                }
+                assert_eq!(runtime.0.proxy_method_depth.get(), 0);
+                drop(context);
+                drop(runtime);
+                assert!(weak.upgrade().is_none());
+            }
+        }
+    }
+}

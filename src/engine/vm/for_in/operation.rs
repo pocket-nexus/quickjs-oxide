@@ -589,55 +589,6 @@ fn enter_prototypes(
     }
 }
 
-#[cfg(test)]
-mod resident_tests {
-    use crate::engine::api::{Runtime, Value};
-
-    #[test]
-    fn dense_for_in_rechecks_descriptor_conversion_shrink_and_append() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        assert_eq!(
-            context
-                .eval(
-                    r#"(()=>{
-            let calls=0, names='';const a=[1,2,3];
-            for(const k in a){
-                names+=k;
-                if(k==='0'){
-                    Object.defineProperty(a,'1',{get(){calls++;throw 1;}});
-                    delete a[2];a.push(4);
-                }
-            }
-            if(names!=='01' || calls!==0)return false;
-            names='';const b=[1,2,3];
-            for(const k in b){names+=k;if(k==='0')b.length=1;}
-            return names==='0';
-        })()"#
-                )
-                .unwrap(),
-            Value::Bool(true)
-        );
-    }
-
-    #[test]
-    fn resident_for_in_keeps_snapshot_shadowing_and_live_own_checks() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        assert_eq!(context.eval(r#"(()=>{
-            let gets=0;const proto={p:1,hidden:2},a=[3,4,5];
-            Object.setPrototypeOf(a,proto);
-            Object.defineProperty(a,'hidden',{value:3,enumerable:false});
-            Object.defineProperty(a,'access',{get(){gets++;throw 1;},enumerable:true});
-            let names='';for(const k in a){names+=k+',';if(k==='0')delete a[1];}
-            if(names!=='0,2,access,p,' || gets!==0)return false;
-            let n=0;const proxy=new Proxy({a:1},{ownKeys(){return ['a'];},getOwnPropertyDescriptor(){n++;return {value:1,writable:true,enumerable:n===1,configurable:true};},getPrototypeOf(){return null;}});
-            names='';for(const k in proxy)names+=k;
-            return names==='a' && n===2;
-        })()"#).unwrap(), Value::Bool(true));
-    }
-}
-
 #[cfg(all(test, feature = "profiling"))]
 mod tests {
     use crate::engine::{
@@ -744,3 +695,52 @@ mod tests {
 
 // S11 all-domain protocol bound; inline completion stays allocation-free.
 const _: () = assert!(std::mem::size_of::<ForInStep>() <= 64);
+
+#[cfg(test)]
+mod resident_tests {
+    use crate::engine::api::{Runtime, Value};
+
+    #[test]
+    fn dense_for_in_rechecks_descriptor_conversion_shrink_and_append() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(
+            context
+                .eval(
+                    r#"(()=>{
+            let calls=0, names='';const a=[1,2,3];
+            for(const k in a){
+                names+=k;
+                if(k==='0'){
+                    Object.defineProperty(a,'1',{get(){calls++;throw 1;}});
+                    delete a[2];a.push(4);
+                }
+            }
+            if(names!=='01' || calls!==0)return false;
+            names='';const b=[1,2,3];
+            for(const k in b){names+=k;if(k==='0')b.length=1;}
+            return names==='0';
+        })()"#
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+    }
+
+    #[test]
+    fn resident_for_in_keeps_snapshot_shadowing_and_live_own_checks() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(context.eval(r#"(()=>{
+            let gets=0;const proto={p:1,hidden:2},a=[3,4,5];
+            Object.setPrototypeOf(a,proto);
+            Object.defineProperty(a,'hidden',{value:3,enumerable:false});
+            Object.defineProperty(a,'access',{get(){gets++;throw 1;},enumerable:true});
+            let names='';for(const k in a){names+=k+',';if(k==='0')delete a[1];}
+            if(names!=='0,2,access,p,' || gets!==0)return false;
+            let n=0;const proxy=new Proxy({a:1},{ownKeys(){return ['a'];},getOwnPropertyDescriptor(){n++;return {value:1,writable:true,enumerable:n===1,configurable:true};},getPrototypeOf(){return null;}});
+            names='';for(const k in proxy)names+=k;
+            return names==='a' && n===2;
+        })()"#).unwrap(), Value::Bool(true));
+    }
+}

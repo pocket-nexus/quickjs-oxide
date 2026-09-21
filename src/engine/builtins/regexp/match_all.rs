@@ -23,16 +23,15 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        super::match_all_protocol::finish(
-            self,
-            realm,
-            super::match_all_protocol::RegExpMatchAllStep::start(
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            super::match_all_protocol::finish(
                 self,
                 realm,
-                &invocation,
-                arguments,
-            )?,
-        )
+                super::match_all_protocol::RegExpMatchAllStep::start(
+                    self, realm, invocation, arguments,
+                )?,
+            )
+        })
     }
 
     pub(super) fn new_regexp_string_iterator(
@@ -79,15 +78,17 @@ impl Runtime {
         realm: ContextId,
         invocation: NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
-        match self.call_regexp_string_iterator_next_raw(realm, invocation)? {
-            NativeInvokeOutcome::Completion(completion) => Ok(completion),
-            NativeInvokeOutcome::IteratorNextRaw { value, done } => {
-                let value = self.root_and_release_jsvalue(value)?;
-                Ok(Completion::Return(self.into_jsvalue(Value::Object(
-                    self.new_iterator_result(realm, value, done)?,
-                ))?))
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            match self.call_regexp_string_iterator_next_raw(realm, invocation.dup(self)?)? {
+                NativeInvokeOutcome::Completion(completion) => Ok(completion),
+                NativeInvokeOutcome::IteratorNextRaw { value, done } => {
+                    let value = self.root_and_release_jsvalue(value)?;
+                    Ok(Completion::Return(self.into_jsvalue(Value::Object(
+                        self.new_iterator_result(realm, value, done)?,
+                    ))?))
+                }
             }
-        }
+        })
     }
 
     /// Execute QuickJS's `JS_CFUNC_iterator_next` ABI without allocating the
@@ -99,10 +100,12 @@ impl Runtime {
         realm: ContextId,
         invocation: NativeInvocation,
     ) -> Result<NativeInvokeOutcome, RuntimeError> {
-        super::iterator_next::finish(
-            self,
-            realm,
-            super::iterator_next::RegExpIteratorStep::start(self, realm, &invocation)?,
-        )
+        self.dispatch_borrowed_invocation(invocation, |invocation| {
+            super::iterator_next::finish(
+                self,
+                realm,
+                super::iterator_next::RegExpIteratorStep::start(self, realm, invocation)?,
+            )
+        })
     }
 }

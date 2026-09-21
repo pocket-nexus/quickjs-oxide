@@ -107,6 +107,52 @@ pub(in crate::engine::vm) fn release_frame_storage(runtime: &Runtime, storage: F
     }
 }
 
+/// Best-effort rollback release for a frame push which failed after taking
+/// ownership of its storage. Edges which no longer resolve in this heap were
+/// already released by whoever invalidated them; surfacing a double-release
+/// invariant during rollback would replace the original push error, so stale
+/// edges are skipped. Releases are defer-safe and nothrow.
+pub(in crate::engine::vm) fn release_frame_storage_tolerant(
+    runtime: &Runtime,
+    storage: FrameStorage,
+) {
+    fn is_live(runtime: &Runtime, value: &JsValue) -> bool {
+        let Ok(state) = runtime.0.state.try_borrow() else {
+            // A nested borrow already owns the release decision; the normal
+            // defer-safe release path handles these edges.
+            return true;
+        };
+        match value {
+            JsValue::Object(id) => state.heap.object_strong_count(*id).is_ok(),
+            JsValue::String(id) => state.heap.string(*id).is_ok(),
+            JsValue::BigInt(id) => state.heap.bigint(*id).is_ok(),
+            JsValue::Symbol(index) => state.atoms.brand(*index).is_ok(),
+            _ => true,
+        }
+    }
+    for value in storage
+        .original_arguments
+        .into_iter()
+        .chain(storage.operands)
+    {
+        if is_live(runtime, &value) {
+            let _ = runtime.release_jsvalue(value);
+        }
+    }
+    for binding in storage.parameters.into_iter().chain(storage.locals) {
+        match binding {
+            FrameBinding::Direct(value) => {
+                if is_live(runtime, &value) {
+                    let _ = runtime.release_jsvalue(value);
+                }
+            }
+            other => {
+                let _ = release_binding(runtime, other);
+            }
+        }
+    }
+}
+
 /// Release only the object/symbol edges an abandoned frame storage still owns,
 /// plus every non-direct binding edge. Direct String/BigInt edges are the
 /// boundary-conversion producer edges the caller already released through the
@@ -290,7 +336,7 @@ impl SlotStore {
         Ok(())
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(all(test, feature = "profiling"))]
     pub(in crate::engine::vm) fn take_native_argument_buffer(
         &mut self,
         count: usize,
@@ -526,7 +572,7 @@ impl SlotStore {
                 || !storage.locals.is_empty()
                 || !storage.operands.is_empty())
         {
-            release_frame_storage(runtime, storage);
+            release_frame_storage_tolerant(runtime, storage);
             return Err(Error::internal(
                 "fresh frame already contains initialized bindings",
             ));
@@ -534,20 +580,20 @@ impl SlotStore {
         if initialize
             .is_some_and(|(_, name)| name.is_some_and(|index| usize::from(index) >= local_count))
         {
-            release_frame_storage(runtime, storage);
+            release_frame_storage_tolerant(runtime, storage);
             return Err(Error::internal("function-name local is outside the frame"));
         }
         if (!fresh
             && (storage.parameters.len() != parameter_count || storage.locals.len() != local_count))
             || storage.operands.len() > layout.operand_capacity()
         {
-            release_frame_storage(runtime, storage);
+            release_frame_storage_tolerant(runtime, storage);
             return Err(Error::internal(
                 "owned frame storage disagrees with its published layout",
             ));
         }
         let Some(next_window) = self.next_window.checked_add(1) else {
-            release_frame_storage(runtime, storage);
+            release_frame_storage_tolerant(runtime, storage);
             return Err(Error::internal("frame window identity exhausted"));
         };
         let base = self.active_end;
@@ -558,7 +604,7 @@ impl SlotStore {
             .and_then(|n| n.checked_add(layout.operand_capacity()))
             .filter(|end| *end <= self.limit)
         else {
-            release_frame_storage(runtime, storage);
+            release_frame_storage_tolerant(runtime, storage);
             return Err(Error::internal("execution slot limit exceeded"));
         };
         #[cfg(feature = "profiling")]
@@ -568,7 +614,7 @@ impl SlotStore {
             .try_reserve(end.saturating_sub(self.slots.len()))
             .is_err()
         {
-            release_frame_storage(runtime, storage);
+            release_frame_storage_tolerant(runtime, storage);
             return Err(Error::internal("execution slot allocation failed"));
         }
         #[cfg(feature = "profiling")]
@@ -577,7 +623,7 @@ impl SlotStore {
             after: self.slots.capacity(),
         });
         if self.windows.try_reserve(1).is_err() {
-            release_frame_storage(runtime, storage);
+            release_frame_storage_tolerant(runtime, storage);
             return Err(Error::internal("execution window allocation failed"));
         }
         let original_end = original_end.unwrap();
@@ -606,7 +652,7 @@ impl SlotStore {
                 let value = if let Some(start) = source_start {
                     let Some(FrameBinding::Direct(value)) = &self.slots[start + index] else {
                         self.clear_unpublished(runtime, original_end..original_end + index)?;
-                        release_frame_storage(runtime, storage);
+                        release_frame_storage_tolerant(runtime, storage);
                         return Err(Error::internal("outgoing argument is not a direct owner"));
                     };
                     value
@@ -627,7 +673,7 @@ impl SlotStore {
                     }
                     Err(error) => {
                         self.clear_unpublished(runtime, original_end..original_end + index)?;
-                        release_frame_storage(runtime, storage);
+                        release_frame_storage_tolerant(runtime, storage);
                         return Err(error);
                     }
                 }
@@ -648,7 +694,7 @@ impl SlotStore {
                             runtime,
                             original_end..original_end + actual_count + parameter_count + index,
                         )?;
-                        release_frame_storage(runtime, storage);
+                        release_frame_storage_tolerant(runtime, storage);
                         return Err(runtime_error_to_vm_error(error));
                     }
                 };
@@ -1307,7 +1353,7 @@ impl SlotStore {
 
     /// Preflight and release one operand without moving any other owner. A
     /// false result leaves both the value and logical depth untouched.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "profiling"))]
     pub(in crate::engine::vm) fn release_operand(
         &mut self,
         window: &FrameWindow,
@@ -1654,22 +1700,8 @@ impl SlotStore {
         // Vec::truncate previously lowered logical length before dropping the
         // suffix. Preserve that authority boundary and ascending owner order.
         self.active_end = window.whole().start;
-        #[cfg(debug_assertions)]
-        let trace_clear = std::env::var_os("QJS_TRACE_CLEAR").is_some();
         for index in window.whole().start..window.operands().start + window.depth {
             if let Some(binding) = self.slots[index].take() {
-                #[cfg(debug_assertions)]
-                if trace_clear {
-                    eprintln!(
-                        "[clear] slot {index} {:?}",
-                        match &binding {
-                            FrameBinding::Direct(JsValue::Object(object)) =>
-                                format!("object {object:?}"),
-                            FrameBinding::Direct(value) => format!("direct {value:?}"),
-                            _ => "other".to_string(),
-                        }
-                    );
-                }
                 release_binding(runtime, binding)?;
             }
         }
@@ -2758,6 +2790,7 @@ mod tests {
                 .iter()
                 .all(Option::is_none)
         );
+        super::release_frame_storage(&runtime, storage);
         slots.clear_frame(&runtime, parent).unwrap();
     }
 
@@ -2821,6 +2854,7 @@ mod tests {
             storage.parameters[0],
             FrameBinding::Direct(JsValue::Int(9))
         ));
+        super::release_frame_storage(&runtime, storage);
     }
 
     #[test]
