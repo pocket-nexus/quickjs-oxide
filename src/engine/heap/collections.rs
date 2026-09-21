@@ -307,13 +307,22 @@ impl Heap {
         id: ObjectId,
         key: &RawValue,
     ) -> Result<Option<usize>, HeapError> {
+        Ok(self.map_find_entry(id, key)?.map(|(index, _)| index))
+    }
+
+    /// Reuse the record already visited by SameValueZero lookup.
+    pub(crate) fn map_find_entry(
+        &self,
+        id: ObjectId,
+        key: &RawValue,
+    ) -> Result<Option<(usize, &MapRecord)>, HeapError> {
         if !is_map_storable_value(key) {
             return Err(HeapError::Invariant(
                 "Map lookup contains an internal value sentinel",
             ));
         }
         match &self.object(id)?.payload {
-            ObjectPayload::Map { records } => Ok(records.find(self, key)),
+            ObjectPayload::Map { records } => Ok(records.find_entry(self, key)),
             _ => Err(HeapError::Invariant(
                 "Map lookup reached an object with the wrong class",
             )),

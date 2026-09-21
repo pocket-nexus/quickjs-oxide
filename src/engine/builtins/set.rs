@@ -458,14 +458,14 @@ impl Runtime {
         set: crate::engine::heap::ObjectId,
         key: &JsValue,
     ) -> Result<bool, RuntimeError> {
-        if self.find_set_record_id(set, key)?.is_some() {
-            return Ok(false);
-        }
         let raw_key = match key {
             JsValue::Float(0.0) => crate::engine::heap::RawValue::Int(0),
             _ => key.as_raw(),
         };
         let mut state = self.0.state.borrow_mut();
+        if state.heap.set_find_record(set, &raw_key)?.is_some() {
+            return Ok(false);
+        }
         let retained = state.retain_raw_value_atoms([&raw_key])?;
         let cleanup = match state.heap.set_insert_record(set, raw_key) {
             Ok(cleanup) => cleanup,
@@ -489,10 +489,14 @@ impl Runtime {
         set: crate::engine::heap::ObjectId,
         key: &JsValue,
     ) -> Result<bool, RuntimeError> {
-        let Some(index) = self.find_set_record_id(set, key)? else {
-            return Ok(false);
+        let raw_key = match key {
+            JsValue::Float(0.0) => crate::engine::heap::RawValue::Int(0),
+            _ => key.as_raw(),
         };
         let mut state = self.0.state.borrow_mut();
+        let Some(index) = state.heap.set_find_record(set, &raw_key)? else {
+            return Ok(false);
+        };
         let cleanup = state.heap.set_delete_record(set, index)?;
         state.apply_cleanup(cleanup)?;
         Ok(true)

@@ -345,7 +345,8 @@ impl RuntimeState {
                 | RawValue::Null
                 | RawValue::Bool(_)
                 | RawValue::Int(_)
-                | RawValue::Float(_) => {}
+                | RawValue::Float(_)
+                | RawValue::ShortBigInt(_) => {}
                 RawValue::Uninitialized | RawValue::Exception => {
                     return Err(RuntimeError::Invariant(
                         "internal value sentinel occupied a pending job root",

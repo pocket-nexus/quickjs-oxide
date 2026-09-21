@@ -193,6 +193,7 @@ impl Runtime {
                 state.heap.retain_string_shared(*id).ok()?;
                 Some(JsValue::String(*id))
             }
+            RawValue::ShortBigInt(value) => Some(JsValue::ShortBigInt(*value)),
             RawValue::BigInt(id) => {
                 state.heap.retain_bigint_shared(*id).ok()?;
                 Some(JsValue::BigInt(*id))

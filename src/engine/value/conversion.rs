@@ -81,6 +81,11 @@ impl Runtime {
                     atom,
                 )?));
             }
+            if let JsValue::String(id) = &value {
+                return Ok(NativeConversion::Value(
+                    self.intern_property_key_string_id(*id)?,
+                ));
+            }
             let string = match crate::engine::vm::to_js_string_jsvalue(self, &value) {
                 Ok(string) => string,
                 Err(error) => {
@@ -309,6 +314,9 @@ impl Runtime {
         value: &JsValue,
     ) -> Result<NativeConversion<crate::engine::value::bigint::JsBigInt>, RuntimeError> {
         match value {
+            JsValue::ShortBigInt(value) => Ok(NativeConversion::Value(
+                crate::engine::value::bigint::JsBigInt::from(*value),
+            )),
             JsValue::BigInt(id) => Ok(NativeConversion::Value(
                 self.0.state.borrow().heap.bigint(*id)?.clone(),
             )),
@@ -335,6 +343,9 @@ impl Runtime {
         realm: ContextId,
         value: &JsValue,
     ) -> Result<NativeConversion<f64>, RuntimeError> {
+        if let JsValue::ShortBigInt(value) = value {
+            return Ok(NativeConversion::Value(*value as f64));
+        }
         if let JsValue::BigInt(id) = value {
             return Ok(NativeConversion::Value(
                 self.0.state.borrow().heap.bigint(*id)?.to_f64(),
@@ -398,6 +409,9 @@ impl Runtime {
             )),
             JsValue::Bool(value) => Ok(NativeConversion::Value(
                 crate::engine::value::bigint::JsBigInt::from(i64::from(*value)),
+            )),
+            JsValue::ShortBigInt(value) => Ok(NativeConversion::Value(
+                crate::engine::value::bigint::JsBigInt::from(*value),
             )),
             JsValue::BigInt(id) => Ok(NativeConversion::Value(
                 self.0.state.borrow().heap.bigint(*id)?.clone(),
@@ -527,7 +541,9 @@ impl Runtime {
             value @ JsValue::Bool(_) => (PrimitiveKind::Boolean, value),
             value @ (JsValue::Int(_) | JsValue::Float(_)) => (PrimitiveKind::Number, value),
             value @ JsValue::String(_) => (PrimitiveKind::String, value),
-            value @ JsValue::BigInt(_) => (PrimitiveKind::BigInt, value),
+            value @ (JsValue::BigInt(_) | JsValue::ShortBigInt(_)) => {
+                (PrimitiveKind::BigInt, value)
+            }
             value @ JsValue::Symbol(_) => (PrimitiveKind::Symbol, value),
         };
         let prototype = match self.primitive_prototype_for_realm(realm, kind) {

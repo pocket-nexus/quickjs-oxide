@@ -229,6 +229,7 @@ impl Runtime {
                 state.heap.retain_string_shared(*id).ok()?;
                 Some(JsValue::String(*id))
             }
+            RawValue::ShortBigInt(value) => Some(JsValue::ShortBigInt(*value)),
             RawValue::BigInt(id) => {
                 state.heap.retain_bigint_shared(*id).ok()?;
                 Some(JsValue::BigInt(*id))
@@ -326,6 +327,7 @@ impl Runtime {
                 | RawValue::Bool(_)
                 | RawValue::Int(_)
                 | RawValue::Float(_)
+                | RawValue::ShortBigInt(_)
                 | RawValue::String(_)
                 | RawValue::Object(_)
                 | RawValue::Symbol(_)
@@ -450,6 +452,9 @@ impl Runtime {
             RawValue::Bool(value) => Value::Bool(value),
             RawValue::Int(value) => Value::Int(value),
             RawValue::Float(value) => Value::Float(value),
+            RawValue::ShortBigInt(value) => {
+                Value::BigInt(crate::engine::value::bigint::JsBigInt::from(value))
+            }
             RawValue::BigInt(id) => Value::BigInt(state.heap.bigint(id)?.clone()),
             RawValue::String(id) => Value::String(state.heap.string(id)?.clone()),
             RawValue::Symbol(index) => {
@@ -485,6 +490,9 @@ impl Runtime {
             RawValue::Bool(value) => Value::Bool(value),
             RawValue::Int(value) => Value::Int(value),
             RawValue::Float(value) => Value::Float(value),
+            RawValue::ShortBigInt(value) => {
+                Value::BigInt(crate::engine::value::bigint::JsBigInt::from(value))
+            }
             RawValue::BigInt(id) => Value::BigInt(state.heap.bigint(id)?.clone()),
             RawValue::String(id) => Value::String(state.heap.string(id)?.clone()),
             RawValue::Symbol(index) => {

@@ -212,7 +212,8 @@ impl RuntimeState {
             | RawValue::Null
             | RawValue::Bool(_)
             | RawValue::Int(_)
-            | RawValue::Float(_) => {}
+            | RawValue::Float(_)
+            | RawValue::ShortBigInt(_) => {}
             RawValue::Private(_) | RawValue::Uninitialized | RawValue::Exception => {
                 unreachable!("internal value occupied committed pending-exception storage")
             }
@@ -236,7 +237,8 @@ impl RuntimeState {
             | RawValue::Null
             | RawValue::Bool(_)
             | RawValue::Int(_)
-            | RawValue::Float(_) => {}
+            | RawValue::Float(_)
+            | RawValue::ShortBigInt(_) => {}
             RawValue::Uninitialized | RawValue::Exception => {
                 return Err(RuntimeError::Invariant(
                     "internal value sentinel cannot become a runtime root",
@@ -272,7 +274,8 @@ impl RuntimeState {
             | RawValue::Null
             | RawValue::Bool(_)
             | RawValue::Int(_)
-            | RawValue::Float(_) => {}
+            | RawValue::Float(_)
+            | RawValue::ShortBigInt(_) => {}
             RawValue::Uninitialized | RawValue::Exception => {
                 return Err(RuntimeError::Invariant(
                     "internal value sentinel occupied a runtime root",

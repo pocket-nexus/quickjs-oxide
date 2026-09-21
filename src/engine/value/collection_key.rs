@@ -39,6 +39,11 @@ pub(crate) fn same_value_zero(heap: &Heap, left: &RawValue, right: &RawValue) ->
         (RawValue::String(left), RawValue::String(right)) => {
             left == right || string_content(heap, *left) == string_content(heap, *right)
         }
+        (RawValue::ShortBigInt(left), RawValue::ShortBigInt(right)) => left == right,
+        (RawValue::ShortBigInt(value), RawValue::BigInt(id))
+        | (RawValue::BigInt(id), RawValue::ShortBigInt(value)) => {
+            bigint_content(heap, *id) == &crate::engine::value::bigint::JsBigInt::from(*value)
+        }
         (RawValue::BigInt(left), RawValue::BigInt(right)) => {
             left == right || bigint_content(heap, *left) == bigint_content(heap, *right)
         }
@@ -88,6 +93,10 @@ pub(crate) fn hash<H: Hasher>(heap: &Heap, key: &RawValue, state: &mut H) {
             // Hash actual content with the index's randomized hasher, not the
             // existing unseeded 32-bit content fingerprint.
             value.hash_code_units(state);
+        }
+        RawValue::ShortBigInt(value) => {
+            state.write_u8(5);
+            crate::engine::value::bigint::JsBigInt::from(*value).hash(state);
         }
         RawValue::BigInt(id) => {
             state.write_u8(5);

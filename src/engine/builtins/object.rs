@@ -444,7 +444,7 @@ impl Runtime {
                 // BigInt-wrapper case. Their standard tags come exclusively
                 // from inherited configurable @@toStringTag properties.
                 ObjectPayload::Primitive(
-                    PrimitiveObjectData::Symbol(_) | PrimitiveObjectData::BigInt(_),
+                    PrimitiveObjectData::Symbol(_) | PrimitiveObjectData::BigInt(_) | PrimitiveObjectData::ShortBigInt(_),
                 ) => JsString::from_static("Object"),
                 ObjectPayload::Array { .. } => JsString::from_static("Array"),
                 ObjectPayload::Arguments { .. } => JsString::from_static("Arguments"),
@@ -565,7 +565,7 @@ impl Runtime {
                         .into_handle(),
                 )))
             }
-            value @ JsValue::BigInt(_) => {
+            value @ (JsValue::BigInt(_) | JsValue::ShortBigInt(_)) => {
                 let prototype = self.primitive_prototype_for_realm(realm, PrimitiveKind::BigInt)?;
                 Ok(Completion::Return(JsValue::Object(
                     self.new_primitive_object_jsvalue(&prototype, PrimitiveKind::BigInt, value)?

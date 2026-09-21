@@ -767,6 +767,12 @@ fn same_representation(
                     .same_representation(state.heap.string(*right)?)
             }
         }
+        (JsValue::ShortBigInt(left), JsValue::ShortBigInt(right)) => left == right,
+        (JsValue::ShortBigInt(value), JsValue::BigInt(id))
+        | (JsValue::BigInt(id), JsValue::ShortBigInt(value)) => {
+            crate::engine::value::bigint::JsBigInt::from(*value)
+                .same_representation(runtime.0.state.borrow().heap.bigint(*id)?)
+        }
         (JsValue::BigInt(left), JsValue::BigInt(right)) => {
             if left == right {
                 true

@@ -27,6 +27,7 @@ impl Runtime {
             | JsValue::Int(_)
             | JsValue::Float(_)
             | JsValue::BigInt(_)
+            | JsValue::ShortBigInt(_)
             | JsValue::String(_)
             | JsValue::Symbol(_) => false,
         };

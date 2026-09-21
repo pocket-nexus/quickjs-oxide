@@ -139,7 +139,8 @@ impl Runtime {
             | JsValue::Null
             | JsValue::Bool(_)
             | JsValue::Int(_)
-            | JsValue::Float(_) => return Ok(SlotReleaseReadiness::Ready),
+            | JsValue::Float(_)
+            | JsValue::ShortBigInt(_) => return Ok(SlotReleaseReadiness::Ready),
             JsValue::Object(_) | JsValue::Symbol(_) | JsValue::String(_) | JsValue::BigInt(_) => {}
         }
         if self.0.deferred_references.has_pending() {

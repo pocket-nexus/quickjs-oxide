@@ -240,7 +240,8 @@ impl Error for HeapError {}
 ///
 /// `Clone` copies the raw payload and duplicates nothing: heap-backed kinds
 /// are generational handles (string/BigInt nodes, unbranded atom indices,
-/// object slots), so an owned clone enters the heap only through checked
+/// object slots); ShortBigInt is an edge-free i64 scalar. An owned heap clone
+/// enters the heap only through checked
 /// methods such as [`Heap::allocate_object`] and
 /// [`Heap::replace_object_slot`], which retain their edges transactionally.
 ///
@@ -257,6 +258,7 @@ pub enum RawValue {
     Int(i32),
     Float(f64),
     BigInt(BigIntId),
+    ShortBigInt(i64),
     String(StringId),
     Symbol(AtomIdx),
     /// Heap-internal class-private identity. This owns one private-atom
@@ -295,6 +297,7 @@ impl RawValue {
             | Self::Bool(_)
             | Self::Int(_)
             | Self::Float(_)
+            | Self::ShortBigInt(_)
             | Self::Symbol(_)
             | Self::Private(_)
             | Self::Object(_)

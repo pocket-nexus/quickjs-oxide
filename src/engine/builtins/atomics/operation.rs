@@ -230,7 +230,10 @@ impl AtomicsResume {
                 self.stored = if element.is_bigint() {
                     match runtime.bigint_from_primitive_jsvalue(self.0.realm, &self.converted)? {
                         NativeConversion::Value(value) => {
-                            if matches!(self.converted, JsValue::BigInt(_)) {
+                            if matches!(
+                                self.converted,
+                                JsValue::BigInt(_) | JsValue::ShortBigInt(_)
+                            ) {
                                 runtime.dup_jsvalue(&self.converted)?
                             } else {
                                 runtime.into_jsvalue(Value::BigInt(value))?

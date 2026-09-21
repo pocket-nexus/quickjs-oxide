@@ -142,11 +142,12 @@ impl Runtime {
             | JsValue::Int(_)
             | JsValue::Float(_)
             | JsValue::BigInt(_)
+            | JsValue::ShortBigInt(_)
             | JsValue::Symbol(_) => {
                 let kind = match &receiver {
                     JsValue::Bool(_) => PrimitiveKind::Boolean,
                     JsValue::Int(_) | JsValue::Float(_) => PrimitiveKind::Number,
-                    JsValue::BigInt(_) => PrimitiveKind::BigInt,
+                    JsValue::BigInt(_) | JsValue::ShortBigInt(_) => PrimitiveKind::BigInt,
                     JsValue::Symbol(_) => PrimitiveKind::Symbol,
                     _ => unreachable!(),
                 };

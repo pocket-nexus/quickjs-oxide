@@ -75,6 +75,7 @@ pub enum PrimitiveObjectData {
     /// Symbol. `object_atoms` returns it during wrapper finalization.
     Symbol(Atom),
     BigInt(BigIntId),
+    ShortBigInt(i64),
 }
 
 impl PrimitiveObjectData {
@@ -86,7 +87,7 @@ impl PrimitiveObjectData {
             Self::String(_) => PrimitiveKind::String,
             Self::Boolean(_) => PrimitiveKind::Boolean,
             Self::Symbol(_) => PrimitiveKind::Symbol,
-            Self::BigInt(_) => PrimitiveKind::BigInt,
+            Self::BigInt(_) | Self::ShortBigInt(_) => PrimitiveKind::BigInt,
         }
     }
 }

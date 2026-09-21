@@ -96,6 +96,7 @@ impl Runtime {
                 | JsValue::Float(_)
                 | JsValue::String(_)
                 | JsValue::BigInt(_)
+                | JsValue::ShortBigInt(_)
                 | JsValue::Symbol(_) => false,
             }
         } else {
@@ -305,6 +306,7 @@ pub(crate) fn bound_function_length(
         | JsValue::Null
         | JsValue::Bool(_)
         | JsValue::BigInt(_)
+        | JsValue::ShortBigInt(_)
         | JsValue::String(_)
         | JsValue::Symbol(_)
         | JsValue::Object(_) => JsValue::Int(0),

@@ -540,8 +540,13 @@ impl RunSlots<'_> {
 fn local_add_values(left: &JsValue, right: &JsValue) -> bool {
     !matches!(left, JsValue::Object(_))
         && !matches!(right, JsValue::Object(_))
-        && (matches!(left, JsValue::String(_) | JsValue::BigInt(_))
-            || matches!(right, JsValue::String(_) | JsValue::BigInt(_)))
+        && (matches!(
+            left,
+            JsValue::String(_) | JsValue::BigInt(_) | JsValue::ShortBigInt(_)
+        ) || matches!(
+            right,
+            JsValue::String(_) | JsValue::BigInt(_) | JsValue::ShortBigInt(_)
+        ))
 }
 
 #[cfg(test)]

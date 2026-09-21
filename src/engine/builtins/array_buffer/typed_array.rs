@@ -1375,6 +1375,7 @@ impl Runtime {
     ) -> Result<[u8; 8], RuntimeError> {
         if element.is_bigint() {
             let bigint = match value {
+                JsValue::ShortBigInt(value) => crate::engine::value::bigint::JsBigInt::from(*value),
                 JsValue::BigInt(id) => self.0.state.borrow().heap.bigint(*id)?.clone(),
                 JsValue::Bool(value) => {
                     crate::engine::value::bigint::JsBigInt::from(i64::from(*value))

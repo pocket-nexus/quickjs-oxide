@@ -160,6 +160,10 @@ impl QjsValuePrinter<'_, '_> {
             RawValue::Bool(true) => self.push_ascii("true"),
             RawValue::Int(value) => self.push_ascii(&value.to_string()),
             RawValue::Float(value) => self.print_float(*value),
+            RawValue::ShortBigInt(value) => {
+                self.push_ascii(&value.to_string());
+                self.output.push(b'n');
+            }
             RawValue::BigInt(value) => {
                 let text = {
                     let state = self.runtime.0.state.borrow();
@@ -381,7 +385,7 @@ impl QjsValuePrinter<'_, '_> {
                 PrimitiveObjectData::String(_) => "String",
                 PrimitiveObjectData::Boolean(_) => "Boolean",
                 PrimitiveObjectData::Symbol(_) => "Symbol",
-                PrimitiveObjectData::BigInt(_) => "BigInt",
+                PrimitiveObjectData::BigInt(_) | PrimitiveObjectData::ShortBigInt(_) => "BigInt",
             },
             ObjectPayload::Date(_) => "Date",
             ObjectPayload::RegExp(_) => "RegExp",
@@ -823,7 +827,9 @@ impl QjsValuePrinter<'_, '_> {
                     PrimitiveObjectData::String(_) => "String",
                     PrimitiveObjectData::Boolean(_) => "Boolean",
                     PrimitiveObjectData::Symbol(_) => "Symbol",
-                    PrimitiveObjectData::BigInt(_) => "BigInt",
+                    PrimitiveObjectData::BigInt(_) | PrimitiveObjectData::ShortBigInt(_) => {
+                        "BigInt"
+                    }
                 };
                 (class_name, PrintableBody::Ordinary)
             }

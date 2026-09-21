@@ -1556,6 +1556,7 @@ pub(super) fn object_edges(object: &ObjectData) -> Edges {
     match &object.payload {
         ObjectPayload::Primitive(PrimitiveObjectData::String(id)) => edges.push(RawId::String(*id)),
         ObjectPayload::Primitive(PrimitiveObjectData::BigInt(id)) => edges.push(RawId::BigInt(*id)),
+        ObjectPayload::Primitive(PrimitiveObjectData::ShortBigInt(_)) => {}
         ObjectPayload::Primitive(
             PrimitiveObjectData::Number(_)
             | PrimitiveObjectData::Boolean(_)
@@ -1905,6 +1906,7 @@ pub(super) fn raw_value_edges(value: &RawValue) -> Edges {
         | RawValue::Bool(_)
         | RawValue::Int(_)
         | RawValue::Float(_)
+        | RawValue::ShortBigInt(_)
         | RawValue::Symbol(_)
         | RawValue::Private(_)
         | RawValue::Uninitialized
@@ -2150,7 +2152,8 @@ pub(super) fn object_atoms(object: &ObjectData) -> impl Iterator<Item = AtomIdx>
             PrimitiveObjectData::Number(_)
             | PrimitiveObjectData::String(_)
             | PrimitiveObjectData::Boolean(_)
-            | PrimitiveObjectData::BigInt(_),
+            | PrimitiveObjectData::BigInt(_)
+            | PrimitiveObjectData::ShortBigInt(_),
         ) => Vec::new(),
         ObjectPayload::BoundFunction {
             this_value,
@@ -2293,6 +2296,7 @@ pub(super) fn raw_value_atom(value: &RawValue) -> Option<AtomIdx> {
         | RawValue::Bool(_)
         | RawValue::Int(_)
         | RawValue::Float(_)
+        | RawValue::ShortBigInt(_)
         | RawValue::BigInt(_)
         | RawValue::String(_)
         | RawValue::Object(_)

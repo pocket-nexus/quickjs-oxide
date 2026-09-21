@@ -3027,7 +3027,7 @@ mod tests {
 
     #[test]
     #[cfg(feature = "profiling")]
-    fn copy_cost_preserves_small_and_large_bigint_node_handles() {
+    fn copy_cost_preserves_short_bigint_immediates_and_large_node_handles() {
         let runtime = Runtime::new();
         let short = runtime
             .into_jsvalue(Value::BigInt("1".parse().unwrap()))
@@ -3043,7 +3043,8 @@ mod tests {
         let cost = profile.snapshot();
         assert_eq!(cost.owned_storage.value_copies, 2);
         assert_eq!(cost.owned_storage.copied_heap_roots, 0);
-        assert_eq!(cost.owned_execution_events["slot_copy.BigIntNode"], 2);
+        assert_eq!(cost.owned_execution_events["slot_copy.BigIntNode"], 1);
+        assert_eq!(cost.owned_execution_events["slot_copy.Immediate"], 1);
         for value in [short_copy, heap_copy, short, heap] {
             runtime.release_jsvalue(value).unwrap();
         }

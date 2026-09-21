@@ -1175,6 +1175,9 @@ impl ConstructNewTarget {
                 crate::engine::value::JsValue::String(id) => {
                     crate::engine::value::JsValue::String(*id)
                 }
+                crate::engine::value::JsValue::ShortBigInt(value) => {
+                    crate::engine::value::JsValue::ShortBigInt(*value)
+                }
                 crate::engine::value::JsValue::BigInt(id) => {
                     crate::engine::value::JsValue::BigInt(*id)
                 }

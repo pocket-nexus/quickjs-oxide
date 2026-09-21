@@ -1093,6 +1093,9 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                             .dup_jsvalue(&JsValue::String(*value))
                             .map_err(runtime_error_to_vm_error)?,
                     ),
+                    Some(BytecodeConstant::Value(RawValue::ShortBigInt(value))) => {
+                        Some(JsValue::ShortBigInt(*value))
+                    }
                     Some(BytecodeConstant::Value(RawValue::BigInt(value))) => Some(
                         runtime
                             .dup_jsvalue(&JsValue::BigInt(*value))
@@ -1914,7 +1917,12 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     // Number/String/bool coercions cannot construct a JS error.
                     if !frame.active_frame.is_materialized()
                         && (0..if kind.unary() { 1 } else { 2 }).any(|i| {
-                            matches!(slots.peek(i), Ok(JsValue::Symbol(_) | JsValue::BigInt(_)))
+                            matches!(
+                                slots.peek(i),
+                                Ok(JsValue::Symbol(_)
+                                    | JsValue::BigInt(_)
+                                    | JsValue::ShortBigInt(_))
+                            )
                         })
                     {
                         return Ok(RunExit::Materialize);

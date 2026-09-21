@@ -46,6 +46,17 @@ pub(in crate::engine::vm) fn bigint_payload(
         .clone())
 }
 
+pub(in crate::engine::vm) fn bigint_value_payload(
+    runtime: &Runtime,
+    value: &JsValue,
+) -> Result<JsBigInt, Error> {
+    match value {
+        JsValue::ShortBigInt(value) => Ok(JsBigInt::from(*value)),
+        JsValue::BigInt(id) => bigint_payload(runtime, *id),
+        _ => Err(Error::internal("BigInt payload requested for another type")),
+    }
+}
+
 /// Publish a freshly produced string payload as an owned internal value.
 /// Concatenation and primitive formatting are genuine string creation points.
 pub(in crate::engine::vm) fn allocate_string_jsvalue(
@@ -68,6 +79,9 @@ pub(in crate::engine::vm) fn allocate_bigint_jsvalue(
     runtime: &Runtime,
     bigint: JsBigInt,
 ) -> Result<JsValue, Error> {
+    if let Some(value) = bigint.as_i64() {
+        return Ok(JsValue::ShortBigInt(value));
+    }
     let id = runtime
         .0
         .state
@@ -105,7 +119,7 @@ pub(crate) fn to_number_jsvalue(runtime: &Runtime, value: &JsValue) -> Result<f6
         JsValue::String(id) => {
             crate::engine::value::string_to_number(&string_payload(runtime, *id)?)
         }
-        JsValue::BigInt(_) => {
+        JsValue::BigInt(_) | JsValue::ShortBigInt(_) => {
             return Err(Error::new(
                 ErrorKind::Type,
                 "cannot convert bigint to number",
@@ -137,6 +151,7 @@ pub(crate) fn to_js_string_jsvalue(runtime: &Runtime, value: &JsValue) -> Result
         JsValue::Float(value) => {
             JsString::from_owned_latin1(crate::engine::value::number_to_string(*value).into_bytes())
         }
+        JsValue::ShortBigInt(value) => JsString::from_owned_latin1(value.to_string().into_bytes()),
         JsValue::BigInt(id) => {
             let bigint = bigint_payload(runtime, *id)?;
             if bigint.exceeds_allocation_limit() {
@@ -167,6 +182,7 @@ pub(in crate::engine::vm) fn to_numeric_primitive(
 ) -> Result<NumericValue, Error> {
     match value {
         JsValue::BigInt(id) => Ok(NumericValue::BigInt(bigint_payload(runtime, *id)?)),
+        JsValue::ShortBigInt(value) => Ok(NumericValue::BigInt(JsBigInt::from(*value))),
         value => Ok(NumericValue::Number(to_number_jsvalue(runtime, value)?)),
     }
 }
@@ -177,7 +193,7 @@ pub(in crate::engine::vm) fn unary_plus_primitive(
     runtime: &Runtime,
     value: JsValue,
 ) -> Result<JsValue, Error> {
-    if matches!(value, JsValue::BigInt(_)) {
+    if value.is_bigint() {
         release_primitive_operand(runtime, value)?;
         return Err(Error::new(ErrorKind::Type, "bigint argument with unary +"));
     }
@@ -314,16 +330,16 @@ pub(in crate::engine::vm) fn add_primitives_ref(
         return allocate_string_jsvalue(runtime, left.try_concat(&right).map_err(Error::from)?);
     }
     match (left, right) {
-        (JsValue::BigInt(left), JsValue::BigInt(right)) => {
-            let left = bigint_payload(runtime, *left)?;
-            let right = bigint_payload(runtime, *right)?;
+        (left, right) if left.is_bigint() && right.is_bigint() => {
+            let left = bigint_value_payload(runtime, left)?;
+            let right = bigint_value_payload(runtime, right)?;
             allocate_bigint_jsvalue(runtime, left.add(&right).map_err(bigint_error)?)
         }
-        (JsValue::BigInt(_), right) => {
+        (left, right) if left.is_bigint() => {
             to_number_jsvalue(runtime, right)?;
             Err(mixed_numeric_type_error())
         }
-        (left, JsValue::BigInt(_)) => {
+        (left, right) if right.is_bigint() => {
             to_number_jsvalue(runtime, left)?;
             Err(mixed_numeric_type_error())
         }
