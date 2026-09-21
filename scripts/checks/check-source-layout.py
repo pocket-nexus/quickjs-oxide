@@ -144,6 +144,18 @@ while pending:
 all_sources = set(src.rglob("*.rs"))
 for path in sorted(all_sources - seen):
     errors.append(f"unreachable Rust source: {path.relative_to(root)}")
+
+# Boundary conversions own a producer edge through `ConvertedValue`; the
+# source must not hand-release it next to a `raw_property_value` call.
+raw_property_value = re.compile(r"\braw_property_value\b")
+manual_conversion_release = re.compile(r"\brelease_converted_(?:value|node)_edge\b")
+for source_file in sorted(all_sources):
+    code = rust_code_only(source_file.read_text())
+    if raw_property_value.search(code) and manual_conversion_release.search(code):
+        errors.append(
+            f"{source_file.relative_to(root)} calls raw_property_value and still "
+            "hand-releases a conversion edge; keep the ConvertedValue guard"
+        )
 if errors:
     print("\n".join("error: " + error for error in errors), file=sys.stderr)
     raise SystemExit(1)

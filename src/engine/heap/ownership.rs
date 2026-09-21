@@ -455,6 +455,51 @@ impl Runtime {
         }
     }
 }
+
+/// Stack-local owner of one boundary conversion's producer node edge.
+///
+/// The guard borrows the runtime and never enters heap slots or the operand
+/// stack.  Dropping it releases the producer edge, so every store-or-decline
+/// path balances the conversion automatically once the transactional store
+/// retained its own copy edge (or rejected the value).  A caller that hands
+/// the value to a by-value owner instead adopts the edge explicitly with
+/// [`ConvertedValue::take`] or [`ConvertedValue::disarm`].
+pub(crate) struct ConvertedValue<'a> {
+    runtime: &'a Runtime,
+    value: Option<RawValue>,
+}
+
+impl<'a> ConvertedValue<'a> {
+    pub(crate) fn new(runtime: &'a Runtime, value: RawValue) -> Self {
+        Self {
+            runtime,
+            value: Some(value),
+        }
+    }
+
+    /// Clone the handle without duplicating the producer edge.
+    pub(crate) fn raw(&self) -> RawValue {
+        self.value.clone().expect("ConvertedValue raw after take")
+    }
+
+    /// Transfer the value and its producer edge to the caller.
+    pub(crate) fn take(&mut self) -> RawValue {
+        self.value.take().expect("ConvertedValue taken twice")
+    }
+
+    /// Stop tracking the edge because a by-value owner releases it later.
+    pub(crate) fn disarm(&mut self) {
+        self.value = None;
+    }
+}
+
+impl Drop for ConvertedValue<'_> {
+    fn drop(&mut self) {
+        if let Some(value) = self.value.take() {
+            self.runtime.release_converted_value_edge(&value);
+        }
+    }
+}
 impl RuntimeState {
     #[inline]
     fn release_heap_reference(&mut self, id: RawId) -> Result<(), RuntimeError> {

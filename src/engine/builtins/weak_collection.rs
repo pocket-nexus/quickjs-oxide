@@ -385,10 +385,10 @@ impl Runtime {
         value: Value,
     ) -> Result<(), RuntimeError> {
         self.validate_value_domain(&value, "WeakMap value")?;
-        let raw_value = self.raw_property_value(&value)?;
+        let converted = self.raw_property_value(&value)?;
+        let raw_value = converted.raw();
         // The record retains its own copy edge inside the heap transaction,
-        // so the conversion's producer edge is released on every exit.
-        let conversion_edge = raw_value.conversion_node_edge();
+        // so the guard balances the conversion's producer edge on every exit.
         let mut state = self.0.state.borrow_mut();
         let retained = state.retain_raw_value_atoms([&raw_value])?;
         let result = state.heap.weak_map_set(map.object_id(), key, raw_value);
@@ -396,18 +396,10 @@ impl Runtime {
             Ok(cleanup) => cleanup,
             Err(error) => {
                 state.release_atoms(retained)?;
-                drop(state);
-                if let Some(edge) = conversion_edge {
-                    self.release_converted_node_edge(edge);
-                }
                 return Err(Self::weak_collection_mutation_error(error));
             }
         };
         state.apply_cleanup(cleanup)?;
-        drop(state);
-        if let Some(edge) = conversion_edge {
-            self.release_converted_node_edge(edge);
-        }
         drop(value);
         Ok(())
     }

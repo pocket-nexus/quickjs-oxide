@@ -116,32 +116,19 @@ impl Runtime {
             return Err(RuntimeError::WrongRuntime("Array"));
         }
         self.validate_value_domain(&value, "Array element")?;
-        let raw = self.raw_property_value(&value)?;
-        // Clone duplicates only the handle; the probe keeps the producer edge
+        let converted = self.raw_property_value(&value)?;
+        let raw = converted.raw();
+        // Clone duplicates only the handle; the guard keeps the producer edge
         // accountable through every store-or-decline path below.
-        let conversion_probe = raw.clone();
         let mut state = self.0.state.borrow_mut();
-        let retained_atoms = match state.retain_raw_value_atoms(std::iter::once(&raw)) {
-            Ok(atoms) => atoms,
-            Err(error) => {
-                drop(state);
-                self.release_converted_value_edge(&conversion_probe);
-                return Err(error);
-            }
-        };
+        let retained_atoms = state.retain_raw_value_atoms(std::iter::once(&raw))?;
         let appended = state
             .heap
             .append_fresh_array_dense_value(array.object_id(), raw);
         match appended {
-            Ok(()) => {
-                drop(state);
-                self.release_converted_value_edge(&conversion_probe);
-                Ok(())
-            }
+            Ok(()) => Ok(()),
             Err(error) => {
                 let released = state.release_atoms(retained_atoms);
-                drop(state);
-                self.release_converted_value_edge(&conversion_probe);
                 released?;
                 Err(error.into())
             }
@@ -551,35 +538,17 @@ impl Runtime {
             self.validate_value_domain(argument, "bound function argument")?;
         }
 
-        let raw_this = self.raw_property_value(this_value)?;
-        let mut raw_arguments = Vec::with_capacity(arguments.len());
+        let converted_this = self.raw_property_value(this_value)?;
+        let mut converted_arguments = Vec::with_capacity(arguments.len());
         for argument in arguments {
-            match self.raw_property_value(argument) {
-                Ok(raw) => raw_arguments.push(raw),
-                Err(error) => {
-                    // Nothing was stored yet; balance every producer edge.
-                    self.release_converted_value_edge(&raw_this);
-                    for raw in &raw_arguments {
-                        self.release_converted_value_edge(raw);
-                    }
-                    return Err(error);
-                }
-            }
+            converted_arguments.push(self.raw_property_value(argument)?);
         }
-        // Clones duplicate only the handles; the probes keep every producer
-        // edge accountable through every store-or-decline path below.
-        let conversion_probes: Vec<_> = std::iter::once(raw_this.clone())
-            .chain(raw_arguments.iter().cloned())
-            .collect();
-        let is_constructor = match self.is_constructor(target.as_object()) {
-            Ok(is_constructor) => is_constructor,
-            Err(error) => {
-                for probe in &conversion_probes {
-                    self.release_converted_value_edge(probe);
-                }
-                return Err(error);
-            }
-        };
+        let raw_this = converted_this.raw();
+        let raw_arguments = converted_arguments
+            .iter()
+            .map(|converted| converted.raw())
+            .collect::<Vec<_>>();
+        let is_constructor = self.is_constructor(target.as_object())?;
 
         let mut state = self.0.state.borrow_mut();
         let shape = {
@@ -596,9 +565,6 @@ impl Runtime {
                 Ok(shape) => shape,
                 Err(error) => {
                     drop(state);
-                    for probe in &conversion_probes {
-                        self.release_converted_value_edge(probe);
-                    }
                     return Err(error);
                 }
             }
@@ -614,9 +580,6 @@ impl Runtime {
                     .map_err(RuntimeError::from)
                     .and_then(|cleanup| state.apply_cleanup(cleanup));
                 drop(state);
-                for probe in &conversion_probes {
-                    self.release_converted_value_edge(probe);
-                }
                 applied?;
                 return Err(error);
             }
@@ -638,9 +601,6 @@ impl Runtime {
                     .map_err(RuntimeError::from)
                     .and_then(|cleanup| state.apply_cleanup(cleanup));
                 drop(state);
-                for probe in &conversion_probes {
-                    self.release_converted_value_edge(probe);
-                }
                 released?;
                 applied?;
                 return Err(error.into());
@@ -652,11 +612,8 @@ impl Runtime {
             .map_err(RuntimeError::from)
             .and_then(|cleanup| state.apply_cleanup(cleanup));
         drop(state);
-        // The bound function retained its own copy edges; the boundary
-        // conversions' producer edges are no longer needed.
-        for probe in &conversion_probes {
-            self.release_converted_value_edge(probe);
-        }
+        // The bound function retained its own copy edges; the guards balance
+        // the boundary conversions' producer edges.
         finalized?;
         Ok(CallableRef::from_validated_object(
             ObjectRef::from_owned_handle(self.clone(), object),

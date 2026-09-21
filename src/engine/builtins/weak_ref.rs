@@ -449,12 +449,12 @@ impl Runtime {
                 };
 
                 self.validate_value_domain(&held_value, "FinalizationRegistry held value")?;
-                let raw_held_value = self.raw_property_value(&held_value)?;
+                let converted = self.raw_property_value(&held_value)?;
+                let raw_held_value = converted.raw();
                 // The conversion allocated a string/BigInt node with one
                 // producer edge; the registry entry retains its own copy edge
-                // inside `finalization_registry_register`, so the producer
-                // edge is released on every exit.
-                let conversion_edge = raw_held_value.conversion_node_edge();
+                // inside `finalization_registry_register`, so the guard
+                // balances the producer edge on every exit.
                 let mut state = self.0.state.borrow_mut();
                 let retained_atoms = state.retain_raw_value_atoms([&raw_held_value])?;
                 if let Err(error) = state.heap.finalization_registry_register(
@@ -464,15 +464,7 @@ impl Runtime {
                     unregister_token,
                 ) {
                     state.release_atoms(retained_atoms)?;
-                    drop(state);
-                    if let Some(edge) = conversion_edge {
-                        self.release_converted_node_edge(edge);
-                    }
                     return Err(Self::weak_intrinsic_mutation_error(error));
-                }
-                drop(state);
-                if let Some(edge) = conversion_edge {
-                    self.release_converted_node_edge(edge);
                 }
                 Ok(Completion::Return(JsValue::Undefined))
             }

@@ -656,14 +656,16 @@ impl Runtime {
         let reject = self.root_value(arguments.readable.get(1).ok_or(
             RuntimeError::Invariant("Promise capability reject argv was not padded"),
         )?)?;
-        let raw_resolve = self.raw_property_value(&resolve)?;
-        let raw_reject = self.raw_property_value(&reject)?;
+        let converted_resolve = self.raw_property_value(&resolve)?;
+        let converted_reject = self.raw_property_value(&reject)?;
         let mut state = self.0.state.borrow_mut();
-        let retained = state.retain_raw_value_atoms([&raw_resolve, &raw_reject])?;
-        match state
-            .heap
-            .set_promise_capability_capture(active.object_id(), raw_resolve, raw_reject)
-        {
+        let retained =
+            state.retain_raw_value_atoms([&converted_resolve.raw(), &converted_reject.raw()])?;
+        match state.heap.set_promise_capability_capture(
+            active.object_id(),
+            converted_resolve.raw(),
+            converted_reject.raw(),
+        ) {
             Ok(true) => {
                 drop(state);
                 drop(resolve);
@@ -712,8 +714,8 @@ impl Runtime {
                 ));
             }
         };
-        let raw = self.raw_property_value(&result)?;
-        let conversion_edge = raw.conversion_node_edge();
+        let converted = self.raw_property_value(&result)?;
+        let raw = converted.raw();
 
         // Prepare job-owned roots before detaching the Promise's reactions,
         // but do not publish the jobs yet. QuickJS exposes the settled state to
@@ -755,11 +757,8 @@ impl Runtime {
             state_ref.apply_cleanup(cleanup)
         })();
         // The settle transaction retained its own copy edge for a stored
-        // string/BigInt; on failure nothing was stored. Either way the
-        // conversion's producer edge is no longer needed.
-        if let Some(edge) = conversion_edge {
-            self.release_converted_node_edge(edge);
-        }
+        // string/BigInt; on failure nothing was stored. The guard balances
+        // the conversion's producer edge on both outcomes.
         settlement?;
         if state == PromiseState::Rejected && !was_handled {
             self.notify_host_promise_rejection_tracker(

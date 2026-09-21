@@ -38,22 +38,22 @@ impl Runtime {
     ) -> Result<ObjectRef, RuntimeError> {
         let prototype = self.iterator_realm_data(realm)?.concat_prototype;
         let prototype = ObjectRef::from_borrowed_handle(self.clone(), prototype)?;
+        let conversions = inputs
+            .iter()
+            .map(|(_, method)| self.raw_property_value(method))
+            .collect::<Result<Vec<_>, _>>()?;
         let items = inputs
             .iter()
-            .map(|(iterable, method)| {
-                Ok(Some(IteratorConcatItem {
+            .zip(&conversions)
+            .map(|((iterable, _), converted)| {
+                Some(IteratorConcatItem {
                     iterable: iterable.object_id(),
-                    method: self.raw_property_value(method)?,
-                }))
+                    method: converted.raw(),
+                })
             })
-            .collect::<Result<Vec<_>, RuntimeError>>()?;
-        // The object retains its own copy edges inside the allocation, so the
-        // conversions' producer edges are released on every exit below.
-        let conversion_probes = items
-            .iter()
-            .flatten()
-            .map(|item| item.method.clone())
             .collect::<Vec<_>>();
+        // The object retains its own copy edges inside the allocation, so the
+        // guards balance the conversions' producer edges on every exit below.
 
         let mut state = self.0.state.borrow_mut();
         let shape = state.get_or_create_shape(Some(prototype.object_id()), &[])?;
@@ -63,10 +63,6 @@ impl Runtime {
                 Err(error) => {
                     let cleanup = state.heap.release_shape(shape)?;
                     state.apply_cleanup(cleanup)?;
-                    drop(state);
-                    for probe in &conversion_probes {
-                        self.release_converted_value_edge(probe);
-                    }
                     return Err(error);
                 }
             };
@@ -80,19 +76,11 @@ impl Runtime {
                     state.release_atoms(retained_atoms)?;
                     let cleanup = state.heap.release_shape(shape)?;
                     state.apply_cleanup(cleanup)?;
-                    drop(state);
-                    for probe in &conversion_probes {
-                        self.release_converted_value_edge(probe);
-                    }
                     return Err(error.into());
                 }
             };
         let cleanup = state.heap.release_shape(shape)?;
         state.apply_cleanup(cleanup)?;
-        drop(state);
-        for probe in &conversion_probes {
-            self.release_converted_value_edge(probe);
-        }
         Ok(ObjectRef::from_owned_handle(self.clone(), object))
     }
 
@@ -146,28 +134,20 @@ impl Runtime {
         concat: &ObjectRef,
         next: &Value,
     ) -> Result<(), RuntimeError> {
-        let raw = self.raw_property_value(next)?;
+        let converted = self.raw_property_value(next)?;
+        let raw = converted.raw();
         // The record retains its own copy edge inside the heap transaction,
-        // so the conversion's producer edge is released on every exit.
-        let conversion_edge = raw.conversion_node_edge();
+        // so the guard balances the conversion's producer edge on every exit.
         let mut state = self.0.state.borrow_mut();
         let retained_atoms = state.retain_raw_value_atoms([&raw])?;
         let cleanup = match state.heap.set_iterator_concat_next(concat.object_id(), raw) {
             Ok(cleanup) => cleanup,
             Err(error) => {
                 state.release_atoms(retained_atoms)?;
-                drop(state);
-                if let Some(edge) = conversion_edge {
-                    self.release_converted_node_edge(edge);
-                }
                 return Err(error.into());
             }
         };
         state.apply_cleanup(cleanup)?;
-        drop(state);
-        if let Some(edge) = conversion_edge {
-            self.release_converted_node_edge(edge);
-        }
         Ok(())
     }
 

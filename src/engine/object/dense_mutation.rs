@@ -45,10 +45,10 @@ impl Runtime {
             return Err(RuntimeError::WrongRuntime("property object"));
         }
         self.validate_value_domain(value, "property value")?;
-        let raw = self.raw_property_value(value)?;
-        // Clone duplicates only the handle; the probe keeps the
+        let converted = self.raw_property_value(value)?;
+        let raw = converted.raw();
+        // Clone duplicates only the handle; the guard keeps the
         // producer edge accountable through every store-or-decline path.
-        let conversion_probe = raw.clone();
         let mut state = self.0.state.borrow_mut();
         let id = object.object_id();
         let prepared = (|| -> Result<Option<u32>, RuntimeError> {
@@ -68,41 +68,21 @@ impl Runtime {
             }
             Ok(Some(length))
         })();
-        // Every decline leaves the dense storage untouched; the value's
-        // producer edge must be balanced before returning.
+        // Every decline leaves the dense storage untouched; the guard
+        // balances the value's producer edge on those exits.
         let length = match prepared {
             Ok(Some(length)) => length,
-            Ok(None) => {
-                drop(state);
-                self.release_converted_value_edge(&conversion_probe);
-                return Ok(None);
-            }
-            Err(error) => {
-                drop(state);
-                self.release_converted_value_edge(&conversion_probe);
-                return Err(error);
-            }
+            Ok(None) => return Ok(None),
+            Err(error) => return Err(error),
         };
         // The shared allocation/edge kernel commits the element before length.
         // The explicit final Set(length) is a no-op on this writable own slot.
-        let retained = match state.retain_raw_value_atoms(std::iter::once(&raw)) {
-            Ok(retained) => retained,
-            Err(error) => {
-                drop(state);
-                self.release_converted_value_edge(&conversion_probe);
-                return Err(error);
-            }
-        };
+        let retained = state.retain_raw_value_atoms(std::iter::once(&raw))?;
         let appended = state.heap.append_fresh_array_dense_value(id, raw);
         match appended {
-            Ok(()) => {
-                drop(state);
-                self.release_converted_value_edge(&conversion_probe);
-            }
+            Ok(()) => {}
             Err(error) => {
                 let released = state.release_atoms(retained);
-                drop(state);
-                self.release_converted_value_edge(&conversion_probe);
                 released?;
                 return Err(error.into());
             }

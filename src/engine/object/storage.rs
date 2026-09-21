@@ -2,6 +2,7 @@ use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::atom::{Atom, AtomIdx};
 use crate::engine::code::function::metadata::ClosureVariableKind;
+use crate::engine::heap::ownership::ConvertedValue;
 use crate::engine::heap::roots::VarRefRoot;
 use crate::engine::heap::runtime::RuntimeState;
 
@@ -205,18 +206,23 @@ impl Runtime {
     /// Convert a public value into its heap-stored form at a boundary.
     ///
     /// String and BigInt payloads allocate one arena node each (API input
-    /// conversion is a genuine creation point); the returned value carries
-    /// that one producer-owned node edge, which the caller releases with
-    /// [`Runtime::release_converted_value_edge`] once a transactional store
-    /// has retained its own copy edge (or immediately when nothing stores
-    /// the value).  Object edges and Symbol atoms are *not* retained here —
-    /// the historical contract stands: transactional stores retain object and
-    /// string/BigInt edges, and Symbol/Private atoms are retained by the
-    /// store's atom accounting or explicitly by transfer points.
+    /// conversion is a genuine creation point); the returned guard owns that
+    /// one producer-owned node edge and releases it on `Drop` unless the
+    /// caller adopts it: clone with [`ConvertedValue::raw`] for a store that
+    /// retained its own copy edge, [`ConvertedValue::take`] for a sink that
+    /// owns and releases the edge itself, or [`ConvertedValue::disarm`] for a
+    /// by-value owner that releases it later.  Object edges and Symbol atoms
+    /// are *not* retained here — the historical contract stands:
+    /// transactional stores retain object and string/BigInt edges, and
+    /// Symbol/Private atoms are retained by the store's atom accounting or
+    /// explicitly by transfer points.
     ///
     /// This conversion takes its own state borrow; callers must not hold one.
-    pub(crate) fn raw_property_value(&self, value: &Value) -> Result<RawValue, RuntimeError> {
-        Ok(match value {
+    pub(crate) fn raw_property_value(
+        &self,
+        value: &Value,
+    ) -> Result<ConvertedValue<'_>, RuntimeError> {
+        let raw = match value {
             Value::Undefined => RawValue::Undefined,
             Value::Null => RawValue::Null,
             Value::Bool(value) => RawValue::Bool(*value),
@@ -255,7 +261,8 @@ impl Runtime {
                 }
                 RawValue::Object(object.object_id())
             }
-        })
+        };
+        Ok(ConvertedValue::new(self, raw))
     }
 
     pub(crate) fn store_complete_property(
@@ -310,20 +317,20 @@ impl Runtime {
             return self.store_complete_global_property(object, hidden, key, complete);
         }
 
-        // Clone duplicates only the handle; the probe keeps the boundary
+        // Clone duplicates only the handle; the guard keeps the boundary
         // conversion's producer edge accountable through the store below.
-        let (flags, replacement, value_probe) = match complete {
+        let (flags, replacement, converted_value) = match complete {
             CompleteOrdinaryPropertyDescriptor::Data {
                 value,
                 writable,
                 enumerable,
                 configurable,
             } => {
-                let raw = self.raw_property_value(&value)?;
+                let converted = self.raw_property_value(&value)?;
                 (
                     PropertyFlags::data(writable, enumerable, configurable),
-                    PropertySlot::Data(raw.clone()),
-                    Some(raw),
+                    PropertySlot::Data(converted.raw()),
+                    Some(converted),
                 )
             }
             CompleteOrdinaryPropertyDescriptor::Accessor {
@@ -342,10 +349,8 @@ impl Runtime {
         };
         let stored = self.store_property_slot(object, key, flags, replacement);
         // The store retained its own copy edge on success; a rejected store
-        // never kept the value. Balance the producer edge either way.
-        if let Some(raw) = &value_probe {
-            self.release_converted_value_edge(raw);
-        }
+        // never kept the value. The guard balances the producer edge either way.
+        drop(converted_value);
         stored
     }
 

@@ -221,11 +221,11 @@ impl Runtime {
             ))?
             .async_from_sync_iterator_prototype;
         let prototype = ObjectRef::from_borrowed_handle(self.clone(), prototype)?;
-        let raw_next = self.raw_property_value(next)?;
+        let converted_next = self.raw_property_value(next)?;
+        let raw_next = converted_next.raw();
         // The conversion allocated a string/BigInt node with one producer
-        // edge; whichever arm runs, that edge is ours to release (the object
+        // edge; whichever arm runs, the guard balances that edge (the object
         // retains its own copy edge on success).
-        let conversion_edge = raw_next.conversion_node_edge();
         let mut state = self.0.state.borrow_mut();
         let shape = state.get_or_create_shape(Some(prototype.object_id()), &[])?;
         let retained_atoms = match state.retain_raw_value_atoms(std::iter::once(&raw_next)) {
@@ -233,10 +233,6 @@ impl Runtime {
             Err(error) => {
                 let cleanup = state.heap.release_shape(shape)?;
                 state.apply_cleanup(cleanup)?;
-                drop(state);
-                if let Some(edge) = conversion_edge {
-                    self.release_converted_node_edge(edge);
-                }
                 return Err(error);
             }
         };
@@ -253,19 +249,11 @@ impl Runtime {
                 state.release_atoms(retained_atoms)?;
                 let cleanup = state.heap.release_shape(shape)?;
                 state.apply_cleanup(cleanup)?;
-                drop(state);
-                if let Some(edge) = conversion_edge {
-                    self.release_converted_node_edge(edge);
-                }
                 return Err(error.into());
             }
         };
         let cleanup = state.heap.release_shape(shape)?;
         state.apply_cleanup(cleanup)?;
-        drop(state);
-        if let Some(edge) = conversion_edge {
-            self.release_converted_node_edge(edge);
-        }
         Ok(ObjectRef::from_owned_handle(self.clone(), object))
     }
 
