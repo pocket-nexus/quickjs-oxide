@@ -375,6 +375,20 @@ impl Runtime {
         invocation: &NativeInvocation,
         getter: bool,
     ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
+        match self.set_receiver_id(realm, invocation, getter)? {
+            NativeConversion::Value(id) => Ok(NativeConversion::Value(
+                ObjectRef::from_borrowed_handle(self.clone(), id)?,
+            )),
+            NativeConversion::Throw(value) => Ok(NativeConversion::Throw(value)),
+        }
+    }
+
+    fn set_receiver_id(
+        &self,
+        realm: ContextId,
+        invocation: &NativeInvocation,
+        getter: bool,
+    ) -> Result<NativeConversion<crate::engine::heap::ObjectId>, RuntimeError> {
         let this_value = match (getter, invocation) {
             (false, NativeInvocation::Call { this_value })
             | (true, NativeInvocation::Getter { this_value }) => this_value,
@@ -391,17 +405,8 @@ impl Runtime {
                 "Set object expected",
             )?));
         };
-        let object = ObjectRef::from_borrowed_handle(self.clone(), *id)?;
-        if !object.belongs_to(self) {
-            return Err(RuntimeError::WrongRuntime("Set receiver"));
-        }
         let is_set = matches!(
-            self.0
-                .state
-                .borrow()
-                .heap
-                .object(object.object_id())?
-                .payload,
+            self.0.state.borrow().heap.object(*id)?.payload,
             ObjectPayload::Set { .. }
         );
         if !is_set {
@@ -411,7 +416,7 @@ impl Runtime {
                 "Set object expected",
             )?));
         }
-        Ok(NativeConversion::Value(object))
+        Ok(NativeConversion::Value(*id))
     }
 
     fn normalized_set_key(value: JsValue) -> JsValue {
@@ -426,50 +431,70 @@ impl Runtime {
         set: &ObjectRef,
         key: &JsValue,
     ) -> Result<Option<usize>, RuntimeError> {
-        let raw_key = key.as_raw();
-        Ok(self
-            .0
-            .state
-            .borrow()
-            .heap
-            .set_find_record(set.object_id(), &raw_key)?)
+        self.find_set_record_id(set.object_id(), key)
+    }
+    fn find_set_record_id(
+        &self,
+        set: crate::engine::heap::ObjectId,
+        key: &JsValue,
+    ) -> Result<Option<usize>, RuntimeError> {
+        let raw_key = match key {
+            JsValue::Float(0.0) => crate::engine::heap::RawValue::Int(0),
+            _ => key.as_raw(),
+        };
+        Ok(self.0.state.borrow().heap.set_find_record(set, &raw_key)?)
     }
 
     fn insert_set_record(&self, set: &ObjectRef, key: JsValue) -> Result<bool, RuntimeError> {
-        let key = Self::normalized_set_key(key);
-        if self.find_set_record(set, &key)?.is_some() {
-            self.release_jsvalue(key)?;
+        let result = self.insert_set_record_borrowed(set.object_id(), &key);
+        let released = self.release_jsvalue(key);
+        let result = result?;
+        released?;
+        Ok(result)
+    }
+    // The native invocation/argv keeps receiver and key alive until commit.
+    fn insert_set_record_borrowed(
+        &self,
+        set: crate::engine::heap::ObjectId,
+        key: &JsValue,
+    ) -> Result<bool, RuntimeError> {
+        if self.find_set_record_id(set, key)?.is_some() {
             return Ok(false);
         }
-        let raw_key = key.as_raw();
+        let raw_key = match key {
+            JsValue::Float(0.0) => crate::engine::heap::RawValue::Int(0),
+            _ => key.as_raw(),
+        };
         let mut state = self.0.state.borrow_mut();
         let retained = state.retain_raw_value_atoms([&raw_key])?;
-        let cleanup = match state.heap.set_insert_record(set.object_id(), raw_key) {
+        let cleanup = match state.heap.set_insert_record(set, raw_key) {
             Ok(cleanup) => cleanup,
             Err(error) => {
                 state.release_atoms(retained)?;
-                drop(state);
-                self.release_jsvalue(key)?;
                 return Err(error.into());
             }
         };
         state.apply_cleanup(cleanup)?;
-        drop(state);
-        self.release_jsvalue(key)?;
         Ok(true)
     }
-
     fn delete_set_record(&self, set: &ObjectRef, key: JsValue) -> Result<bool, RuntimeError> {
-        let key = Self::normalized_set_key(key);
-        let Some(index) = self.find_set_record(set, &key)? else {
-            self.release_jsvalue(key)?;
+        let result = self.delete_set_record_borrowed(set.object_id(), &key);
+        let released = self.release_jsvalue(key);
+        let result = result?;
+        released?;
+        Ok(result)
+    }
+    fn delete_set_record_borrowed(
+        &self,
+        set: crate::engine::heap::ObjectId,
+        key: &JsValue,
+    ) -> Result<bool, RuntimeError> {
+        let Some(index) = self.find_set_record_id(set, key)? else {
             return Ok(false);
         };
         let mut state = self.0.state.borrow_mut();
-        let cleanup = state.heap.set_delete_record(set.object_id(), index)?;
+        let cleanup = state.heap.set_delete_record(set, index)?;
         state.apply_cleanup(cleanup)?;
-        drop(state);
-        self.release_jsvalue(key)?;
         Ok(true)
     }
 
@@ -522,17 +547,17 @@ impl Runtime {
         invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        let set = match self.set_receiver(realm, invocation, false)? {
+        let set = match self.set_receiver_id(realm, invocation, false)? {
             NativeConversion::Value(set) => set,
             NativeConversion::Throw(value) => {
                 return Ok(Completion::Throw(value));
             }
         };
-        let value = self.dup_jsvalue(arguments.readable.first().ok_or(
-            RuntimeError::Invariant("Set.prototype.add value argv was not padded"),
-        )?)?;
-        self.insert_set_record(&set, value)?;
-        Ok(Completion::Return(self.into_jsvalue(Value::Object(set))?))
+        let value = arguments.readable.first().ok_or(RuntimeError::Invariant(
+            "Set.prototype.add value argv was not padded",
+        ))?;
+        self.insert_set_record_borrowed(set, value)?;
+        Ok(Completion::Return(self.dup_jsvalue(&JsValue::Object(set))?))
     }
 
     fn call_set_has(
@@ -541,18 +566,16 @@ impl Runtime {
         invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        let set = match self.set_receiver(realm, invocation, false)? {
+        let set = match self.set_receiver_id(realm, invocation, false)? {
             NativeConversion::Value(set) => set,
             NativeConversion::Throw(value) => {
                 return Ok(Completion::Throw(value));
             }
         };
-        let value =
-            Self::normalized_set_key(self.dup_jsvalue(arguments.readable.first().ok_or(
-                RuntimeError::Invariant("Set.prototype.has value argv was not padded"),
-            )?)?);
-        let has = self.find_set_record(&set, &value)?.is_some();
-        self.release_jsvalue(value)?;
+        let value = arguments.readable.first().ok_or(RuntimeError::Invariant(
+            "Set.prototype.has value argv was not padded",
+        ))?;
+        let has = self.find_set_record_id(set, value)?.is_some();
         Ok(Completion::Return(JsValue::Bool(has)))
     }
 
@@ -562,17 +585,17 @@ impl Runtime {
         invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        let set = match self.set_receiver(realm, invocation, false)? {
+        let set = match self.set_receiver_id(realm, invocation, false)? {
             NativeConversion::Value(set) => set,
             NativeConversion::Throw(value) => {
                 return Ok(Completion::Throw(value));
             }
         };
-        let value = self.dup_jsvalue(arguments.readable.first().ok_or(
-            RuntimeError::Invariant("Set.prototype.delete value argv was not padded"),
-        )?)?;
+        let value = arguments.readable.first().ok_or(RuntimeError::Invariant(
+            "Set.prototype.delete value argv was not padded",
+        ))?;
         Ok(Completion::Return(JsValue::Bool(
-            self.delete_set_record(&set, value)?,
+            self.delete_set_record_borrowed(set, value)?,
         )))
     }
 
@@ -581,14 +604,15 @@ impl Runtime {
         realm: ContextId,
         invocation: &NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
-        let set = match self.set_receiver(realm, invocation, false)? {
+        let set = match self.set_receiver_id(realm, invocation, false)? {
             NativeConversion::Value(set) => set,
             NativeConversion::Throw(value) => {
                 return Ok(Completion::Throw(value));
             }
         };
+
         let mut state = self.0.state.borrow_mut();
-        let cleanup = state.heap.set_clear(set.object_id())?;
+        let cleanup = state.heap.set_clear(set)?;
         state.apply_cleanup(cleanup)?;
         Ok(Completion::Return(JsValue::Undefined))
     }
@@ -598,14 +622,15 @@ impl Runtime {
         realm: ContextId,
         invocation: &NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
-        let set = match self.set_receiver(realm, invocation, true)? {
+        let set = match self.set_receiver_id(realm, invocation, true)? {
             NativeConversion::Value(set) => set,
             NativeConversion::Throw(value) => {
                 return Ok(Completion::Throw(value));
             }
         };
+
         Ok(Completion::Return(JsValue::Int(
-            self.set_size_value(&set)? as i32
+            self.0.state.borrow().heap.set_size(set)? as i32,
         )))
     }
 

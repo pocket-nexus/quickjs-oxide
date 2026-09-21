@@ -450,9 +450,8 @@ impl Drop for NativeActivation {
     /// completed activation drops an empty vector. Releases are defer-safe and
     /// never run JavaScript.
     fn drop(&mut self) {
-        let runtime = self.runtime.clone();
         for value in self.arguments.readable.drain(..) {
-            let _ = runtime.release_jsvalue(value);
+            let _ = self.runtime.release_jsvalue(value);
         }
     }
 }
@@ -481,22 +480,32 @@ impl NativeActivation {
         self,
         result: Result<NativeInvokeOutcome, RuntimeError>,
     ) -> (Result<NativeInvokeOutcome, RuntimeError>, Vec<JsValue>) {
-        self.finish_reusing_with(result, |value| {
-            NativeInvokeOutcome::Completion(Completion::Throw(value))
-        })
+        self.finish_reusing_with(
+            result,
+            |value| NativeInvokeOutcome::Completion(Completion::Throw(value)),
+            |outcome| match outcome {
+                NativeInvokeOutcome::Completion(
+                    Completion::Return(value) | Completion::Throw(value),
+                )
+                | NativeInvokeOutcome::IteratorNextRaw { value, .. } => value,
+            },
+        )
     }
 
     pub(in crate::engine::vm) fn finish_completion_reusing(
         self,
         result: Result<Completion, RuntimeError>,
     ) -> (Result<Completion, RuntimeError>, Vec<JsValue>) {
-        self.finish_reusing_with(result, Completion::Throw)
+        self.finish_reusing_with(result, Completion::Throw, |completion| match completion {
+            Completion::Return(value) | Completion::Throw(value) => value,
+        })
     }
 
     fn finish_reusing_with<T>(
         mut self,
         result: Result<T, RuntimeError>,
         throw: impl FnOnce(JsValue) -> T,
+        into_owned_value: impl FnOnce(T) -> JsValue,
     ) -> (Result<T, RuntimeError>, Vec<JsValue>) {
         let runtime = self.runtime.clone();
         let result = (|| match result {
@@ -511,12 +520,20 @@ impl NativeActivation {
             }
             result => result,
         })();
-        let result = self
+        let result = match self
             .active_frame
             .take()
             .expect("native activation lost its active frame")
             .finish()
-            .and(result);
+        {
+            Ok(()) => result,
+            Err(error) => {
+                if let Ok(outcome) = result {
+                    let _ = runtime.release_jsvalue(into_owned_value(outcome));
+                }
+                Err(error)
+            }
+        };
         // Keep the original field cleanup order: the callable owner is released
         // before the readable argument owners. Taking the buffer first leaves
         // the activation Drop with nothing to release.

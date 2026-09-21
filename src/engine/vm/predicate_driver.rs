@@ -94,17 +94,17 @@ pub(super) fn start(
         )
         .map(Progress::Call);
     }
-    let input = Box::new(Input {
+    let mut input = Input {
         runtime: runtime.clone(),
         base,
         key,
         kind,
         depth,
-    });
+    };
     if matches!(input.key, JsValue::Object(_)) {
-        Ok(Progress::Convert(input))
+        Ok(Progress::Convert(Box::new(input)))
     } else {
-        converted(runtime, execution, id, input).map(Progress::Call)
+        complete(runtime, execution, id, &mut input).map(Progress::Call)
     }
 }
 // The pending predicate conversion transfers its existing box directly to this consuming handler.
@@ -114,6 +114,17 @@ pub(super) fn converted(
     execution: &mut RunningExecution,
     id: FrameId,
     mut input: Box<Input>,
+) -> Result<CallStep, Error> {
+    complete(runtime, execution, id, &mut input)
+}
+
+// Both immediate and resumed predicates keep the same input owner live through
+// completion; only an object key that can suspend needs heap-resident storage.
+fn complete(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    id: FrameId,
+    input: &mut Input,
 ) -> Result<CallStep, Error> {
     let kind = input.kind;
     let depth = input.depth;
