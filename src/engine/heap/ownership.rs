@@ -92,6 +92,40 @@ pub(crate) fn dump_outstanding_object_retains() {
     });
 }
 
+/// Whether the debug edge ledger captures creation backtraces.
+///
+/// Capture is enabled only for explicit leak diagnosis (`QJS_EDGE_LEDGER`,
+/// `QJS_TEARDOWN_PROBE`, or `QJS_TRACE_ROOTS`): a backtrace costs far more
+/// than the arena operation it annotates, and the acceptance budget is a
+/// debug test-time regression under 2×.
+#[cfg(debug_assertions)]
+pub(crate) fn alloc_site_capture_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        ["QJS_EDGE_LEDGER", "QJS_TEARDOWN_PROBE", "QJS_TRACE_ROOTS"]
+            .iter()
+            .any(|name| std::env::var_os(name).is_some())
+    })
+}
+
+/// Compact one captured backtrace into a single diagnostic line.
+#[cfg(debug_assertions)]
+pub(crate) fn compact_backtrace() -> String {
+    std::backtrace::Backtrace::force_capture()
+        .to_string()
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            let at = line.strip_prefix("at ")?;
+            at.split_once(": ")
+                .map(|(path, _)| path.to_string())
+                .or_else(|| Some(at.to_string()))
+        })
+        .take(12)
+        .collect::<Vec<_>>()
+        .join(" <- ")
+}
+
 impl Runtime {
     #[inline]
     pub(crate) fn operation(&self) -> RuntimeOperation<'_> {
