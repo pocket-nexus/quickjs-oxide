@@ -262,7 +262,7 @@ current-source receipt，不改 `current.conf`）→
 
 - **手工 RC 纪律扩大 panic 面**（VM 接线起）：debug 构建维持全量
   generation 校验 + 冻结向量兜底；trusted 访问器遇 stale 即 panic 的
-  政策不变。
+  政策不变。泄漏类回归的可观测性补漏手段见 §7。
 - **触及面全仓最大**：值类型是所有模块的公共依赖；融合大扫除期间允许
   长时间不绿，回退单位是整个大阶段（分支级）。
 - **8B 索引 NaN-box 无生产先例**（附录 A.8）：每次 deref 多一次 base
@@ -272,3 +272,105 @@ current-source receipt，不改 `current.conf`）→
   StrictEq/switch 的字符串路径、teardown `live == 0` 断言、
   `GcStats`/`HeapCounts` 口径；`same_representation` 与
   `released_strings` 在 D2 下**不变**（公共 `JsString` 不动）。
+
+---
+
+## 7. 工程化补漏手段：边账本 / 边守卫 / move 优先签名
+
+> 动机：句柄化之后，泄漏类错误从「类型层面不可能」变成「每个交接点都可能」，
+> 而现有唯一检测器（teardown `live == 0` 计数断言）只报总数、不报来源，
+> 修复流程退化成手工排查。本节钉死三条补漏手段；它们**只在边界与 debug
+> 构建出现，发布热路径零成本**，且不构成对 §1.2「无 RAII 包装」纪律的
+> 任何豁免（值类型永远无 `Drop`）。执行顺序：7.1 → 7.2 → 7.3；7.2/7.3 与
+> W3 尾部合并执行最省。
+
+### 7.1 边账本（debug-only edge ledger）——把计数断言升级为溯源断言
+
+**决定**：
+
+1. `RuntimeState` 新增 `#[cfg(debug_assertions)]` 账本：节点句柄 →
+   `LedgerEntry { outstanding_edges: u32, alloc_site: Backtrace }`；
+   retain/release 只核销计数（不落回溯，控制成本）；teardown `live != 0`
+   时打印每个幸存节点的**内容摘要 + 创建点回溯 + 残余边数**，随后照常
+   assert。
+2. 挂点收敛在 `Heap` 的 `allocate_string`/`allocate_bigint`（创建）、
+   `retain_raw`/`release_raw_no_drain`（计数增减）与 `AtomTable` 的
+   index 级 retain/release；**调用点零改动**。
+3. 发布构建（非 debug_assertions）无字段、无调用、零成本；不改变任何
+   语义，因此可以独立于工作流落地、先上。
+
+**验收**：人为制造一个已知泄漏（如撤销某处释放）→ teardown 报告直接给出
+创建调用栈；全绿时账本为空；`cargo test --lib` 在 debug 下时长不回退超过
+实测阈值的 2×（超了就把回溯采样改为仅创建点）。
+
+### 7.2 边界边守卫（scoped edge guard）——用编译器消灭「忘释放生产者边」
+
+**事实**：§2 的真创建点（边界转换）产生带一条生产者边的值，目前每个调用点
+手工保证「存储成功后释放」——这是历次泄漏的最大重复模式（数十个调用点、
+每个都靠人肉覆盖每个错误出口/早退）。
+
+**决定**：
+
+1. 新增栈局部守卫类型（示意）：
+
+   ```rust
+   pub(crate) struct ConvertedValue<'a> {
+       runtime: &'a Runtime,        // 借用，无 Rc 计数
+       value: Option<RawValue>,     // 携带一条生产者节点边
+   }
+   impl Drop for ConvertedValue<'_> {
+       fn drop(&mut self) {
+           if let Some(value) = self.value.take() {
+               self.runtime.release_converted_value_edge(&value);
+           }
+       }
+   }
+   impl<'a> ConvertedValue<'a> {
+       /// 存储采纳：移交值与边，守卫排空，Drop 不再释放。
+       pub(crate) fn take(&mut self) -> RawValue { /* value.take() */ }
+   }
+   ```
+
+2. **采纳是唯一显式动作**：`converted.take()` 移交边给事务存储；未被采纳
+   的边在守卫作用域退出时由 Drop 经 `release_or_defer` 释放（借用中压队，
+   既有通路）。
+3. **逃逸不可能**：生命周期参数让守卫类型上逃不出当前函数；它不进堆槽位、
+   不进操作数栈、不被 memcpy——§1.2 的 memcpy/析构时刻约束不适用，Drop
+   合法。
+4. 应用面：`raw_property_value`（及其 `*_jsvalue` 变体）的全部调用点改为
+   守卫式；`ConvertedValue::take()` 后的存储路径沿用现有事务（不变）。
+5. 槽位纪律不变：pop/overwrite/teardown 的手工 release 不受守卫覆盖
+   （那里不允许 Drop），由 7.1 账本检测兜底。
+
+**性能论证**：发布热路径零变化——Drop 的释放就是原手写释放的同一调用，
+代码生成相同，多一次栈上 `Option` 检查；守卫不碰值布局、不产生新计数对。
+
+**验收**：`raw_property_value` 调用点盘点无手写 `release_converted_*` 残留
+（`check-source-layout.py` 加对应源级规则）；全量测试全绿；评审先看「守卫
+未逃逸、take 只取一次」。
+
+### 7.3 move 优先签名——把「交接生产者边」从评审规则变成签名规则
+
+**事实**：§1.2 已钉死「move 入库 → 交接生产者边，不产生计数对」，但目前
+采纳路径多为「借入 + 内部 dup + 调用方事后 release」，靠人肉配平。
+
+**决定**：
+
+1. **采纳即 by value**：吞掉值所有权的存储/记录/缓冲函数参数一律取
+   `JsValue`（或 `RawValue`）by value；调用方在值消失后再无处可 release，
+   「存了忘放」在类型上不成立。
+2. **产出即 owned**：返回 owned 值的函数保持 by-value 返回，值类型标注
+   `#[must_use]`——「创建后既没存也没放」作为语句出现时编译器告警。
+3. **dup 显式化**：调用方需要「存完再用」时显式 `dup_jsvalue`；dup 从被调
+   函数内部挪到调用方可见处。
+4. 执行与 W3 尾部/W4 签名切换同波完成（同一批调用点），逐文件推进，
+   编译器驱动。
+
+**性能论证**：by-value 16B 枚举传参 = 寄存器移动，codegen 不变；每个采纳点
+**删掉一对 dup/release**（借入 dup + 事后 release），严格更少计数动作。
+
+**已知覆盖缺口（诚实清单）**：`let v = pop();` 后遗忘（赋值未用）Rust 不告警；
+槽位 pop/丢弃的手工 release 不受签名规则覆盖——二者由 7.1 账本检测。
+
+**验收**：clippy `-D warnings` 全绿；全量测试全绿（teardown 断言照常）；
+评审规则写入「采纳签名一律 by value」。
