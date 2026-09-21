@@ -8,6 +8,7 @@
 use std::{cell::Cell, rc::Rc};
 
 use super::*;
+use crate::engine::object::{OwnedPropertyDescriptor, operations::PropertyDefineOutcome};
 
 #[derive(Clone, Copy)]
 enum AggregateTerminal {
@@ -37,7 +38,7 @@ impl Runtime {
         capability: &RootedPromiseCapability,
         remaining: &Rc<Cell<i32>>,
         index: u32,
-    ) -> Result<NativeConversion<[Value; 2]>, RuntimeError> {
+    ) -> Result<NativeConversion<[JsValue; 2]>, RuntimeError> {
         let then_arguments = match kind {
             PromiseNativeKind::All => {
                 let resolve_element = self.new_internal_promise_function(
@@ -54,8 +55,8 @@ impl Runtime {
                     },
                 )?;
                 [
-                    Value::Object(resolve_element.as_object().clone()),
-                    Value::Object(capability.reject.as_object().clone()),
+                    JsValue::Object(resolve_element.as_object().clone().into_handle()),
+                    JsValue::Object(capability.reject.as_object().clone().into_handle()),
                 ]
             }
             PromiseNativeKind::AllSettled => {
@@ -78,8 +79,8 @@ impl Runtime {
                 let fulfill_element = make_element(PromiseReactionKind::Fulfill)?;
                 let reject_element = make_element(PromiseReactionKind::Reject)?;
                 [
-                    Value::Object(fulfill_element.as_object().clone()),
-                    Value::Object(reject_element.as_object().clone()),
+                    JsValue::Object(fulfill_element.as_object().clone().into_handle()),
+                    JsValue::Object(reject_element.as_object().clone().into_handle()),
                 ]
             }
             PromiseNativeKind::Any => {
@@ -96,17 +97,14 @@ impl Runtime {
                         index,
                     },
                 )?;
-                if let Some(value) = self.define_array_data_property_without_throw(
-                    realm,
-                    values,
-                    index,
-                    Value::Undefined,
-                )? {
+                if let Some(value) =
+                    self.define_promise_array_element(realm, values, index, &JsValue::Undefined)?
+                {
                     return Ok(NativeConversion::Throw(value));
                 }
                 [
-                    Value::Object(capability.resolve.as_object().clone()),
-                    Value::Object(reject_element.as_object().clone()),
+                    JsValue::Object(capability.resolve.as_object().clone().into_handle()),
+                    JsValue::Object(reject_element.as_object().clone().into_handle()),
                 ]
             }
             _ => unreachable!("aggregate selector was validated above"),
@@ -242,12 +240,18 @@ impl Runtime {
             PromiseReactionKind::Fulfill => ("fulfilled", "value"),
             PromiseReactionKind::Reject => ("rejected", "reason"),
         };
-        self.define_fresh_aggregate_property(
+        self.define_fresh_promise_property(
             &result,
             "status",
-            Value::String(JsString::from_static(status)),
+            self.into_jsvalue(Value::String(JsString::from_static(status)))?,
+            "fresh Promise.allSettled result rejected a data property",
         )?;
-        self.define_fresh_aggregate_property(&result, payload_name, value)?;
+        self.define_fresh_promise_property(
+            &result,
+            payload_name,
+            self.dup_jsvalue(value)?,
+            "fresh Promise.allSettled result rejected a data property",
+        )?;
 
         self.finish_promise_aggregate_element(
             realm,
@@ -255,7 +259,7 @@ impl Runtime {
             resolve,
             remaining,
             index,
-            Value::Object(result),
+            &JsValue::Object(result.object_id()),
             AggregateTerminal::ResolveValues,
         )
     }
@@ -323,38 +327,55 @@ impl Runtime {
         )
     }
 
-    fn promise_aggregate_element_argument(
+    fn promise_aggregate_element_argument<'a>(
         &self,
-        arguments: &NativeArguments,
-    ) -> Result<Value, RuntimeError> {
-        self.root_value(arguments.readable.first().ok_or(RuntimeError::Invariant(
+        arguments: &'a NativeArguments,
+    ) -> Result<&'a JsValue, RuntimeError> {
+        arguments.readable.first().ok_or(RuntimeError::Invariant(
             "Promise aggregate element argv was not padded",
-        ))?)
+        ))
     }
 
-    fn define_fresh_aggregate_property(
+    pub(super) fn define_fresh_promise_property(
         &self,
         object: &ObjectRef,
         name: &str,
-        value: Value,
+        value: JsValue,
+        rejection: &'static str,
     ) -> Result<(), RuntimeError> {
+        let mut descriptor = OwnedPropertyDescriptor::new(self);
+        descriptor.value = DescriptorField::Present(value);
+        descriptor.writable = DescriptorField::Present(true);
+        descriptor.enumerable = DescriptorField::Present(true);
+        descriptor.configurable = DescriptorField::Present(true);
         let key = self.intern_property_key(name)?;
-        if !self.define_own_property(
-            object,
-            &key,
-            &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(value),
-                writable: DescriptorField::Present(true),
-                enumerable: DescriptorField::Present(true),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "fresh Promise.allSettled result rejected a data property",
-            ));
+        match self.define_owned_property_in_realm(None, object, &key, &descriptor)? {
+            PropertyDefineOutcome::Defined(true) => Ok(()),
+            PropertyDefineOutcome::Defined(false) => Err(RuntimeError::Invariant(rejection)),
+            PropertyDefineOutcome::Throw(_) => Err(RuntimeError::Invariant(
+                "context-free property definition produced a JavaScript throw",
+            )),
         }
-        Ok(())
+    }
+
+    // JS_PROP_THROW is deliberately absent: frozen aggregate arrays ignore false.
+    fn define_promise_array_element(
+        &self,
+        realm: ContextId,
+        object: &ObjectRef,
+        index: u32,
+        value: &JsValue,
+    ) -> Result<Option<Value>, RuntimeError> {
+        let key = self.property_key_for_index(u64::from(index))?;
+        let mut descriptor = OwnedPropertyDescriptor::new(self);
+        descriptor.value = DescriptorField::Present(self.dup_jsvalue(value)?);
+        descriptor.writable = DescriptorField::Present(true);
+        descriptor.enumerable = DescriptorField::Present(true);
+        descriptor.configurable = DescriptorField::Present(true);
+        match self.internal_define_owned_property(realm, object, &key, descriptor)? {
+            NativeConversion::Value(_) => Ok(None),
+            NativeConversion::Throw(value) => Ok(Some(value)),
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -365,13 +386,11 @@ impl Runtime {
         settle: ObjectId,
         remaining: Rc<Cell<i32>>,
         index: u32,
-        value: Value,
+        value: &JsValue,
         terminal: AggregateTerminal,
     ) -> Result<operation::PromiseStep, RuntimeError> {
         let values = ObjectRef::from_borrowed_handle(self.clone(), values)?;
-        if let Some(value) =
-            self.define_array_data_property_without_throw(realm, &values, index, value)?
-        {
+        if let Some(value) = self.define_promise_array_element(realm, &values, index, value)? {
             return Ok(operation::PromiseStep::Complete(Completion::Throw(
                 self.into_jsvalue(value)?,
             )));
@@ -391,9 +410,9 @@ impl Runtime {
         }
 
         let argument = match terminal {
-            AggregateTerminal::ResolveValues => Value::Object(values.clone()),
+            AggregateTerminal::ResolveValues => values.clone(),
             AggregateTerminal::RejectAggregate => {
-                Value::Object(self.new_internal_aggregate_error(realm, values.clone())?)
+                self.new_internal_aggregate_error(realm, values.clone())?
             }
         };
         let settle = ObjectRef::from_borrowed_handle(self.clone(), settle)?;
@@ -401,7 +420,9 @@ impl Runtime {
             "Promise aggregate final settlement function was no longer callable",
         ))?;
         Ok(operation::PromiseStep::ignore_return(
-            realm, settle, argument,
+            realm,
+            settle,
+            JsValue::Object(argument.into_handle()),
         ))
     }
 }

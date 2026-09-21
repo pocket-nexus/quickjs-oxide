@@ -1,15 +1,17 @@
 //! Array callback loops retain the captured length and reread each observable property.
 
 use crate::engine::builtins::native::NativeFunctionId;
+#[cfg(test)]
+use crate::engine::value::Value;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::{ArrayFindKind, ArrayIterationKind, ArrayReduceKind},
     heap::ContextId,
     object::{
-        CallableRef, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey,
+        CallableRef, DescriptorField, ObjectRef, OwnedPropertyDescriptor, PropertyKey,
         operations::InternalDefineResult,
     },
-    value::{JsValue, Value, conversion::NativeConversion},
+    value::{JsValue, conversion::NativeConversion},
     vm::{
         Completion,
         call::{NativeArguments, NativeInvocation},
@@ -68,13 +70,13 @@ pub(crate) struct CallbackResumeState {
     realm: ContextId,
     kind: CallbackKind,
     object: ObjectRef,
-    original: Value,
-    callback_value: Value,
+    original: JsValue,
+    callback_value: JsValue,
     callback: Option<CallableRef>,
-    this_arg: Value,
-    accumulator: Option<Value>,
-    result: Value,
-    value: Value,
+    this_arg: JsValue,
+    accumulator: Option<JsValue>,
+    result: JsValue,
+    value: JsValue,
     phase: Phase,
     length: u64,
     cursor: u64,
@@ -85,6 +87,16 @@ impl Drop for CallbackResumeState {
     /// request is abandoned. Consumption goes through `Option::take`, so a
     /// drained field is `None` here; releases are defer-safe and nothrow.
     fn drop(&mut self) {
+        for value in [
+            std::mem::replace(&mut self.original, JsValue::Undefined),
+            std::mem::replace(&mut self.callback_value, JsValue::Undefined),
+            std::mem::replace(&mut self.this_arg, JsValue::Undefined),
+            std::mem::replace(&mut self.result, JsValue::Undefined),
+            std::mem::replace(&mut self.value, JsValue::Undefined),
+            self.accumulator.take().unwrap_or(JsValue::Undefined),
+        ] {
+            let _ = self.runtime.release_jsvalue(value);
+        }
         if let Some(value) = self.pending_effect.number_value.take() {
             let _ = self.runtime.release_jsvalue(value);
         }
@@ -120,44 +132,42 @@ impl CallbackStep {
                     )));
                 }
             };
-        let callback_value = runtime.root_value(arguments.readable.first().ok_or(
+        let mut resume = CallbackResume(Box::new(CallbackResumeState {
+            runtime: runtime.clone(),
+            pending_effect: CallbackStepPending::default(),
+            realm,
+            kind,
+            object,
+            original: JsValue::Undefined,
+            callback_value: JsValue::Undefined,
+            callback: None,
+            this_arg: JsValue::Undefined,
+            accumulator: None,
+            result: JsValue::Undefined,
+            value: JsValue::Undefined,
+            phase: Phase::Length,
+            length: 0,
+            cursor: 0,
+            selected: 0,
+        }));
+        resume.0.original = runtime.dup_jsvalue(this_value)?;
+        resume.0.callback_value = runtime.dup_jsvalue(arguments.readable.first().ok_or(
             RuntimeError::Invariant("Array callback argv was not padded"),
         )?)?;
-        let second = if arguments.actual_arg_count > 1 {
-            Some(runtime.root_value(arguments.readable.get(1).ok_or(
-                RuntimeError::Invariant("Array callback second argument missing"),
-            )?)?)
-        } else {
-            None
-        };
-        Ok(Self::request_read(
-            object.clone(),
-            runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
-            CallbackResume(Box::new(CallbackResumeState {
-                runtime: runtime.clone(),
-                pending_effect: CallbackStepPending::default(),
-                realm,
-                kind,
-                object,
-                original: runtime.root_value(this_value)?,
-                callback_value,
-                callback: None,
-                this_arg: second.clone().unwrap_or(Value::Undefined),
-                accumulator: if matches!(kind, CallbackKind::Reduce(_)) {
-                    second
-                } else {
-                    None
-                },
-                result: Value::Undefined,
-                value: Value::Undefined,
-                phase: Phase::Length,
-                length: 0,
-                cursor: 0,
-                selected: 0,
-            })),
-        ))
+        if arguments.actual_arg_count > 1 {
+            let second = arguments.readable.get(1).ok_or(RuntimeError::Invariant(
+                "Array callback second argument missing",
+            ))?;
+            resume.0.this_arg = runtime.dup_jsvalue(second)?;
+            if matches!(kind, CallbackKind::Reduce(_)) {
+                resume.0.accumulator = Some(runtime.dup_jsvalue(second)?);
+            }
+        }
+        let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
+        Ok(Self::request_read(resume.0.object.clone(), key, resume))
     }
 }
+
 impl CallbackResume {
     fn index(&self) -> u64 {
         match self.0.kind {
@@ -186,112 +196,142 @@ impl CallbackResume {
             }
             Phase::Species => {
                 if !matches!(value, JsValue::Object(_)) {
+                    runtime.release_jsvalue(value)?;
                     return Err(RuntimeError::Invariant(
                         "ArraySpeciesCreate returned a primitive",
                     ));
                 }
-                self.0.result = runtime.root_and_release_jsvalue(value)?;
+                runtime.release_jsvalue(std::mem::replace(&mut self.0.result, value))?;
                 self.next(runtime)
             }
             Phase::Read => {
-                let value = runtime.root_and_release_jsvalue(value)?;
                 if matches!(self.0.kind, CallbackKind::Reduce(_)) && self.0.accumulator.is_none() {
                     self.0.accumulator = Some(value);
                     self.0.cursor += 1;
                     return self.next(runtime);
                 }
-                let index = Value::number(self.index() as f64);
-                let arguments = if let CallbackKind::Reduce(_) = self.0.kind {
-                    vec![
-                        self.0
-                            .accumulator
-                            .take()
-                            .ok_or(RuntimeError::Invariant("Array reduce accumulator missing"))?,
-                        value.clone(),
-                        index,
-                        Value::Object(self.0.object.clone()),
-                    ]
-                } else {
-                    vec![
-                        value.clone(),
-                        index,
-                        if matches!(self.0.kind, CallbackKind::Find(_)) {
-                            self.0.original.clone()
-                        } else {
-                            Value::Object(self.0.object.clone())
-                        },
-                    ]
-                };
-                self.0.value = value;
+                runtime.release_jsvalue(std::mem::replace(&mut self.0.value, value))?;
                 self.0.phase = Phase::Callback;
-                let arguments = arguments
-                    .into_iter()
-                    .map(|value| runtime.into_jsvalue(value))
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok(CallbackStep::request_call(
+                self.0.pending_effect.call_callable = Some(
                     self.0
                         .callback
                         .as_ref()
                         .ok_or(RuntimeError::Invariant("Array callback missing"))?
                         .clone(),
-                    if matches!(self.0.kind, CallbackKind::Reduce(_)) {
+                );
+                self.0.pending_effect.call_receiver =
+                    Some(if matches!(self.0.kind, CallbackKind::Reduce(_)) {
                         JsValue::Undefined
                     } else {
-                        runtime.into_jsvalue(self.0.this_arg.clone())?
-                    },
-                    arguments,
-                    self,
-                ))
+                        runtime.dup_jsvalue(&self.0.this_arg)?
+                    });
+                self.0.pending_effect.call_arguments = Some(Vec::with_capacity(4));
+                if matches!(self.0.kind, CallbackKind::Reduce(_)) {
+                    let accumulator = self
+                        .0
+                        .accumulator
+                        .take()
+                        .ok_or(RuntimeError::Invariant("Array reduce accumulator missing"))?;
+                    self.0
+                        .pending_effect
+                        .call_arguments
+                        .as_mut()
+                        .unwrap()
+                        .push(accumulator);
+                }
+                let argument = runtime.dup_jsvalue(&self.0.value)?;
+                self.0
+                    .pending_effect
+                    .call_arguments
+                    .as_mut()
+                    .unwrap()
+                    .push(argument);
+                let index =
+                    crate::engine::value::number::operations::Number::compact(self.index() as f64)
+                        .into();
+                self.0
+                    .pending_effect
+                    .call_arguments
+                    .as_mut()
+                    .unwrap()
+                    .push(index);
+                let receiver = if matches!(self.0.kind, CallbackKind::Find(_)) {
+                    runtime.dup_jsvalue(&self.0.original)?
+                } else {
+                    JsValue::Object(self.0.object.clone().into_handle())
+                };
+                self.0
+                    .pending_effect
+                    .call_arguments
+                    .as_mut()
+                    .unwrap()
+                    .push(receiver);
+                Ok(CallbackStep::Call { resume: self })
             }
             Phase::Callback => {
-                let value = runtime.root_and_release_jsvalue(value)?;
                 match self.0.kind {
-                    CallbackKind::Reduce(_) => self.0.accumulator = Some(value),
-                    CallbackKind::Find(kind) => {
-                        if runtime.value_to_boolean(&value)? {
-                            let result = match kind {
-                                ArrayFindKind::Find | ArrayFindKind::FindLast => {
-                                    std::mem::replace(&mut self.0.value, Value::Undefined)
-                                }
-                                _ => Value::number(self.index() as f64),
-                            };
-                            return Ok(CallbackStep::Complete(Completion::Return(
-                                runtime.into_jsvalue(result)?,
-                            )));
+                    CallbackKind::Reduce(_) => {
+                        if let Some(previous) = self.0.accumulator.replace(value) {
+                            runtime.release_jsvalue(previous)?;
                         }
                     }
-                    CallbackKind::Iteration(kind) => match kind {
-                        ArrayIterationKind::Every if !runtime.value_to_boolean(&value)? => {
-                            return Ok(CallbackStep::Complete(Completion::Return(JsValue::Bool(
-                                false,
-                            ))));
+                    CallbackKind::Iteration(ArrayIterationKind::Map) => {
+                        let index = self.index();
+                        return self.define(runtime, index, value);
+                    }
+                    kind => {
+                        let truthy = runtime.value_to_boolean_jsvalue(&value);
+                        runtime.release_jsvalue(value)?;
+                        let truthy = truthy?;
+                        match kind {
+                            CallbackKind::Find(kind) if truthy => {
+                                let result = if matches!(
+                                    kind,
+                                    ArrayFindKind::Find | ArrayFindKind::FindLast
+                                ) {
+                                    std::mem::replace(&mut self.0.value, JsValue::Undefined)
+                                } else {
+                                    crate::engine::value::number::operations::Number::compact(
+                                        self.index() as f64,
+                                    )
+                                    .into()
+                                };
+                                return Ok(CallbackStep::Complete(Completion::Return(result)));
+                            }
+                            CallbackKind::Iteration(ArrayIterationKind::Every) if !truthy => {
+                                return Ok(CallbackStep::Complete(Completion::Return(
+                                    JsValue::Bool(false),
+                                )));
+                            }
+                            CallbackKind::Iteration(ArrayIterationKind::Some) if truthy => {
+                                return Ok(CallbackStep::Complete(Completion::Return(
+                                    JsValue::Bool(true),
+                                )));
+                            }
+                            CallbackKind::Iteration(ArrayIterationKind::Filter) if truthy => {
+                                let original =
+                                    std::mem::replace(&mut self.0.value, JsValue::Undefined);
+                                let index = self.0.selected;
+                                return self.define(runtime, index, original);
+                            }
+                            _ => {}
                         }
-                        ArrayIterationKind::Some if runtime.value_to_boolean(&value)? => {
-                            return Ok(CallbackStep::Complete(Completion::Return(JsValue::Bool(
-                                true,
-                            ))));
-                        }
-                        ArrayIterationKind::Map => {
-                            let index = self.index();
-                            return self.define(runtime, index, value);
-                        }
-                        ArrayIterationKind::Filter if runtime.value_to_boolean(&value)? => {
-                            let original = self.0.value.clone();
-                            let index = self.0.selected;
-                            return self.define(runtime, index, original);
-                        }
-                        _ => {}
-                    },
+                    }
                 }
-                self.0.value = Value::Undefined;
+                runtime
+                    .release_jsvalue(std::mem::replace(&mut self.0.value, JsValue::Undefined))?;
                 self.0.cursor += 1;
                 self.next(runtime)
             }
-            _ => Err(RuntimeError::Invariant(
-                "Array callback value reply phase mismatch",
-            )),
+            _ => {
+                runtime.release_jsvalue(value)?;
+                Err(RuntimeError::Invariant(
+                    "Array callback value reply phase mismatch",
+                ))
+            }
         }
     }
+
     pub(crate) fn number(
         mut self,
         runtime: &Runtime,
@@ -310,12 +350,21 @@ impl CallbackResume {
                 )));
             }
         };
-        self.0.callback = Some(runtime.callable_from_value(self.0.callback_value.clone())?);
+        let callback = match &self.0.callback_value {
+            JsValue::Object(id) => runtime.as_callable_object(*id)?,
+            _ => None,
+        };
+        self.0.callback = Some(callback.ok_or_else(|| {
+            RuntimeError::Engine(crate::engine::api::Error::new(
+                crate::engine::api::ErrorKind::Type,
+                "not a function",
+            ))
+        })?);
         if let CallbackKind::Iteration(kind) = self.0.kind {
             self.0.result = match kind {
-                ArrayIterationKind::Every => Value::Bool(true),
-                ArrayIterationKind::Some => Value::Bool(false),
-                _ => Value::Undefined,
+                ArrayIterationKind::Every => JsValue::Bool(true),
+                ArrayIterationKind::Some => JsValue::Bool(false),
+                _ => JsValue::Undefined,
             };
             if matches!(kind, ArrayIterationKind::Map | ArrayIterationKind::Filter) {
                 self.0.phase = Phase::Species;
@@ -336,7 +385,7 @@ impl CallbackResume {
         if self.0.cursor == self.0.length {
             let result = match self.0.kind {
                 CallbackKind::Iteration(_) => {
-                    std::mem::replace(&mut self.0.result, Value::Undefined)
+                    std::mem::replace(&mut self.0.result, JsValue::Undefined)
                 }
                 CallbackKind::Reduce(_) => match self.0.accumulator.take() {
                     Some(value) => value,
@@ -351,13 +400,11 @@ impl CallbackResume {
                     }
                 },
                 CallbackKind::Find(ArrayFindKind::Find | ArrayFindKind::FindLast) => {
-                    Value::Undefined
+                    JsValue::Undefined
                 }
-                CallbackKind::Find(_) => Value::Int(-1),
+                CallbackKind::Find(_) => JsValue::Int(-1),
             };
-            return Ok(CallbackStep::Complete(Completion::Return(
-                runtime.into_jsvalue(result)?,
-            )));
+            return Ok(CallbackStep::Complete(Completion::Return(result)));
         }
         let key = runtime.property_key_for_index(self.index())?;
         if matches!(self.0.kind, CallbackKind::Find(_)) {
@@ -398,27 +445,22 @@ impl CallbackResume {
         mut self,
         runtime: &Runtime,
         index: u64,
-        value: Value,
+        value: JsValue,
     ) -> Result<CallbackStep, RuntimeError> {
-        let Value::Object(object) = &self.0.result else {
+        let mut descriptor = OwnedPropertyDescriptor::new(runtime);
+        descriptor.value = DescriptorField::Present(value);
+        descriptor.writable = DescriptorField::Present(true);
+        descriptor.enumerable = DescriptorField::Present(true);
+        descriptor.configurable = DescriptorField::Present(true);
+        let JsValue::Object(id) = self.0.result else {
             return Err(RuntimeError::Invariant(
                 "Array callback result was not an object",
             ));
         };
-        let object = object.clone();
+        let object = ObjectRef::from_borrowed_handle(runtime.clone(), id)?;
+        let key = runtime.property_key_for_index(index)?;
         self.0.phase = Phase::Define;
-        Ok(CallbackStep::request_define(
-            object,
-            runtime.property_key_for_index(index)?,
-            OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(value),
-                writable: DescriptorField::Present(true),
-                enumerable: DescriptorField::Present(true),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-            self,
-        ))
+        Ok(CallbackStep::request_define(object, key, descriptor, self))
     }
     pub(crate) fn defined(
         mut self,
@@ -449,7 +491,7 @@ impl CallbackResume {
         if filter {
             self.0.selected += 1;
         }
-        self.0.value = Value::Undefined;
+        runtime.release_jsvalue(std::mem::replace(&mut self.0.value, JsValue::Undefined))?;
         self.0.cursor += 1;
         self.next(runtime)
     }
@@ -471,8 +513,8 @@ pub(crate) fn finish(
                 )?
             }
             CallbackStep::Number { mut resume } => {
-                let value = runtime.root_and_release_jsvalue(resume.take_number_value())?;
-                resume.number(runtime, runtime.native_to_number(realm, &value)?)?
+                let value = resume.take_number_value();
+                resume.number(runtime, runtime.native_to_number_jsvalue(realm, value)?)?
             }
             CallbackStep::Has { mut resume } => {
                 let object = resume.take_has_object();
@@ -484,15 +526,11 @@ pub(crate) fn finish(
             }
             CallbackStep::Call { mut resume } => {
                 let callable = resume.take_call_callable();
-                let receiver = runtime.root_and_release_jsvalue(resume.take_call_receiver())?;
-                let arguments = resume
-                    .take_call_arguments()
-                    .into_iter()
-                    .map(|value| runtime.root_and_release_jsvalue(value))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let receiver = resume.take_call_receiver();
+                let arguments = resume.take_call_arguments();
                 resume.resume(
                     runtime,
-                    runtime.call_internal(realm, &callable, receiver, &arguments)?,
+                    runtime.call_internal_jsvalue(realm, &callable, receiver, arguments)?,
                 )?
             }
             CallbackStep::Species { mut resume } => {
@@ -513,7 +551,7 @@ pub(crate) fn finish(
                 let descriptor = resume.take_define_descriptor();
                 resume.defined(
                     runtime,
-                    runtime.internal_define_own_property(realm, &object, &key, &descriptor)?,
+                    runtime.internal_define_owned_property(realm, &object, &key, descriptor)?,
                 )?
             }
         };
@@ -627,7 +665,7 @@ struct CallbackStepPending {
     species_length: Option<u64>,
     define_object: Option<ObjectRef>,
     define_key: Option<PropertyKey>,
-    define_descriptor: Option<OrdinaryPropertyDescriptor>,
+    define_descriptor: Option<OwnedPropertyDescriptor>,
 }
 impl CallbackStep {
     pub(crate) fn request_read(
@@ -652,17 +690,6 @@ impl CallbackStep {
         resume.0.pending_effect.has_key = Some(key);
         Self::Has { resume }
     }
-    pub(crate) fn request_call(
-        callable: CallableRef,
-        receiver: JsValue,
-        arguments: Vec<JsValue>,
-        mut resume: CallbackResume,
-    ) -> Self {
-        resume.0.pending_effect.call_callable = Some(callable);
-        resume.0.pending_effect.call_receiver = Some(receiver);
-        resume.0.pending_effect.call_arguments = Some(arguments);
-        Self::Call { resume }
-    }
     pub(crate) fn request_species(
         source: ObjectRef,
         length: u64,
@@ -675,7 +702,7 @@ impl CallbackStep {
     pub(crate) fn request_define(
         object: ObjectRef,
         key: PropertyKey,
-        descriptor: OrdinaryPropertyDescriptor,
+        descriptor: OwnedPropertyDescriptor,
         mut resume: CallbackResume,
     ) -> Self {
         resume.0.pending_effect.define_object = Some(object);
@@ -769,7 +796,7 @@ impl CallbackResume {
             .take()
             .expect("CallbackStep Define key")
     }
-    pub(crate) fn take_define_descriptor(&mut self) -> OrdinaryPropertyDescriptor {
+    pub(crate) fn take_define_descriptor(&mut self) -> OwnedPropertyDescriptor {
         self.0
             .pending_effect
             .define_descriptor

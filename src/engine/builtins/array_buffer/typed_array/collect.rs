@@ -11,33 +11,48 @@ use crate::engine::{
 pub(crate) enum TypedIteratorMethodStep {
     Complete(NativeConversion<Option<CallableRef>>),
     Read {
-        receiver: JsValue,
         key: PropertyKey,
         resume: TypedIteratorMethodResume,
     },
 }
-pub(crate) struct TypedIteratorMethodResume {
+pub(crate) struct TypedIteratorMethodResume(Box<TypedIteratorMethodResumeState>);
+struct TypedIteratorMethodResumeState {
+    runtime: Runtime,
     realm: ContextId,
+    receiver: Option<JsValue>,
+}
+impl Drop for TypedIteratorMethodResumeState {
+    fn drop(&mut self) {
+        if let Some(value) = self.receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
 }
 impl TypedIteratorMethodStep {
     pub(crate) fn start(
         runtime: &Runtime,
         realm: ContextId,
-        source: Value,
+        source: JsValue,
     ) -> Result<Self, RuntimeError> {
-        if matches!(source, Value::Null | Value::Undefined) {
+        if matches!(source, JsValue::Null | JsValue::Undefined) {
             return Ok(Self::Complete(NativeConversion::Throw(
                 runtime.new_native_error(realm, NativeErrorKind::Type, "cannot get iterator")?,
             )));
         }
         Ok(Self::Read {
-            receiver: runtime.into_jsvalue(source)?,
             key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)),
-            resume: TypedIteratorMethodResume { realm },
+            resume: TypedIteratorMethodResume(Box::new(TypedIteratorMethodResumeState {
+                runtime: runtime.clone(),
+                realm,
+                receiver: Some(source),
+            })),
         })
     }
 }
 impl TypedIteratorMethodResume {
+    pub(crate) fn take_receiver(&mut self) -> JsValue {
+        self.0.receiver.take().expect("typed iterator receiver")
+    }
     pub(crate) fn resume(
         self,
         runtime: &Runtime,
@@ -57,16 +72,15 @@ impl TypedIteratorMethodResume {
             )));
         }
         let callable = match &value {
-            JsValue::Object(id) => {
-                runtime.as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)?
-            }
-            _ => None,
+            JsValue::Object(id) => runtime.as_callable_object(*id),
+            _ => Ok(None),
         };
         runtime.release_jsvalue(value)?;
+        let callable = callable?;
         Ok(TypedIteratorMethodStep::Complete(match callable {
             Some(value) => NativeConversion::Value(Some(value)),
             None => NativeConversion::Throw(runtime.new_native_error(
-                self.realm,
+                self.0.realm,
                 NativeErrorKind::Type,
                 "value is not iterable",
             )?),
@@ -81,12 +95,8 @@ pub(crate) fn finish_method(
     loop {
         step = match step {
             TypedIteratorMethodStep::Complete(result) => return Ok(result),
-            TypedIteratorMethodStep::Read {
-                receiver,
-                key,
-                resume,
-            } => {
-                let receiver = runtime.root_and_release_jsvalue(receiver)?;
+            TypedIteratorMethodStep::Read { key, mut resume } => {
+                let receiver = runtime.root_and_release_jsvalue(resume.take_receiver())?;
                 resume.resume(
                     runtime,
                     runtime.get_value_property_in_realm(realm, receiver, &key)?,
@@ -97,10 +107,9 @@ pub(crate) fn finish_method(
 }
 
 pub(crate) enum TypedCollectStep {
-    Complete(NativeConversion<Vec<Value>>),
+    Complete(NativeConversion<Vec<JsValue>>),
     Call {
         callable: CallableRef,
-        receiver: JsValue,
         resume: TypedCollectResume,
     },
     Read {
@@ -130,6 +139,8 @@ impl std::ops::DerefMut for TypedCollectResume {
 }
 const _: () = assert!(std::mem::size_of::<TypedCollectResume>() <= 8);
 pub(crate) struct TypedCollectResumeState {
+    runtime: Runtime,
+    receiver: Option<JsValue>,
     realm: ContextId,
     _method: CallableRef,
     iterator: Option<ObjectRef>,
@@ -138,21 +149,32 @@ pub(crate) struct TypedCollectResumeState {
     done_key: Option<PropertyKey>,
     value_key: Option<PropertyKey>,
     maximum: u64,
-    values: Vec<Value>,
+    values: Vec<JsValue>,
     phase: Phase,
+}
+impl Drop for TypedCollectResumeState {
+    fn drop(&mut self) {
+        if let Some(value) = self.receiver.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        for value in self.values.drain(..) {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
 }
 impl TypedCollectStep {
     pub(crate) fn start(
         runtime: &Runtime,
         realm: ContextId,
-        source: Value,
+        source: JsValue,
         method: CallableRef,
         element: TypedArrayElementKind,
     ) -> Result<Self, RuntimeError> {
         Ok(Self::Call {
             callable: method.clone(),
-            receiver: runtime.into_jsvalue(source)?,
             resume: TypedCollectResume(Box::new(TypedCollectResumeState {
+                runtime: runtime.clone(),
+                receiver: Some(source),
                 realm,
                 _method: method,
                 iterator: None,
@@ -168,6 +190,9 @@ impl TypedCollectStep {
     }
 }
 impl TypedCollectResume {
+    pub(crate) fn take_receiver(&mut self) -> JsValue {
+        self.0.receiver.take().expect("typed collection receiver")
+    }
     fn abrupt(self, value: Value) -> TypedCollectStep {
         TypedCollectStep::Complete(NativeConversion::Throw(value))
     }
@@ -178,6 +203,16 @@ impl TypedCollectResume {
     fn next(mut self) -> Result<TypedCollectStep, RuntimeError> {
         self.0.iteration = None;
         self.0.phase = Phase::NextResult;
+        self.0.receiver = Some(JsValue::Object(
+            self.0
+                .iterator
+                .as_ref()
+                .ok_or(RuntimeError::Invariant(
+                    "TypedArray collection lost iterator",
+                ))?
+                .clone()
+                .into_handle(),
+        ));
         Ok(TypedCollectStep::Call {
             callable: self
                 .0
@@ -187,16 +222,6 @@ impl TypedCollectResume {
                     "TypedArray iterator lost cached next",
                 ))?
                 .clone(),
-            receiver: JsValue::Object(
-                self.0
-                    .iterator
-                    .as_ref()
-                    .ok_or(RuntimeError::Invariant(
-                        "TypedArray collection lost iterator",
-                    ))?
-                    .clone()
-                    .into_handle(),
-            ),
             resume: self,
         })
     }
@@ -206,16 +231,18 @@ impl TypedCollectResume {
         reply: Completion,
     ) -> Result<TypedCollectStep, RuntimeError> {
         let value = match reply {
-            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Return(value) => value,
             Completion::Throw(value) => {
                 return Ok(self.abrupt(runtime.root_and_release_jsvalue(value)?));
             }
         };
         match self.0.phase {
             Phase::Factory => {
-                let Value::Object(iterator) = value else {
+                let JsValue::Object(id) = value else {
+                    runtime.release_jsvalue(value)?;
                     return self.fail(runtime, "not an object");
                 };
+                let iterator = ObjectRef::from_owned_handle(runtime.clone(), id);
                 self.0.iterator = Some(iterator.clone());
                 self.0.phase = Phase::NextMethod;
                 Ok(TypedCollectStep::Read {
@@ -226,10 +253,12 @@ impl TypedCollectResume {
                 })
             }
             Phase::NextMethod => {
-                let next = match value {
-                    Value::Object(object) => runtime.as_callable(&object)?,
-                    _ => None,
+                let next = match &value {
+                    JsValue::Object(id) => runtime.as_callable_object(*id),
+                    _ => Ok(None),
                 };
+                runtime.release_jsvalue(value)?;
+                let next = next?;
                 let Some(next) = next else {
                     return self.fail(runtime, "not a function");
                 };
@@ -243,9 +272,11 @@ impl TypedCollectResume {
                 self.next()
             }
             Phase::NextResult => {
-                let Value::Object(iteration) = value else {
+                let JsValue::Object(id) = value else {
+                    runtime.release_jsvalue(value)?;
                     return self.fail(runtime, "iterator must return an object");
                 };
+                let iteration = ObjectRef::from_owned_handle(runtime.clone(), id);
                 self.0.iteration = Some(iteration.clone());
                 self.0.phase = Phase::Done;
                 Ok(TypedCollectStep::Read {
@@ -260,9 +291,11 @@ impl TypedCollectResume {
                 })
             }
             Phase::Done => {
-                if runtime.value_to_boolean(&value)? {
+                let done = runtime.value_to_boolean_jsvalue(&value);
+                runtime.release_jsvalue(value)?;
+                if done? {
                     return Ok(TypedCollectStep::Complete(NativeConversion::Value(
-                        self.0.values,
+                        std::mem::take(&mut self.0.values),
                     )));
                 }
                 // This limit is observed before Get(value), unlike the shared
@@ -292,6 +325,7 @@ impl TypedCollectResume {
             }
             Phase::Value => {
                 if self.0.values.try_reserve(1).is_err() {
+                    runtime.release_jsvalue(value)?;
                     let error = runtime.new_native_error(
                         self.0.realm,
                         NativeErrorKind::Internal,
@@ -309,19 +343,18 @@ pub(crate) fn finish_collect(
     runtime: &Runtime,
     realm: ContextId,
     mut step: TypedCollectStep,
-) -> Result<NativeConversion<Vec<Value>>, RuntimeError> {
+) -> Result<NativeConversion<Vec<JsValue>>, RuntimeError> {
     loop {
         step = match step {
             TypedCollectStep::Complete(result) => return Ok(result),
             TypedCollectStep::Call {
                 callable,
-                receiver,
-                resume,
+                mut resume,
             } => {
-                let receiver = runtime.root_and_release_jsvalue(receiver)?;
+                let receiver = resume.take_receiver();
                 resume.resume(
                     runtime,
-                    runtime.call_internal(realm, &callable, receiver, &[])?,
+                    runtime.call_internal_jsvalue(realm, &callable, receiver, Vec::new())?,
                 )?
             }
             TypedCollectStep::Read {

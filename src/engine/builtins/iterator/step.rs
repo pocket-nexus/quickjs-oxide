@@ -81,6 +81,27 @@ impl NextStep {
         }
     }
 
+    pub(crate) fn start_jsvalue(
+        runtime: &Runtime,
+        realm: ContextId,
+        iterator: ObjectRef,
+        method: JsValue,
+    ) -> Result<Self, RuntimeError> {
+        let callable = if let JsValue::Object(id) = method {
+            let object = ObjectRef::from_owned_handle(runtime.clone(), id);
+            runtime.as_callable(&object)?
+        } else {
+            runtime.release_jsvalue(method)?;
+            None
+        };
+        let Some(callable) = callable else {
+            return Ok(Self::Complete(ObjectIteratorStep::Throw(
+                runtime.new_native_error_jsvalue(realm, NativeErrorKind::Type, "not a function")?,
+            )));
+        };
+        Ok(Self::call(realm, iterator, callable))
+    }
+
     pub(crate) fn start(
         runtime: &Runtime,
         realm: ContextId,
@@ -211,23 +232,29 @@ pub(crate) fn finish_next(
                 resume,
             } => resume.resume(
                 runtime,
-                runtime.get_property_in_realm(realm, &object, &key)?,
+                runtime.internal_get_jsvalue(
+                    realm,
+                    &object,
+                    &key,
+                    JsValue::Object(object.clone().into_handle()),
+                )?,
             )?,
             NextStep::Call {
                 callable,
                 iterator,
                 resume,
             } => {
-                let receiver = Value::Object(iterator);
-                match runtime.try_call_native_iterator_next_raw(
-                    realm,
-                    &callable,
-                    receiver.clone(),
-                )? {
+                let receiver = JsValue::Object(iterator.object_id());
+                match runtime.try_call_native_iterator_next_raw(realm, &callable, &receiver)? {
                     Some(result) => resume.raw(runtime, result)?,
                     None => resume.resume(
                         runtime,
-                        runtime.call_internal(realm, &callable, receiver, &[])?,
+                        runtime.call_internal_jsvalue(
+                            realm,
+                            &callable,
+                            JsValue::Object(iterator.into_handle()),
+                            Vec::new(),
+                        )?,
                     )?,
                 }
             }
@@ -377,7 +404,12 @@ pub(crate) fn finish_close(
                 resume,
             } => resume.resume(
                 runtime,
-                runtime.get_property_in_realm(realm, &object, &key)?,
+                runtime.internal_get_jsvalue(
+                    realm,
+                    &object,
+                    &key,
+                    JsValue::Object(object.clone().into_handle()),
+                )?,
             )?,
             CloseStep::Call {
                 callable,
@@ -385,7 +417,12 @@ pub(crate) fn finish_close(
                 resume,
             } => resume.resume(
                 runtime,
-                runtime.call_internal(realm, &callable, Value::Object(iterator), &[])?,
+                runtime.call_internal_jsvalue(
+                    realm,
+                    &callable,
+                    JsValue::Object(iterator.into_handle()),
+                    Vec::new(),
+                )?,
             )?,
         };
     }

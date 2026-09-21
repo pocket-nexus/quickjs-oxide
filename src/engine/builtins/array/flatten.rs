@@ -1,14 +1,16 @@
 //! Flatten owns nested source frames and commits each output before visiting the next element.
 use super::{ARRAY_FLATTEN_FRAME_LIMIT, ArrayFlattenFrame};
+#[cfg(test)]
+use crate::engine::value::Value;
 use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::ArrayFlattenKind,
     heap::ContextId,
     object::{
-        CallableRef, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey,
+        CallableRef, DescriptorField, ObjectRef, OwnedPropertyDescriptor, PropertyKey,
         operations::InternalDefineResult,
     },
-    value::{JsValue, Value, conversion::NativeConversion},
+    value::{JsValue, conversion::NativeConversion},
     vm::{
         Completion,
         call::{NativeArguments, NativeInvocation},
@@ -58,12 +60,12 @@ pub(crate) struct FlattenResumeState {
     source_index: u64,
     source_length: u64,
     depth: i32,
-    argument: Value,
+    argument: JsValue,
     mapper: Option<CallableRef>,
-    mapper_this: Value,
+    mapper_this: JsValue,
     target: Option<ObjectRef>,
     frames: Vec<ArrayFlattenFrame>,
-    element: Value,
+    element: JsValue,
     target_index: u64,
     target_limit: u64,
     frame_limit: usize,
@@ -71,6 +73,13 @@ pub(crate) struct FlattenResumeState {
 }
 impl Drop for FlattenResumeState {
     fn drop(&mut self) {
+        for value in [
+            std::mem::replace(&mut self.argument, JsValue::Undefined),
+            std::mem::replace(&mut self.mapper_this, JsValue::Undefined),
+            std::mem::replace(&mut self.element, JsValue::Undefined),
+        ] {
+            let _ = self.runtime.release_jsvalue(value);
+        }
         if let Some(value) = self.pending_effect.number_value.take() {
             let _ = self.runtime.release_jsvalue(value);
         }
@@ -106,41 +115,37 @@ impl FlattenStep {
                     )));
                 }
             };
-        Ok(Self::request_read(
-            source.clone(),
-            runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
-            FlattenResume(Box::new(FlattenResumeState {
-                runtime: runtime.clone(),
-                pending_effect: FlattenStepPending::default(),
-                realm,
-                kind,
-                phase: Phase::Length,
-                source,
-                source_index: 0,
-                source_length: 0,
-                depth: 1,
-                argument: match arguments.readable.first() {
-                    Some(value) => runtime.root_value(value)?,
-                    None => Value::Undefined,
-                },
-                mapper: None,
-                mapper_this: if arguments.actual_arg_count > 1 {
-                    match arguments.readable.get(1) {
-                        Some(value) => runtime.root_value(value)?,
-                        None => Value::Undefined,
-                    }
-                } else {
-                    Value::Undefined
-                },
-                target: None,
-                frames: Vec::new(),
-                element: Value::Undefined,
-                target_index: 0,
-                target_limit: (1_u64 << 53) - 1,
-                frame_limit: ARRAY_FLATTEN_FRAME_LIMIT,
-                return_count: false,
-            })),
-        ))
+        let mut resume = FlattenResume(Box::new(FlattenResumeState {
+            runtime: runtime.clone(),
+            pending_effect: FlattenStepPending::default(),
+            realm,
+            kind,
+            phase: Phase::Length,
+            source,
+            source_index: 0,
+            source_length: 0,
+            depth: 1,
+            argument: JsValue::Undefined,
+            mapper: None,
+            mapper_this: JsValue::Undefined,
+            target: None,
+            frames: Vec::new(),
+            element: JsValue::Undefined,
+            target_index: 0,
+            target_limit: (1_u64 << 53) - 1,
+            frame_limit: ARRAY_FLATTEN_FRAME_LIMIT,
+            return_count: false,
+        }));
+        if let Some(value) = arguments.readable.first() {
+            resume.0.argument = runtime.dup_jsvalue(value)?;
+        }
+        if arguments.actual_arg_count > 1
+            && let Some(value) = arguments.readable.get(1)
+        {
+            resume.0.mapper_this = runtime.dup_jsvalue(value)?;
+        }
+        let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
+        Ok(Self::request_read(resume.0.source.clone(), key, resume))
     }
     #[allow(clippy::too_many_arguments)]
     #[cfg(test)]
@@ -166,12 +171,12 @@ impl FlattenStep {
             source_index: 0,
             source_length: length,
             depth,
-            argument: Value::Undefined,
+            argument: JsValue::Undefined,
             mapper,
-            mapper_this,
+            mapper_this: runtime.into_jsvalue(mapper_this)?,
             target: Some(target),
             frames: Vec::new(),
-            element: Value::Undefined,
+            element: JsValue::Undefined,
             target_index: 0,
             target_limit,
             frame_limit,
@@ -187,27 +192,26 @@ impl FlattenResume {
         result: Completion,
     ) -> Result<FlattenStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Return(value) => value,
             Completion::Throw(value) => return Ok(FlattenStep::Complete(Completion::Throw(value))),
         };
         match self.0.phase {
             Phase::Length => {
                 self.0.phase = Phase::LengthNumber;
-                Ok(FlattenStep::request_number(
-                    runtime.into_jsvalue(value)?,
-                    self,
-                ))
+                Ok(FlattenStep::request_number(value, self))
             }
             Phase::Species => {
-                let Value::Object(target) = value else {
+                let JsValue::Object(id) = value else {
+                    runtime.release_jsvalue(value)?;
                     return Err(RuntimeError::Invariant(
                         "ArraySpeciesCreate returned a primitive for flatten",
                     ));
                 };
-                self.0.target = Some(target);
+                self.0.target = Some(ObjectRef::from_owned_handle(runtime.clone(), id));
                 self.begin(runtime)
             }
             Phase::Read => {
+                runtime.release_jsvalue(std::mem::replace(&mut self.0.element, value))?;
                 let apply = self
                     .0
                     .frames
@@ -216,34 +220,40 @@ impl FlattenResume {
                     .apply_mapper;
                 if apply {
                     self.0.phase = Phase::Mapper;
-                    return Ok(FlattenStep::request_call(
+                    self.0.pending_effect.call_callable = Some(
                         self.0
                             .mapper
                             .as_ref()
                             .ok_or(RuntimeError::Invariant("flatten mapper missing"))?
                             .clone(),
-                        runtime.into_jsvalue(self.0.mapper_this.clone())?,
-                        vec![
-                            runtime.into_jsvalue(value)?,
-                            runtime.into_jsvalue(Value::number(self.0.source_index as f64))?,
-                            runtime.into_jsvalue(Value::Object(self.0.source.clone()))?,
-                        ],
-                        self,
-                    ));
+                    );
+                    self.0.pending_effect.call_receiver =
+                        Some(runtime.dup_jsvalue(&self.0.mapper_this)?);
+                    let value = std::mem::replace(&mut self.0.element, JsValue::Undefined);
+                    self.0.pending_effect.call_arguments = Some(vec![
+                        value,
+                        crate::engine::value::number::operations::Number::compact(
+                            self.0.source_index as f64,
+                        )
+                        .into(),
+                        JsValue::Object(self.0.source.clone().into_handle()),
+                    ]);
+                    return Ok(FlattenStep::Call { resume: self });
                 }
+                let value = std::mem::replace(&mut self.0.element, JsValue::Undefined);
                 self.visit(runtime, value)
             }
             Phase::Mapper => self.visit(runtime, value),
             Phase::NestedLength => {
                 self.0.phase = Phase::NestedNumber;
-                Ok(FlattenStep::request_number(
-                    runtime.into_jsvalue(value)?,
-                    self,
+                Ok(FlattenStep::request_number(value, self))
+            }
+            _ => {
+                runtime.release_jsvalue(value)?;
+                Err(RuntimeError::Invariant(
+                    "Array flatten value phase mismatch",
                 ))
             }
-            _ => Err(RuntimeError::Invariant(
-                "Array flatten value phase mismatch",
-            )),
         }
     }
     pub(crate) fn number(
@@ -263,11 +273,20 @@ impl FlattenResume {
             Phase::LengthNumber => {
                 self.0.source_length = Runtime::length_from_number(number);
                 if self.0.kind == ArrayFlattenKind::FlatMap {
-                    self.0.mapper = Some(runtime.callable_from_value(self.0.argument.clone())?);
-                } else if !matches!(self.0.argument, Value::Undefined) {
+                    let mapper = match &self.0.argument {
+                        JsValue::Object(id) => runtime.as_callable_object(*id)?,
+                        _ => None,
+                    };
+                    self.0.mapper = Some(mapper.ok_or_else(|| {
+                        RuntimeError::Engine(crate::engine::api::Error::new(
+                            crate::engine::api::ErrorKind::Type,
+                            "not a function",
+                        ))
+                    })?);
+                } else if !matches!(self.0.argument, JsValue::Undefined) {
                     self.0.phase = Phase::Depth;
                     return Ok(FlattenStep::request_number(
-                        runtime.into_jsvalue(self.0.argument.clone())?,
+                        runtime.dup_jsvalue(&self.0.argument)?,
                         self,
                     ));
                 }
@@ -281,11 +300,12 @@ impl FlattenResume {
                 if self.0.frames.len() >= self.0.frame_limit {
                     return self.overflow(runtime);
                 }
-                let Value::Object(source) =
-                    std::mem::replace(&mut self.0.element, Value::Undefined)
-                else {
+                let element = std::mem::replace(&mut self.0.element, JsValue::Undefined);
+                let JsValue::Object(id) = element else {
+                    runtime.release_jsvalue(element)?;
                     return Err(RuntimeError::Invariant("flatten nested object missing"));
                 };
+                let source = ObjectRef::from_owned_handle(runtime.clone(), id);
                 self.0.frames.push(ArrayFlattenFrame {
                     source,
                     length: Runtime::length_from_number(number),
@@ -330,18 +350,20 @@ impl FlattenResume {
         loop {
             let Some(frame) = self.0.frames.last_mut() else {
                 let value = if self.0.return_count {
-                    Value::number(self.0.target_index as f64)
+                    crate::engine::value::number::operations::Number::compact(
+                        self.0.target_index as f64,
+                    )
+                    .into()
                 } else {
-                    Value::Object(
+                    JsValue::Object(
                         self.0
                             .target
                             .take()
-                            .ok_or(RuntimeError::Invariant("flatten target missing"))?,
+                            .ok_or(RuntimeError::Invariant("flatten target missing"))?
+                            .into_handle(),
                     )
                 };
-                return Ok(FlattenStep::Complete(Completion::Return(
-                    runtime.into_jsvalue(value)?,
-                )));
+                return Ok(FlattenStep::Complete(Completion::Return(value)));
             };
             if frame.next_index == frame.length {
                 self.0.frames.pop();
@@ -387,9 +409,10 @@ impl FlattenResume {
             self,
         ))
     }
-    fn visit(mut self, runtime: &Runtime, element: Value) -> Result<FlattenStep, RuntimeError> {
+    fn visit(mut self, runtime: &Runtime, element: JsValue) -> Result<FlattenStep, RuntimeError> {
+        runtime.release_jsvalue(std::mem::replace(&mut self.0.element, element))?;
         let flatten = if self.0.depth > 0 {
-            match runtime.internal_is_array(self.0.realm, &element)? {
+            match runtime.internal_is_array_jsvalue(self.0.realm, &self.0.element)? {
                 NativeConversion::Value(value) => value,
                 NativeConversion::Throw(value) => {
                     return Ok(FlattenStep::Complete(Completion::Throw(
@@ -401,13 +424,12 @@ impl FlattenResume {
             false
         };
         if flatten {
-            let Value::Object(object) = &element else {
+            let JsValue::Object(id) = self.0.element else {
                 return Err(RuntimeError::Invariant(
                     "IsArray accepted primitive flatten element",
                 ));
             };
-            let object = object.clone();
-            self.0.element = element;
+            let object = ObjectRef::from_borrowed_handle(runtime.clone(), id)?;
             self.0.phase = Phase::NestedLength;
             return Ok(FlattenStep::request_read(
                 object,
@@ -424,6 +446,12 @@ impl FlattenResume {
                 )?,
             )));
         }
+        let mut descriptor = OwnedPropertyDescriptor::new(runtime);
+        descriptor.value =
+            DescriptorField::Present(std::mem::replace(&mut self.0.element, JsValue::Undefined));
+        descriptor.writable = DescriptorField::Present(true);
+        descriptor.enumerable = DescriptorField::Present(true);
+        descriptor.configurable = DescriptorField::Present(true);
         self.0.phase = Phase::Define;
         Ok(FlattenStep::request_define(
             self.0
@@ -431,13 +459,7 @@ impl FlattenResume {
                 .clone()
                 .ok_or(RuntimeError::Invariant("flatten target missing"))?,
             runtime.property_key_for_index(self.0.target_index)?,
-            OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(element),
-                writable: DescriptorField::Present(true),
-                enumerable: DescriptorField::Present(true),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
+            descriptor,
             self,
         ))
     }
@@ -481,8 +503,8 @@ pub(crate) fn finish(
                 )?
             }
             FlattenStep::Number { mut resume } => {
-                let value = runtime.root_and_release_jsvalue(resume.take_number_value())?;
-                resume.number(runtime, runtime.native_to_number(realm, &value)?)?
+                let value = resume.take_number_value();
+                resume.number(runtime, runtime.native_to_number_jsvalue(realm, value)?)?
             }
             FlattenStep::Has { mut resume } => {
                 let object = resume.take_has_object();
@@ -505,15 +527,11 @@ pub(crate) fn finish(
             }
             FlattenStep::Call { mut resume } => {
                 let callable = resume.take_call_callable();
-                let receiver = runtime.root_and_release_jsvalue(resume.take_call_receiver())?;
-                let arguments = resume
-                    .take_call_arguments()
-                    .into_iter()
-                    .map(|value| runtime.root_and_release_jsvalue(value))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let receiver = resume.take_call_receiver();
+                let arguments = resume.take_call_arguments();
                 resume.resume(
                     runtime,
-                    runtime.call_internal(realm, &callable, receiver, &arguments)?,
+                    runtime.call_internal_jsvalue(realm, &callable, receiver, arguments)?,
                 )?
             }
             FlattenStep::Define { mut resume } => {
@@ -522,7 +540,7 @@ pub(crate) fn finish(
                 let descriptor = resume.take_define_descriptor();
                 resume.defined(
                     runtime,
-                    runtime.internal_define_own_property(realm, &object, &key, &descriptor)?,
+                    runtime.internal_define_owned_property(realm, &object, &key, descriptor)?,
                 )?
             }
         };
@@ -542,7 +560,7 @@ struct FlattenStepPending {
     call_arguments: Option<Vec<JsValue>>,
     define_object: Option<ObjectRef>,
     define_key: Option<PropertyKey>,
-    define_descriptor: Option<OrdinaryPropertyDescriptor>,
+    define_descriptor: Option<OwnedPropertyDescriptor>,
 }
 impl FlattenStep {
     pub(crate) fn request_read(
@@ -571,21 +589,10 @@ impl FlattenStep {
         resume.0.pending_effect.species_source = Some(source);
         Self::Species { resume }
     }
-    pub(crate) fn request_call(
-        callable: CallableRef,
-        receiver: JsValue,
-        arguments: Vec<JsValue>,
-        mut resume: FlattenResume,
-    ) -> Self {
-        resume.0.pending_effect.call_callable = Some(callable);
-        resume.0.pending_effect.call_receiver = Some(receiver);
-        resume.0.pending_effect.call_arguments = Some(arguments);
-        Self::Call { resume }
-    }
     pub(crate) fn request_define(
         object: ObjectRef,
         key: PropertyKey,
-        descriptor: OrdinaryPropertyDescriptor,
+        descriptor: OwnedPropertyDescriptor,
         mut resume: FlattenResume,
     ) -> Self {
         resume.0.pending_effect.define_object = Some(object);
@@ -672,7 +679,7 @@ impl FlattenResume {
             .take()
             .expect("FlattenStep Define key")
     }
-    pub(crate) fn take_define_descriptor(&mut self) -> OrdinaryPropertyDescriptor {
+    pub(crate) fn take_define_descriptor(&mut self) -> OwnedPropertyDescriptor {
         self.0
             .pending_effect
             .define_descriptor

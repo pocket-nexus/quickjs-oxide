@@ -5,7 +5,7 @@ use super::{
 };
 use crate::engine::api::{runtime::Runtime, runtime_error::RuntimeError};
 use crate::engine::heap::ContextId;
-use crate::engine::object::{CompleteOrdinaryPropertyDescriptor, ObjectRef, PropertyKey};
+use crate::engine::object::{ObjectRef, PropertyKey};
 use crate::engine::value::{JsValue, Value, conversion::NativeConversion};
 use crate::engine::vm::{Completion, call::DirectCallTarget};
 
@@ -311,7 +311,9 @@ impl ProxyBooleanResume {
     pub(crate) fn descriptor(
         self,
         runtime: &Runtime,
-        descriptor: NativeConversion<Option<CompleteOrdinaryPropertyDescriptor>>,
+        descriptor: NativeConversion<
+            Option<crate::engine::object::OwnedCompletePropertyDescriptor>,
+        >,
     ) -> Result<ProxyBooleanStep, RuntimeError> {
         let (rooted, key, deleting) = match self.0.phase {
             Phase::HasInvariant { rooted, key } => (rooted, key, false),
@@ -432,7 +434,7 @@ pub(super) fn finish(
                 let key = resume.take_descriptor_key();
                 resume.descriptor(
                     runtime,
-                    runtime.internal_get_own_property(realm, &object, &key)?,
+                    runtime.internal_get_own_property_owned(realm, &object, &key)?,
                 )?
             }
         };
@@ -732,12 +734,12 @@ mod tests {
                         .descriptor(
                             &runtime,
                             NativeConversion::Value(Some(
-                                CompleteOrdinaryPropertyDescriptor::Data {
+                                crate::engine::object::OwnedCompletePropertyDescriptor::from_public(&runtime, &crate::engine::object::CompleteOrdinaryPropertyDescriptor::Data {
                                     value: Value::Int(1),
                                     writable: true,
                                     enumerable: true,
                                     configurable: true,
-                                },
+                                }).unwrap(),
                             )),
                         )
                         .unwrap(),

@@ -278,7 +278,7 @@ impl Runtime {
         instance::finish(
             self,
             realm,
-            instance::InstanceStep::ordinary(self, realm, target, candidate)?,
+            instance::InstanceStep::ordinary(self, realm, target, self.into_jsvalue(candidate)?)?,
         )
     }
 }

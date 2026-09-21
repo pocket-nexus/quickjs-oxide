@@ -5,10 +5,12 @@
 //! runtime atom table or invokes JavaScript callbacks while borrowing the arena.
 
 use super::Edges;
+#[cfg(debug_assertions)]
+use super::HeapNodeKind;
 use super::{
     AsyncGeneratorRequestData, AtomIdx, AutoInitProperty, BigIntId, BytecodeConstant, ContextData,
     ContextId, FinalizationRegistryEntry, FunctionBytecodeData, FunctionBytecodeId,
-    GeneratorActivationData, GeneratorFrameBinding, Hash, HashMap, Heap, HeapError, HeapNodeKind,
+    GeneratorActivationData, GeneratorFrameBinding, Hash, HashMap, Heap, HeapError,
     InternalCallableData, NativeErrorKind, Node, NodeData, ObjectData, ObjectId, ObjectPayload,
     PrimitiveKind, PrimitiveObjectData, PromiseCapabilityData, PromiseReaction, PropertySlot,
     RawId, RawModuleEvaluationState, RawModuleLinkRealm, RawModuleNamespaceState, RawModuleRecord,

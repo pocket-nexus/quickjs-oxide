@@ -12,9 +12,11 @@ use crate::engine::api::runtime_error::RuntimeError;
 
 use crate::engine::builtins::native::{GeneratorResumeKind, NativeFunctionId};
 use crate::engine::heap::{ContextId, InternalCallableData, ObjectData};
-use crate::engine::object::{CallableRef, ObjectRef};
+use crate::engine::object::CallableRef;
+use crate::engine::object::ObjectRef;
 #[cfg(test)]
 use crate::engine::object::{PropertyKey, WellKnownSymbol};
+#[cfg(test)]
 use crate::engine::value::Value;
 use crate::engine::value::conversion::NativeConversion;
 use crate::engine::vm::Completion;
@@ -126,6 +128,25 @@ impl Runtime {
         Ok(NativeConversion::Value((iterator, next)))
     }
 
+    fn async_from_sync_callable_jsvalue(
+        &self,
+        realm: ContextId,
+        value: &crate::engine::value::JsValue,
+    ) -> Result<NativeConversion<CallableRef>, RuntimeError> {
+        if let crate::engine::value::JsValue::Object(id) = value {
+            let object = ObjectRef::from_borrowed_handle(self.clone(), *id)?;
+            if let Some(callable) = self.as_callable(&object)? {
+                return Ok(NativeConversion::Value(callable));
+            }
+        }
+        Ok(NativeConversion::Throw(self.new_native_error(
+            realm,
+            NativeErrorKind::Type,
+            "not a function",
+        )?))
+    }
+
+    #[cfg(test)]
     fn async_from_sync_callable(
         &self,
         realm: ContextId,
@@ -203,58 +224,18 @@ impl Runtime {
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub(super) fn new_async_from_sync_iterator(
         &self,
         realm: ContextId,
         sync_iterator: &ObjectRef,
         next: &Value,
     ) -> Result<ObjectRef, RuntimeError> {
-        let prototype = self
-            .0
-            .state
-            .borrow()
-            .heap
-            .context(realm)?
-            .async_generator
-            .ok_or(RuntimeError::Invariant(
-                "realm has no AsyncGenerator intrinsics",
-            ))?
-            .async_from_sync_iterator_prototype;
-        let prototype = ObjectRef::from_borrowed_handle(self.clone(), prototype)?;
-        let converted_next = self.raw_property_value(next)?;
-        let raw_next = converted_next.raw();
-        // The conversion allocated a string/BigInt node with one producer
-        // edge; whichever arm runs, the guard balances that edge (the object
-        // retains its own copy edge on success).
-        let mut state = self.0.state.borrow_mut();
-        let shape = state.get_or_create_shape(Some(prototype.object_id()), &[])?;
-        let retained_atoms = match state.retain_raw_value_atoms(std::iter::once(&raw_next)) {
-            Ok(atoms) => atoms,
-            Err(error) => {
-                let cleanup = state.heap.release_shape(shape)?;
-                state.apply_cleanup(cleanup)?;
-                return Err(error);
-            }
-        };
-        let object = match state
-            .heap
-            .allocate_object(ObjectData::async_from_sync_iterator(
-                shape,
-                Vec::new(),
-                sync_iterator.object_id(),
-                raw_next,
-            )) {
-            Ok(object) => object,
-            Err(error) => {
-                state.release_atoms(retained_atoms)?;
-                let cleanup = state.heap.release_shape(shape)?;
-                state.apply_cleanup(cleanup)?;
-                return Err(error.into());
-            }
-        };
-        let cleanup = state.heap.release_shape(shape)?;
-        state.apply_cleanup(cleanup)?;
-        Ok(ObjectRef::from_owned_handle(self.clone(), object))
+        let next = self.unroot_value(next)?;
+        let result =
+            self.new_async_from_sync_iterator_jsvalue(realm, sync_iterator.object_id(), &next);
+        self.release_jsvalue(next)?;
+        result
     }
 
     pub(crate) fn call_async_from_sync_iterator_resume(
@@ -313,9 +294,9 @@ impl Runtime {
                 "Async-from-Sync unwrap argv was not padded",
             ))?;
         let result = self.new_iterator_result_jsvalue(realm, value, done)?;
-        Ok(Completion::Return(
-            self.into_jsvalue(Value::Object(result))?,
-        ))
+        Ok(Completion::Return(crate::engine::value::JsValue::Object(
+            result.into_handle(),
+        )))
     }
 
     pub(crate) fn call_async_from_sync_iterator_close(

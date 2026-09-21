@@ -3,7 +3,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::{ContextId, HeapError},
     object::{ObjectRef, PropertyKey},
-    value::{JsValue, Value, conversion::NativeConversion},
+    value::{JsValue, conversion::NativeConversion},
     vm::Completion,
 };
 
@@ -60,13 +60,15 @@ impl ArgumentsStep {
     pub(crate) fn start(
         runtime: &Runtime,
         realm: ContextId,
-        value: Value,
+        value: JsValue,
     ) -> Result<Self, RuntimeError> {
-        let Value::Object(carrier) = value else {
+        let JsValue::Object(carrier) = value else {
+            runtime.release_jsvalue(value)?;
             return Ok(Self::Complete(NativeConversion::Throw(
                 runtime.new_native_error(realm, NativeErrorKind::Type, "not a object")?,
             )));
         };
+        let carrier = ObjectRef::from_owned_handle(runtime.clone(), carrier);
         if let Some(result) = runtime.prepare_fast_array_arguments_jsvalue(realm, &carrier)? {
             return Ok(Self::Complete(result));
         }
@@ -204,8 +206,8 @@ pub(crate) fn finish(
                 runtime.get_property_in_realm(realm, &object, &key)?,
             )?,
             ArgumentsStep::Number { mut resume } => {
-                let value = runtime.root_and_release_jsvalue(resume.take_number_value())?;
-                resume.number(runtime, runtime.native_to_number(realm, &value)?)?
+                let value = resume.take_number_value();
+                resume.number(runtime, runtime.native_to_number_jsvalue(realm, value)?)?
             }
         };
     }

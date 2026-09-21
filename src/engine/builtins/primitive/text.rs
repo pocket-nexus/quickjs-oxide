@@ -217,9 +217,9 @@ impl ScalarTextResume {
                     )));
                 }
                 Some(JsValue::String(id)) => {
-                    let chunk = runtime.0.state.borrow().heap.string(id)?.clone();
+                    let chunk = runtime.0.state.borrow().heap.string(id).cloned();
                     runtime.release_jsvalue(JsValue::String(id))?;
-                    self.0.string = self.0.string.try_concat(&chunk).map_err(Error::from)?;
+                    self.0.string = self.0.string.try_concat(&chunk?).map_err(Error::from)?;
                 }
                 Some(value) => {
                     self.0.phase = Phase::Chunk;
@@ -295,12 +295,10 @@ pub(crate) fn finish(
         step = match step {
             ScalarTextStep::Complete(result) => return Ok(result),
             ScalarTextStep::String { value, resume } => {
-                let value = runtime.root_and_release_jsvalue(value)?;
-                resume.string(runtime, runtime.native_to_js_string(realm, &value)?)?
+                resume.string(runtime, runtime.native_to_js_string_jsvalue(realm, value)?)?
             }
             ScalarTextStep::Number { value, resume } => {
-                let value = runtime.root_and_release_jsvalue(value)?;
-                resume.number(runtime, runtime.native_to_number(realm, &value)?)?
+                resume.number(runtime, runtime.native_to_number_jsvalue(realm, value)?)?
             }
         };
     }

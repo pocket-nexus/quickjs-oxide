@@ -11,12 +11,10 @@ use super::{
 use crate::engine::api::{Error, runtime::Runtime};
 use crate::engine::code::function::metadata::FunctionKind;
 use crate::engine::object::{
-    CompleteOrdinaryPropertyDescriptor, ObjectRef, OrdinaryRead, PropertyKey, ProxyGetResume,
-    ProxyGetStep, ProxyOwnResume, ProxyOwnStep,
+    ObjectRef, OrdinaryRead, PropertyKey, ProxyGetResume, ProxyGetStep, ProxyOwnResume,
+    ProxyOwnStep,
 };
-use crate::engine::object::{
-    OrdinaryPropertyDescriptor, PreparedHas, ProxyBooleanKind, ProxyBooleanResume, ProxyBooleanStep,
-};
+use crate::engine::object::{PreparedHas, ProxyBooleanKind, ProxyBooleanResume, ProxyBooleanStep};
 use crate::engine::value::conversion::descriptor::{DescriptorResume, DescriptorStep};
 use crate::engine::value::{JsValue, Value, conversion::NativeConversion};
 
@@ -888,15 +886,9 @@ pub(super) fn start_apply(
             runtime,
             realm,
             kind,
-            runtime
-                .root_value(execution.slots.peek(&parent.window, 2)?)
-                .map_err(runtime_error_to_vm_error)?,
-            runtime
-                .root_value(execution.slots.peek(&parent.window, 1)?)
-                .map_err(runtime_error_to_vm_error)?,
-            runtime
-                .root_value(execution.slots.peek(&parent.window, 0)?)
-                .map_err(runtime_error_to_vm_error)?,
+            execution.slots.peek(&parent.window, 2)?,
+            execution.slots.peek(&parent.window, 1)?,
+            execution.slots.peek(&parent.window, 0)?,
         )
         .map_err(runtime_error_to_vm_error)?;
         start_instruction(runtime, execution, frame, step.into(), 3)
@@ -1087,9 +1079,6 @@ pub(super) fn start_write(
     strict: bool,
     depth: usize,
 ) -> Result<CallStep, Error> {
-    let receiver = runtime
-        .root_and_release_jsvalue(receiver)
-        .map_err(runtime_error_to_vm_error)?;
     start_write_progress(
         runtime, execution, frame, object, key, value, receiver, strict, depth,
     )
@@ -1104,7 +1093,7 @@ pub(super) fn start_write_progress(
     object: ObjectRef,
     key: PropertyKey,
     value: JsValue,
-    receiver: Value,
+    receiver: JsValue,
     strict: bool,
     depth: usize,
 ) -> Result<super::property_driver::PropertyProgress, Error> {
@@ -1128,7 +1117,7 @@ pub(super) fn start_receiver_write_progress(
     frame: FrameId,
     key: PropertyKey,
     value: JsValue,
-    receiver: Value,
+    receiver: JsValue,
     strict: bool,
     depth: usize,
 ) -> Result<super::property_driver::PropertyProgress, Error> {
@@ -1145,11 +1134,18 @@ fn start_write_adapted(
     object: Option<ObjectRef>,
     key: PropertyKey,
     value: JsValue,
-    receiver: Value,
+    receiver: JsValue,
     strict: bool,
     depth: usize,
 ) -> Result<super::property_driver::PropertyProgress, Error> {
-    let parent = execution.frames.current_mut(frame)?;
+    let parent = match execution.frames.current_mut(frame) {
+        Ok(parent) => parent,
+        Err(error) => {
+            let _ = runtime.release_jsvalue(value);
+            let _ = runtime.release_jsvalue(receiver);
+            return Err(error);
+        }
+    };
     let realm = parent.executable.realm;
     let result = (|| {
         let mut waiting_result = None;
@@ -1479,7 +1475,7 @@ pub(super) fn start_root(
         } => Step::Define {
             object: Some(object),
             key: Some(key),
-            descriptor: Some(descriptor),
+            descriptor: Some(descriptor.into()),
             resume: Some(Resume::RootDefine),
         },
         super::driver::RootOperation::Set {
@@ -2949,9 +2945,6 @@ pub(super) fn start_instance(
         .ok_or_else(|| Error::internal("instance query identity exhausted"))?;
     parent.property_generation = identity;
     let result = (|| {
-        let candidate = runtime
-            .root_and_release_jsvalue(candidate)
-            .map_err(runtime_error_to_vm_error)?;
         let step = crate::engine::builtins::InstanceStep::start(runtime, realm, candidate, target)
             .map_err(runtime_error_to_vm_error)?;
         advance(
@@ -2990,9 +2983,7 @@ pub(super) fn start_object_copy(
             "CopyDataProperties target is not an object",
         ));
     };
-    let source = runtime
-        .root_value(execution.slots.peek(&parent.window, source_depth)?)
-        .map_err(runtime_error_to_vm_error)?;
+    let source = execution.slots.peek(&parent.window, source_depth)?;
     let excluded = if let Some(depth) = excluded_depth {
         let excluded = runtime
             .root_value(execution.slots.peek(&parent.window, depth)?)
@@ -3294,15 +3285,16 @@ pub(super) fn start_public_field(
     value: crate::engine::value::JsValue,
     depth: usize,
 ) -> Result<CallStep, Error> {
+    let mut descriptor = crate::engine::object::OwnedPropertyDescriptor::new(runtime);
+    descriptor.value = crate::engine::object::DescriptorField::Present(value);
+    descriptor.writable = crate::engine::object::DescriptorField::Present(true);
+    descriptor.enumerable = crate::engine::object::DescriptorField::Present(true);
+    descriptor.configurable = crate::engine::object::DescriptorField::Present(true);
     let realm = execution.frames.current_mut(frame)?.executable.realm;
     let step = Step::Define {
         object: Some(object),
         key: Some(key),
-        descriptor: Some(Runtime::public_class_field_descriptor(
-            runtime
-                .root_and_release_jsvalue(value)
-                .map_err(runtime_error_to_vm_error)?,
-        )),
+        descriptor: Some(descriptor.into()),
         resume: Some(Resume::PublicField),
     };
     start_instruction_query(

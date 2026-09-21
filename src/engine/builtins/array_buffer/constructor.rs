@@ -4,7 +4,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::ContextId,
     object::{ObjectRef, PropertyKey},
-    value::{JsValue, Value, conversion::NativeConversion},
+    value::{JsValue, conversion::NativeConversion},
     vm::{
         Completion, ToPrimitiveHint,
         call::{
@@ -43,11 +43,32 @@ impl std::ops::DerefMut for BufferConstructorResume {
 }
 const _: () = assert!(std::mem::size_of::<BufferConstructorResume>() <= 8);
 pub(crate) struct BufferConstructorResumeState {
+    runtime: Runtime,
     realm: ContextId,
     shared: bool,
-    new_target: Value,
+    new_target: JsValue,
     options: Option<ObjectRef>,
     phase: ConstructorPhase,
+}
+impl Drop for BufferConstructorResumeState {
+    fn drop(&mut self) {
+        let _ = self
+            .runtime
+            .release_jsvalue(std::mem::replace(&mut self.new_target, JsValue::Undefined));
+    }
+}
+
+pub(super) fn primitive_index(
+    runtime: &Runtime,
+    realm: ContextId,
+    value: JsValue,
+) -> Result<NativeConversion<u64>, RuntimeError> {
+    let number = runtime.number_from_primitive_jsvalue(realm, &value);
+    runtime.release_jsvalue(value)?;
+    match number? {
+        NativeConversion::Value(number) => runtime.index_from_number(realm, number),
+        NativeConversion::Throw(value) => Ok(NativeConversion::Throw(value)),
+    }
 }
 enum ConstructorPhase {
     Length,
@@ -84,9 +105,6 @@ impl BufferConstructorStep {
                 "ArrayBuffer constructor did not receive a constructor invocation",
             ));
         };
-        let value = runtime.dup_jsvalue(arguments.readable.first().ok_or(
-            RuntimeError::Invariant("ArrayBuffer length argument was not padded"),
-        )?)?;
         let options = if arguments.actual_arg_count >= 2 {
             match arguments.readable.get(1) {
                 Some(JsValue::Object(id)) => {
@@ -97,16 +115,19 @@ impl BufferConstructorStep {
         } else {
             None
         };
-        Ok(Self::Primitive {
-            value,
-            resume: BufferConstructorResume(Box::new(BufferConstructorResumeState {
-                realm,
-                shared: false,
-                new_target: runtime.root_value(new_target)?,
-                options,
-                phase: ConstructorPhase::Length,
-            })),
-        })
+        let mut resume = BufferConstructorResume(Box::new(BufferConstructorResumeState {
+            runtime: runtime.clone(),
+            realm,
+            shared: false,
+            new_target: JsValue::Undefined,
+            options,
+            phase: ConstructorPhase::Length,
+        }));
+        resume.0.new_target = runtime.dup_jsvalue(new_target)?;
+        let value = runtime.dup_jsvalue(arguments.readable.first().ok_or(
+            RuntimeError::Invariant("ArrayBuffer length argument was not padded"),
+        )?)?;
+        Ok(Self::Primitive { value, resume })
     }
 }
 impl BufferConstructorResume {
@@ -117,7 +138,7 @@ impl BufferConstructorResume {
         maximum: Option<u64>,
     ) -> Result<BufferConstructorStep, RuntimeError> {
         Ok(BufferConstructorStep::Prototype {
-            new_target: runtime.into_jsvalue(self.0.new_target.clone())?,
+            new_target: runtime.dup_jsvalue(&self.0.new_target)?,
             resume: {
                 let updated_0 = ConstructorPhase::Prototype { length, maximum };
                 self.0.phase = updated_0;
@@ -131,19 +152,20 @@ impl BufferConstructorResume {
         result: Completion,
     ) -> Result<BufferConstructorStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Return(value) => value,
             Completion::Throw(value) => {
                 return Ok(BufferConstructorStep::Complete(Completion::Throw(value)));
             }
         };
         match self.0.phase {
             ConstructorPhase::Length => {
-                if matches!(value, Value::Object(_)) {
+                if matches!(value, JsValue::Object(_)) {
+                    runtime.release_jsvalue(value)?;
                     return Err(RuntimeError::Invariant(
                         "ArrayBuffer length conversion returned an object",
                     ));
                 }
-                let length = match runtime.native_to_index(self.0.realm, &value)? {
+                let length = match primitive_index(runtime, self.0.realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
                         return Ok(BufferConstructorStep::Complete(Completion::Throw(
@@ -168,11 +190,11 @@ impl BufferConstructorResume {
                 }
             }
             ConstructorPhase::Maximum(length) => {
-                if matches!(value, Value::Undefined) {
+                if matches!(value, JsValue::Undefined) {
                     self.lookup(runtime, length, None)
                 } else {
                     Ok(BufferConstructorStep::Primitive {
-                        value: runtime.into_jsvalue(value)?,
+                        value,
                         resume: {
                             let updated_0 = ConstructorPhase::MaximumNumber(length);
                             self.0.phase = updated_0;
@@ -182,13 +204,16 @@ impl BufferConstructorResume {
                 }
             }
             ConstructorPhase::MaximumNumber(length) => {
-                if matches!(value, Value::Object(_)) {
+                if matches!(value, JsValue::Object(_)) {
+                    runtime.release_jsvalue(value)?;
                     return Err(RuntimeError::Invariant(
                         "ArrayBuffer maximum conversion returned an object",
                     ));
                 }
-                let maximum = match runtime.native_to_int64(self.0.realm, &value)? {
-                    NativeConversion::Value(value) => value,
+                let number = runtime.number_from_primitive_jsvalue(self.0.realm, &value);
+                runtime.release_jsvalue(value)?;
+                let maximum = match number? {
+                    NativeConversion::Value(number) => super::quickjs_to_int64_free(number),
                     NativeConversion::Throw(value) => {
                         return Ok(BufferConstructorStep::Complete(Completion::Throw(
                             runtime.into_jsvalue(value)?,
@@ -206,9 +231,12 @@ impl BufferConstructorResume {
                 }
                 self.lookup(runtime, length, Some(maximum as u64))
             }
-            ConstructorPhase::Prototype { .. } => Err(RuntimeError::Invariant(
-                "ArrayBuffer prototype request received an untyped reply",
-            )),
+            ConstructorPhase::Prototype { .. } => {
+                runtime.release_jsvalue(value)?;
+                Err(RuntimeError::Invariant(
+                    "ArrayBuffer prototype request received an untyped reply",
+                ))
+            }
         }
     }
     pub(crate) fn prototype(
@@ -270,19 +298,21 @@ pub(in crate::engine::builtins) fn finish(
                 resume,
             } => resume.resume(
                 runtime,
-                runtime.get_property_in_realm(realm, &object, &key)?,
+                runtime.internal_get_jsvalue(
+                    realm,
+                    &object,
+                    &key,
+                    JsValue::Object(object.clone().into_handle()),
+                )?,
             )?,
-            BufferConstructorStep::Prototype { new_target, resume } => {
-                let new_target = runtime.root_and_release_jsvalue(new_target)?;
-                resume.prototype(
+            BufferConstructorStep::Prototype { new_target, resume } => resume.prototype(
+                runtime,
+                finish_source(
                     runtime,
-                    finish_source(
-                        runtime,
-                        realm,
-                        ProtoSourceStep::start(runtime, realm, new_target)?,
-                    )?,
-                )?
-            }
+                    realm,
+                    ProtoSourceStep::start(runtime, realm, new_target)?,
+                )?,
+            )?,
         };
     }
 }

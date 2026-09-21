@@ -250,7 +250,7 @@ pub(super) fn step(
 
             Operation::Define { source, name } => {
                 use crate::engine::object::{
-                    DescriptorField, OrdinaryPropertyDescriptor, operations::PropertyDefineOutcome,
+                    OwnedPropertyDescriptor, operations::PropertyDefineOutcome,
                 };
                 let object = super::environment_bindings::eval_variable_object(
                     runtime,
@@ -275,25 +275,9 @@ pub(super) fn step(
                 }
                 let key = linked_key(runtime, &frame.executable, name)?;
                 let value = execution.slots.pop(&mut frame.window)?;
-                let value_root = runtime
-                    .root_value(&value)
-                    .map_err(runtime_error_to_vm_error)?;
+                let descriptor = OwnedPropertyDescriptor::data(runtime, value);
                 let defined = runtime
-                    .define_own_property_in_realm(
-                        Some(realm),
-                        &object,
-                        &key,
-                        &OrdinaryPropertyDescriptor {
-                            value: DescriptorField::Present(value_root),
-                            writable: DescriptorField::Present(true),
-                            enumerable: DescriptorField::Present(true),
-                            configurable: DescriptorField::Present(true),
-                            ..OrdinaryPropertyDescriptor::new()
-                        },
-                    )
-                    .map_err(runtime_error_to_vm_error)?;
-                runtime
-                    .release_jsvalue(value)
+                    .define_owned_property_in_realm(Some(realm), &object, &key, &descriptor)
                     .map_err(runtime_error_to_vm_error)?;
                 match defined {
                     PropertyDefineOutcome::Defined(true) => {}

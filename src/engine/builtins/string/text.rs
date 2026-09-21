@@ -61,11 +61,22 @@ const _: () = assert!(std::mem::size_of::<StringTextResume>() <= 8);
 pub(crate) struct StringTextResumeState {
     realm: ContextId,
     kind: StringTextKind,
-    first: Value,
-    second: Value,
+    runtime: Runtime,
+    first: JsValue,
+    second: JsValue,
+    converted: JsValue,
     actual: usize,
     limit: usize,
     phase: TextPhase,
+}
+impl Drop for StringTextResumeState {
+    fn drop(&mut self) {
+        for value in [&mut self.first, &mut self.second, &mut self.converted] {
+            let _ = self
+                .runtime
+                .release_jsvalue(std::mem::replace(value, JsValue::Undefined));
+        }
+    }
 }
 enum TextPhase {
     Source,
@@ -113,8 +124,7 @@ impl StringTextStep {
                 "String text conversion did not receive a call",
             ));
         };
-        let this_value = runtime.root_value(this_value)?;
-        if matches!(this_value, Value::Undefined | Value::Null) {
+        if matches!(this_value, JsValue::Undefined | JsValue::Null) {
             return Ok(Self::Complete(Completion::Throw(
                 runtime.new_native_error_jsvalue(
                     realm,
@@ -123,26 +133,27 @@ impl StringTextStep {
                 )?,
             )));
         }
-        let first = match arguments.and_then(|args| args.readable.first()) {
-            Some(value) => runtime.root_value(value)?,
-            None => Value::Undefined,
-        };
-        let second = match arguments.and_then(|args| args.readable.get(1)) {
-            Some(value) => runtime.root_value(value)?,
-            None => Value::Undefined,
-        };
+        let mut resume = StringTextResume(Box::new(StringTextResumeState {
+            runtime: runtime.clone(),
+            realm,
+            kind,
+            first: JsValue::Undefined,
+            second: JsValue::Undefined,
+            converted: JsValue::Undefined,
+            actual: arguments.map_or(0, |args| args.actual_arg_count),
+            limit,
+            phase: TextPhase::Source,
+        }));
+        if let Some(value) = arguments.and_then(|args| args.readable.first()) {
+            resume.first = runtime.dup_jsvalue(value)?;
+        }
+        if let Some(value) = arguments.and_then(|args| args.readable.get(1)) {
+            resume.second = runtime.dup_jsvalue(value)?;
+        }
         Ok(Self::Primitive {
-            value: runtime.into_jsvalue(this_value)?,
+            value: runtime.dup_jsvalue(this_value)?,
             hint: ToPrimitiveHint::String,
-            resume: StringTextResume(Box::new(StringTextResumeState {
-                realm,
-                kind,
-                first,
-                second,
-                actual: arguments.map_or(0, |args| args.actual_arg_count),
-                limit,
-                phase: TextPhase::Source,
-            })),
+            resume,
         })
     }
 }
@@ -153,6 +164,8 @@ impl StringTextResume {
         hint: ToPrimitiveHint,
         phase: TextPhase,
     ) -> StringTextStep {
+        let converted = std::mem::replace(&mut self.converted, JsValue::Undefined);
+        let _ = self.runtime.release_jsvalue(converted);
         StringTextStep::Primitive {
             value,
             hint,
@@ -169,20 +182,21 @@ impl StringTextResume {
         result: Completion,
     ) -> Result<StringTextStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Return(value) => value,
             Completion::Throw(value) => {
                 return Ok(StringTextStep::Complete(Completion::Throw(value)));
             }
         };
-        if matches!(value, Value::Object(_)) {
+        self.converted = value;
+        if matches!(self.converted, JsValue::Object(_)) {
             return Err(RuntimeError::Invariant(
                 "String text conversion returned an object",
             ));
         }
         let realm = self.0.realm;
-        let result = match self.0.phase {
+        let result = match std::mem::replace(&mut self.0.phase, TextPhase::Source) {
             TextPhase::Source => {
-                let source = match runtime.native_to_js_string(realm, &value)? {
+                let source = match runtime.string_from_primitive_jsvalue(realm, &self.converted)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
                         return Ok(StringTextStep::Complete(Completion::Throw(
@@ -198,7 +212,7 @@ impl StringTextResume {
                         runtime.finish_string_case(realm, kind, source, self.0.limit)?
                     }
                     StringTextKind::Repeat => {
-                        let argument = runtime.unroot_value(&self.0.first)?;
+                        let argument = std::mem::replace(&mut self.0.first, JsValue::Undefined);
                         return Ok(self.convert(
                             argument,
                             ToPrimitiveHint::Number,
@@ -206,7 +220,7 @@ impl StringTextResume {
                         ));
                     }
                     StringTextKind::Pad(_) => {
-                        let argument = runtime.unroot_value(&self.0.first)?;
+                        let argument = std::mem::replace(&mut self.0.first, JsValue::Undefined);
                         return Ok(self.convert(
                             argument,
                             ToPrimitiveHint::Number,
@@ -214,7 +228,7 @@ impl StringTextResume {
                         ));
                     }
                     StringTextKind::Normalize => {
-                        if self.0.actual == 0 || matches!(self.0.first, Value::Undefined) {
+                        if self.0.actual == 0 || matches!(self.0.first, JsValue::Undefined) {
                             runtime.finish_string_normalize(
                                 realm,
                                 source,
@@ -222,7 +236,7 @@ impl StringTextResume {
                                 self.0.limit,
                             )?
                         } else {
-                            let argument = runtime.unroot_value(&self.0.first)?;
+                            let argument = std::mem::replace(&mut self.0.first, JsValue::Undefined);
                             return Ok(self.convert(
                                 argument,
                                 ToPrimitiveHint::String,
@@ -231,7 +245,7 @@ impl StringTextResume {
                         }
                     }
                     StringTextKind::LocaleCompare => {
-                        let argument = runtime.unroot_value(&self.0.first)?;
+                        let argument = std::mem::replace(&mut self.0.first, JsValue::Undefined);
                         return Ok(self.convert(
                             argument,
                             ToPrimitiveHint::String,
@@ -243,7 +257,7 @@ impl StringTextResume {
                         let (tag, attribute) = create_html_definition(kind);
                         let buffer = CreateHtmlStringBuffer::new(tag, attribute, self.0.limit);
                         if attribute.is_some() {
-                            if matches!(self.0.first, Value::Undefined | Value::Null) {
+                            if matches!(self.0.first, JsValue::Undefined | JsValue::Null) {
                                 return Ok(StringTextStep::Complete(Completion::Throw(
                                     runtime.new_native_error_jsvalue(
                                         realm,
@@ -252,7 +266,7 @@ impl StringTextResume {
                                     )?,
                                 )));
                             }
-                            let argument = runtime.unroot_value(&self.0.first)?;
+                            let argument = std::mem::replace(&mut self.0.first, JsValue::Undefined);
                             return Ok(self.convert(
                                 argument,
                                 ToPrimitiveHint::String,
@@ -268,8 +282,8 @@ impl StringTextResume {
                 }
             }
             TextPhase::Count(source) => {
-                let count = match runtime.native_to_int64_sat(realm, &value)? {
-                    NativeConversion::Value(value) => value,
+                let count = match runtime.number_from_primitive_jsvalue(realm, &self.converted)? {
+                    NativeConversion::Value(value) => Runtime::int64_from_number(value),
                     NativeConversion::Throw(value) => {
                         return Ok(StringTextStep::Complete(Completion::Throw(
                             runtime.into_jsvalue(value)?,
@@ -279,7 +293,7 @@ impl StringTextResume {
                 runtime.finish_string_repeat(realm, source, count, self.0.limit)?
             }
             TextPhase::Target(source) => {
-                let target = match runtime.native_to_number(realm, &value)? {
+                let target = match runtime.number_from_primitive_jsvalue(realm, &self.converted)? {
                     NativeConversion::Value(value) => {
                         crate::engine::value::number::to_int32_sat(value)
                     }
@@ -293,8 +307,8 @@ impl StringTextResume {
                     .map_err(|_| RuntimeError::Invariant("String length exceeded signed Int32"))?;
                 if source_len >= target {
                     Completion::Return(runtime.into_jsvalue(Value::String(source))?)
-                } else if self.0.actual > 1 && !matches!(self.0.second, Value::Undefined) {
-                    let argument = runtime.unroot_value(&self.0.second)?;
+                } else if self.0.actual > 1 && !matches!(self.0.second, JsValue::Undefined) {
+                    let argument = std::mem::replace(&mut self.0.second, JsValue::Undefined);
                     return Ok({
                         let updated_0 = TextPhase::Source;
                         self.0.phase = updated_0;
@@ -313,7 +327,7 @@ impl StringTextResume {
                 }
             }
             TextPhase::Filler { source, target } => {
-                let filler = match runtime.native_to_js_string(realm, &value)? {
+                let filler = match runtime.string_from_primitive_jsvalue(realm, &self.converted)? {
                     NativeConversion::Value(value) => value.linearize(),
                     NativeConversion::Throw(value) => {
                         return Ok(StringTextStep::Complete(Completion::Throw(
@@ -334,7 +348,7 @@ impl StringTextResume {
                 )?
             }
             TextPhase::Form(source) => {
-                let form = match runtime.native_to_js_string(realm, &value)? {
+                let form = match runtime.string_from_primitive_jsvalue(realm, &self.converted)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
                         return Ok(StringTextStep::Complete(Completion::Throw(
@@ -362,7 +376,7 @@ impl StringTextResume {
                 runtime.finish_string_normalize(realm, source, form, self.0.limit)?
             }
             TextPhase::Compare(source) => {
-                let that = match runtime.native_to_js_string(realm, &value)? {
+                let that = match runtime.string_from_primitive_jsvalue(realm, &self.converted)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
                         return Ok(StringTextStep::Complete(Completion::Throw(
@@ -377,14 +391,15 @@ impl StringTextResume {
                 mut buffer,
                 tag,
             } => {
-                let attribute = match runtime.native_to_js_string(realm, &value)? {
-                    NativeConversion::Value(value) => value.linearize(),
-                    NativeConversion::Throw(value) => {
-                        return Ok(StringTextStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
-                    }
-                };
+                let attribute =
+                    match runtime.string_from_primitive_jsvalue(realm, &self.converted)? {
+                        NativeConversion::Value(value) => value.linearize(),
+                        NativeConversion::Throw(value) => {
+                            return Ok(StringTextStep::Complete(Completion::Throw(
+                                runtime.into_jsvalue(value)?,
+                            )));
+                        }
+                    };
                 buffer.append_escaped_attribute(&attribute);
                 runtime.finish_string_create_html(realm, source, buffer, tag)?
             }

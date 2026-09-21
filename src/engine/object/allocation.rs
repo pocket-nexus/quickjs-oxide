@@ -244,15 +244,6 @@ impl Runtime {
         Ok(ObjectRef::from_owned_handle(self.clone(), object))
     }
 
-    pub(crate) fn new_iterator_result(
-        &self,
-        realm: ContextId,
-        value: Value,
-        done: bool,
-    ) -> Result<ObjectRef, RuntimeError> {
-        self.new_iterator_result_jsvalue(realm, self.into_jsvalue(value)?, done)
-    }
-
     /// A fresh result object copies the internal value handle into its data
     /// slot; the consumed producer edge is released on every exit.
     pub(crate) fn new_iterator_result_jsvalue(

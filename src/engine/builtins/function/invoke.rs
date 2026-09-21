@@ -6,7 +6,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::NativeFunctionId,
     heap::ContextId,
-    value::{JsValue, Value, conversion::NativeConversion},
+    value::{JsValue, conversion::NativeConversion},
     vm::{
         Completion,
         call::{NativeArguments, NativeInvocation},
@@ -71,10 +71,10 @@ impl Drop for InvokeResumeState {
 enum ForwardTarget {
     Call {
         target: DirectCallTarget,
-        receiver: Value,
+        receiver: JsValue,
     },
     Construct {
-        target: Value,
+        target: JsValue,
         new_target: Option<ConstructNewTarget>,
     },
 }
@@ -93,22 +93,24 @@ impl InvokeStep {
         };
         if matches!(kind, InvokeKind::ReflectConstruct) {
             let new_target = if arguments.actual_arg_count > 2 {
-                let value = runtime.root_value(arguments.readable.get(2).ok_or(
-                    RuntimeError::Invariant("Reflect.construct newTarget argv was not readable"),
-                )?)?;
-                if !matches!(value, Value::Object(_)) {
+                let value = arguments.readable.get(2).ok_or(RuntimeError::Invariant(
+                    "Reflect.construct newTarget argv was not readable",
+                ))?;
+                if !matches!(value, JsValue::Object(_)) {
                     return Ok(Self::Complete(Completion::Throw(runtime.into_jsvalue(
-                        runtime.new_not_constructor_error(realm, &value)?,
+                        runtime.new_not_constructor_error_jsvalue(realm, value)?,
                     )?)));
                 }
-                Some(match runtime.constructor_from_value(realm, value)? {
-                    NativeConversion::Value(target) => ConstructNewTarget::Validated(target),
-                    NativeConversion::Throw(value) => {
-                        return Ok(Self::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
-                    }
-                })
+                Some(
+                    match runtime.constructor_from_jsvalue(realm, runtime.dup_jsvalue(value)?)? {
+                        NativeConversion::Value(target) => ConstructNewTarget::Validated(target),
+                        NativeConversion::Throw(value) => {
+                            return Ok(Self::Complete(Completion::Throw(
+                                runtime.into_jsvalue(value)?,
+                            )));
+                        }
+                    },
+                )
             } else {
                 None
             };
@@ -120,7 +122,7 @@ impl InvokeStep {
                     pending_effect: InvokeStepPending::default(),
                     realm,
                     target: ForwardTarget::Construct {
-                        target: runtime.root_value(&arguments.readable[0])?,
+                        target: runtime.dup_jsvalue(&arguments.readable[0])?,
                         new_target,
                     },
                 }));
@@ -212,22 +214,20 @@ impl InvokeStep {
                 };
                 (
                     DirectCallTarget::Callable(target),
-                    runtime.root_value(&arguments.readable[0])?,
+                    runtime.dup_jsvalue(&arguments.readable[0])?,
                     runtime.dup_jsvalue(&arguments.readable[1])?,
                 )
             }
             InvokeKind::ReflectApply => (
-                DirectCallTarget::Callable(
-                    runtime.callable_from_value(runtime.root_value(&arguments.readable[0])?)?,
-                ),
-                runtime.root_value(&arguments.readable[1])?,
+                DirectCallTarget::Callable(runtime.callable_from_jsvalue(&arguments.readable[0])?),
+                runtime.dup_jsvalue(&arguments.readable[1])?,
                 runtime.dup_jsvalue(&arguments.readable[2])?,
             ),
         };
         if matches!(kind, InvokeKind::Apply) && matches!(list, JsValue::Null | JsValue::Undefined) {
             return Ok(Self::Call(Box::new(InvokeCall {
                 target,
-                receiver: runtime.into_jsvalue(receiver)?,
+                receiver,
                 arguments: Vec::new(),
             })));
         }
@@ -248,40 +248,41 @@ impl InvokeStep {
         runtime: &Runtime,
         realm: ContextId,
         kind: crate::engine::code::bytecode::ApplyKind,
-        target: Value,
-        receiver: Value,
-        value: Value,
+        target: &JsValue,
+        receiver: &JsValue,
+        value: &JsValue,
     ) -> Result<Self, RuntimeError> {
-        // OP_apply validates callability even for construct mode, before argsList.
-        let callable = runtime.callable_from_value(target.clone())?;
-        if matches!(value, Value::Null | Value::Undefined) {
+        // OP_apply checks callability before inspecting argsList, including construct mode.
+        let callable = runtime.callable_from_jsvalue(target)?;
+        if matches!(value, JsValue::Null | JsValue::Undefined) {
             return Ok(Self::Call(Box::new(InvokeCall {
                 target: DirectCallTarget::Callable(callable),
-                receiver: runtime.into_jsvalue(receiver)?,
+                receiver: runtime.dup_jsvalue(receiver)?,
                 arguments: Vec::new(),
             })));
         }
-        let target = match kind {
+        let mut owner = InvokeResume(Box::new(InvokeResumeState {
+            runtime: runtime.clone(),
+            arguments: Vec::new(),
+            pending_effect: Default::default(),
+            realm,
+            target: ForwardTarget::Construct {
+                target: JsValue::Undefined,
+                new_target: None,
+            },
+        }));
+        owner.target = match kind {
             crate::engine::code::bytecode::ApplyKind::Call => ForwardTarget::Call {
                 target: DirectCallTarget::Callable(callable),
-                receiver,
+                receiver: runtime.dup_jsvalue(receiver)?,
             },
             crate::engine::code::bytecode::ApplyKind::Construct => ForwardTarget::Construct {
-                target,
-                new_target: Some(ConstructNewTarget::Raw(runtime.into_jsvalue(receiver)?)),
+                target: runtime.dup_jsvalue(target)?,
+                new_target: Some(ConstructNewTarget::Raw(runtime.dup_jsvalue(receiver)?)),
             },
         };
-        Ok({
-            let __pending_field_value = runtime.into_jsvalue(value)?;
-            let __pending_field_resume = InvokeResume(Box::new(InvokeResumeState {
-                runtime: runtime.clone(),
-                arguments: Vec::new(),
-                pending_effect: InvokeStepPending::default(),
-                realm,
-                target,
-            }));
-            Self::request_arguments(__pending_field_value, __pending_field_resume)
-        })
+        let value = runtime.dup_jsvalue(value)?;
+        Ok(Self::request_arguments(value, owner))
     }
 }
 impl ForwardTarget {
@@ -289,13 +290,18 @@ impl ForwardTarget {
     /// forward.  `ConstructNewTarget::Raw` carries no `Drop`, so every
     /// abandonment path must release it explicitly.
     fn release_pending_new_target(&mut self, runtime: &Runtime) -> Result<(), RuntimeError> {
-        let ForwardTarget::Construct { new_target, .. } = self else {
-            return Ok(());
-        };
-        if let Some(ConstructNewTarget::Raw(value)) = new_target.take() {
-            runtime.release_jsvalue(value)?;
+        match self {
+            Self::Call { receiver, .. } => {
+                runtime.release_jsvalue(std::mem::replace(receiver, JsValue::Undefined))
+            }
+            Self::Construct { target, new_target } => {
+                runtime.release_jsvalue(std::mem::replace(target, JsValue::Undefined))?;
+                if let Some(ConstructNewTarget::Raw(value)) = new_target.take() {
+                    runtime.release_jsvalue(value)?;
+                }
+                Ok(())
+            }
         }
-        Ok(())
     }
 }
 impl InvokeResume {
@@ -323,18 +329,18 @@ impl InvokeResume {
         let target = std::mem::replace(
             &mut self.0.target,
             ForwardTarget::Construct {
-                target: Value::Undefined,
+                target: JsValue::Undefined,
                 new_target: None,
             },
         );
         Ok(match target {
             ForwardTarget::Call { target, receiver } => InvokeStep::Call(Box::new(InvokeCall {
                 target,
-                receiver: runtime.into_jsvalue(receiver)?,
+                receiver,
                 arguments: std::mem::take(&mut self.0.arguments),
             })),
             ForwardTarget::Construct { target, new_target } => {
-                let classified = runtime.constructor_from_value(self.0.realm, target);
+                let classified = runtime.constructor_from_jsvalue(self.0.realm, target);
                 let target = match classified {
                     Err(error) => {
                         if let Some(ConstructNewTarget::Raw(value)) = new_target {
@@ -377,50 +383,36 @@ pub(crate) fn finish(
             InvokeStep::Construct(request) => {
                 let target = request.target;
                 let new_target = request.new_target;
-                let arguments = request
-                    .arguments
-                    .into_iter()
-                    .map(|value| runtime.root_and_release_jsvalue(value))
-                    .collect::<Result<Vec<_>, _>>()?;
-                {
-                    return runtime.construct_internal_with_new_target(
-                        realm, &target, new_target, &arguments,
-                    );
-                }
+                return runtime.construct_internal_jsvalue(
+                    realm,
+                    &target,
+                    new_target,
+                    request.arguments,
+                );
             }
             InvokeStep::Arguments { mut resume } => {
                 let value = resume.take_arguments_value();
                 resume.arguments(
                     runtime,
-                    finish_arguments(
-                        runtime,
-                        realm,
-                        ArgumentsStep::start(
-                            runtime,
-                            realm,
-                            runtime.root_and_release_jsvalue(value)?,
-                        )?,
-                    )?,
+                    finish_arguments(runtime, realm, ArgumentsStep::start(runtime, realm, value)?)?,
                 )?
             }
             InvokeStep::Call(request) => {
                 let target = request.target;
-                let receiver = runtime.root_and_release_jsvalue(request.receiver)?;
-                let arguments = request
-                    .arguments
-                    .into_iter()
-                    .map(|value| runtime.root_and_release_jsvalue(value))
-                    .collect::<Result<Vec<_>, _>>()?;
-                {
-                    return match target {
-                        DirectCallTarget::Callable(target) => {
-                            runtime.call_internal(realm, &target, receiver, &arguments)
-                        }
-                        DirectCallTarget::NonCallableProxy(proxy) => {
-                            runtime.call_proxy(realm, &proxy, receiver, &arguments)
-                        }
-                    };
-                }
+                return match target {
+                    DirectCallTarget::Callable(target) => runtime.call_internal_jsvalue(
+                        realm,
+                        &target,
+                        request.receiver,
+                        request.arguments,
+                    ),
+                    DirectCallTarget::NonCallableProxy(proxy) => runtime.call_proxy_jsvalue(
+                        realm,
+                        &proxy,
+                        request.receiver,
+                        request.arguments,
+                    ),
+                };
             }
         };
     }

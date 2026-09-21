@@ -7,8 +7,7 @@ use crate::engine::{
     },
     heap::ContextId,
     object::{
-        CallableRef, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey,
-        WellKnownSymbol,
+        CallableRef, ObjectRef, OwnedPropertyDescriptor, PropertyKey, WellKnownSymbol,
         operations::{InternalDefineResult, InternalSetResult, PropertyDefineOutcome},
     },
     value::{JsValue, Value, conversion::NativeConversion},
@@ -483,13 +482,7 @@ impl BuildResume {
         Ok(BuildStep::request_define(
             result,
             key,
-            OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(runtime.root_and_release_jsvalue(value)?),
-                writable: DescriptorField::Present(true),
-                enumerable: DescriptorField::Present(true),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
+            OwnedPropertyDescriptor::data(runtime, value),
             self,
         ))
     }
@@ -776,7 +769,7 @@ pub(crate) fn finish(
                 let descriptor = resume.take_define_descriptor();
                 resume.defined(
                     runtime,
-                    runtime.internal_define_own_property(realm, &object, &key, &descriptor)?,
+                    runtime.internal_define_owned_property(realm, &object, &key, descriptor)?,
                 )?
             }
             BuildStep::Set { mut resume } => {
@@ -821,7 +814,7 @@ struct BuildStepPending {
     parse_result: Option<Completion>,
     define_object: Option<ObjectRef>,
     define_key: Option<PropertyKey>,
-    define_descriptor: Option<OrdinaryPropertyDescriptor>,
+    define_descriptor: Option<OwnedPropertyDescriptor>,
     set_object: Option<ObjectRef>,
     set_key: Option<PropertyKey>,
     set_value: Option<JsValue>,
@@ -867,7 +860,7 @@ impl BuildStep {
     pub(crate) fn request_define(
         object: ObjectRef,
         key: PropertyKey,
-        descriptor: OrdinaryPropertyDescriptor,
+        descriptor: OwnedPropertyDescriptor,
         mut resume: BuildResume,
     ) -> Self {
         resume.0.pending_effect.define_object = Some(object);
@@ -965,7 +958,7 @@ impl BuildResume {
             .take()
             .expect("BuildStep Define key")
     }
-    pub(crate) fn take_define_descriptor(&mut self) -> OrdinaryPropertyDescriptor {
+    pub(crate) fn take_define_descriptor(&mut self) -> OwnedPropertyDescriptor {
         self.0
             .pending_effect
             .define_descriptor

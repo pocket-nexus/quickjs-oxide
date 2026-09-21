@@ -114,7 +114,7 @@ impl OwnedSuspension {
 }
 
 pub(super) fn prepare(
-    runtime: &Runtime,
+    _runtime: &Runtime,
     mut entry: FrameEntry,
     kind: VmSuspendKind,
     pc: usize,
@@ -168,10 +168,8 @@ pub(super) fn prepare(
             entry.storage.operands.push(JsValue::Int(magic));
         }
     }
-    entry.cold.resume_throw = match abrupt {
-        Some(value) => Some(runtime.root_and_release_jsvalue(value)?),
-        None => None,
-    };
+    entry.cold.release_resume_throw();
+    entry.cold.resume_throw = abrupt;
     Ok(PreparedResume { entry, pc })
 }
 

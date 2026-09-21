@@ -1,13 +1,13 @@
 //! Object spread/rest share the pinned enumerable snapshot and live-read rules.
-#[cfg(test)]
-use crate::engine::heap::ContextId;
 use crate::engine::{
     api::{runtime::Runtime, runtime_error::RuntimeError},
     atom::PropertyKeyKind,
     object::{ObjectRef, PropertyKey},
-    value::{JsValue, Value, conversion::NativeConversion},
+    value::{JsValue, conversion::NativeConversion},
     vm::Completion,
 };
+#[cfg(test)]
+use crate::engine::{heap::ContextId, value::Value};
 // These count this cursor's successful logical clone sites, not all runtime
 // retains/releases and not bytes moved by the compiler.
 #[inline]
@@ -100,10 +100,10 @@ impl CopyStep {
     pub(crate) fn start(
         runtime: &Runtime,
         target: ObjectRef,
-        source: Value,
+        source: &JsValue,
         excluded: Option<ObjectRef>,
     ) -> Result<Self, RuntimeError> {
-        let Value::Object(source) = source else {
+        let JsValue::Object(source) = source else {
             if excluded.is_some() {
                 return Err(RuntimeError::Invariant(
                     "object-rest source was not an Object after ToObject",
@@ -111,6 +111,7 @@ impl CopyStep {
             }
             return Ok(Self::Complete(Completion::Return(JsValue::Undefined)));
         };
+        let source = ObjectRef::from_borrowed_handle(runtime.clone(), *source)?;
         if !target.belongs_to(runtime)
             || !source.belongs_to(runtime)
             || excluded
@@ -197,7 +198,7 @@ impl CopyResume {
         self.next(runtime)
     }
     fn next(mut self, runtime: &Runtime) -> Result<CopyStep, RuntimeError> {
-        let receiver = Value::Object(clone_copy_object(&self.0.source));
+        let receiver = JsValue::Object(self.0.source.object_id());
         while let Some(key) = self.0.remaining.next() {
             // Own membership never walks prototypes or calls getters.
             if let Some(excluded) = &self.0.excluded
@@ -216,13 +217,16 @@ impl CopyResume {
             if self.0.snapshot {
                 #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_owned_execution_event("copy_local_live_read");
-                let read =
-                    runtime.prepare_ordinary_read_borrowed(&self.0.source, &key, &receiver)?;
+                let read = runtime.prepare_ordinary_read_selected(
+                    &self.0.source,
+                    &key,
+                    &receiver,
+                    None,
+                )?;
                 match read {
                     crate::engine::object::OrdinaryRead::Complete(value) => {
                         self.0.key = Some(key);
-                        let value = runtime
-                            .root_and_release_jsvalue(value.unwrap_or(JsValue::Undefined))?;
+                        let value = value.unwrap_or(JsValue::Undefined);
                         self.define_value(runtime, value)?;
                         #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_owned_execution_event(
@@ -262,20 +266,22 @@ impl CopyResume {
         Ok(CopyStep::Complete(Completion::Return(JsValue::Undefined)))
     }
 
-    fn define_value(&self, runtime: &Runtime, value: Value) -> Result<(), RuntimeError> {
-        let key = self
-            .0
-            .key
-            .as_ref()
-            .ok_or(RuntimeError::Invariant("Object copy key missing"))?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("copy_define_attempt");
-        runtime.define_fresh_object_descriptor_property(
-            &self.0.target,
-            key,
-            value,
-            self.0.rejection,
-        )
+    fn define_value(&self, runtime: &Runtime, value: JsValue) -> Result<(), RuntimeError> {
+        let result = (|| {
+            let key = self
+                .0
+                .key
+                .as_ref()
+                .ok_or(RuntimeError::Invariant("Object copy key missing"))?;
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event("copy_define_attempt");
+            match runtime.define_selected_set_data(&self.0.target, key, &value, false)? {
+                crate::engine::object::operations::PropertyDefineOutcome::Defined(true) => Ok(()),
+                _ => Err(RuntimeError::Invariant(self.0.rejection)),
+            }
+        })();
+        runtime.release_jsvalue(value)?;
+        result
     }
     pub(crate) fn boolean(
         self,
@@ -305,7 +311,7 @@ impl CopyResume {
         reply: Completion,
     ) -> Result<CopyStep, RuntimeError> {
         let value = match reply {
-            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Return(value) => value,
             Completion::Throw(value) => return Ok(CopyStep::Complete(Completion::Throw(value))),
         };
         // Definition uses the unpublished target's own C_W_E data slot.
@@ -325,9 +331,9 @@ pub(crate) fn finish(
             CopyStep::Complete(result) => return Ok(result),
             CopyStep::PreparedRead(prepared) => {
                 let (read, key, resume) = prepared.into_parts();
-                let completion = match runtime.finish_prepared_read(realm, &key, read)? {
+                let completion = match runtime.finish_prepared_read_jsvalue(realm, &key, read)? {
                     NativeConversion::Value(value) => {
-                        Completion::Return(runtime.into_jsvalue(value.unwrap_or(Value::Undefined))?)
+                        Completion::Return(value.unwrap_or(JsValue::Undefined))
                     }
                     NativeConversion::Throw(value) => {
                         Completion::Throw(runtime.into_jsvalue(value)?)
@@ -375,7 +381,9 @@ mod recovery_tests {
             .unwrap();
         #[cfg(feature = "profiling")]
         let profile = crate::engine::api::profiling::CostProfile::start();
-        let step = CopyStep::start(&runtime, target.clone(), source, None).unwrap();
+        let source = runtime.into_jsvalue(source).unwrap();
+        let step = CopyStep::start(&runtime, target.clone(), &source, None).unwrap();
+        runtime.release_jsvalue(source).unwrap();
         assert!(runtime.own_property_keys(&target).unwrap().is_empty());
         let step = step.advance_without_callback(&runtime).unwrap();
         assert!(matches!(step, CopyStep::PreparedRead(_)));

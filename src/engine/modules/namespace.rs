@@ -117,6 +117,39 @@ impl Runtime {
     /// Implement the Module Namespace `[[DefineOwnProperty]]` compatibility
     /// rule for a live export property. `None` delegates to the ordinary path
     /// for non-namespace objects, missing keys, and `@@toStringTag`.
+    pub(crate) fn define_module_namespace_export_owned(
+        &self,
+        object: &ObjectRef,
+        key: &PropertyKey,
+        descriptor: &crate::engine::object::OwnedPropertyDescriptor,
+    ) -> Result<Option<bool>, RuntimeError> {
+        use crate::engine::object::property::CompletePropertyDescriptor;
+        if !self.module_namespace_export_slot(object, key)? {
+            return Ok(None);
+        }
+        // Preserve the unconditional TDZ read, including attribute-only definitions.
+        let current = self
+            .get_own_property_owned(object, key)?
+            .ok_or(RuntimeError::Invariant(
+                "module namespace export slot has no own descriptor",
+            ))?;
+        let CompletePropertyDescriptor::Data { value: current, .. } = current.record() else {
+            return Err(RuntimeError::Invariant(
+                "module namespace export slot is not a data descriptor",
+            ));
+        };
+        if descriptor.get.is_present()
+            || descriptor.set.is_present()
+            || matches!(descriptor.configurable, DescriptorField::Present(true))
+            || matches!(descriptor.enumerable, DescriptorField::Present(false))
+            || matches!(descriptor.writable, DescriptorField::Present(false))
+            || matches!(&descriptor.value, DescriptorField::Present(value) if !crate::engine::value::collection_key::same_value(&self.0.state.borrow().heap, &value.as_raw(), current))
+        {
+            return Ok(Some(false));
+        }
+        Ok(Some(true))
+    }
+
     pub(crate) fn define_module_namespace_export(
         &self,
         object: &ObjectRef,

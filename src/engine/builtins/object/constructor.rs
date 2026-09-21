@@ -103,11 +103,7 @@ pub(super) fn finish(
                 finish_source(
                     runtime,
                     realm,
-                    ProtoSourceStep::start(
-                        runtime,
-                        realm,
-                        runtime.root_and_release_jsvalue(new_target)?,
-                    )?,
+                    ProtoSourceStep::start(runtime, realm, new_target)?,
                 )?,
             )?,
         ),

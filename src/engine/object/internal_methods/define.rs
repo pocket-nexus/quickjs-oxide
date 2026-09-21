@@ -8,7 +8,7 @@ use crate::engine::api::{runtime::Runtime, runtime_error::RuntimeError};
 use crate::engine::heap::ContextId;
 use crate::engine::object::operations::InternalDefineResult;
 use crate::engine::object::{
-    CompleteOrdinaryPropertyDescriptor, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor,
+    DescriptorField, ObjectRef, OwnedCompletePropertyDescriptor, OwnedPropertyDescriptor,
     PropertyKey,
 };
 use crate::engine::value::{JsValue, Value, conversion::NativeConversion};
@@ -43,7 +43,7 @@ enum Phase {
     Method {
         resume: MethodResume,
         key: PropertyKey,
-        descriptor: OrdinaryPropertyDescriptor,
+        descriptor: OwnedPropertyDescriptor,
     },
     Forward {
         _rooted: RootedProxy,
@@ -51,11 +51,11 @@ enum Phase {
     Trap {
         rooted: RootedProxy,
         key: PropertyKey,
-        descriptor: OrdinaryPropertyDescriptor,
+        descriptor: OwnedPropertyDescriptor,
     },
     Invariant {
         rooted: RootedProxy,
-        descriptor: OrdinaryPropertyDescriptor,
+        descriptor: OwnedPropertyDescriptor,
     },
 }
 impl ProxyDefineStep {
@@ -64,10 +64,9 @@ impl ProxyDefineStep {
         realm: ContextId,
         object: ObjectRef,
         key: PropertyKey,
-        descriptor: OrdinaryPropertyDescriptor,
+        descriptor: OwnedPropertyDescriptor,
     ) -> Result<Self, RuntimeError> {
         runtime.validate_object_and_key(&object, &key)?;
-        runtime.validate_descriptor_domains(&descriptor)?;
         let step = MethodStep::start(runtime, realm, object, "defineProperty")?;
         method(runtime, realm, key, descriptor, step)
     }
@@ -76,7 +75,7 @@ fn method(
     runtime: &Runtime,
     realm: ContextId,
     key: PropertyKey,
-    descriptor: OrdinaryPropertyDescriptor,
+    descriptor: OwnedPropertyDescriptor,
     step: MethodStep,
 ) -> Result<ProxyDefineStep, RuntimeError> {
     Ok(match step {
@@ -119,7 +118,8 @@ fn method(
                 ),
                 Some(target) => {
                     let key_value = runtime.property_key_value(&key)?;
-                    let descriptor_object = runtime.proxy_descriptor_object(realm, &descriptor)?;
+                    let descriptor_object =
+                        runtime.proxy_descriptor_object_owned(realm, &descriptor)?;
                     let receiver = runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?;
                     let arguments = [
                         Value::Object(rooted.target.clone()),
@@ -215,7 +215,7 @@ impl ProxyDefineResume {
     pub(crate) fn descriptor(
         self,
         runtime: &Runtime,
-        result: NativeConversion<Option<CompleteOrdinaryPropertyDescriptor>>,
+        result: NativeConversion<Option<OwnedCompletePropertyDescriptor>>,
     ) -> Result<ProxyDefineStep, RuntimeError> {
         let Phase::Invariant { rooted, descriptor } = self.0.phase else {
             return Err(RuntimeError::Invariant(
@@ -229,7 +229,7 @@ impl ProxyDefineResume {
             }
         };
         let compatible = if let Some(target) = target.as_ref() {
-            proxy_define_descriptor_is_compatible(target, &descriptor)
+            proxy_define_descriptor_is_compatible(runtime, target, &descriptor)
         } else {
             runtime.raw_extensible_bit(&rooted.target)?
                 && !matches!(descriptor.configurable, DescriptorField::Present(false))
@@ -252,7 +252,7 @@ struct ProxyDefineStepPending {
     call_arguments: Option<Vec<JsValue>>,
     define_object: Option<ObjectRef>,
     define_key: Option<PropertyKey>,
-    define_descriptor: Option<OrdinaryPropertyDescriptor>,
+    define_descriptor: Option<OwnedPropertyDescriptor>,
     descriptor_object: Option<ObjectRef>,
     descriptor_key: Option<PropertyKey>,
 }
@@ -318,7 +318,7 @@ impl ProxyDefineStep {
     pub(crate) fn request_define(
         object: ObjectRef,
         key: PropertyKey,
-        descriptor: OrdinaryPropertyDescriptor,
+        descriptor: OwnedPropertyDescriptor,
         mut resume: ProxyDefineResume,
     ) -> Self {
         resume.0.pending_effect.define_object = Some(object);
@@ -393,7 +393,7 @@ impl ProxyDefineResume {
             .take()
             .expect("ProxyDefineStep Define key")
     }
-    pub(crate) fn take_define_descriptor(&mut self) -> OrdinaryPropertyDescriptor {
+    pub(crate) fn take_define_descriptor(&mut self) -> OwnedPropertyDescriptor {
         self.0
             .pending_effect
             .define_descriptor

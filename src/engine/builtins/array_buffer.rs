@@ -355,25 +355,24 @@ impl Runtime {
                 "ArrayBuffer prototype getter received a non-getter invocation",
             ));
         };
-        let this_value = self.root_value(this_value)?;
-        let object = match self.require_array_buffer_borrowed(realm, &this_value)? {
+        let object = match self.require_array_buffer_jsvalue(realm, this_value)? {
             NativeConversion::Value(object) => object,
             NativeConversion::Throw(value) => {
                 return Ok(Completion::Throw(self.into_jsvalue(value)?));
             }
         };
-        let snapshot = self.array_buffer_snapshot(object)?;
+        let snapshot = self.array_buffer_snapshot(&object)?;
         let value = match kind {
-            ArrayBufferNativeKind::ByteLength => Value::Int(
+            ArrayBufferNativeKind::ByteLength => JsValue::Int(
                 i32::try_from(snapshot.byte_length)
                     .expect("ArrayBuffer length is bounded by i32::MAX"),
             ),
-            ArrayBufferNativeKind::MaxByteLength => Value::Int(
+            ArrayBufferNativeKind::MaxByteLength => JsValue::Int(
                 i32::try_from(snapshot.max_byte_length.unwrap_or(snapshot.byte_length))
                     .expect("ArrayBuffer maximum is bounded by i32::MAX"),
             ),
-            ArrayBufferNativeKind::Resizable => Value::Bool(snapshot.max_byte_length.is_some()),
-            ArrayBufferNativeKind::Detached => Value::Bool(snapshot.detached),
+            ArrayBufferNativeKind::Resizable => JsValue::Bool(snapshot.max_byte_length.is_some()),
+            ArrayBufferNativeKind::Detached => JsValue::Bool(snapshot.detached),
             ArrayBufferNativeKind::Constructor
             | ArrayBufferNativeKind::IsView
             | ArrayBufferNativeKind::Species
@@ -386,7 +385,7 @@ impl Runtime {
                 ));
             }
         };
-        Ok(Completion::Return(self.into_jsvalue(value)?))
+        Ok(Completion::Return(value))
     }
 
     fn call_array_buffer_resize(
@@ -475,12 +474,23 @@ impl Runtime {
     pub(in crate::engine::builtins) fn array_buffer_slice_source(
         &self,
         realm: ContextId,
-        value: Value,
+        value: &JsValue,
     ) -> Result<NativeConversion<(ObjectRef, i64)>, RuntimeError> {
-        let source = match self.require_array_buffer(realm, value)? {
-            NativeConversion::Value(source) => source,
-            NativeConversion::Throw(value) => return Ok(NativeConversion::Throw(value)),
+        let JsValue::Object(id) = value else {
+            return Ok(NativeConversion::Throw(self.new_native_error(
+                realm,
+                NativeErrorKind::Type,
+                "ArrayBuffer object expected",
+            )?));
         };
+        let source = ObjectRef::from_borrowed_handle(self.clone(), *id)?;
+        if self.array_buffer_snapshot_if_branded(&source)?.is_none() {
+            return Ok(NativeConversion::Throw(self.new_native_error(
+                realm,
+                NativeErrorKind::Type,
+                "ArrayBuffer object expected",
+            )?));
+        }
         let initial = self.array_buffer_snapshot(&source)?;
         if initial.detached {
             return Ok(NativeConversion::Throw(self.new_native_error(
@@ -692,6 +702,29 @@ impl Runtime {
                 NativeConversion::Throw(value) => NativeConversion::Throw(value),
             })
     }
+    fn require_array_buffer_jsvalue(
+        &self,
+        realm: ContextId,
+        value: &JsValue,
+    ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
+        let JsValue::Object(id) = value else {
+            return Ok(NativeConversion::Throw(self.new_native_error(
+                realm,
+                NativeErrorKind::Type,
+                "ArrayBuffer object expected",
+            )?));
+        };
+        let object = ObjectRef::from_borrowed_handle(self.clone(), *id)?;
+        if self.array_buffer_snapshot_if_branded(&object)?.is_none() {
+            return Ok(NativeConversion::Throw(self.new_native_error(
+                realm,
+                NativeErrorKind::Type,
+                "ArrayBuffer object expected",
+            )?));
+        }
+        Ok(NativeConversion::Value(object))
+    }
+
     fn require_array_buffer_borrowed<'a>(
         &self,
         realm: ContextId,

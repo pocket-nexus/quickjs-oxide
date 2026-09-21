@@ -701,15 +701,7 @@ fn run_frames_with_state(
                 .cold
                 .resume_throw
                 .take()
-                .map(|value| {
-                    // The rare-cell throw is a public-root island; entering the
-                    // internal completion duplicates its edges at this boundary.
-                    runtime
-                        .unroot_value(&value)
-                        .map(Completion::Throw)
-                        .map_err(runtime_error_to_vm_error)
-                })
-                .transpose()?;
+                .map(Completion::Throw);
         }
         let mut conversion_prepared = false;
         let mut exit = if let Some(task) = conversion.take() {
@@ -4689,14 +4681,15 @@ mod tests {
                 constructor = Some(Value::Object(callable.into_object()));
             }
         }
+        let constructor_input = runtime.into_jsvalue(constructor.unwrap()).unwrap();
         let crate::engine::vm::DefineClassOutcome::Defined {
             constructor,
             prototype,
         } = runtime
             .define_class_pair(
                 context.realm,
-                Value::Undefined,
-                constructor.unwrap(),
+                &JsValue::Undefined,
+                &constructor_input,
                 &crate::engine::value::JsString::from_static(""),
                 false,
             )
@@ -4704,6 +4697,7 @@ mod tests {
         else {
             panic!("expected fresh class pair")
         };
+        runtime.release_jsvalue(constructor_input).unwrap();
         let static_initializer = static_initializer.unwrap();
         let install_pc = entry
             .executable
@@ -4799,15 +4793,14 @@ mod tests {
             Value::Int(42)
         );
         // Preparation is irreversible even when the body throws.
+        let static_initializer = runtime.into_jsvalue(static_initializer).unwrap();
         assert!(
             runtime
-                .begin_class_static_initializer(
-                    context.realm,
-                    runtime.root_and_release_jsvalue(constructor).unwrap(),
-                    static_initializer
-                )
+                .begin_class_static_initializer(context.realm, &constructor, &static_initializer)
                 .is_err()
         );
+        runtime.release_jsvalue(constructor).unwrap();
+        runtime.release_jsvalue(static_initializer).unwrap();
         runtime.release_jsvalue(prototype).unwrap();
         let costs = profile.snapshot();
         assert_eq!(costs.owned_storage.maximum_frame_depth, 3);

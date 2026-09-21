@@ -393,6 +393,14 @@ impl Runtime {
         let Value::Object(object) = value else {
             return Ok(());
         };
+        self.define_object_name_for_object(object, name)
+    }
+
+    pub(crate) fn define_object_name_for_object(
+        &self,
+        object: &ObjectRef,
+        name: &JsString,
+    ) -> Result<(), RuntimeError> {
         let key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name)?;
         let should_define = match self.get_own_property(object, &key)? {
             None => true,

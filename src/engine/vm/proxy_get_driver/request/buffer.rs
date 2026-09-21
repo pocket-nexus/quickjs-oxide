@@ -113,14 +113,13 @@ impl From<crate::engine::builtins::TypedSpeciesStep> for Step {
             },
             T::Construct {
                 constructor,
-                arguments,
-                resume,
+                mut resume,
             } => Self::Construct {
                 new_target: Some(crate::engine::vm::call::ConstructNewTarget::Validated(
                     constructor.clone(),
                 )),
                 target: Some(constructor),
-                arguments: Some(arguments),
+                arguments: Some(resume.take_arguments()),
                 resume: Some(Resume::TypedSpecies(resume)),
             },
         }
@@ -470,12 +469,8 @@ impl From<crate::engine::builtins::TypedIteratorMethodStep> for Step {
         use crate::engine::builtins::TypedIteratorMethodStep as T;
         match step {
             T::Complete(result) => Self::TypedIteratorMethodComplete(Some(result)),
-            T::Read {
-                receiver,
-                key,
-                resume,
-            } => Self::ReadValue {
-                receiver: Some(receiver),
+            T::Read { key, mut resume } => Self::ReadValue {
+                receiver: Some(resume.take_receiver()),
                 key: Some(key),
                 resume: Some(Resume::TypedIteratorMethod(resume)),
             },
@@ -500,11 +495,10 @@ impl From<crate::engine::builtins::TypedCollectStep> for Step {
             },
             T::Call {
                 callable,
-                receiver,
-                resume,
+                mut resume,
             } => Self::Call {
                 target: Some(DirectCallTarget::Callable(callable)),
-                receiver: Some(receiver),
+                receiver: Some(resume.take_receiver()),
                 arguments: Some(Vec::new()),
                 resume: Some(Resume::TypedCollect(resume)),
             },

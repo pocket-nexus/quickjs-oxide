@@ -66,19 +66,32 @@ impl std::ops::DerefMut for StringFactoryResume {
 }
 const _: () = assert!(std::mem::size_of::<StringFactoryResume>() <= 8);
 pub(crate) struct StringFactoryResumeState {
+    runtime: Runtime,
     realm: ContextId,
     kind: StringFactoryKind,
-    arguments: Vec<Value>,
+    arguments: Vec<JsValue>,
     actual: usize,
     cooked: Option<ObjectRef>,
     raw: Option<ObjectRef>,
-    chunk: Value,
-    length_value: Value,
+    chunk: JsValue,
+    length_value: JsValue,
     length: u64,
     index: u64,
     builder: Option<JsStringBuilder>,
     limit: usize,
     phase: Phase,
+}
+impl Drop for StringFactoryResumeState {
+    fn drop(&mut self) {
+        for value in self.arguments.drain(..) {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        for value in [&mut self.chunk, &mut self.length_value] {
+            let _ = self
+                .runtime
+                .release_jsvalue(std::mem::replace(value, JsValue::Undefined));
+        }
+    }
 }
 impl StringFactoryStep {
     pub(crate) fn start(
@@ -96,31 +109,33 @@ impl StringFactoryStep {
         arguments: &NativeArguments,
         limit: usize,
     ) -> Result<Self, RuntimeError> {
-        let mut readable = Vec::with_capacity(arguments.readable.len());
-        for value in &arguments.readable {
-            readable.push(runtime.root_value(value)?);
-        }
         let mut resume = StringFactoryResume(Box::new(StringFactoryResumeState {
+            runtime: runtime.clone(),
             realm,
             kind,
-            arguments: readable,
+            arguments: Vec::with_capacity(arguments.readable.len()),
             actual: arguments.actual_arg_count,
             cooked: None,
             raw: None,
-            chunk: Value::Undefined,
-            length_value: Value::Undefined,
+            chunk: JsValue::Undefined,
+            length_value: JsValue::Undefined,
             length: 0,
             index: 0,
             builder: None,
             limit,
             phase: Phase::Characters,
         }));
+        for value in &arguments.readable {
+            resume.arguments.push(runtime.dup_jsvalue(value)?);
+        }
         match kind {
             StringFactoryKind::Static(StringStaticKind::Raw) => {
                 let template = resume.arguments.first().ok_or(RuntimeError::Invariant(
                     "String.raw template argv was not padded",
                 ))?;
-                let cooked = match runtime.native_to_object(realm, template.clone())? {
+                let cooked = match runtime
+                    .native_to_object_jsvalue(realm, runtime.dup_jsvalue(template)?)?
+                {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
                         return Ok(Self::Complete(Completion::Throw(
@@ -147,14 +162,12 @@ impl StringFactoryStep {
                 let value = resume
                     .arguments
                     .first()
-                    .cloned()
+                    .map(|value| runtime.dup_jsvalue(value))
+                    .transpose()?
                     .ok_or(RuntimeError::Invariant(
                         "String codePointRange start argv was not padded",
                     ))?;
-                Ok(Self::Number {
-                    value: runtime.into_jsvalue(value)?,
-                    resume,
-                })
+                Ok(Self::Number { value, resume })
             }
         }
     }
@@ -184,7 +197,7 @@ impl StringFactoryResume {
             self.0.kind,
             StringFactoryKind::Static(StringStaticKind::Raw)
         ) {
-            self.0.chunk = Value::Undefined;
+            runtime.release_jsvalue(std::mem::replace(&mut self.0.chunk, JsValue::Undefined))?;
             if self.0.index == self.0.length {
                 return self.complete(runtime);
             }
@@ -205,13 +218,14 @@ impl StringFactoryResume {
                 .0
                 .arguments
                 .get(self.0.index as usize)
-                .cloned()
+                .map(|value| runtime.dup_jsvalue(value))
+                .transpose()?
                 .ok_or(RuntimeError::Invariant("String factory argument missing"))?;
             if matches!(
                 self.0.kind,
                 StringFactoryKind::Static(StringStaticKind::FromCodePoint)
             ) {
-                if let Value::Int(value) = value {
+                if let JsValue::Int(value) = value {
                     if !(0..=0x10_ffff).contains(&value) {
                         let error = runtime.new_native_error_jsvalue(
                             self.0.realm,
@@ -226,7 +240,7 @@ impl StringFactoryResume {
                 }
             }
             return Ok(StringFactoryStep::Number {
-                value: runtime.into_jsvalue(value)?,
+                value,
                 resume: self,
             });
         }
@@ -270,13 +284,7 @@ impl StringFactoryResume {
                 self.next(runtime)
             }
             Phase::Length => {
-                self.0.length =
-                    match runtime.native_to_length(self.0.realm, &Value::number(number))? {
-                        NativeConversion::Value(value) => value,
-                        NativeConversion::Throw(value) => {
-                            return Ok(self.abrupt(runtime.into_jsvalue(value)?));
-                        }
-                    };
+                self.0.length = Runtime::length_from_number(number);
                 self.0.builder = Some(JsStringBuilder::with_limit(0, self.0.limit));
                 self.next(runtime)
             }
@@ -287,12 +295,13 @@ impl StringFactoryResume {
                     .0
                     .arguments
                     .get(1)
-                    .cloned()
+                    .map(|value| runtime.dup_jsvalue(value))
+                    .transpose()?
                     .ok_or(RuntimeError::Invariant(
                         "String codePointRange end argv was not padded",
                     ))?;
                 Ok(StringFactoryStep::Number {
-                    value: runtime.into_jsvalue(value)?,
+                    value,
                     resume: self,
                 })
             }
@@ -323,12 +332,12 @@ impl StringFactoryResume {
         result: Completion,
     ) -> Result<StringFactoryStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Return(value) => value,
             Completion::Throw(value) => return Ok(self.abrupt(value)),
         };
         match self.0.phase {
             Phase::Raw => {
-                let raw = match runtime.native_to_object(self.0.realm, value)? {
+                let raw = match runtime.native_to_object_jsvalue(self.0.realm, value)? {
                     NativeConversion::Value(value) => value,
                     NativeConversion::Throw(value) => {
                         return Ok(self.abrupt(runtime.into_jsvalue(value)?));
@@ -344,22 +353,27 @@ impl StringFactoryResume {
                 })
             }
             Phase::Length => {
-                self.0.length_value = value.clone();
+                runtime.release_jsvalue(std::mem::replace(&mut self.0.length_value, value))?;
+                let value = runtime.dup_jsvalue(&self.0.length_value)?;
                 Ok(StringFactoryStep::Number {
-                    value: runtime.into_jsvalue(value)?,
+                    value,
                     resume: self,
                 })
             }
             Phase::Chunk => {
-                self.0.chunk = value.clone();
+                runtime.release_jsvalue(std::mem::replace(&mut self.0.chunk, value))?;
+                let value = runtime.dup_jsvalue(&self.0.chunk)?;
                 Ok(StringFactoryStep::String {
-                    value: runtime.into_jsvalue(value)?,
+                    value,
                     resume: self,
                 })
             }
-            _ => Err(RuntimeError::Invariant(
-                "String factory read phase mismatch",
-            )),
+            _ => {
+                runtime.release_jsvalue(value)?;
+                Err(RuntimeError::Invariant(
+                    "String factory read phase mismatch",
+                ))
+            }
         }
     }
     pub(crate) fn string(
@@ -393,12 +407,13 @@ impl StringFactoryResume {
                     .0
                     .arguments
                     .get(index)
-                    .cloned()
+                    .map(|value| runtime.dup_jsvalue(value))
+                    .transpose()?
                     .ok_or(RuntimeError::Invariant(
                         "String.raw substitution argv was not readable",
                     ))?;
                 Ok(StringFactoryStep::String {
-                    value: runtime.into_jsvalue(value)?,
+                    value,
                     resume: self,
                 })
             }
@@ -421,14 +436,12 @@ pub(crate) fn finish(
     loop {
         step = match step {
             StringFactoryStep::Complete(result) => return Ok(result),
-            StringFactoryStep::Number { value, resume } => resume.number(
-                runtime,
-                runtime.native_to_number(realm, &runtime.root_and_release_jsvalue(value)?)?,
-            )?,
-            StringFactoryStep::String { value, resume } => resume.string(
-                runtime,
-                runtime.native_to_js_string(realm, &runtime.root_and_release_jsvalue(value)?)?,
-            )?,
+            StringFactoryStep::Number { value, resume } => {
+                resume.number(runtime, runtime.native_to_number_jsvalue(realm, value)?)?
+            }
+            StringFactoryStep::String { value, resume } => {
+                resume.string(runtime, runtime.native_to_js_string_jsvalue(realm, value)?)?
+            }
             StringFactoryStep::Read {
                 object,
                 key,

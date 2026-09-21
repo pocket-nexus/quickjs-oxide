@@ -243,7 +243,7 @@ fn prepared_setter_action_roots_callable_receiver_and_argument() {
     let returned = context
         .call(
             &setter,
-            receiver,
+            runtime.root_and_release_jsvalue(receiver).unwrap(),
             &[runtime.root_and_release_jsvalue(argument).unwrap()],
         )
         .unwrap();

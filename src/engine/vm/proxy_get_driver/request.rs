@@ -13,9 +13,8 @@ mod string;
 mod vm;
 
 use super::{
-    BytecodeCallRequest, CompleteOrdinaryPropertyDescriptor, Completion, DescriptorResume,
-    DescriptorStep, DirectCallTarget, JsValue, NativeConversion, ObjectRef,
-    OrdinaryPropertyDescriptor, OrdinaryRead, PropertyKey, ProxyBooleanResume, ProxyBooleanStep,
+    BytecodeCallRequest, Completion, DescriptorResume, DescriptorStep, DirectCallTarget, JsValue,
+    NativeConversion, ObjectRef, OrdinaryRead, PropertyKey, ProxyBooleanResume, ProxyBooleanStep,
     ProxyGetResume, ProxyGetStep, ProxyOwnResume, ProxyOwnStep, Runtime, Value,
 };
 use crate::engine::object::operations::{
@@ -43,13 +42,13 @@ pub(super) struct BooleanResultPayload {
 }
 pub(super) struct DefineTypedPayload {
     pub(super) object: ObjectRef,
-    pub(super) _descriptor: OrdinaryPropertyDescriptor,
+    pub(super) _descriptor: crate::engine::object::OwnedPropertyDescriptor,
     pub(super) resume: Box<Resume>,
 }
 pub(super) struct DefineLengthPayload {
     pub(super) object: ObjectRef,
     pub(super) key: PropertyKey,
-    pub(super) descriptor: OrdinaryPropertyDescriptor,
+    pub(super) descriptor: crate::engine::object::OwnedPropertyDescriptor,
     pub(super) resume: Box<Resume>,
 }
 
@@ -315,7 +314,7 @@ pub(super) enum Step {
         element: Option<TypedArrayElementKind>,
         resume: Option<Resume>,
     },
-    TypedCollectComplete(Option<NativeConversion<Vec<Value>>>),
+    TypedCollectComplete(Option<NativeConversion<Vec<JsValue>>>),
     TypedCreate {
         constructor: Option<JsValue>,
         length: Option<u64>,
@@ -562,20 +561,22 @@ pub(super) enum Step {
     Define {
         object: Option<ObjectRef>,
         key: Option<PropertyKey>,
-        descriptor: Option<OrdinaryPropertyDescriptor>,
+        descriptor: Option<crate::engine::object::DefinitionInput>,
         resume: Option<Resume>,
     },
     DefineOrdinary {
         object: Option<ObjectRef>,
         key: Option<PropertyKey>,
-        descriptor: Option<OrdinaryPropertyDescriptor>,
+        descriptor: Option<crate::engine::object::DefinitionInput>,
         resume: Option<Resume>,
     },
     Defined(Option<NativeConversion<InternalDefineResult>>),
     Complete(Option<Completion>),
     BooleanComplete(Option<NativeConversion<bool>>),
-    OwnComplete(Option<NativeConversion<Option<CompleteOrdinaryPropertyDescriptor>>>),
-    Converted(Option<NativeConversion<OrdinaryPropertyDescriptor>>),
+    OwnComplete(
+        Option<NativeConversion<Option<crate::engine::object::OwnedCompletePropertyDescriptor>>>,
+    ),
+    Converted(Option<NativeConversion<crate::engine::object::OwnedPropertyDescriptor>>),
     Has {
         object: Option<ObjectRef>,
         key: Option<PropertyKey>,
@@ -1137,10 +1138,12 @@ impl Resume {
     pub(super) fn descriptor(
         self,
         runtime: &Runtime,
-        result: NativeConversion<Option<CompleteOrdinaryPropertyDescriptor>>,
+        result: NativeConversion<Option<crate::engine::object::OwnedCompletePropertyDescriptor>>,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
-            Self::RootDescriptor => Ok(Step::RootDescriptor(Some(result))),
+            Self::RootDescriptor => Ok(Step::RootDescriptor(Some(
+                runtime.public_descriptor_result(result)?,
+            ))),
             Self::OwnFlagReply { enumerable, resume } => resume.boolean(
                 runtime,
                 match result {
@@ -1185,8 +1188,12 @@ impl Resume {
                 let result = match result {
                     ArrayLengthConversion::Throw(value) => NativeConversion::Throw(value),
                     ArrayLengthConversion::Length(length) => match runtime
-                        .apply_array_length_descriptor(&object, &key, &descriptor, length)?
-                    {
+                        .apply_array_length_descriptor(
+                            &object,
+                            &key,
+                            &descriptor.attributes_public(),
+                            length,
+                        )? {
                         PropertyDefineOutcome::Defined(true) => {
                             NativeConversion::Value(InternalDefineResult::Defined)
                         }
@@ -1268,7 +1275,7 @@ impl Resume {
     pub(super) fn converted(
         self,
         runtime: &Runtime,
-        result: NativeConversion<OrdinaryPropertyDescriptor>,
+        result: NativeConversion<crate::engine::object::OwnedPropertyDescriptor>,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
             Self::Definitions(resume) => resume.converted(runtime, result).map(Into::into),
@@ -1561,13 +1568,20 @@ impl Resume {
     pub(super) fn typed_collected(
         self,
         runtime: &Runtime,
-        result: NativeConversion<Vec<Value>>,
+        result: NativeConversion<Vec<JsValue>>,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
             Self::TypedCreate(resume) => resume.collected(runtime, result).map(Into::into),
-            _ => Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
-                "typed collected values have no continuation",
-            )),
+            _ => {
+                if let NativeConversion::Value(values) = result {
+                    for value in values {
+                        let _ = runtime.release_jsvalue(value);
+                    }
+                }
+                Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
+                    "typed collected values have no continuation",
+                ))
+            }
         }
     }
 }

@@ -60,22 +60,15 @@ pub(super) fn advance(
                 continue;
             }
             Step::Aggregate { iterable, resume } => {
-                let iterable = iterable.take().expect("selected Step field");
-                let resume = resume.take().expect("selected Step field");
-
                 query.parents.try_reserve(1).map_err(|_| {
                     Error::internal("AggregateError continuation allocation failed")
                 })?;
+                let iterable = iterable.take().expect("selected Step field");
+                let resume = resume.take().expect("selected Step field");
                 query.parents.push(resume);
-                *step = crate::engine::builtins::AggregateStep::start(
-                    runtime,
-                    realm,
-                    runtime
-                        .root_and_release_jsvalue(iterable)
-                        .map_err(runtime_error_to_vm_error)?,
-                )
-                .map_err(runtime_error_to_vm_error)?
-                .into();
+                *step = crate::engine::builtins::AggregateStep::start(runtime, realm, iterable)
+                    .map_err(runtime_error_to_vm_error)?
+                    .into();
                 continue;
             }
             Step::ArraySpecies {
@@ -248,24 +241,16 @@ pub(super) fn advance(
                 input,
                 resume,
             } => {
-                let regexp = regexp.take().expect("selected Step field");
-                let input = input.take().expect("selected Step field");
-                let resume = resume.take().expect("selected Step field");
-
                 query
                     .parents
                     .try_reserve(1)
                     .map_err(|_| Error::internal("RegExp exec continuation allocation failed"))?;
+                let regexp = regexp.take().expect("selected Step field");
+                let input = input.take().expect("selected Step field");
+                let resume = resume.take().expect("selected Step field");
                 query.parents.push(resume);
                 *step = crate::engine::builtins::RegExpExecStep::abstract_exec(
-                    runtime,
-                    realm,
-                    runtime
-                        .root_and_release_jsvalue(regexp)
-                        .map_err(runtime_error_to_vm_error)?,
-                    runtime
-                        .root_and_release_jsvalue(input)
-                        .map_err(runtime_error_to_vm_error)?,
+                    runtime, realm, regexp, input,
                 )
                 .map_err(runtime_error_to_vm_error)?
                 .into();
@@ -310,9 +295,7 @@ pub(super) fn advance(
                     runtime,
                     realm,
                     &constructor,
-                    runtime
-                        .root_and_release_jsvalue(value)
-                        .map_err(runtime_error_to_vm_error)?,
+                    value,
                 )
                 .map_err(runtime_error_to_vm_error)?
                 .into();

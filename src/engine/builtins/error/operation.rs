@@ -5,7 +5,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::ErrorConstructorKind,
     heap::ContextId,
-    object::{ObjectRef, PropertyKey},
+    object::{DescriptorField, ObjectRef, OwnedPropertyDescriptor, PropertyKey},
     value::{JsString, JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion,
@@ -64,13 +64,23 @@ pub(crate) struct ErrorResumeState {
     kind: ErrorKind,
     phase: Phase,
     object: Option<ObjectRef>,
-    new_target: Value,
-    arguments: Vec<Value>,
+    new_target: JsValue,
+    arguments: Vec<JsValue>,
     actual: usize,
     name: JsString,
+    name_value: JsValue,
 }
 impl Drop for ErrorResumeState {
     fn drop(&mut self) {
+        let _ = self
+            .runtime
+            .release_jsvalue(std::mem::replace(&mut self.new_target, JsValue::Undefined));
+        let _ = self
+            .runtime
+            .release_jsvalue(std::mem::replace(&mut self.name_value, JsValue::Undefined));
+        for value in self.arguments.drain(..) {
+            let _ = self.runtime.release_jsvalue(value);
+        }
         for value in [
             self.pending_effect.read_receiver.take(),
             self.pending_effect.string_value.take(),
@@ -91,13 +101,6 @@ impl ErrorStep {
         invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Self, RuntimeError> {
-        let mut owned_arguments = Vec::new();
-        owned_arguments
-            .try_reserve_exact(arguments.readable.len())
-            .map_err(|_| RuntimeError::Invariant("Error argument allocation failed"))?;
-        for argument in &arguments.readable {
-            owned_arguments.push(runtime.root_value(argument)?);
-        }
         let mut resume = ErrorResume(Box::new(ErrorResumeState {
             runtime: runtime.clone(),
             pending_effect: ErrorStepPending::default(),
@@ -105,11 +108,20 @@ impl ErrorStep {
             kind,
             phase: Phase::Prototype,
             object: None,
-            new_target: Value::Undefined,
-            arguments: owned_arguments,
+            new_target: JsValue::Undefined,
+            arguments: Vec::new(),
             actual: arguments.actual_arg_count,
             name: JsString::from_static("Error"),
+            name_value: JsValue::Undefined,
         }));
+        resume
+            .0
+            .arguments
+            .try_reserve_exact(arguments.readable.len())
+            .map_err(|_| RuntimeError::Invariant("Error argument allocation failed"))?;
+        for argument in &arguments.readable {
+            resume.0.arguments.push(runtime.dup_jsvalue(argument)?);
+        }
         match kind {
             ErrorKind::Constructor(_) => {
                 let NativeInvocation::Construct { new_target } = invocation else {
@@ -118,15 +130,14 @@ impl ErrorStep {
                     ));
                 };
                 resume.new_target = if matches!(new_target, JsValue::Undefined) {
-                    Value::Object(runtime.active_function()?)
+                    JsValue::Object(runtime.active_function()?.into_handle())
                 } else {
-                    runtime.root_value(new_target)?
+                    runtime.dup_jsvalue(new_target)?
                 };
                 Ok({
-                    let __pending_field_receiver =
-                        runtime.into_jsvalue(resume.new_target.clone())?;
                     let __pending_field_key = runtime
                         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Prototype)?;
+                    let __pending_field_receiver = runtime.dup_jsvalue(&resume.new_target)?;
                     let __pending_field_resume = resume;
                     Self::request_read(
                         __pending_field_receiver,
@@ -154,9 +165,9 @@ impl ErrorStep {
                 resume.object = Some(object.clone());
                 resume.phase = Phase::NameRead;
                 Ok({
-                    let __pending_field_receiver = JsValue::Object(object.into_handle());
                     let __pending_field_key = runtime
                         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name)?;
+                    let __pending_field_receiver = JsValue::Object(object.into_handle());
                     let __pending_field_resume = resume;
                     Self::request_read(
                         __pending_field_receiver,
@@ -187,19 +198,21 @@ impl ErrorResume {
         result: Completion,
     ) -> Result<ErrorStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Return(value) => value,
             Completion::Throw(value) => return Ok(ErrorStep::Complete(Completion::Throw(value))),
         };
         match self.0.phase {
             Phase::Prototype => {
                 let ErrorKind::Constructor(kind) = self.0.kind else {
+                    runtime.release_jsvalue(value)?;
                     return Err(RuntimeError::Invariant("Error prototype kind mismatch"));
                 };
-                let prototype = if let Value::Object(object) = value {
-                    object
+                let prototype = if let JsValue::Object(object) = value {
+                    ObjectRef::from_owned_handle(runtime.clone(), object)
                 } else {
+                    runtime.release_jsvalue(value)?;
                     let realm = match runtime
-                        .function_realm_from_value(self.0.realm, &self.0.new_target)?
+                        .function_realm_from_jsvalue(self.0.realm, &self.0.new_target)?
                     {
                         NativeConversion::Value(realm) => realm,
                         NativeConversion::Throw(value) => {
@@ -229,113 +242,145 @@ impl ErrorResume {
                     .0
                     .arguments
                     .get(usize::from(self.aggregate_kind()))
-                    .cloned()
                     .ok_or(RuntimeError::Invariant("Error message argv missing"))?;
-                if matches!(message, Value::Undefined) {
+                if matches!(message, JsValue::Undefined) {
                     self.cause(runtime)
                 } else {
                     self.0.phase = Phase::Message;
                     Ok({
-                        let __pending_field_value = runtime.into_jsvalue(message)?;
+                        let __pending_field_value = runtime.dup_jsvalue(message)?;
                         let __pending_field_resume = self;
-                        ErrorStep::request_string(__pending_field_value, __pending_field_resume)
+                        __pending_field_resume.stringify(runtime, __pending_field_value)?
                     })
                 }
             }
             Phase::Cause => {
-                runtime.define_function_data_property(
-                    &self.object()?,
-                    "cause",
-                    value,
-                    true,
-                    true,
-                )?;
+                self.define_field(runtime, "cause", value)?;
                 self.aggregate(runtime)
             }
             Phase::Aggregate => {
-                if !matches!(value, Value::Object(_)) {
+                if !matches!(value, JsValue::Object(_)) {
+                    runtime.release_jsvalue(value)?;
                     return Err(RuntimeError::Invariant(
                         "AggregateError iterable returned non-object",
                     ));
                 }
-                runtime.define_function_data_property(
-                    &self.object()?,
-                    "errors",
-                    value,
-                    true,
-                    true,
-                )?;
+                self.define_field(runtime, "errors", value)?;
                 self.finish(runtime)
             }
             Phase::NameRead => {
-                if matches!(value, Value::Undefined) {
+                if matches!(value, JsValue::Undefined) {
                     self.text(runtime)
                 } else {
                     self.0.phase = Phase::Name;
                     Ok({
-                        let __pending_field_value = runtime.into_jsvalue(value)?;
+                        let __pending_field_value = value;
                         let __pending_field_resume = self;
-                        ErrorStep::request_string(__pending_field_value, __pending_field_resume)
+                        __pending_field_resume.stringify(runtime, __pending_field_value)?
                     })
                 }
             }
             Phase::TextRead => {
                 self.0.phase = Phase::Text;
-                if matches!(value, Value::Undefined) {
+                if matches!(value, JsValue::Undefined) {
                     self.string(runtime, NativeConversion::Value(JsString::from_static("")))
                 } else {
                     Ok({
-                        let __pending_field_value = runtime.into_jsvalue(value)?;
+                        let __pending_field_value = value;
                         let __pending_field_resume = self;
-                        ErrorStep::request_string(__pending_field_value, __pending_field_resume)
+                        __pending_field_resume.stringify(runtime, __pending_field_value)?
                     })
                 }
             }
-            _ => Err(RuntimeError::Invariant("Error value reply phase mismatch")),
+            _ => {
+                runtime.release_jsvalue(value)?;
+                Err(RuntimeError::Invariant("Error value reply phase mismatch"))
+            }
+        }
+    }
+    fn define_field(
+        &self,
+        runtime: &Runtime,
+        name: &str,
+        value: JsValue,
+    ) -> Result<(), RuntimeError> {
+        let mut descriptor = OwnedPropertyDescriptor::new(runtime);
+        descriptor.value = DescriptorField::Present(value);
+        descriptor.writable = DescriptorField::Present(true);
+        descriptor.enumerable = DescriptorField::Present(false);
+        descriptor.configurable = DescriptorField::Present(true);
+        let object = self.object()?;
+        let key = runtime.intern_property_key(name)?;
+        if !runtime.define_ordinary_owned_property(&object, &key, &descriptor)? {
+            return Err(RuntimeError::Invariant(
+                "function intrinsic property definition was rejected",
+            ));
+        }
+        Ok(())
+    }
+    fn stringify(self, runtime: &Runtime, value: JsValue) -> Result<ErrorStep, RuntimeError> {
+        if matches!(value, JsValue::String(_)) {
+            self.string_value(runtime, value)
+        } else {
+            Ok(ErrorStep::request_string(value, self))
         }
     }
     pub(crate) fn string(
-        mut self,
+        self,
         runtime: &Runtime,
         result: NativeConversion<JsString>,
     ) -> Result<ErrorStep, RuntimeError> {
-        let value = match result {
-            NativeConversion::Value(value) => value,
-            NativeConversion::Throw(value) => {
-                return Ok(ErrorStep::Complete(Completion::Throw(
-                    runtime.into_jsvalue(value)?,
-                )));
+        match result {
+            NativeConversion::Value(value) => {
+                self.string_value(runtime, runtime.into_jsvalue(Value::String(value))?)
             }
+            NativeConversion::Throw(value) => Ok(ErrorStep::Complete(Completion::Throw(
+                runtime.into_jsvalue(value)?,
+            ))),
+        }
+    }
+    fn string_value(
+        mut self,
+        runtime: &Runtime,
+        value: JsValue,
+    ) -> Result<ErrorStep, RuntimeError> {
+        self.0.pending_effect.string_value = Some(value);
+        let Some(JsValue::String(id)) = self.0.pending_effect.string_value.as_ref() else {
+            return Err(RuntimeError::Invariant(
+                "Error string reply was not a string",
+            ));
         };
+        let text = runtime.0.state.borrow().heap.string(*id)?.clone();
         match self.0.phase {
             Phase::Message => {
-                runtime.define_function_data_property(
-                    &self.object()?,
-                    "message",
-                    Value::String(value),
-                    true,
-                    true,
-                )?;
+                let value = self.0.pending_effect.string_value.take().unwrap();
+                self.define_field(runtime, "message", value)?;
                 self.cause(runtime)
             }
             Phase::Name => {
-                self.0.name = value;
+                self.0.name = text;
+                let value = self.0.pending_effect.string_value.take().unwrap();
+                runtime.release_jsvalue(std::mem::replace(&mut self.0.name_value, value))?;
                 self.text(runtime)
             }
             Phase::Text => {
-                let value = if self.0.name.is_empty() {
-                    value
-                } else if value.is_empty() {
-                    std::mem::replace(&mut self.0.name, JsString::from_static(""))
+                let result = if self.0.name.is_empty() {
+                    self.0.pending_effect.string_value.take().unwrap()
+                } else if text.is_empty() {
+                    if matches!(self.0.name_value, JsValue::Undefined) {
+                        runtime.into_jsvalue(Value::String(self.0.name.clone()))?
+                    } else {
+                        std::mem::replace(&mut self.0.name_value, JsValue::Undefined)
+                    }
                 } else {
-                    self.0
-                        .name
-                        .try_concat(&JsString::from_static(": "))?
-                        .try_concat(&value)?
+                    runtime.into_jsvalue(Value::String(
+                        self.0
+                            .name
+                            .try_concat(&JsString::from_static(": "))?
+                            .try_concat(&text)?,
+                    ))?
                 };
-                Ok(ErrorStep::Complete(Completion::Return(
-                    runtime.unroot_value(&Value::String(value))?,
-                )))
+                Ok(ErrorStep::Complete(Completion::Return(result)))
             }
             _ => Err(RuntimeError::Invariant("Error string reply phase mismatch")),
         }
@@ -343,9 +388,9 @@ impl ErrorResume {
     fn text(mut self, runtime: &Runtime) -> Result<ErrorStep, RuntimeError> {
         self.0.phase = Phase::TextRead;
         Ok({
-            let __pending_field_receiver = JsValue::Object(self.object()?.into_handle());
             let __pending_field_key =
                 runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message)?;
+            let __pending_field_receiver = JsValue::Object(self.object()?.into_handle());
             let __pending_field_resume = self;
             ErrorStep::request_read(
                 __pending_field_receiver,
@@ -357,9 +402,9 @@ impl ErrorResume {
     fn cause(mut self, runtime: &Runtime) -> Result<ErrorStep, RuntimeError> {
         let index = usize::from(self.aggregate_kind()) + 1;
         if self.0.actual > index
-            && let Some(Value::Object(options)) = self.0.arguments.get(index)
+            && let Some(JsValue::Object(options)) = self.0.arguments.get(index)
         {
-            let object = options.clone();
+            let object = ObjectRef::from_borrowed_handle(runtime.clone(), *options)?;
             self.0.phase = Phase::CauseHas;
             return Ok({
                 let __pending_field_object = object;
@@ -396,12 +441,13 @@ impl ErrorResume {
         if !value {
             return self.aggregate(runtime);
         }
-        let receiver = self.0.arguments[usize::from(self.aggregate_kind()) + 1].clone();
+        let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Cause)?;
+        let receiver =
+            runtime.dup_jsvalue(&self.0.arguments[usize::from(self.aggregate_kind()) + 1])?;
         self.0.phase = Phase::Cause;
         Ok({
-            let __pending_field_receiver = runtime.into_jsvalue(receiver)?;
-            let __pending_field_key =
-                runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Cause)?;
+            let __pending_field_receiver = receiver;
+            let __pending_field_key = key;
             let __pending_field_resume = self;
             ErrorStep::request_read(
                 __pending_field_receiver,
@@ -415,7 +461,7 @@ impl ErrorResume {
             self.0.phase = Phase::Aggregate;
             Ok({
                 let __pending_field_iterable =
-                    runtime.into_jsvalue(self.0.arguments.first().cloned().ok_or(
+                    runtime.dup_jsvalue(self.0.arguments.first().ok_or(
                         RuntimeError::Invariant("AggregateError errors argv missing"),
                     )?)?;
                 let __pending_field_resume = self;
@@ -426,11 +472,12 @@ impl ErrorResume {
         }
     }
     fn finish(self, runtime: &Runtime) -> Result<ErrorStep, RuntimeError> {
-        let value = Value::Object(self.object()?);
-        runtime.ensure_error_backtrace(&value, true, None)?;
-        Ok(ErrorStep::Complete(Completion::Return(
-            runtime.into_jsvalue(value)?,
-        )))
+        let object = self.object()?;
+        let value = JsValue::Object(object.object_id());
+        runtime.ensure_error_backtrace_jsvalue(&value, true, None)?;
+        Ok(ErrorStep::Complete(Completion::Return(JsValue::Object(
+            object.into_handle(),
+        ))))
     }
 }
 pub(crate) fn finish(
@@ -442,16 +489,16 @@ pub(crate) fn finish(
         step = match step {
             ErrorStep::Complete(result) => return Ok(result),
             ErrorStep::Read { mut resume } => {
-                let receiver = runtime.root_and_release_jsvalue(resume.take_read_receiver())?;
+                let receiver = resume.take_read_receiver();
                 let key = resume.take_read_key();
                 resume.resume(
                     runtime,
-                    runtime.get_value_property_in_realm(realm, receiver, &key)?,
+                    runtime.get_value_property_in_realm_jsvalue(realm, receiver, &key)?,
                 )?
             }
             ErrorStep::String { mut resume } => {
-                let value = runtime.root_and_release_jsvalue(resume.take_string_value())?;
-                resume.string(runtime, runtime.native_to_js_string(realm, &value)?)?
+                let value = resume.take_string_value();
+                resume.string(runtime, runtime.native_to_js_string_jsvalue(realm, value)?)?
             }
             ErrorStep::Has { mut resume } => {
                 let object = resume.take_has_object();
@@ -462,8 +509,7 @@ pub(crate) fn finish(
                 )?
             }
             ErrorStep::Aggregate { mut resume } => {
-                let iterable =
-                    runtime.root_and_release_jsvalue(resume.take_aggregate_iterable())?;
+                let iterable = resume.take_aggregate_iterable();
                 resume.resume(
                     runtime,
                     super::aggregate::finish(

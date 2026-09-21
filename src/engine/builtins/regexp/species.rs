@@ -3,7 +3,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     heap::ContextId,
     object::{ObjectRef, PropertyKey, WellKnownSymbol},
-    value::{Value, conversion::NativeConversion},
+    value::{JsValue, conversion::NativeConversion},
     vm::{Completion, call::ConstructorRef},
 };
 pub(crate) enum RegExpSpeciesStep {
@@ -62,7 +62,7 @@ impl RegExpSpeciesResume {
         result: Completion,
     ) -> Result<RegExpSpeciesStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Return(value) => value,
             Completion::Throw(value) => {
                 return Ok(RegExpSpeciesStep::Complete(NativeConversion::Throw(
                     runtime.root_and_release_jsvalue(value)?,
@@ -70,27 +70,32 @@ impl RegExpSpeciesResume {
             }
         };
         if self.0.species {
-            let result = if matches!(value, Value::Null | Value::Undefined) {
+            let result = if matches!(value, JsValue::Null | JsValue::Undefined) {
                 NativeConversion::Value(self.0.default)
-            } else if !matches!(value, Value::Object(_)) {
-                NativeConversion::Throw(runtime.new_not_constructor_error(self.0.realm, &value)?)
+            } else if !matches!(value, JsValue::Object(_)) {
+                {
+                    let error = runtime.new_not_constructor_error_jsvalue(self.0.realm, &value);
+                    runtime.release_jsvalue(value)?;
+                    NativeConversion::Throw(error?)
+                }
             } else {
-                runtime.constructor_from_value(self.0.realm, value)?
+                runtime.constructor_from_jsvalue(self.0.realm, value)?
             };
             return Ok(RegExpSpeciesStep::Complete(result));
         }
-        if matches!(value, Value::Undefined) {
+        if matches!(value, JsValue::Undefined) {
             return Ok(RegExpSpeciesStep::Complete(NativeConversion::Value(
                 self.0.default,
             )));
         }
-        let Value::Object(object) = value else {
+        let JsValue::Object(id) = value else {
+            runtime.release_jsvalue(value)?;
             return Ok(RegExpSpeciesStep::Complete(NativeConversion::Throw(
                 runtime.new_native_error(self.0.realm, NativeErrorKind::Type, "not an object")?,
             )));
         };
         Ok(RegExpSpeciesStep::Read {
-            object,
+            object: ObjectRef::from_owned_handle(runtime.clone(), id),
             key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Species)),
             resume: {
                 let updated_0 = true;

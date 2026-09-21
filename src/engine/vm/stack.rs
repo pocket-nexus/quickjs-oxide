@@ -1133,6 +1133,18 @@ impl SlotStore {
         self.push_current(window, value)
     }
 
+    /// Transfer an operand only after all window/stack checks succeed.
+    pub(in crate::engine::vm) fn push_owned(
+        &mut self,
+        window: &mut FrameWindow,
+        value: &mut JsValue,
+    ) -> Result<(), Error> {
+        self.check_current(window)?;
+        let index = self.operand_push_index(window)?;
+        self.install_operand(window, index, std::mem::replace(value, JsValue::Undefined));
+        Ok(())
+    }
+
     #[inline]
     fn push_current(&mut self, window: &mut FrameWindow, value: JsValue) -> Result<(), Error> {
         let index = self.operand_push_index(window)?;

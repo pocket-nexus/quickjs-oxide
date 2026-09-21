@@ -300,6 +300,84 @@ impl Runtime {
         self.materialize_property_snapshot(object, key, snapshot)
     }
 
+    pub(crate) fn get_own_property_owned(
+        &self,
+        object: &ObjectRef,
+        key: &PropertyKey,
+    ) -> Result<Option<super::OwnedCompletePropertyDescriptor>, RuntimeError> {
+        use super::property::CompletePropertyDescriptor;
+        self.validate_object_and_key(object, key)?;
+        // These virtual properties construct their language value on demand.
+        if self.typed_array_is_object(object)?
+            && self.typed_array_canonical_numeric_index(key)?.is_some()
+        {
+            return self
+                .get_own_property(object, key)?
+                .as_ref()
+                .map(|v| super::OwnedCompletePropertyDescriptor::from_public(self, v))
+                .transpose();
+        }
+        if let Some(value) = self.string_exotic_own_property(object, key)? {
+            return super::OwnedCompletePropertyDescriptor::from_public(self, &value).map(Some);
+        }
+        if let Some(value) = self.dense_array_index_value(object, key)? {
+            return super::OwnedCompletePropertyDescriptor::from_raw(
+                self,
+                &CompletePropertyDescriptor::Data {
+                    value,
+                    writable: true,
+                    enumerable: true,
+                    configurable: true,
+                },
+            )
+            .map(Some);
+        }
+        let record = {
+            let state = self.0.state.borrow();
+            let data = state.heap.object(object.object_id())?;
+            let shape = state.heap.shape(data.shape)?;
+            let Some(index) = shape.find(AtomIdx::from_raw(key.atom().raw())) else {
+                return Ok(None);
+            };
+            let flags = shape.entries()[index as usize].flags;
+            match &data.slots[index as usize] {
+                PropertySlot::Data(value) => Some(CompletePropertyDescriptor::Data {
+                    value: value.clone(),
+                    writable: flags.writable,
+                    enumerable: flags.enumerable,
+                    configurable: flags.configurable,
+                }),
+                PropertySlot::VarRef(id) => {
+                    let value = state.heap.var_ref(*id)?.value.clone();
+                    if matches!(value, RawValue::Uninitialized) {
+                        None
+                    } else {
+                        Some(CompletePropertyDescriptor::Data {
+                            value,
+                            writable: flags.writable,
+                            enumerable: flags.enumerable,
+                            configurable: flags.configurable,
+                        })
+                    }
+                }
+                PropertySlot::Accessor { get, set } => Some(CompletePropertyDescriptor::Accessor {
+                    get: get.map(RawValue::Object),
+                    set: set.map(RawValue::Object),
+                    enumerable: flags.enumerable,
+                    configurable: flags.configurable,
+                }),
+                PropertySlot::AutoInit(_) => None,
+            }
+        };
+        if let Some(record) = record {
+            return super::OwnedCompletePropertyDescriptor::from_raw(self, &record).map(Some);
+        }
+        // Preserve lazy initialization and uninitialized-binding errors before
+        // reacquiring the canonical raw slot; this branch cannot cache a root.
+        drop(self.get_own_property(object, key)?);
+        self.get_own_property_owned(object, key)
+    }
+
     pub(super) fn materialize_property_snapshot(
         &self,
         object: &ObjectRef,
@@ -791,6 +869,182 @@ impl Runtime {
         Ok(true)
     }
 
+    pub(crate) fn define_ordinary_owned_property(
+        &self,
+        object: &ObjectRef,
+        key: &PropertyKey,
+        descriptor: &super::OwnedPropertyDescriptor,
+    ) -> Result<bool, RuntimeError> {
+        self.validate_object_and_key(object, key)?;
+        if let Some(current) = self.string_exotic_own_property(object, key)? {
+            // Virtual characters are genuine creation; the supplied value stays internal.
+            let current = super::OwnedCompletePropertyDescriptor::from_public(self, &current)?;
+            let record = descriptor.raw_record();
+            let extensible = self.is_extensible(object)?;
+            let result = {
+                let state = self.0.state.borrow();
+                validate_and_apply_property_descriptor(
+                    extensible,
+                    &record,
+                    Some(current.record()),
+                    &RawValue::Undefined,
+                    |a, b| crate::engine::value::collection_key::same_value(&state.heap, a, b),
+                )
+            };
+            return match result {
+                Ok(_) => Ok(true),
+                Err(PropertyDefinitionError::InvalidDescriptor) => {
+                    Err(PropertyDefinitionError::InvalidDescriptor.into())
+                }
+                Err(_) => Ok(false),
+            };
+        }
+        if let Some(flags) = self.auto_init_own_property_flags(object, key)? {
+            if descriptor.is_mixed_descriptor() {
+                return Err(PropertyDefinitionError::InvalidDescriptor.into());
+            }
+            if !flags.configurable
+                && (matches!(descriptor.configurable, DescriptorField::Present(true))
+                    || matches!(descriptor.enumerable, DescriptorField::Present(value) if value != flags.enumerable)
+                    || descriptor.get.is_present()
+                    || descriptor.set.is_present()
+                    || (!flags.writable
+                        && matches!(descriptor.writable, DescriptorField::Present(true))))
+            {
+                return Ok(false);
+            }
+            self.materialize_auto_init_property(object, key)?;
+        }
+        if self.can_define_raw_property(object, key)? {
+            return self.define_raw_property(object, key, &descriptor.raw_record());
+        }
+        let current = self.get_own_property_owned(object, key)?;
+        let record = descriptor.raw_record();
+        let extensible = self.is_extensible(object)?;
+        let complete = {
+            let state = self.0.state.borrow();
+            validate_and_apply_property_descriptor(
+                extensible,
+                &record,
+                current.as_ref().map(|value| value.record()),
+                &RawValue::Undefined,
+                |a, b| crate::engine::value::collection_key::same_value(&state.heap, a, b),
+            )
+        };
+        match complete {
+            Ok(complete) => {
+                self.store_complete_raw_property(object, key, complete)?;
+                Ok(true)
+            }
+            Err(PropertyDefinitionError::InvalidDescriptor) => {
+                Err(PropertyDefinitionError::InvalidDescriptor.into())
+            }
+            Err(_) => Ok(false),
+        }
+    }
+
+    pub(crate) fn define_owned_property_in_realm(
+        &self,
+        realm: Option<ContextId>,
+        object: &ObjectRef,
+        key: &PropertyKey,
+        descriptor: &super::OwnedPropertyDescriptor,
+    ) -> Result<PropertyDefineOutcome, RuntimeError> {
+        let _operation = self.operation();
+        self.validate_object_and_key(object, key)?;
+        if let Some(defined) = self.try_define_owned_property(object, key, descriptor)? {
+            return Ok(PropertyDefineOutcome::Defined(defined));
+        }
+        if descriptor.is_mixed_descriptor() {
+            return Err(PropertyDefinitionError::InvalidDescriptor.into());
+        }
+        if let Some(defined) = self.define_module_namespace_export_owned(object, key, descriptor)? {
+            return Ok(PropertyDefineOutcome::Defined(defined));
+        }
+        if let Some(request) = self.prepare_typed_array_definition_owned(object, key, descriptor)? {
+            if let Some(realm) = realm {
+                return Ok(match request.finish_sync(self, realm)? {
+                    NativeConversion::Value(value) => PropertyDefineOutcome::Defined(value),
+                    NativeConversion::Throw(value) => PropertyDefineOutcome::Throw(value),
+                });
+            }
+            // Context-free API only supports primitive element conversion.
+            return Ok(match request.finish_context_free(self)? {
+                NativeConversion::Value(value) => PropertyDefineOutcome::Defined(value),
+                NativeConversion::Throw(value) => PropertyDefineOutcome::Throw(value),
+            });
+        }
+        if let Some(defined) = self.define_arguments_index_owned(object, key, descriptor)? {
+            return Ok(PropertyDefineOutcome::Defined(defined));
+        }
+        if self.array_own_key(object, key)? == ArrayOwnKey::Length {
+            if let DescriptorField::Present(value) = &descriptor.value {
+                let length = match self.to_array_length_jsvalue(realm, self.dup_jsvalue(value)?)? {
+                    ArrayLengthConversion::Length(value) => value,
+                    ArrayLengthConversion::Throw(value) => {
+                        return Ok(PropertyDefineOutcome::Throw(value));
+                    }
+                };
+                return self.apply_array_length_descriptor(
+                    object,
+                    key,
+                    &descriptor.attributes_public(),
+                    length,
+                );
+            }
+        }
+        self.define_ordinary_owned_property(object, key, descriptor)
+            .map(PropertyDefineOutcome::Defined)
+    }
+
+    pub(crate) fn try_define_owned_property(
+        &self,
+        object: &ObjectRef,
+        key: &PropertyKey,
+        descriptor: &super::OwnedPropertyDescriptor,
+    ) -> Result<Option<bool>, RuntimeError> {
+        self.validate_object_and_key(object, key)?;
+        match self.array_own_key(object, key)? {
+            ArrayOwnKey::Index(index) => {
+                let (old_length, writable) = self.array_length_state(object)?;
+                if index >= old_length && !writable {
+                    return Ok(Some(false));
+                }
+                return match self.define_array_index_raw(
+                    object,
+                    key,
+                    index,
+                    old_length,
+                    &descriptor.raw_record(),
+                )? {
+                    PropertyDefineOutcome::Defined(value) => Ok(Some(value)),
+                    PropertyDefineOutcome::Throw(_) => {
+                        Err(RuntimeError::Invariant("raw array index definition threw"))
+                    }
+                };
+            }
+            ArrayOwnKey::Length => return Ok(None),
+            ArrayOwnKey::Other => {}
+        }
+        let global = matches!(
+            self.0
+                .state
+                .borrow()
+                .heap
+                .object(object.object_id())?
+                .payload,
+            ObjectPayload::GlobalObject { .. }
+        );
+        if (global || self.ordinary_property_flags(object, key)?.is_some())
+            && self.can_define_raw_property(object, key)?
+        {
+            return self
+                .define_raw_property(object, key, &descriptor.raw_record())
+                .map(Some);
+        }
+        Ok(None)
+    }
+
     fn can_define_raw_property(
         &self,
         object: &ObjectRef,
@@ -798,20 +1052,19 @@ impl Runtime {
     ) -> Result<bool, RuntimeError> {
         let state = self.0.state.borrow();
         let data = state.heap.object(object.object_id())?;
-        if matches!(
-            data.payload,
-            ObjectPayload::GlobalObject { .. } | ObjectPayload::Array { dense: Some(_) }
-        ) {
+        if matches!(data.payload, ObjectPayload::Array { dense: Some(_) }) {
             return Ok(false);
         }
         let shape = state.heap.shape(data.shape)?;
         Ok(shape
             .find(AtomIdx::from_raw(key.atom().raw()))
-            .is_none_or(|index| {
-                matches!(
-                    data.slots[index as usize],
-                    PropertySlot::Data(_) | PropertySlot::Accessor { .. }
-                )
+            .is_none_or(|index| match &data.slots[index as usize] {
+                PropertySlot::Data(_) | PropertySlot::Accessor { .. } => true,
+                PropertySlot::VarRef(id) => state
+                    .heap
+                    .var_ref(*id)
+                    .is_ok_and(|cell| !matches!(cell.value, RawValue::Uninitialized)),
+                PropertySlot::AutoInit(_) => false,
             }))
     }
 
@@ -835,6 +1088,12 @@ impl Runtime {
                     match &data.slots[index as usize] {
                         PropertySlot::Data(value) => Ok(CompletePropertyDescriptor::Data {
                             value: value.clone(),
+                            writable: flags.writable,
+                            enumerable: flags.enumerable,
+                            configurable: flags.configurable,
+                        }),
+                        PropertySlot::VarRef(id) => Ok(CompletePropertyDescriptor::Data {
+                            value: state.heap.var_ref(*id)?.value.clone(),
                             writable: flags.writable,
                             enumerable: flags.enumerable,
                             configurable: flags.configurable,
@@ -868,39 +1127,7 @@ impl Runtime {
             }
             Err(_) => return Ok(false),
         };
-        let (flags, slot) = match complete {
-            CompletePropertyDescriptor::Data {
-                value,
-                writable,
-                enumerable,
-                configurable,
-            } => (
-                PropertyFlags::data(writable, enumerable, configurable),
-                PropertySlot::Data(value),
-            ),
-            CompletePropertyDescriptor::Accessor {
-                get,
-                set,
-                enumerable,
-                configurable,
-            } => {
-                let object_id = |value| match value {
-                    None => Ok(None),
-                    Some(RawValue::Object(id)) => Ok(Some(id)),
-                    _ => Err(RuntimeError::Invariant(
-                        "raw descriptor accessor was not an object",
-                    )),
-                };
-                (
-                    PropertyFlags::accessor(enumerable, configurable),
-                    PropertySlot::Accessor {
-                        get: object_id(get)?,
-                        set: object_id(set)?,
-                    },
-                )
-            }
-        };
-        self.store_property_slot(object, key, flags, slot)?;
+        self.store_complete_raw_property(object, key, complete)?;
         Ok(true)
     }
 
@@ -1327,7 +1554,7 @@ impl Runtime {
             return Ok(PropertyDefineOutcome::Defined(false));
         }
 
-        use crate::engine::object::property::{CompletePropertyDescriptor, PropertyDescriptor};
+        use crate::engine::object::property::PropertyDescriptor;
         let converted = match &descriptor.value {
             DescriptorField::Present(value) => Some(self.raw_property_value(value)?),
             DescriptorField::Absent => None,
@@ -1361,6 +1588,18 @@ impl Runtime {
                 DescriptorField::Absent => None,
             },
         };
+        self.define_array_index_raw(object, key, index, old_length, &record)
+    }
+
+    fn define_array_index_raw(
+        &self,
+        object: &ObjectRef,
+        key: &PropertyKey,
+        index: u32,
+        old_length: u32,
+        record: &crate::engine::object::property::PropertyDescriptor<RawValue>,
+    ) -> Result<PropertyDefineOutcome, RuntimeError> {
+        use crate::engine::object::property::CompletePropertyDescriptor;
         if let Some(dense_len) = self.array_fast_len(object)? {
             let current = if index < dense_len {
                 Some(CompletePropertyDescriptor::Data {
@@ -1438,55 +1677,6 @@ impl Runtime {
             ));
         }
         Ok(PropertyDefineOutcome::Defined(true))
-    }
-
-    pub(crate) fn prepare_typed_array_definition(
-        &self,
-        object: &ObjectRef,
-        key: &PropertyKey,
-        descriptor: &OrdinaryPropertyDescriptor,
-    ) -> Result<Option<crate::engine::builtins::TypedWriteStep>, RuntimeError> {
-        use crate::engine::builtins::TypedWriteStep;
-        if !self.typed_array_is_object(object)? {
-            return Ok(None);
-        }
-        self.validate_object_and_key(object, key)?;
-        self.validate_descriptor_domains(descriptor)?;
-        if descriptor.is_mixed_descriptor() {
-            return Err(PropertyDefinitionError::InvalidDescriptor.into());
-        }
-        let Some(numeric) = self.typed_array_canonical_numeric_index(key)? else {
-            return Ok(None);
-        };
-        let CanonicalNumericIndex::Valid(index) = numeric else {
-            return Ok(Some(TypedWriteStep::Complete(NativeConversion::Value(
-                false,
-            ))));
-        };
-        TypedWriteStep::define(self, object.clone(), index, descriptor).map(Some)
-    }
-
-    /// Prepare the only Array DefineOwnProperty branch that can invoke JS.
-    /// Arrays cannot take the ordinary-value fast path or another exotic branch.
-    pub(crate) fn prepare_array_length_definition(
-        &self,
-        realm: Option<ContextId>,
-        object: &ObjectRef,
-        key: &PropertyKey,
-        descriptor: &OrdinaryPropertyDescriptor,
-    ) -> Result<Option<super::ArrayLengthStep>, RuntimeError> {
-        if self.array_own_key(object, key)? != ArrayOwnKey::Length {
-            return Ok(None);
-        }
-        self.validate_object_and_key(object, key)?;
-        self.validate_descriptor_domains(descriptor)?;
-        if descriptor.is_mixed_descriptor() {
-            return Err(PropertyDefinitionError::InvalidDescriptor.into());
-        }
-        let DescriptorField::Present(value) = &descriptor.value else {
-            return Ok(None);
-        };
-        super::ArrayLengthStep::start(self, realm, self.unroot_value(value)?).map(Some)
     }
 
     fn define_array_length(

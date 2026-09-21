@@ -104,12 +104,8 @@ impl From<crate::engine::vm::call::prototype::ProtoSourceStep> for Step {
         use crate::engine::vm::call::prototype::ProtoSourceStep as T;
         match step {
             T::Complete(result) => Self::ConstructorSourceComplete(Some(result)),
-            T::ReadValue {
-                receiver,
-                key,
-                resume,
-            } => Self::ReadValue {
-                receiver: Some(receiver),
+            T::ReadValue { key, mut resume } => Self::ReadValue {
+                receiver: Some(resume.take_read_receiver()),
                 key: Some(key),
                 resume: Some(Resume::ConstructorSource(resume)),
             },

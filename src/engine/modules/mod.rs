@@ -1995,16 +1995,13 @@ impl Runtime {
         &self,
         realm: ContextId,
         name: JsString,
-        default_value: Value,
+        default_value: crate::engine::value::JsValue,
     ) -> Result<RawModuleRef, RuntimeError> {
-        self.validate_value_domain(&default_value, "JSON module value")?;
-        let converted_default_value = self.raw_property_value(&default_value)?;
-        // Clone duplicates only the handle; the guard keeps the producer edge
-        // accountable after the record consumes the value.
+        // The parser owns the input until publication retains the record edge.
         let record = ModuleRecord {
             name,
             body: ModuleRecordBody::Json {
-                default_value: converted_default_value.raw(),
+                default_value: default_value.as_raw(),
             },
             import_meta: None,
             has_top_level_await: false,
@@ -2035,12 +2032,8 @@ impl Runtime {
             compile_realm: realm,
         };
         let published = self.publish_module_record(realm, record);
-        // `publish_module_record` retained the record's own node edge on
-        // success; a rejected publication never stores the value. The guard
-        // balances the boundary conversion's producer edge either way.
-        let published = published?;
-        drop(default_value);
-        Ok(published)
+        self.release_jsvalue(default_value)?;
+        published
     }
 
     fn raw_module_dependencies(

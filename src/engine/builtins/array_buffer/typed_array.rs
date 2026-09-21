@@ -915,6 +915,24 @@ impl Runtime {
                 NativeConversion::Throw(value) => NativeConversion::Throw(value),
             })
     }
+    fn require_typed_array_jsvalue(
+        &self,
+        realm: ContextId,
+        value: &JsValue,
+    ) -> Result<NativeConversion<ObjectRef>, RuntimeError> {
+        if let JsValue::Object(id) = value {
+            let object = ObjectRef::from_borrowed_handle(self.clone(), *id)?;
+            if self.typed_array_snapshot_if_branded(&object)?.is_some() {
+                return Ok(NativeConversion::Value(object));
+            }
+        }
+        Ok(NativeConversion::Throw(self.new_native_error(
+            realm,
+            NativeErrorKind::Type,
+            "not a TypedArray",
+        )?))
+    }
+
     fn require_typed_array_borrowed<'a>(
         &self,
         realm: ContextId,
@@ -1038,7 +1056,7 @@ impl Runtime {
     fn typed_array_iterator_method(
         &self,
         realm: ContextId,
-        source: Value,
+        source: JsValue,
     ) -> Result<NativeConversion<Option<CallableRef>>, RuntimeError> {
         collect::finish_method(
             self,
@@ -1050,10 +1068,10 @@ impl Runtime {
     fn collect_typed_array_iterator(
         &self,
         realm: ContextId,
-        source: Value,
+        source: JsValue,
         method: &CallableRef,
         element: TypedArrayElementKind,
-    ) -> Result<NativeConversion<Vec<Value>>, RuntimeError> {
+    ) -> Result<NativeConversion<Vec<JsValue>>, RuntimeError> {
         collect::finish_collect(
             self,
             realm,
@@ -1310,6 +1328,33 @@ impl Runtime {
         Ok(Some(typed_array_decode(snapshot.element, bytes)))
     }
 
+    fn typed_array_read_index_jsvalue(
+        &self,
+        object: &ObjectRef,
+        index: u64,
+    ) -> Result<Option<JsValue>, RuntimeError> {
+        let snapshot = self.typed_array_snapshot(object)?;
+        let bytes = match self.ordinary_typed_array_word(snapshot, index, None)? {
+            OrdinaryTypedWord::Missing => return Ok(None),
+            OrdinaryTypedWord::Word(bytes) => bytes,
+            OrdinaryTypedWord::Shared => {
+                let access = self.snapshot_buffer_access(snapshot.buffer)?;
+                let Some((absolute, width)) =
+                    typed_array_word_range(snapshot, access.state, index)?
+                else {
+                    return Ok(None);
+                };
+                self.read_buffer_word(&access, absolute, width)?
+            }
+        };
+        // Decoding backing bytes creates a new numeric value. Publish BigInt
+        // once here; subsequent callback buffers retain this exact node.
+        Ok(Some(self.into_jsvalue(typed_array_decode(
+            snapshot.element,
+            bytes,
+        ))?))
+    }
+
     pub(crate) fn typed_array_get_index_descriptor(
         &self,
         object: &ObjectRef,
@@ -1325,14 +1370,13 @@ impl Runtime {
         }))
     }
 
-    pub(crate) fn typed_array_convert_element(
+    pub(crate) fn typed_array_convert_element_jsvalue(
         &self,
         realm: ContextId,
         element: TypedArrayElementKind,
-        value: &Value,
+        value: JsValue,
     ) -> Result<NativeConversion<[u8; 8]>, RuntimeError> {
-        element::ElementStep::start(self, realm, element, self.unroot_value(value)?)?
-            .finish_sync(self, realm)
+        element::ElementStep::start(self, realm, element, value)?.finish_sync(self, realm)
     }
 
     /// Convert a primitive descriptor value for the public context-free

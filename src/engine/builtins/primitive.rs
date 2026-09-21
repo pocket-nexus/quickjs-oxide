@@ -8,8 +8,8 @@ use crate::engine::builtins::native::{
     SymbolRegistryKind,
 };
 use crate::engine::heap::{ContextId, ObjectPayload, PrimitiveObjectData};
-use crate::engine::object::SymbolRef;
 use crate::engine::object::access::raw_string_property_one_level;
+use crate::engine::object::{ObjectRef, SymbolRef};
 use crate::engine::value::conversion::NativeConversion;
 
 use crate::engine::value::{JsString, JsValue, Value};
@@ -45,7 +45,34 @@ impl Runtime {
         realm: ContextId,
         target: &Value,
     ) -> Result<Value, RuntimeError> {
-        let name = if let Value::Object(object) = target
+        let object = match target {
+            Value::Object(object) => Some(object),
+            _ => None,
+        };
+        self.new_not_constructor_error_object(realm, object)
+    }
+
+    pub(crate) fn new_not_constructor_error_jsvalue(
+        &self,
+        realm: ContextId,
+        target: &JsValue,
+    ) -> Result<Value, RuntimeError> {
+        let object = match target {
+            JsValue::Object(id) => Some(crate::engine::object::ObjectRef::from_borrowed_handle(
+                self.clone(),
+                *id,
+            )?),
+            _ => None,
+        };
+        self.new_not_constructor_error_object(realm, object.as_ref())
+    }
+
+    fn new_not_constructor_error_object(
+        &self,
+        realm: ContextId,
+        object: Option<&crate::engine::object::ObjectRef>,
+    ) -> Result<Value, RuntimeError> {
+        let name = if let Some(object) = object
             && self.as_callable(object)?.is_some()
         {
             let name = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name)?;
@@ -161,107 +188,64 @@ impl Runtime {
         })
     }
 
-    pub(crate) fn primitive_this_value(
+    pub(crate) fn primitive_this_value_jsvalue(
         &self,
         realm: ContextId,
         kind: PrimitiveKind,
-        this_value: Value,
-    ) -> Result<NativeConversion<Value>, RuntimeError> {
-        self.primitive_this_value_borrowed(realm, kind, &this_value)
-    }
-    pub(crate) fn primitive_this_value_borrowed(
-        &self,
-        realm: ContextId,
-        kind: PrimitiveKind,
-        this_value: &Value,
-    ) -> Result<NativeConversion<Value>, RuntimeError> {
-        let direct = matches!(
-            (&this_value, kind),
-            (Value::Int(_) | Value::Float(_), PrimitiveKind::Number)
-                | (Value::String(_), PrimitiveKind::String)
-                | (Value::Bool(_), PrimitiveKind::Boolean)
-                | (Value::Symbol(_), PrimitiveKind::Symbol)
-                | (Value::BigInt(_), PrimitiveKind::BigInt)
-        );
-        if direct {
-            return Ok(NativeConversion::Value(this_value.clone()));
+        value: &JsValue,
+    ) -> Result<NativeConversion<JsValue>, RuntimeError> {
+        if matches!(
+            (value, kind),
+            (JsValue::Int(_) | JsValue::Float(_), PrimitiveKind::Number)
+                | (JsValue::String(_), PrimitiveKind::String)
+                | (JsValue::Bool(_), PrimitiveKind::Boolean)
+                | (JsValue::Symbol(_), PrimitiveKind::Symbol)
+                | (JsValue::BigInt(_), PrimitiveKind::BigInt)
+        ) {
+            return self.dup_jsvalue(value).map(NativeConversion::Value);
         }
-        if let Value::Object(object) = &this_value {
+        if let JsValue::Object(id) = value {
             let payload = {
                 let state = self.0.state.borrow();
-                match &state.heap.object(object.object_id())?.payload {
-                    ObjectPayload::Primitive(PrimitiveObjectData::Number(value))
+                match &state.heap.object(*id)?.payload {
+                    ObjectPayload::Primitive(PrimitiveObjectData::Number(v))
                         if kind == PrimitiveKind::Number =>
                     {
-                        Some(Ok(Value::number(*value)))
+                        Some(Ok(Value::number(*v)))
                     }
-                    ObjectPayload::Primitive(PrimitiveObjectData::String(value))
+                    ObjectPayload::Primitive(PrimitiveObjectData::String(v))
                         if kind == PrimitiveKind::String =>
                     {
-                        Some(Ok(Value::String(value.clone())))
+                        Some(Ok(Value::String(v.clone())))
                     }
-                    ObjectPayload::Primitive(PrimitiveObjectData::Boolean(value))
+                    ObjectPayload::Primitive(PrimitiveObjectData::Boolean(v))
                         if kind == PrimitiveKind::Boolean =>
                     {
-                        Some(Ok(Value::Bool(*value)))
+                        Some(Ok(Value::Bool(*v)))
+                    }
+                    ObjectPayload::Primitive(PrimitiveObjectData::BigInt(v))
+                        if kind == PrimitiveKind::BigInt =>
+                    {
+                        Some(Ok(Value::BigInt(v.clone())))
                     }
                     ObjectPayload::Primitive(PrimitiveObjectData::Symbol(atom))
                         if kind == PrimitiveKind::Symbol =>
                     {
-                        // Promote the wrapper's raw owning atom only after the
-                        // immutable heap borrow above has ended.
                         Some(Err(*atom))
                     }
-                    ObjectPayload::Primitive(PrimitiveObjectData::BigInt(value))
-                        if kind == PrimitiveKind::BigInt =>
-                    {
-                        Some(Ok(Value::BigInt(value.clone())))
-                    }
-                    ObjectPayload::Ordinary
-                    | ObjectPayload::ArrayBuffer(_)
-                    | ObjectPayload::SharedArrayBuffer(_)
-                    | ObjectPayload::DataView(_)
-                    | ObjectPayload::TypedArray(_)
-                    | ObjectPayload::Proxy(_)
-                    | ObjectPayload::AsyncFunctionState(_)
-                    | ObjectPayload::RawJson
-                    | ObjectPayload::Promise(_)
-                    | ObjectPayload::Date(_)
-                    | ObjectPayload::RegExp(_)
-                    | ObjectPayload::Array { .. }
-                    | ObjectPayload::Arguments { .. }
-                    | ObjectPayload::ArrayIterator { .. }
-                    | ObjectPayload::IteratorHelper(_)
-                    | ObjectPayload::IteratorWrap(_)
-                    | ObjectPayload::AsyncFromSyncIterator(_)
-                    | ObjectPayload::IteratorConcat(_)
-                    | ObjectPayload::Map { .. }
-                    | ObjectPayload::MapIterator { .. }
-                    | ObjectPayload::Set { .. }
-                    | ObjectPayload::WeakMap { .. }
-                    | ObjectPayload::WeakSet { .. }
-                    | ObjectPayload::WeakRef { .. }
-                    | ObjectPayload::FinalizationRegistry(_)
-                    | ObjectPayload::SetIterator { .. }
-                    | ObjectPayload::ForInIterator(_)
-                    | ObjectPayload::Primitive(_)
-                    | ObjectPayload::GlobalObject { .. }
-                    | ObjectPayload::Error
-                    | ObjectPayload::StringIterator { .. }
-                    | ObjectPayload::RegExpStringIterator { .. }
-                    | ObjectPayload::NativeFunction { .. }
-                    | ObjectPayload::BoundFunction { .. }
-                    | ObjectPayload::BytecodeFunction { .. }
-                    | ObjectPayload::Generator { .. }
-                    | ObjectPayload::AsyncGenerator(_) => None,
+                    _ => None,
                 }
             };
             if let Some(payload) = payload {
-                let payload = match payload {
-                    Ok(value) => value,
-                    Err(atom) => Value::Symbol(SymbolRef::from_borrowed_atom(self.clone(), atom)?),
+                // Wrapper payloads are specialized storage, so extraction creates a value once.
+                return match payload {
+                    Ok(value) => self.into_jsvalue(value).map(NativeConversion::Value),
+                    Err(atom) => {
+                        let index = self.0.state.borrow().atoms.unbrand(atom)?;
+                        self.dup_jsvalue(&JsValue::Symbol(index))
+                            .map(NativeConversion::Value)
+                    }
                 };
-                return Ok(NativeConversion::Value(payload));
             }
         }
         let message = match kind {
@@ -354,8 +338,8 @@ impl Runtime {
                 "String Iterator next did not receive an iterator-next invocation",
             ));
         };
-        let this_value = self.root_and_release_jsvalue(this_value)?;
-        let Value::Object(iterator) = this_value else {
+        let JsValue::Object(id) = this_value else {
+            self.release_jsvalue(this_value)?;
             return Ok(NativeInvokeOutcome::Completion(Completion::Throw(
                 self.new_native_error_jsvalue(
                     realm,
@@ -364,6 +348,7 @@ impl Runtime {
                 )?,
             )));
         };
+        let iterator = ObjectRef::from_owned_handle(self.clone(), id);
         let branded = matches!(
             self.0
                 .state
@@ -487,67 +472,71 @@ impl Runtime {
         &self,
         realm: ContextId,
         kind: PrimitiveKind,
-        value: Value,
+        value: JsValue,
         radix: u32,
     ) -> Result<Completion, RuntimeError> {
-        match (kind, value) {
-            (PrimitiveKind::Number, value @ (Value::Int(_) | Value::Float(_))) => {
-                let number = value.as_number().ok_or(RuntimeError::Invariant(
-                    "Number brand extraction did not return a Number",
-                ))?;
-                let formatted = crate::engine::value::number::to_string_radix(number, radix)
-                    .map_err(|error| match error {
-                        crate::engine::value::number::NumberFormatError::InvalidRadix => {
+        if matches!((kind, &value), (PrimitiveKind::String, JsValue::String(_))) {
+            return Ok(Completion::Return(value));
+        }
+        let result = (|| {
+            let text = match (kind, &value) {
+                (PrimitiveKind::Number, JsValue::Int(_) | JsValue::Float(_)) => {
+                    let number = value.as_number().ok_or(RuntimeError::Invariant(
+                        "Number brand extraction did not return a Number",
+                    ))?;
+                    let text = crate::engine::value::number::to_string_radix(number, radix)
+                        .map_err(|_| {
                             RuntimeError::Invariant(
                                 "validated Number radix was rejected by the formatter",
                             )
-                        }
-                        crate::engine::value::number::NumberFormatError::InvalidDigits => {
-                            RuntimeError::Invariant(
-                                "Number radix formatting reported a digit-count error",
-                            )
-                        }
-                    })?;
-                JsString::checked_length(0, formatted.len())?;
-                debug_assert!(formatted.is_ascii());
-                Ok(Completion::Return(self.unroot_value(&Value::String(
-                    JsString::from_owned_latin1(formatted.into_bytes()),
-                ))?))
-            }
-            (PrimitiveKind::String, Value::String(value)) => Ok(Completion::Return(
-                self.unroot_value(&Value::String(value))?,
-            )),
-            (PrimitiveKind::Boolean, Value::Bool(value)) => {
-                Ok(Completion::Return(self.unroot_value(&Value::String(
-                    JsString::from_static(if value { "true" } else { "false" }),
-                ))?))
-            }
-            (PrimitiveKind::Symbol, Value::Symbol(value)) => Ok(Completion::Return(
-                self.unroot_value(&Value::String(self.symbol_descriptive_string(&value)?))?,
-            )),
-            (PrimitiveKind::BigInt, Value::BigInt(value)) => {
-                if value.exceeds_allocation_limit()
-                    && (value.is_negative() || !radix.is_power_of_two())
-                {
-                    return Ok(Completion::Throw(self.new_native_error_jsvalue(
-                        realm,
-                        NativeErrorKind::Range,
-                        "BigInt is too large to allocate",
-                    )?));
+                        })?;
+                    JsString::checked_length(0, text.len())?;
+                    JsString::from_owned_latin1(text.into_bytes())
                 }
-                let text = value
-                    .to_string_radix(radix)
-                    .map_err(|_| RuntimeError::Invariant("validated BigInt radix was rejected"))?;
-                JsString::checked_length(0, text.len())?;
-                debug_assert!(text.is_ascii());
-                Ok(Completion::Return(self.unroot_value(&Value::String(
-                    JsString::from_owned_latin1(text.into_bytes()),
-                ))?))
-            }
-            _ => Err(RuntimeError::Invariant(
-                "unimplemented primitive toString reached native dispatch",
-            )),
-        }
+                (PrimitiveKind::Boolean, JsValue::Bool(value)) => {
+                    JsString::from_static(if *value { "true" } else { "false" })
+                }
+                (PrimitiveKind::Symbol, JsValue::Symbol(index)) => {
+                    let atom = self.0.state.borrow().atoms.brand(*index)?;
+                    self.symbol_descriptive_string(&SymbolRef::from_borrowed_atom(
+                        self.clone(),
+                        atom,
+                    )?)?
+                }
+                (PrimitiveKind::BigInt, JsValue::BigInt(id)) => {
+                    let formatted = {
+                        let state = self.0.state.borrow();
+                        let bigint = state.heap.bigint(*id)?;
+                        if bigint.exceeds_allocation_limit()
+                            && (bigint.is_negative() || !radix.is_power_of_two())
+                        {
+                            None
+                        } else {
+                            Some(bigint.to_string_radix(radix).map_err(|_| {
+                                RuntimeError::Invariant("validated BigInt radix was rejected")
+                            })?)
+                        }
+                    };
+                    let Some(text) = formatted else {
+                        return Ok(Completion::Throw(self.new_native_error_jsvalue(
+                            realm,
+                            NativeErrorKind::Range,
+                            "BigInt is too large to allocate",
+                        )?));
+                    };
+                    JsString::checked_length(0, text.len())?;
+                    JsString::from_owned_latin1(text.into_bytes())
+                }
+                _ => {
+                    return Err(RuntimeError::Invariant(
+                        "unimplemented primitive toString reached native dispatch",
+                    ));
+                }
+            };
+            Ok(Completion::Return(self.into_jsvalue(Value::String(text))?))
+        })();
+        self.release_jsvalue(value)?;
+        result
     }
 
     pub(crate) fn call_primitive_prototype_to_string(
@@ -703,14 +692,15 @@ impl Runtime {
                 )?,
             ),
             SymbolRegistryKind::KeyFor => {
-                let argument = self.root_value(argument)?;
-                let Value::Symbol(symbol) = argument else {
+                let JsValue::Symbol(index) = argument else {
                     return Ok(Completion::Throw(self.new_native_error_jsvalue(
                         realm,
                         NativeErrorKind::Type,
                         "not a symbol",
                     )?));
                 };
+                let atom = self.0.state.borrow().atoms.brand(*index)?;
+                let symbol = SymbolRef::from_borrowed_atom(self.clone(), atom)?;
                 Ok(Completion::Return(match self.symbol_key_for(&symbol)? {
                     Some(value) => self.unroot_value(&Value::String(value))?,
                     None => JsValue::Undefined,
@@ -729,11 +719,14 @@ impl Runtime {
                 "Symbol.prototype.description received the wrong native invocation",
             ));
         };
-        let this_value = self.root_value(this_value)?;
         let value =
-            match self.primitive_this_value_borrowed(realm, PrimitiveKind::Symbol, &this_value)? {
-                NativeConversion::Value(Value::Symbol(value)) => value,
-                NativeConversion::Value(_) => {
+            match self.primitive_this_value_jsvalue(realm, PrimitiveKind::Symbol, this_value)? {
+                NativeConversion::Value(JsValue::Symbol(index)) => {
+                    let atom = self.0.state.borrow().atoms.brand(index)?;
+                    SymbolRef::from_owned_atom(self.clone(), atom)
+                }
+                NativeConversion::Value(value) => {
+                    self.release_jsvalue(value)?;
                     return Err(RuntimeError::Invariant(
                         "Symbol brand extraction did not return a Symbol",
                     ));
@@ -761,9 +754,8 @@ impl Runtime {
                 "primitive valueOf did not receive a generic invocation",
             ));
         };
-        let this_value = self.root_value(this_value)?;
-        match self.primitive_this_value_borrowed(realm, kind, &this_value)? {
-            NativeConversion::Value(value) => Ok(Completion::Return(self.into_jsvalue(value)?)),
+        match self.primitive_this_value_jsvalue(realm, kind, this_value)? {
+            NativeConversion::Value(value) => Ok(Completion::Return(value)),
             NativeConversion::Throw(value) => Ok(Completion::Throw(self.into_jsvalue(value)?)),
         }
     }

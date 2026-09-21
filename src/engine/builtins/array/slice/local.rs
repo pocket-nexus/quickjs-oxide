@@ -62,7 +62,7 @@ impl SliceStep {
                     )? =>
                 {
                     let (object, key, descriptor) = resume.take_define();
-                    let result = define_local(runtime, realm, &object, &key, &descriptor)?;
+                    let result = define_local(runtime, realm, &object, &key, descriptor)?;
                     resume.defined_once(runtime, result)?
                 }
                 step => return Ok(step),
@@ -76,19 +76,9 @@ pub(super) fn define_local(
     realm: ContextId,
     object: &ObjectRef,
     key: &PropertyKey,
-    descriptor: &OrdinaryPropertyDescriptor,
+    descriptor: OwnedPropertyDescriptor,
 ) -> Result<NativeConversion<InternalDefineResult>, RuntimeError> {
-    let result = match runtime.define_own_property_in_realm(Some(realm), object, key, descriptor)? {
-        crate::engine::object::operations::PropertyDefineOutcome::Defined(true) => {
-            NativeConversion::Value(InternalDefineResult::Defined)
-        }
-        crate::engine::object::operations::PropertyDefineOutcome::Defined(false) => {
-            NativeConversion::Value(InternalDefineResult::RejectedOrdinary(object.clone()))
-        }
-        crate::engine::object::operations::PropertyDefineOutcome::Throw(value) => {
-            NativeConversion::Throw(value)
-        }
-    };
+    let result = runtime.internal_define_owned_property(realm, object, key, descriptor)?;
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_execution_event("array_slice_local_define");
     Ok(result)

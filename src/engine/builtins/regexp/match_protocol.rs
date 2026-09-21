@@ -49,7 +49,19 @@ pub(crate) struct RegExpMatchResumeState {
     step_pending: RegExpMatchStepPending,
     realm: ContextId,
     regexp: ObjectRef,
+    converted: JsValue,
+    input_value: JsValue,
     phase: MatchPhase,
+}
+impl Drop for RegExpMatchResumeState {
+    fn drop(&mut self) {
+        for value in [&mut self.converted, &mut self.input_value] {
+            let _ = self
+                .step_pending
+                .runtime
+                .release_jsvalue(std::mem::replace(value, JsValue::Undefined));
+        }
+    }
 }
 struct MatchCollection {
     input: JsString,
@@ -83,12 +95,12 @@ impl RegExpMatchStep {
                 "RegExp @@match did not receive a generic invocation",
             ));
         };
-        let this_value = runtime.root_value(this_value)?;
-        let Value::Object(regexp) = this_value else {
+        let JsValue::Object(regexp_id) = this_value else {
             return Ok(Self::Complete(Completion::Throw(
                 runtime.new_native_error_jsvalue(realm, NativeErrorKind::Type, "not an object")?,
             )));
         };
+        let regexp = ObjectRef::from_borrowed_handle(runtime.clone(), *regexp_id)?;
         Ok(Self::make_primitive(
             runtime.dup_jsvalue(arguments.readable.first().ok_or(RuntimeError::Invariant(
                 "RegExp @@match input argv was not padded",
@@ -98,6 +110,8 @@ impl RegExpMatchStep {
                 step_pending: RegExpMatchStepPending::new(runtime),
                 realm,
                 regexp,
+                converted: JsValue::Undefined,
+                input_value: JsValue::Undefined,
                 phase: MatchPhase::Input,
             })),
         ))
@@ -110,8 +124,8 @@ impl RegExpMatchResume {
         state: MatchCollection,
     ) -> Result<RegExpMatchStep, RuntimeError> {
         Ok(RegExpMatchStep::make_exec(
-            runtime.into_jsvalue(Value::Object(self.0.regexp.clone()))?,
-            runtime.into_jsvalue(Value::String(state.input.clone()))?,
+            JsValue::Object(self.0.regexp.clone().into_handle()),
+            runtime.dup_jsvalue(&self.0.input_value)?,
             {
                 let updated_0 = MatchPhase::Exec(state);
                 self.0.phase = updated_0;
@@ -131,7 +145,7 @@ impl RegExpMatchResume {
                 runtime.into_jsvalue(value)?,
             )));
         }
-        match self.0.phase {
+        match std::mem::replace(&mut self.0.phase, MatchPhase::Single) {
             MatchPhase::InitialSet { input, unicode } => {
                 let matches = runtime.new_array(self.0.realm)?;
                 let zero = runtime
@@ -169,20 +183,28 @@ impl RegExpMatchResume {
         result: Completion,
     ) -> Result<RegExpMatchStep, RuntimeError> {
         let value = match result {
-            Completion::Return(value) => runtime.root_and_release_jsvalue(value)?,
+            Completion::Return(value) => value,
             Completion::Throw(value) => {
                 return Ok(RegExpMatchStep::Complete(Completion::Throw(value)));
             }
         };
-        match self.0.phase {
+        let previous = std::mem::replace(&mut self.0.converted, value);
+        runtime.release_jsvalue(previous)?;
+        match std::mem::replace(&mut self.0.phase, MatchPhase::Single) {
             MatchPhase::Input => {
-                let input = match match_string(runtime, self.0.realm, value)? {
-                    NativeConversion::Value(value) => value,
-                    NativeConversion::Throw(value) => {
-                        return Ok(RegExpMatchStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
-                    }
+                let input =
+                    match runtime.string_from_primitive_jsvalue(self.0.realm, &self.0.converted)? {
+                        NativeConversion::Value(value) => value,
+                        NativeConversion::Throw(value) => {
+                            return Ok(RegExpMatchStep::Complete(Completion::Throw(
+                                runtime.into_jsvalue(value)?,
+                            )));
+                        }
+                    };
+                self.0.input_value = if matches!(self.0.converted, JsValue::String(_)) {
+                    std::mem::replace(&mut self.0.converted, JsValue::Undefined)
+                } else {
+                    runtime.into_jsvalue(Value::String(input.clone()))?
                 };
                 Ok(RegExpMatchStep::make_read(
                     self.0.regexp.clone(),
@@ -195,7 +217,7 @@ impl RegExpMatchResume {
                 ))
             }
             MatchPhase::Flags(input) => Ok(RegExpMatchStep::make_primitive(
-                runtime.into_jsvalue(value)?,
+                std::mem::replace(&mut self.0.converted, JsValue::Undefined),
                 ToPrimitiveHint::String,
                 {
                     let updated_0 = MatchPhase::FlagsString(input);
@@ -204,18 +226,19 @@ impl RegExpMatchResume {
                 },
             )),
             MatchPhase::FlagsString(input) => {
-                let flags = match match_string(runtime, self.0.realm, value)? {
-                    NativeConversion::Value(value) => value,
-                    NativeConversion::Throw(value) => {
-                        return Ok(RegExpMatchStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
-                    }
-                };
+                let flags =
+                    match runtime.string_from_primitive_jsvalue(self.0.realm, &self.0.converted)? {
+                        NativeConversion::Value(value) => value,
+                        NativeConversion::Throw(value) => {
+                            return Ok(RegExpMatchStep::Complete(Completion::Throw(
+                                runtime.into_jsvalue(value)?,
+                            )));
+                        }
+                    };
                 if !flags.utf16_units().any(|unit| unit == u16::from(b'g')) {
                     return Ok(RegExpMatchStep::make_exec(
-                        runtime.into_jsvalue(Value::Object(self.0.regexp.clone()))?,
-                        runtime.into_jsvalue(Value::String(input))?,
+                        JsValue::Object(self.0.regexp.clone().into_handle()),
+                        runtime.dup_jsvalue(&self.0.input_value)?,
                         {
                             let updated_0 = MatchPhase::Single;
                             self.0.phase = updated_0;
@@ -239,20 +262,27 @@ impl RegExpMatchResume {
                 ))
             }
             MatchPhase::Single => Ok(RegExpMatchStep::Complete(Completion::Return(
-                runtime.into_jsvalue(value)?,
+                std::mem::replace(&mut self.0.converted, JsValue::Undefined),
             ))),
             MatchPhase::Exec(state) => {
-                let result = match value {
-                    Value::Null => {
+                let result = match &self.0.converted {
+                    JsValue::Null => {
                         return Ok(RegExpMatchStep::Complete(Completion::Return(
-                            runtime.into_jsvalue(if state.count == 0 {
-                                Value::Null
+                            if state.count == 0 {
+                                JsValue::Null
                             } else {
-                                Value::Object(state.matches)
-                            })?,
+                                JsValue::Object(state.matches.into_handle())
+                            },
                         )));
                     }
-                    Value::Object(result) => result,
+                    JsValue::Object(_) => {
+                        let JsValue::Object(id) =
+                            std::mem::replace(&mut self.0.converted, JsValue::Undefined)
+                        else {
+                            unreachable!()
+                        };
+                        ObjectRef::from_owned_handle(runtime.clone(), id)
+                    }
                     _ => {
                         return Err(RuntimeError::Invariant(
                             "RegExpExec returned neither an object nor null",
@@ -266,7 +296,7 @@ impl RegExpMatchResume {
                 }))
             }
             MatchPhase::Match(state) => Ok(RegExpMatchStep::make_primitive(
-                runtime.into_jsvalue(value)?,
+                std::mem::replace(&mut self.0.converted, JsValue::Undefined),
                 ToPrimitiveHint::String,
                 {
                     let updated_0 = MatchPhase::MatchString(state);
@@ -275,14 +305,15 @@ impl RegExpMatchResume {
                 },
             )),
             MatchPhase::MatchString(mut state) => {
-                let matched = match match_string(runtime, self.0.realm, value)? {
-                    NativeConversion::Value(value) => value,
-                    NativeConversion::Throw(value) => {
-                        return Ok(RegExpMatchStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
-                    }
-                };
+                let matched =
+                    match runtime.string_from_primitive_jsvalue(self.0.realm, &self.0.converted)? {
+                        NativeConversion::Value(value) => value,
+                        NativeConversion::Throw(value) => {
+                            return Ok(RegExpMatchStep::Complete(Completion::Throw(
+                                runtime.into_jsvalue(value)?,
+                            )));
+                        }
+                    };
                 let empty = matched.is_empty();
                 let Some(next) = state.count.checked_add(1) else {
                     return Ok(RegExpMatchStep::Complete(Completion::Throw(
@@ -297,7 +328,12 @@ impl RegExpMatchResume {
                 // across custom exec/result callbacks. Its consecutive C/W/E
                 // elements use the same constructor effect as builtin exec
                 // results; inherited indexed setters must never be observed.
-                runtime.append_fresh_array_value(&state.matches, Value::String(matched))?;
+                let matched_value = if matches!(self.0.converted, JsValue::String(_)) {
+                    std::mem::replace(&mut self.0.converted, JsValue::Undefined)
+                } else {
+                    runtime.into_jsvalue(Value::String(matched))?
+                };
+                runtime.append_fresh_array_value_jsvalue(&state.matches, matched_value)?;
                 #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_owned_execution_event(
                     "regexp_result.match_append",
@@ -325,7 +361,7 @@ impl RegExpMatchResume {
                 }
             }
             MatchPhase::LastIndex(state) => Ok(RegExpMatchStep::make_primitive(
-                runtime.into_jsvalue(value)?,
+                std::mem::replace(&mut self.0.converted, JsValue::Undefined),
                 ToPrimitiveHint::Number,
                 {
                     let updated_0 = MatchPhase::LastIndexNumber(state);
@@ -334,19 +370,20 @@ impl RegExpMatchResume {
                 },
             )),
             MatchPhase::LastIndexNumber(state) => {
-                if matches!(value, Value::Object(_)) {
+                if matches!(self.0.converted, JsValue::Object(_)) {
                     return Err(RuntimeError::Invariant(
                         "RegExp match lastIndex conversion returned an object",
                     ));
                 }
-                let current = match runtime.native_to_length(self.0.realm, &value)? {
-                    NativeConversion::Value(value) => value,
-                    NativeConversion::Throw(value) => {
-                        return Ok(RegExpMatchStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
-                    }
-                };
+                let current =
+                    match runtime.number_from_primitive_jsvalue(self.0.realm, &self.0.converted)? {
+                        NativeConversion::Value(value) => Runtime::length_from_number(value),
+                        NativeConversion::Throw(value) => {
+                            return Ok(RegExpMatchStep::Complete(Completion::Throw(
+                                runtime.into_jsvalue(value)?,
+                            )));
+                        }
+                    };
                 let next = advance_string_index(&state.input, current, state.unicode);
                 Ok(RegExpMatchStep::make_set(
                     self.0.regexp.clone(),
@@ -365,18 +402,6 @@ impl RegExpMatchResume {
             ),
         }
     }
-}
-fn match_string(
-    runtime: &Runtime,
-    realm: ContextId,
-    value: Value,
-) -> Result<NativeConversion<JsString>, RuntimeError> {
-    if matches!(value, Value::Object(_)) {
-        return Err(RuntimeError::Invariant(
-            "RegExp match String conversion returned an object",
-        ));
-    }
-    runtime.native_to_js_string(realm, &value)
 }
 impl Runtime {
     pub(crate) fn call_regexp_symbol_match(
@@ -408,22 +433,22 @@ impl Runtime {
                         resume.resume(self, self.get_property_in_realm(realm, &object, &key)?)?
                     }
                     RegExpMatchStep::Exec { mut resume } => {
-                        let regexp = self.root_and_release_jsvalue(resume.take_exec_regexp())?;
-                        let input = self.root_and_release_jsvalue(resume.take_exec_input())?;
+                        let regexp = resume.take_exec_regexp();
+                        let input = resume.take_exec_input();
                         resume.resume(self, self.regexp_exec_abstract(realm, regexp, input)?)?
                     }
                     RegExpMatchStep::Set { mut resume } => {
                         let object = resume.take_set_object();
                         let key = resume.take_set_key();
-                        let value = self.root_and_release_jsvalue(resume.take_set_value())?;
+                        let value = resume.take_set_value();
                         resume.set(
                             self,
-                            self.internal_set(
+                            self.internal_set_jsvalue(
                                 realm,
                                 &object,
                                 &key,
                                 value,
-                                Value::Object(object.clone()),
+                                JsValue::Object(object.clone().into_handle()),
                             )?,
                         )?
                     }

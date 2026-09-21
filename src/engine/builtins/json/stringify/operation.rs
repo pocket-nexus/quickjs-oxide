@@ -8,7 +8,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     atom::PropertyKeyKind,
     heap::ContextId,
-    object::{CallableRef, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey},
+    object::{CallableRef, ObjectRef, PropertyKey},
     value::{JsString, JsStringBuilder, JsValue, Value, conversion::NativeConversion},
     vm::{Completion, call::NativeArguments},
 };
@@ -46,6 +46,18 @@ impl Drop for StringifyResumeState {
     /// request is abandoned. Consumption goes through `Option::take`, so a
     /// drained field is `None` here; releases are defer-safe and nothrow.
     fn drop(&mut self) {
+        for value in [
+            std::mem::replace(&mut self.state.root, JsValue::Undefined),
+            std::mem::replace(&mut self.state.space, JsValue::Undefined),
+            std::mem::replace(&mut self.state.current, JsValue::Undefined),
+        ] {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+        for task in self.state.tasks.drain(..) {
+            if let Task::Value { value, .. } = task {
+                let _ = self.runtime.release_jsvalue(value);
+            }
+        }
         if let Some(value) = self.pending_effect.read_receiver.take() {
             let _ = self.runtime.release_jsvalue(value);
         }
@@ -73,7 +85,6 @@ struct List {
 }
 struct Check {
     holder: ObjectRef,
-    value: Value,
     key: JsString,
     destination: Destination,
 }
@@ -133,9 +144,9 @@ fn converted<T>(reply: NativeConversion<T>) -> JsonStringifyResult<T> {
         NativeConversion::Throw(value) => Err(JsonStringifyFailure::Throw(value)),
     }
 }
-fn returned(runtime: &Runtime, reply: Completion) -> JsonStringifyResult<Value> {
+fn returned(runtime: &Runtime, reply: Completion) -> JsonStringifyResult<JsValue> {
     match reply {
-        Completion::Return(value) => Ok(runtime.root_and_release_jsvalue(value)?),
+        Completion::Return(value) => Ok(value),
         Completion::Throw(value) => Err(JsonStringifyFailure::Throw(
             runtime.root_and_release_jsvalue(value)?,
         )),
@@ -156,7 +167,7 @@ impl StringifyStep {
                     Value::Object(object) => runtime.as_callable(object)?,
                     _ => None,
                 };
-                let state = Box::new(StringifyResumeState {
+                let mut state = Box::new(StringifyResumeState {
                     runtime: runtime.clone(),
                     pending_effect: Default::default(),
                     phase: Phase::GapString,
@@ -169,10 +180,13 @@ impl StringifyStep {
                         stack: Vec::new(),
                         output: JsStringBuilder::new(0),
                         tasks: Vec::new(),
-                        root: runtime.root_value(&arguments.readable[0])?,
-                        space: runtime.root_value(&arguments.readable[2])?,
+                        root: JsValue::Undefined,
+                        space: JsValue::Undefined,
+                        current: JsValue::Undefined,
                     },
                 });
+                state.root = runtime.dup_jsvalue(&arguments.readable[0])?;
+                state.space = runtime.dup_jsvalue(&arguments.readable[2])?;
                 if state.replacer.is_none()
                     && let Value::Object(object) = &replacer_value
                     && converted(runtime.internal_is_array(realm, &replacer_value)?)?
@@ -231,10 +245,12 @@ impl StringifyResumeState {
     }
     fn gap(self: Box<Self>, runtime: &Runtime) -> JsonStringifyResult<StringifyStep> {
         match &self.space {
-            Value::Object(object) => match runtime.json_wrapper_kind(object)? {
+            JsValue::Object(object) => match runtime
+                .json_wrapper_kind(&ObjectRef::from_borrowed_handle(runtime.clone(), *object)?)?
+            {
                 JsonWrapperKind::String => {
                     return Ok(StringifyStep::request_string(
-                        runtime.unroot_value(&self.space)?,
+                        runtime.dup_jsvalue(&self.space)?,
                         {
                             let phase = Phase::GapString;
                             let mut owner = self;
@@ -245,7 +261,7 @@ impl StringifyResumeState {
                 }
                 JsonWrapperKind::Number => {
                     return Ok(StringifyStep::request_number(
-                        runtime.unroot_value(&self.space)?,
+                        runtime.dup_jsvalue(&self.space)?,
                         {
                             let phase = Phase::GapNumber;
                             let mut owner = self;
@@ -256,15 +272,19 @@ impl StringifyResumeState {
                 }
                 _ => {}
             },
-            Value::String(value) => {
-                let gap = value.sub_string(0, value.len().min(10));
+            JsValue::String(value) => {
+                let gap = {
+                    let state = runtime.0.state.borrow();
+                    let value = state.heap.string(*value)?;
+                    value.sub_string(0, value.len().min(10))
+                };
                 return self.root(runtime, gap);
             }
-            Value::Int(value) => {
+            JsValue::Int(value) => {
                 let number = f64::from(*value);
                 return self.number_gap(runtime, number);
             }
-            Value::Float(number) => {
+            JsValue::Float(number) => {
                 let number = *number;
                 return self.number_gap(runtime, number);
             }
@@ -294,17 +314,10 @@ impl StringifyResumeState {
         self.gap = gap;
         let holder = runtime.new_ordinary_object_in_realm(self.realm)?;
         let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal0)?;
-        if !runtime.define_own_property(
-            &holder,
-            &key,
-            &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(self.root.clone()),
-                writable: DescriptorField::Present(true),
-                enumerable: DescriptorField::Present(true),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
+        if !matches!(
+            runtime.define_selected_set_data(&holder, &key, &self.root, false)?,
+            crate::engine::object::operations::PropertyDefineOutcome::Defined(true)
+        ) {
             return Err(RuntimeError::Invariant(
                 "fresh JSON.stringify root definition was rejected",
             )
@@ -313,12 +326,11 @@ impl StringifyResumeState {
         self.to_json_key =
             Some(runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::ToJSON)?);
         self.output = JsStringBuilder::new(256);
-        let value = std::mem::replace(&mut self.root, Value::Undefined);
+        self.current = std::mem::replace(&mut self.root, JsValue::Undefined);
         self.check(
             runtime,
             Check {
                 holder,
-                value,
                 key: JsString::from_static(""),
                 destination: Destination::Root,
             },
@@ -329,9 +341,9 @@ impl StringifyResumeState {
         runtime: &Runtime,
         check: Check,
     ) -> JsonStringifyResult<StringifyStep> {
-        if matches!(check.value, Value::Object(_) | Value::BigInt(_)) {
+        if matches!(self.current, JsValue::Object(_) | JsValue::BigInt(_)) {
             Ok(StringifyStep::request_read(
-                runtime.unroot_value(&check.value)?,
+                runtime.dup_jsvalue(&self.current)?,
                 self.to_json_key
                     .clone()
                     .ok_or(RuntimeError::Invariant("JSON stringify lost toJSON key"))?,
@@ -361,10 +373,10 @@ impl StringifyResumeState {
                 )?));
             }
             arguments.push(runtime.into_jsvalue(Value::String(check.key.clone()))?);
-            arguments.push(runtime.unroot_value(&check.value)?);
+            arguments.push(runtime.dup_jsvalue(&self.current)?);
             return Ok(StringifyStep::request_call(
                 callable.clone(),
-                runtime.into_jsvalue(Value::Object(check.holder.clone()))?,
+                JsValue::Object(check.holder.clone().into_handle()),
                 arguments,
                 {
                     let phase = Phase::Replacer(check);
@@ -381,20 +393,26 @@ impl StringifyResumeState {
         runtime: &Runtime,
         check: Check,
     ) -> JsonStringifyResult<StringifyStep> {
-        let accepted = match &check.value {
-            Value::Undefined | Value::Symbol(_) => false,
-            Value::Object(object) => runtime.as_callable(object)?.is_none(),
+        let accepted = match &self.current {
+            JsValue::Undefined | JsValue::Symbol(_) => false,
+            JsValue::Object(object) => runtime
+                .as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *object)?)?
+                .is_none(),
             _ => true,
         };
+        if !accepted {
+            runtime.release_jsvalue(std::mem::replace(&mut self.current, JsValue::Undefined))?;
+        }
         match check.destination {
             Destination::Root => {
                 if !accepted {
                     return Ok(StringifyStep::Complete(Completion::Return(
-                        runtime.into_jsvalue(Value::Undefined)?,
+                        JsValue::Undefined,
                     )));
                 }
+                let value = std::mem::replace(&mut self.current, JsValue::Undefined);
                 self.tasks.push(Task::Value {
-                    value: check.value,
+                    value,
                     indent: JsString::from_static(""),
                 });
             }
@@ -407,10 +425,8 @@ impl StringifyResumeState {
                 let indent = next_indent.clone();
                 self.tasks.push(task);
                 if accepted {
-                    self.tasks.push(Task::Value {
-                        value: check.value,
-                        indent,
-                    });
+                    let value = std::mem::replace(&mut self.current, JsValue::Undefined);
+                    self.tasks.push(Task::Value { value, indent });
                 } else {
                     self.output.push_utf8("null")?;
                 }
@@ -441,10 +457,8 @@ impl StringifyResumeState {
                 }
                 self.tasks.push(task);
                 if accepted {
-                    self.tasks.push(Task::Value {
-                        value: check.value,
-                        indent,
-                    });
+                    let value = std::mem::replace(&mut self.current, JsValue::Undefined);
+                    self.tasks.push(Task::Value { value, indent });
                 }
             }
         }
@@ -453,74 +467,92 @@ impl StringifyResumeState {
     fn advance(mut self: Box<Self>, runtime: &Runtime) -> JsonStringifyResult<StringifyStep> {
         while let Some(task) = self.tasks.pop() {
             match task {
-                Task::Value { mut value, indent } => loop {
-                    match value {
-                        Value::String(value) => {
-                            self.append_quoted(&value)?;
-                            break;
+                Task::Value { value, indent } => {
+                    runtime.release_jsvalue(std::mem::replace(&mut self.current, value))?;
+                    match &self.current {
+                        JsValue::String(id) => {
+                            let text = runtime.0.state.borrow().heap.string(*id)?.clone();
+                            self.append_quoted(&text)?;
                         }
-                        Value::Int(value) => {
-                            self.output.push_utf8(&value.to_string())?;
-                            break;
+                        JsValue::Int(value) => {
+                            let text = value.to_string();
+                            self.output.push_utf8(&text)?;
                         }
-                        Value::Float(value) if value.is_finite() => {
-                            self.output
-                                .push_js_string(&Value::Float(value).to_js_string()?)?;
-                            break;
+                        JsValue::Float(value) if value.is_finite() => {
+                            let text = Value::Float(*value).to_js_string()?;
+                            self.output.push_js_string(&text)?;
                         }
-                        Value::Float(_) | Value::Null => {
+                        JsValue::Float(_) | JsValue::Null => {
                             self.output.push_utf8("null")?;
-                            break;
                         }
-                        Value::Bool(value) => {
-                            self.output
-                                .push_utf8(if value { "true" } else { "false" })?;
-                            break;
+                        JsValue::Bool(value) => {
+                            let text = if *value { "true" } else { "false" };
+                            self.output.push_utf8(text)?;
                         }
-                        Value::BigInt(_) => {
+                        JsValue::BigInt(_) => {
                             return Err(JsonStringifyFailure::Throw(runtime.new_native_error(
                                 self.realm,
                                 NativeErrorKind::Type,
                                 "Do not know how to serialize a BigInt",
                             )?));
                         }
-                        Value::Object(object) => {
+                        JsValue::Object(id) => {
+                            let object = ObjectRef::from_borrowed_handle(runtime.clone(), *id)?;
                             if runtime.is_raw_json_object(&object)? {
+                                runtime.release_jsvalue(std::mem::replace(
+                                    &mut self.current,
+                                    JsValue::Undefined,
+                                ))?;
                                 return self.read(runtime, object, "rawJSON", Phase::Raw);
                             }
                             match runtime.json_wrapper_kind(&object)? {
                                 JsonWrapperKind::String => {
+                                    let value =
+                                        std::mem::replace(&mut self.current, JsValue::Undefined);
+                                    self.phase = Phase::WrapperString;
                                     return Ok(StringifyStep::request_string(
-                                        runtime.into_jsvalue(Value::Object(object))?,
-                                        {
-                                            let phase = Phase::WrapperString;
-                                            let mut owner = self;
-                                            owner.phase = phase;
-                                            StringifyResume(owner)
-                                        },
+                                        value,
+                                        StringifyResume(self),
                                     ));
                                 }
                                 JsonWrapperKind::Number => {
+                                    let value =
+                                        std::mem::replace(&mut self.current, JsValue::Undefined);
+                                    self.phase = Phase::WrapperNumber(indent);
                                     return Ok(StringifyStep::request_number(
-                                        runtime.into_jsvalue(Value::Object(object))?,
-                                        {
-                                            let phase = Phase::WrapperNumber(indent);
-                                            let mut owner = self;
-                                            owner.phase = phase;
-                                            StringifyResume(owner)
-                                        },
+                                        value,
+                                        StringifyResume(self),
                                     ));
                                 }
-                                JsonWrapperKind::Boolean(boolean) => value = Value::Bool(boolean),
-                                JsonWrapperKind::BigInt(bigint) => value = Value::BigInt(bigint),
+                                JsonWrapperKind::Boolean(value) => {
+                                    self.output
+                                        .push_utf8(if value { "true" } else { "false" })?;
+                                }
+                                JsonWrapperKind::BigInt => {
+                                    return Err(JsonStringifyFailure::Throw(
+                                        runtime.new_native_error(
+                                            self.realm,
+                                            NativeErrorKind::Type,
+                                            "Do not know how to serialize a BigInt",
+                                        )?,
+                                    ));
+                                }
                                 JsonWrapperKind::Other => {
+                                    runtime.release_jsvalue(std::mem::replace(
+                                        &mut self.current,
+                                        JsValue::Undefined,
+                                    ))?;
                                     return self.begin(runtime, object, indent);
                                 }
                             }
                         }
-                        Value::Undefined | Value::Symbol(_) => break,
+                        JsValue::Undefined | JsValue::Symbol(_) => {}
                     }
-                },
+                    runtime.release_jsvalue(std::mem::replace(
+                        &mut self.current,
+                        JsValue::Undefined,
+                    ))?;
+                }
                 Task::ArrayElement {
                     array,
                     index,
@@ -712,37 +744,35 @@ impl StringifyResume {
     fn value(mut self, runtime: &Runtime, reply: Completion) -> JsonStringifyResult<StringifyStep> {
         let value = returned(runtime, reply)?;
         let phase = std::mem::replace(&mut self.0.phase, Phase::GapString);
-        let state = self.0;
+        let mut state = self.0;
         match phase {
-            Phase::ListLength(object) => Ok(StringifyStep::request_number(
-                runtime.into_jsvalue(value)?,
-                {
-                    let phase = Phase::ListNumber(object);
-                    let mut owner = state;
-                    owner.phase = phase;
-                    StringifyResume(owner)
-                },
-            )),
+            Phase::ListLength(object) => {
+                state.phase = Phase::ListNumber(object);
+                Ok(StringifyStep::request_number(value, StringifyResume(state)))
+            }
             Phase::ListItem(mut list) => {
-                let string = match &value {
-                    Value::String(_) | Value::Int(_) | Value::Float(_) => true,
-                    Value::Object(object) => matches!(
-                        runtime.json_wrapper_kind(object)?,
+                // Keep the reply owned through potentially failing wrapper inspection.
+                runtime.release_jsvalue(std::mem::replace(&mut state.current, value))?;
+                let string = match &state.current {
+                    JsValue::String(_) | JsValue::Int(_) | JsValue::Float(_) => true,
+                    JsValue::Object(id) => matches!(
+                        runtime.json_wrapper_kind(&ObjectRef::from_borrowed_handle(
+                            runtime.clone(),
+                            *id
+                        )?)?,
                         JsonWrapperKind::String | JsonWrapperKind::Number
                     ),
                     _ => false,
                 };
                 if string {
-                    Ok(StringifyStep::request_string(
-                        runtime.into_jsvalue(value)?,
-                        {
-                            let phase = Phase::ListString(list);
-                            let mut owner = state;
-                            owner.phase = phase;
-                            StringifyResume(owner)
-                        },
-                    ))
+                    let value = std::mem::replace(&mut state.current, JsValue::Undefined);
+                    state.phase = Phase::ListString(list);
+                    Ok(StringifyStep::request_string(value, StringifyResume(state)))
                 } else {
+                    runtime.release_jsvalue(std::mem::replace(
+                        &mut state.current,
+                        JsValue::Undefined,
+                    ))?;
                     list.index += 1;
                     state.list(runtime, list)
                 }
@@ -751,19 +781,28 @@ impl StringifyResume {
                 holder,
                 key,
                 destination,
-            } => state.check(
-                runtime,
-                Check {
-                    holder,
-                    value,
-                    key,
-                    destination,
-                },
-            ),
+            } => {
+                runtime.release_jsvalue(std::mem::replace(&mut state.current, value))?;
+                state.check(
+                    runtime,
+                    Check {
+                        holder,
+                        key,
+                        destination,
+                    },
+                )
+            }
             Phase::ToJson(check) => {
-                if let Value::Object(object) = value
-                    && let Some(callable) = runtime.as_callable(&object)?
-                {
+                let callable = match value {
+                    JsValue::Object(id) => {
+                        runtime.as_callable(&ObjectRef::from_owned_handle(runtime.clone(), id))?
+                    }
+                    value => {
+                        runtime.release_jsvalue(value)?;
+                        None
+                    }
+                };
+                if let Some(callable) = callable {
                     let mut arguments = Vec::new();
                     if arguments.try_reserve_exact(1).is_err() {
                         return Err(JsonStringifyFailure::Throw(runtime.new_native_error(
@@ -773,50 +812,48 @@ impl StringifyResume {
                         )?));
                     }
                     arguments.push(runtime.into_jsvalue(Value::String(check.key.clone()))?);
+                    let receiver = runtime.dup_jsvalue(&state.current)?;
+                    state.phase = Phase::ToJsonCall(check);
                     Ok(StringifyStep::request_call(
                         callable,
-                        runtime.unroot_value(&check.value)?,
+                        receiver,
                         arguments,
-                        {
-                            let phase = Phase::ToJsonCall(check);
-                            let mut owner = state;
-                            owner.phase = phase;
-                            StringifyResume(owner)
-                        },
+                        StringifyResume(state),
                     ))
                 } else {
                     state.replacer(runtime, check)
                 }
             }
-            Phase::ToJsonCall(mut check) => {
-                check.value = value;
+            Phase::ToJsonCall(check) => {
+                runtime.release_jsvalue(std::mem::replace(&mut state.current, value))?;
                 state.replacer(runtime, check)
             }
-            Phase::Replacer(mut check) => {
-                check.value = value;
+            Phase::Replacer(check) => {
+                runtime.release_jsvalue(std::mem::replace(&mut state.current, value))?;
                 state.checked(runtime, check)
             }
             Phase::Raw => {
-                let Value::String(source) = value else {
+                runtime.release_jsvalue(std::mem::replace(&mut state.current, value))?;
+                let JsValue::String(id) = &state.current else {
                     return Err(RuntimeError::Invariant(
                         "Raw JSON branded object lost its source string",
                     )
                     .into());
                 };
-                let mut state = state;
+                let source = runtime.0.state.borrow().heap.string(*id)?.clone();
                 state.output.push_js_string(&source)?;
+                runtime
+                    .release_jsvalue(std::mem::replace(&mut state.current, JsValue::Undefined))?;
                 state.advance(runtime)
             }
-            Phase::ArrayLength(start) => Ok(StringifyStep::request_number(
-                runtime.into_jsvalue(value)?,
-                {
-                    let phase = Phase::ArrayNumber(start);
-                    let mut owner = state;
-                    owner.phase = phase;
-                    StringifyResume(owner)
-                },
-            )),
-            _ => Err(RuntimeError::Invariant("JSON stringify unexpected value reply").into()),
+            Phase::ArrayLength(start) => {
+                state.phase = Phase::ArrayNumber(start);
+                Ok(StringifyStep::request_number(value, StringifyResume(state)))
+            }
+            _ => {
+                runtime.release_jsvalue(value)?;
+                Err(RuntimeError::Invariant("JSON stringify unexpected value reply").into())
+            }
         }
     }
     pub(crate) fn string(
@@ -876,7 +913,8 @@ impl StringifyResume {
                     Phase::GapNumber => state.number_gap(runtime, value),
                     Phase::WrapperNumber(indent) => {
                         state.tasks.push(Task::Value {
-                            value: Value::number(value),
+                            value: crate::engine::value::number::operations::Number::compact(value)
+                                .into(),
                             indent,
                         });
                         state.advance(runtime)
@@ -957,20 +995,20 @@ pub(super) fn finish(
         step = match step {
             StringifyStep::Complete(result) => return Ok(result),
             StringifyStep::Read { mut resume } => {
-                let receiver = runtime.root_and_release_jsvalue(resume.take_read_receiver())?;
+                let receiver = resume.take_read_receiver();
                 let key = resume.take_read_key();
                 resume.resume(
                     runtime,
-                    runtime.get_value_property_in_realm(realm, receiver, &key)?,
+                    runtime.get_value_property_in_realm_jsvalue(realm, receiver, &key)?,
                 )?
             }
             StringifyStep::String { mut resume } => {
-                let value = runtime.root_and_release_jsvalue(resume.take_string_value())?;
-                resume.string(runtime, runtime.native_to_js_string(realm, &value)?)?
+                let value = resume.take_string_value();
+                resume.string(runtime, runtime.native_to_js_string_jsvalue(realm, value)?)?
             }
             StringifyStep::Number { mut resume } => {
-                let value = runtime.root_and_release_jsvalue(resume.take_number_value())?;
-                resume.number(runtime, runtime.native_to_number(realm, &value)?)?
+                let value = resume.take_number_value();
+                resume.number(runtime, runtime.native_to_number_jsvalue(realm, value)?)?
             }
             StringifyStep::Keys { mut resume } => {
                 let object = resume.take_keys_object();
@@ -986,15 +1024,11 @@ pub(super) fn finish(
             }
             StringifyStep::Call { mut resume } => {
                 let callable = resume.take_call_callable();
-                let receiver = runtime.root_and_release_jsvalue(resume.take_call_receiver())?;
-                let arguments = resume
-                    .take_call_arguments()
-                    .into_iter()
-                    .map(|value| runtime.root_and_release_jsvalue(value))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let receiver = resume.take_call_receiver();
+                let arguments = resume.take_call_arguments();
                 resume.resume(
                     runtime,
-                    runtime.call_internal(realm, &callable, receiver, &arguments)?,
+                    runtime.call_internal_jsvalue(realm, &callable, receiver, arguments)?,
                 )?
             }
         };

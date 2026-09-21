@@ -62,9 +62,10 @@ impl Runtime {
         &self,
         realm: ContextId,
         input: JsString,
+        input_value: &JsValue,
         program: Rc<CompiledRegExp>,
         matched: RegExpMatch,
-    ) -> Result<Value, RuntimeError> {
+    ) -> Result<JsValue, RuntimeError> {
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("regexp_result.build");
         let capture_count = matched.captures().len();
@@ -143,9 +144,7 @@ impl Runtime {
             .push(JsValue::Int(i32::try_from(complete.start).map_err(
                 |_| RuntimeError::Invariant("RegExp match start exceeded signed String range"),
             )?));
-        owner
-            .properties
-            .push(self.into_jsvalue(Value::String(input))?);
+        owner.properties.push(self.dup_jsvalue(input_value)?);
         let groups = if group_names.is_some() {
             JsValue::Object(
                 self.new_regexp_groups(realm, &named, &owner.captures)?
@@ -178,7 +177,7 @@ impl Runtime {
             &owner.properties,
             usize::from(has_indices),
         )?;
-        Ok(Value::Object(result))
+        Ok(JsValue::Object(result.into_handle()))
     }
 
     fn new_regexp_groups(

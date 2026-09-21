@@ -7,6 +7,7 @@ use crate::engine::heap::roots::VarRefRoot;
 use crate::engine::heap::runtime::RuntimeState;
 
 use crate::engine::heap::{ObjectId, ObjectPayload, PropertySlot, RawValue, ShapeId};
+use crate::engine::object::property::CompletePropertyDescriptor;
 use crate::engine::object::shape::{PropertyFlags, ShapeEntry};
 use crate::engine::object::{
     AccessorValue, CompleteOrdinaryPropertyDescriptor, DescriptorField, ObjectRef,
@@ -100,13 +101,14 @@ impl Runtime {
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("IsHTMLDDA value"));
         }
-        Ok(self
-            .0
-            .state
-            .borrow()
-            .heap
-            .object(object.object_id())?
-            .is_html_dda)
+        self.value_is_html_dda_jsvalue(&JsValue::Object(object.object_id()))
+    }
+
+    pub(crate) fn value_is_html_dda_jsvalue(&self, value: &JsValue) -> Result<bool, RuntimeError> {
+        let JsValue::Object(id) = value else {
+            return Ok(false);
+        };
+        Ok(self.0.state.borrow().heap.object(*id)?.is_html_dda)
     }
 
     /// Apply ECMAScript `ToBoolean`, including QuickJS's Annex B falsy
@@ -247,6 +249,49 @@ impl Runtime {
         key: &PropertyKey,
         complete: CompleteOrdinaryPropertyDescriptor,
     ) -> Result<(), RuntimeError> {
+        let converted = match &complete {
+            CompleteOrdinaryPropertyDescriptor::Data { value, .. } => {
+                Some(self.raw_property_value(value)?)
+            }
+            CompleteOrdinaryPropertyDescriptor::Accessor { .. } => None,
+        };
+        let complete = match &complete {
+            CompleteOrdinaryPropertyDescriptor::Data {
+                writable,
+                enumerable,
+                configurable,
+                ..
+            } => CompletePropertyDescriptor::Data {
+                value: converted.as_ref().expect("converted data").raw(),
+                writable: *writable,
+                enumerable: *enumerable,
+                configurable: *configurable,
+            },
+            CompleteOrdinaryPropertyDescriptor::Accessor {
+                get,
+                set,
+                enumerable,
+                configurable,
+            } => CompletePropertyDescriptor::Accessor {
+                get: get
+                    .as_ref()
+                    .map(|v| RawValue::Object(v.as_object().object_id())),
+                set: set
+                    .as_ref()
+                    .map(|v| RawValue::Object(v.as_object().object_id())),
+                enumerable: *enumerable,
+                configurable: *configurable,
+            },
+        };
+        self.store_complete_raw_property(object, key, complete)
+    }
+
+    pub(crate) fn store_complete_raw_property(
+        &self,
+        object: &ObjectRef,
+        key: &PropertyKey,
+        complete: CompletePropertyDescriptor<RawValue>,
+    ) -> Result<(), RuntimeError> {
         let global_hidden = {
             let state = self.0.state.borrow();
             match state.heap.object(object.object_id())?.payload {
@@ -290,56 +335,52 @@ impl Runtime {
             }
         };
         if let Some(hidden) = global_hidden {
-            return self.store_complete_global_property(object, hidden, key, complete);
+            return self.store_complete_global_raw_property(object, hidden, key, complete);
         }
 
-        // Clone duplicates only the handle; the guard keeps the boundary
-        // conversion's producer edge accountable through the store below.
-        let (flags, replacement, converted_value) = match complete {
-            CompleteOrdinaryPropertyDescriptor::Data {
+        let (flags, replacement) = match complete {
+            CompletePropertyDescriptor::Data {
                 value,
                 writable,
                 enumerable,
                 configurable,
-            } => {
-                let converted = self.raw_property_value(&value)?;
-                (
-                    PropertyFlags::data(writable, enumerable, configurable),
-                    PropertySlot::Data(converted.raw()),
-                    Some(converted),
-                )
-            }
-            CompleteOrdinaryPropertyDescriptor::Accessor {
+            } => (
+                PropertyFlags::data(writable, enumerable, configurable),
+                PropertySlot::Data(value),
+            ),
+            CompletePropertyDescriptor::Accessor {
                 get,
                 set,
                 enumerable,
                 configurable,
-            } => (
-                PropertyFlags::accessor(enumerable, configurable),
-                PropertySlot::Accessor {
-                    get: get.as_ref().map(|value| value.as_object().object_id()),
-                    set: set.as_ref().map(|value| value.as_object().object_id()),
-                },
-                None,
-            ),
+            } => {
+                let id = |value| match value {
+                    None => Ok(None),
+                    Some(RawValue::Object(id)) => Ok(Some(id)),
+                    _ => Err(RuntimeError::Invariant("raw accessor is not an object")),
+                };
+                (
+                    PropertyFlags::accessor(enumerable, configurable),
+                    PropertySlot::Accessor {
+                        get: id(get)?,
+                        set: id(set)?,
+                    },
+                )
+            }
         };
-        let stored = self.store_property_slot(object, key, flags, replacement);
-        // The store retained its own copy edge on success; a rejected store
-        // never kept the value. The guard balances the producer edge either way.
-        drop(converted_value);
-        stored
+        self.store_property_slot(object, key, flags, replacement)
     }
 
-    pub(crate) fn store_complete_global_property(
+    pub(crate) fn store_complete_global_raw_property(
         &self,
         object: &ObjectRef,
         hidden_id: ObjectId,
         key: &PropertyKey,
-        complete: CompleteOrdinaryPropertyDescriptor,
+        complete: CompletePropertyDescriptor<RawValue>,
     ) -> Result<(), RuntimeError> {
         let hidden = ObjectRef::from_borrowed_handle(self.clone(), hidden_id)?;
         match complete {
-            CompleteOrdinaryPropertyDescriptor::Data {
+            CompletePropertyDescriptor::Data {
                 value,
                 writable,
                 enumerable,
@@ -352,7 +393,12 @@ impl Runtime {
                     None
                 };
                 let root = if let Some(root) = global_root {
-                    self.write_var_ref(&root, self.unroot_value(&value)?)?;
+                    self.write_var_ref(
+                        &root,
+                        self.dup_jsvalue(&JsValue::from_raw(value.clone()).ok_or(
+                            RuntimeError::Invariant("global data held internal sentinel"),
+                        )?)?,
+                    )?;
                     root
                 } else if let Some(root) = hidden_root {
                     if !self.delete_property(&hidden, key)? {
@@ -360,10 +406,22 @@ impl Runtime {
                             "hidden global VarRef property was not configurable",
                         ));
                     }
-                    self.write_var_ref(&root, self.unroot_value(&value)?)?;
+                    self.write_var_ref(
+                        &root,
+                        self.dup_jsvalue(&JsValue::from_raw(value.clone()).ok_or(
+                            RuntimeError::Invariant("global data held internal sentinel"),
+                        )?)?,
+                    )?;
                     root
                 } else {
-                    self.new_var_ref_rooted(value, false, !writable, ClosureVariableKind::Normal)?
+                    self.new_var_ref(
+                        self.dup_jsvalue(&JsValue::from_raw(value.clone()).ok_or(
+                            RuntimeError::Invariant("global data held internal sentinel"),
+                        )?)?,
+                        false,
+                        !writable,
+                        ClosureVariableKind::Normal,
+                    )?
                 };
                 self.set_var_ref_metadata(&root, false, !writable, ClosureVariableKind::Normal)?;
                 self.store_property_slot(
@@ -373,7 +431,7 @@ impl Runtime {
                     PropertySlot::VarRef(root.id()),
                 )
             }
-            CompleteOrdinaryPropertyDescriptor::Accessor {
+            CompletePropertyDescriptor::Accessor {
                 get,
                 set,
                 enumerable,
@@ -407,8 +465,14 @@ impl Runtime {
                     key,
                     PropertyFlags::accessor(enumerable, configurable),
                     PropertySlot::Accessor {
-                        get: get.as_ref().map(|value| value.as_object().object_id()),
-                        set: set.as_ref().map(|value| value.as_object().object_id()),
+                        get: get.map(|value| match value {
+                            RawValue::Object(id) => id,
+                            _ => unreachable!("validated accessor"),
+                        }),
+                        set: set.map(|value| match value {
+                            RawValue::Object(id) => id,
+                            _ => unreachable!("validated accessor"),
+                        }),
                     },
                 )
             }

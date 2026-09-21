@@ -342,7 +342,7 @@ impl From<crate::engine::builtins::IteratorTagStep> for Step {
                 Self::Define {
                     object: Some(object),
                     key: Some(key),
-                    descriptor: Some(descriptor),
+                    descriptor: Some(descriptor.into()),
                     resume: Some(Resume::IteratorTag(resume)),
                 }
             }

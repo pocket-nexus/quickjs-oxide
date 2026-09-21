@@ -4,9 +4,7 @@ use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::heap::ContextId;
 use crate::engine::object::operations::InternalDefineResult;
 
-use crate::engine::object::{
-    DescriptorField, OrdinaryPropertyDescriptor, PropertyKey, WellKnownSymbol,
-};
+use crate::engine::object::{OwnedPropertyDescriptor, PropertyKey, WellKnownSymbol};
 use crate::engine::value::conversion::NativeConversion;
 use crate::engine::value::{JsString, JsValue, Value};
 use crate::engine::vm::Completion;
@@ -80,7 +78,16 @@ pub(crate) struct TagSetterResumeState {
     runtime: Runtime,
     receiver: crate::engine::object::ObjectRef,
     key: PropertyKey,
-    value: Value,
+    value: JsValue,
+}
+impl Drop for TagSetterResumeState {
+    fn drop(&mut self) {
+        let value = std::mem::replace(&mut self.value, JsValue::Undefined);
+        let _ = self.runtime.release_jsvalue(value);
+        if let Some(value) = self.pending_effect.set_value.take() {
+            let _ = self.runtime.release_jsvalue(value);
+        }
+    }
 }
 impl TagSetterStep {
     pub(crate) fn start(
@@ -102,9 +109,9 @@ impl TagSetterStep {
         };
         let receiver =
             crate::engine::object::ObjectRef::from_borrowed_handle(runtime.clone(), *receiver_id)?;
-        let value = runtime.root_value(arguments.readable.first().ok_or(
-            RuntimeError::Invariant("Iterator.prototype toStringTag setter argv was not padded"),
-        )?)?;
+        let value = arguments.readable.first().ok_or(RuntimeError::Invariant(
+            "Iterator.prototype toStringTag setter argv was not padded",
+        ))?;
         let iterator_prototype = runtime
             .0
             .state
@@ -128,7 +135,7 @@ impl TagSetterStep {
                 runtime: runtime.clone(),
                 receiver: receiver.clone(),
                 key,
-                value,
+                value: runtime.dup_jsvalue(value)?,
             }));
             Self::request_own(
                 __pending_field_object,
@@ -150,7 +157,7 @@ impl TagSetterResume {
             NativeConversion::Value(true) => Ok({
                 let __pending_field_object = self.0.receiver.clone();
                 let __pending_field_key = self.0.key.clone();
-                let __pending_field_value = self.0.runtime.into_jsvalue(self.0.value.clone())?;
+                let __pending_field_value = self.0.runtime.dup_jsvalue(&self.0.value)?;
                 let __pending_field_resume = self;
                 TagSetterStep::request_set(
                     __pending_field_object,
@@ -162,13 +169,10 @@ impl TagSetterResume {
             NativeConversion::Value(false) => Ok({
                 let __pending_field_object = self.0.receiver.clone();
                 let __pending_field_key = self.0.key.clone();
-                let __pending_field_descriptor = OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(self.0.value.clone()),
-                    writable: DescriptorField::Present(true),
-                    enumerable: DescriptorField::Present(true),
-                    configurable: DescriptorField::Present(true),
-                    ..OrdinaryPropertyDescriptor::new()
-                };
+                let __pending_field_descriptor = OwnedPropertyDescriptor::data(
+                    &self.0.runtime,
+                    self.0.runtime.dup_jsvalue(&self.0.value)?,
+                );
                 let __pending_field_resume = self;
                 TagSetterStep::request_define(
                     __pending_field_object,
@@ -244,7 +248,7 @@ pub(crate) fn finish_tag(
                 let descriptor = resume.take_define_descriptor();
                 resume.defined(
                     runtime,
-                    runtime.internal_define_own_property(realm, &object, &key, &descriptor)?,
+                    runtime.internal_define_owned_property(realm, &object, &key, descriptor)?,
                 )?
             }
             TagSetterStep::Set { mut resume } => {
@@ -272,7 +276,7 @@ struct TagSetterStepPending {
     own_key: Option<PropertyKey>,
     define_object: Option<crate::engine::object::ObjectRef>,
     define_key: Option<PropertyKey>,
-    define_descriptor: Option<OrdinaryPropertyDescriptor>,
+    define_descriptor: Option<OwnedPropertyDescriptor>,
     set_object: Option<crate::engine::object::ObjectRef>,
     set_key: Option<PropertyKey>,
     set_value: Option<JsValue>,
@@ -290,7 +294,7 @@ impl TagSetterStep {
     pub(crate) fn request_define(
         object: crate::engine::object::ObjectRef,
         key: PropertyKey,
-        descriptor: OrdinaryPropertyDescriptor,
+        descriptor: OwnedPropertyDescriptor,
         mut resume: TagSetterResume,
     ) -> Self {
         resume.0.pending_effect.define_object = Some(object);
@@ -339,7 +343,7 @@ impl TagSetterResume {
             .take()
             .expect("TagSetterStep Define key")
     }
-    pub(crate) fn take_define_descriptor(&mut self) -> OrdinaryPropertyDescriptor {
+    pub(crate) fn take_define_descriptor(&mut self) -> OwnedPropertyDescriptor {
         self.0
             .pending_effect
             .define_descriptor

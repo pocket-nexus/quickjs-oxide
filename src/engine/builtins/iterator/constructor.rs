@@ -3,7 +3,7 @@ use crate::engine::{
     api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::NativeFunctionId,
     heap::{ContextId, ObjectPayload},
-    object::{CallableRef, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor},
+    object::{CallableRef, DescriptorField, ObjectRef, OwnedPropertyDescriptor},
     value::{JsValue, Value, conversion::NativeConversion},
     vm::{
         Completion,
@@ -119,7 +119,6 @@ impl ConstructorStep {
                 runtime.new_native_error_jsvalue(realm, NativeErrorKind::Type, "not an object")?,
             )));
         };
-        let value = ObjectRef::from_borrowed_handle(runtime.clone(), *value_id)?;
         let JsValue::Object(receiver_id) = this_value else {
             return Ok(Self::Complete(Completion::Throw(
                 runtime.new_native_error_jsvalue(realm, NativeErrorKind::Type, "not an object")?,
@@ -128,14 +127,16 @@ impl ConstructorStep {
         let receiver = ObjectRef::from_borrowed_handle(runtime.clone(), *receiver_id)?;
         let key =
             runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?;
-        let descriptor = OrdinaryPropertyDescriptor {
-            value: DescriptorField::Present(Value::Object(value.clone())),
-            writable: DescriptorField::Present(true),
-            enumerable: DescriptorField::Present(false),
-            configurable: DescriptorField::Present(true),
-            ..OrdinaryPropertyDescriptor::new()
-        };
-        let completion = if runtime.define_own_property(&receiver, &key, &descriptor)? {
+        let mut descriptor = OwnedPropertyDescriptor::new(runtime);
+        descriptor.value =
+            DescriptorField::Present(runtime.dup_jsvalue(&JsValue::Object(*value_id))?);
+        descriptor.writable = DescriptorField::Present(true);
+        descriptor.enumerable = DescriptorField::Present(false);
+        descriptor.configurable = DescriptorField::Present(true);
+        let completion = if matches!(
+            runtime.define_owned_property_in_realm(Some(realm), &receiver, &key, &descriptor)?,
+            crate::engine::object::operations::PropertyDefineOutcome::Defined(true)
+        ) {
             Completion::Return(JsValue::Undefined)
         } else {
             Completion::Throw(runtime.new_native_error_jsvalue(
@@ -184,13 +185,10 @@ pub(crate) fn finish(
     loop {
         step = match step {
             ConstructorStep::Complete(result) => return Ok(result),
-            ConstructorStep::Prototype { new_target, resume } => {
-                let new_target = runtime.root_and_release_jsvalue(new_target)?;
-                resume.prototype(
-                    runtime,
-                    runtime.constructor_prototype_source(realm, &new_target)?,
-                )?
-            }
+            ConstructorStep::Prototype { new_target, resume } => resume.prototype(
+                runtime,
+                runtime.constructor_prototype_source(realm, new_target)?,
+            )?,
         };
     }
 }

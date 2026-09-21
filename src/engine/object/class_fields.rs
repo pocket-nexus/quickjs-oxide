@@ -14,24 +14,17 @@ use crate::engine::object::PropertyKey;
 use crate::engine::code::function::metadata::{ClassInitializerKind, ConstructorKind};
 use crate::engine::heap::{ContextId, ObjectPayload};
 use crate::engine::object::operations::{InternalDefineResult, PropertyDefineOutcome};
+use crate::engine::object::{CallableRef, ObjectRef};
+#[cfg(test)]
 use crate::engine::object::{
-    CallableRef, CompleteOrdinaryPropertyDescriptor, DescriptorField, ObjectRef,
-    OrdinaryPropertyDescriptor,
+    CompleteOrdinaryPropertyDescriptor, DescriptorField, OrdinaryPropertyDescriptor,
 };
+use crate::engine::value::JsValue;
+#[cfg(test)]
 use crate::engine::value::Value;
 use crate::engine::value::conversion::NativeConversion;
 
 impl Runtime {
-    pub(crate) fn public_class_field_descriptor(value: Value) -> OrdinaryPropertyDescriptor {
-        OrdinaryPropertyDescriptor {
-            value: DescriptorField::Present(value),
-            writable: DescriptorField::Present(true),
-            enumerable: DescriptorField::Present(true),
-            configurable: DescriptorField::Present(true),
-            ..OrdinaryPropertyDescriptor::new()
-        }
-    }
-
     pub(crate) fn finish_public_class_field_definition(
         outcome: NativeConversion<InternalDefineResult>,
     ) -> Result<PropertyDefineOutcome, RuntimeError> {
@@ -54,10 +47,10 @@ impl Runtime {
 
     fn class_initializer_callable(
         &self,
-        value: Value,
+        value: &JsValue,
         expected: ClassInitializerKind,
     ) -> Result<(CallableRef, ContextId, bool), RuntimeError> {
-        let callable = self.callable_from_value(value)?;
+        let callable = self.callable_from_jsvalue(value)?;
         let state = self.0.state.borrow();
         let object = state.heap.object(callable.as_object().object_id())?;
         let ObjectPayload::BytecodeFunction { bytecode, .. } = &object.payload else {
@@ -79,13 +72,14 @@ impl Runtime {
 
     fn class_constructor_object(
         &self,
-        value: Value,
+        value: &JsValue,
     ) -> Result<(ObjectRef, ContextId), RuntimeError> {
-        let Value::Object(constructor) = value else {
+        let JsValue::Object(constructor) = value else {
             return Err(RuntimeError::Invariant(
                 "class initializer hook received a primitive constructor",
             ));
         };
+        let constructor = ObjectRef::from_borrowed_handle(self.clone(), *constructor)?;
         if !constructor.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("class constructor"));
         }
@@ -118,21 +112,19 @@ impl Runtime {
     ) -> Result<ObjectRef, RuntimeError> {
         let prototype_key =
             self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Prototype)?;
-        let Some(CompleteOrdinaryPropertyDescriptor::Data {
-            value: Value::Object(prototype),
+        let descriptor = self.get_own_property_owned(constructor, &prototype_key)?;
+        let Some(crate::engine::object::property::CompletePropertyDescriptor::Data {
+            value: crate::engine::heap::RawValue::Object(prototype),
             writable: false,
             enumerable: false,
             configurable: false,
-        }) = self.get_own_property(constructor, &prototype_key)?
+        }) = descriptor.as_ref().map(|descriptor| descriptor.record())
         else {
             return Err(RuntimeError::Invariant(
                 "class initializer owner has no authenticated prototype",
             ));
         };
-        if !prototype.belongs_to(self) {
-            return Err(RuntimeError::WrongRuntime("class prototype"));
-        }
-        Ok(prototype)
+        ObjectRef::from_borrowed_handle(self.clone(), *prototype).map_err(Into::into)
     }
 
     fn validate_fresh_class_pair(
@@ -148,15 +140,12 @@ impl Runtime {
         }
         let constructor_key =
             self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?;
-        if !matches!(
-            self.get_own_property(prototype, &constructor_key)?,
-            Some(CompleteOrdinaryPropertyDescriptor::Data {
-                value: Value::Object(ref owner),
-                writable: true,
-                enumerable: false,
-                configurable: true,
-            }) if owner == constructor
-        ) {
+        let descriptor = self.get_own_property_owned(prototype, &constructor_key)?;
+        if !matches!(descriptor.as_ref().map(|descriptor| descriptor.record()),
+            Some(crate::engine::object::property::CompletePropertyDescriptor::Data {
+                value: crate::engine::heap::RawValue::Object(owner), writable: true, enumerable: false, configurable: true,
+            }) if *owner == constructor.object_id())
+        {
             return Err(RuntimeError::Invariant(
                 "class prototype has no authenticated constructor back-reference",
             ));
@@ -167,9 +156,9 @@ impl Runtime {
     pub(crate) fn install_class_instance_initializer(
         &self,
         caller_realm: ContextId,
-        constructor: Value,
-        prototype: Value,
-        initializer: Value,
+        constructor: &JsValue,
+        prototype: &JsValue,
+        initializer: &JsValue,
     ) -> Result<(), RuntimeError> {
         let (constructor, constructor_realm) = self.class_constructor_object(constructor)?;
         if caller_realm != constructor_realm {
@@ -177,14 +166,12 @@ impl Runtime {
                 "class initializer bridge crossed constructor realms",
             ));
         }
-        let Value::Object(prototype) = prototype else {
+        let JsValue::Object(prototype) = prototype else {
             return Err(RuntimeError::Invariant(
                 "class instance initializer HomeObject is not an Object",
             ));
         };
-        if !prototype.belongs_to(self) {
-            return Err(RuntimeError::WrongRuntime("class prototype"));
-        }
+        let prototype = ObjectRef::from_borrowed_handle(self.clone(), *prototype)?;
         self.validate_fresh_class_pair(&constructor, &prototype)?;
         let (initializer, initializer_realm, private_brand) =
             self.class_initializer_callable(initializer, ClassInitializerKind::InstanceFields)?;
@@ -210,8 +197,8 @@ impl Runtime {
     pub(crate) fn begin_class_instance_initializer(
         &self,
         caller_realm: ContextId,
-        constructor: Value,
-        receiver: &Value,
+        constructor: &JsValue,
+        receiver: &JsValue,
     ) -> Result<Option<CallableRef>, RuntimeError> {
         let (constructor, constructor_realm) = self.class_constructor_object(constructor)?;
         if caller_realm != constructor_realm {
@@ -220,11 +207,12 @@ impl Runtime {
             ));
         }
         let prototype = self.published_class_prototype(&constructor)?;
-        let Value::Object(receiver_object) = receiver else {
+        let JsValue::Object(receiver_object) = receiver else {
             return Err(RuntimeError::Invariant(
                 "class instance initializer receiver is not an Object",
             ));
         };
+        let receiver_object = ObjectRef::from_borrowed_handle(self.clone(), *receiver_object)?;
         if !receiver_object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime(
                 "class instance initializer receiver",
@@ -241,7 +229,7 @@ impl Runtime {
         };
         let initializer = ObjectRef::from_borrowed_handle(self.clone(), initializer)?;
         let (initializer, initializer_realm, private_brand) = self.class_initializer_callable(
-            Value::Object(initializer),
+            &JsValue::Object(initializer.object_id()),
             ClassInitializerKind::InstanceFields,
         )?;
         if initializer_realm != constructor_realm
@@ -253,7 +241,7 @@ impl Runtime {
             ));
         }
         if private_brand {
-            self.add_private_method_brand(&prototype, receiver_object)?;
+            self.add_private_method_brand(&prototype, &receiver_object)?;
         }
         Ok(Some(initializer))
     }
@@ -263,9 +251,9 @@ impl Runtime {
     pub(crate) fn begin_class_static_initializer(
         &self,
         caller_realm: ContextId,
-        constructor: Value,
-        initializer: Value,
-    ) -> Result<(CallableRef, Value), RuntimeError> {
+        constructor: &JsValue,
+        initializer: &JsValue,
+    ) -> Result<(CallableRef, JsValue), RuntimeError> {
         let (constructor, constructor_realm) = self.class_constructor_object(constructor)?;
         if caller_realm != constructor_realm {
             return Err(RuntimeError::Invariant(
@@ -296,7 +284,7 @@ impl Runtime {
             self.ensure_private_brand_home(&constructor)?;
             self.add_private_method_brand(&constructor, &constructor)?;
         }
-        Ok((initializer, Value::Object(constructor)))
+        Ok((initializer, JsValue::Object(constructor.into_handle())))
     }
 
     /// Authenticate a fresh block and attach the parent's HomeObject once.
@@ -304,11 +292,11 @@ impl Runtime {
         &self,
         caller_realm: ContextId,
         static_initializer: &ObjectRef,
-        this_value: &Value,
-        block: Value,
+        this_value: &JsValue,
+        block: &JsValue,
     ) -> Result<CallableRef, RuntimeError> {
         let (parent, parent_realm, _) = self.class_initializer_callable(
-            Value::Object(static_initializer.clone()),
+            &JsValue::Object(static_initializer.object_id()),
             ClassInitializerKind::StaticElements,
         )?;
         let (block, block_realm, block_private_brand) =
@@ -321,7 +309,7 @@ impl Runtime {
         if block_private_brand
             || caller_realm != parent_realm
             || block_realm != parent_realm
-            || *this_value != Value::Object(home_object.clone())
+            || !matches!(this_value, JsValue::Object(id) if *id == home_object.object_id())
             || self
                 .bytecode_function_home_object(block.as_object())?
                 .is_some()

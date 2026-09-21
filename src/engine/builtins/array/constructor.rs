@@ -3,10 +3,10 @@ use crate::engine::{
     api::{runtime::Runtime, runtime_error::RuntimeError},
     heap::ContextId,
     object::{
-        DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey,
+        DescriptorField, ObjectRef, OwnedPropertyDescriptor, PropertyKey,
         operations::{ArrayLengthConversion, InternalSetResult, PropertyDefineOutcome},
     },
-    value::{JsValue, Value, conversion::NativeConversion},
+    value::{JsValue, conversion::NativeConversion},
     vm::{
         Completion,
         call::{NativeArguments, NativeInvocation},
@@ -35,8 +35,8 @@ pub(crate) struct ConstructorResumeState {
     pending_effect: ConstructorStepPending,
     scheduler_set_key: Option<PropertyKey>,
     realm: ContextId,
-    new_target: Value,
-    arguments: Vec<Value>,
+    new_target: JsValue,
+    arguments: Vec<JsValue>,
     array: Option<ObjectRef>,
     index: usize,
 }
@@ -45,6 +45,12 @@ impl Drop for ConstructorResumeState {
     /// request is abandoned. Consumption goes through `Option::take`, so a
     /// drained field is `None` here; releases are defer-safe and nothrow.
     fn drop(&mut self) {
+        let _ = self
+            .runtime
+            .release_jsvalue(std::mem::replace(&mut self.new_target, JsValue::Undefined));
+        for value in self.arguments.drain(..) {
+            let _ = self.runtime.release_jsvalue(value);
+        }
         if let Some(value) = self.pending_effect.read_receiver.take() {
             let _ = self.runtime.release_jsvalue(value);
         }
@@ -65,25 +71,37 @@ impl ConstructorStep {
                 "Array constructor requires constructor-or-function invocation",
             ));
         };
-        let resume = ConstructorResume(Box::new(ConstructorResumeState {
+        let mut resume = ConstructorResume(Box::new(ConstructorResumeState {
             runtime: runtime.clone(),
             pending_effect: ConstructorStepPending::default(),
             scheduler_set_key: None,
             realm,
-            new_target: runtime.root_value(new_target)?,
-            arguments: arguments.readable[..arguments.actual_arg_count]
-                .iter()
-                .map(|value| runtime.root_value(value))
-                .collect::<Result<Vec<_>, _>>()?,
+            new_target: JsValue::Undefined,
+            arguments: Vec::new(),
             array: None,
             index: 0,
         }));
+        resume.0.new_target = runtime.dup_jsvalue(new_target)?;
+        resume
+            .0
+            .arguments
+            .try_reserve_exact(arguments.actual_arg_count)
+            .map_err(|_| {
+                RuntimeError::Engine(crate::engine::api::Error::internal(
+                    "Array constructor arguments allocation failed",
+                ))
+            })?;
+        for value in &arguments.readable[..arguments.actual_arg_count] {
+            resume.0.arguments.push(runtime.dup_jsvalue(value)?);
+        }
         if matches!(new_target, JsValue::Undefined) {
             resume.resume(runtime, Completion::Return(JsValue::Undefined))
         } else {
+            let key =
+                runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Prototype)?;
             Ok(Self::request_read(
                 runtime.dup_jsvalue(new_target)?,
-                runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Prototype)?,
+                key,
                 resume,
             ))
         }
@@ -104,6 +122,8 @@ impl ConstructorResume {
         result: Completion,
     ) -> Result<ConstructorStep, RuntimeError> {
         if self.0.array.is_some() {
+            let (Completion::Return(value) | Completion::Throw(value)) = result;
+            runtime.release_jsvalue(value)?;
             return Err(RuntimeError::Invariant(
                 "Array constructor repeated prototype reply",
             ));
@@ -112,13 +132,16 @@ impl ConstructorResume {
             Completion::Throw(value) => {
                 return Ok(ConstructorStep::Complete(Completion::Throw(value)));
             }
-            Completion::Return(value) => match runtime.root_and_release_jsvalue(value)? {
-                Value::Object(object) => object,
-                _ => {
-                    let realm = if matches!(self.0.new_target, Value::Undefined) {
+            Completion::Return(value) => match value {
+                JsValue::Object(object) => ObjectRef::from_owned_handle(runtime.clone(), object),
+                value => {
+                    runtime.release_jsvalue(value)?;
+                    let realm = if matches!(self.0.new_target, JsValue::Undefined) {
                         self.0.realm
                     } else {
-                        match runtime.function_realm_from_value(self.0.realm, &self.0.new_target)? {
+                        match runtime
+                            .function_realm_from_jsvalue(self.0.realm, &self.0.new_target)?
+                        {
                             NativeConversion::Value(realm) => realm,
                             NativeConversion::Throw(value) => {
                                 return Ok(ConstructorStep::Complete(Completion::Throw(
@@ -140,28 +163,35 @@ impl ConstructorResume {
         };
         let array = runtime.new_empty_array_with_prototype(&prototype)?;
         if self.0.arguments.len() == 1
-            && matches!(self.0.arguments[0], Value::Int(_) | Value::Float(_))
+            && matches!(self.0.arguments[0], JsValue::Int(_) | JsValue::Float(_))
         {
-            let length =
-                match runtime.array_constructor_length(self.0.realm, &self.0.arguments[0])? {
-                    ArrayLengthConversion::Length(length) => length,
-                    ArrayLengthConversion::Throw(value) => {
-                        return Ok(ConstructorStep::Complete(Completion::Throw(
-                            runtime.into_jsvalue(value)?,
-                        )));
-                    }
-                };
+            let length = match match &self.0.arguments[0] {
+                JsValue::Int(value) if *value >= 0 => ArrayLengthConversion::Length(*value as u32),
+                JsValue::Int(_) => runtime.invalid_array_length(Some(self.0.realm))?,
+                JsValue::Float(value) => {
+                    runtime.validate_array_length_number(Some(self.0.realm), *value, None)?
+                }
+                _ => unreachable!(),
+            } {
+                ArrayLengthConversion::Length(length) => length,
+                ArrayLengthConversion::Throw(value) => {
+                    return Ok(ConstructorStep::Complete(Completion::Throw(
+                        runtime.into_jsvalue(value)?,
+                    )));
+                }
+            };
             let key =
                 runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
             // Fresh Array own length and an already validated Number cannot invoke JavaScript.
-            match runtime.define_own_property_in_realm(
+            let mut descriptor = OwnedPropertyDescriptor::new(runtime);
+            descriptor.value = DescriptorField::Present(
+                crate::engine::value::number::operations::Number::compact(f64::from(length)).into(),
+            );
+            match runtime.define_owned_property_in_realm(
                 Some(self.0.realm),
                 &array,
                 &key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(Runtime::array_length_value(length)),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
+                &descriptor,
             )? {
                 PropertyDefineOutcome::Defined(true) => {}
                 PropertyDefineOutcome::Defined(false) => {
@@ -176,7 +206,7 @@ impl ConstructorResume {
                 }
             }
             return Ok(ConstructorStep::Complete(Completion::Return(
-                runtime.into_jsvalue(Value::Object(array))?,
+                JsValue::Object(array.into_handle()),
             )));
         }
         self.0.array = Some(array);
@@ -186,9 +216,9 @@ impl ConstructorResume {
         let object = self.0.array.clone().ok_or(RuntimeError::Invariant(
             "Array constructor allocation missing",
         ))?;
-        let Some(value) = self.0.arguments.get(self.0.index).cloned() else {
+        let Some(value) = self.0.arguments.get(self.0.index) else {
             return Ok(ConstructorStep::Complete(Completion::Return(
-                runtime.into_jsvalue(Value::Object(object))?,
+                JsValue::Object(object.into_handle()),
             )));
         };
         let index = u32::try_from(self.0.index)
@@ -196,7 +226,7 @@ impl ConstructorResume {
         Ok(ConstructorStep::request_set(
             object,
             runtime.property_key_for_index(u64::from(index))?,
-            runtime.into_jsvalue(value)?,
+            runtime.dup_jsvalue(value)?,
             self,
         ))
     }
@@ -229,24 +259,24 @@ pub(crate) fn finish(
         step = match step {
             ConstructorStep::Complete(result) => return Ok(result),
             ConstructorStep::Read { mut resume } => {
-                let receiver = runtime.root_and_release_jsvalue(resume.take_read_receiver())?;
+                let receiver = resume.take_read_receiver();
                 let key = resume.take_read_key();
                 resume.resume(
                     runtime,
-                    runtime.get_value_property_in_realm(realm, receiver, &key)?,
+                    runtime.get_value_property_in_realm_jsvalue(realm, receiver, &key)?,
                 )?
             }
             ConstructorStep::Set { mut resume } => {
                 let object = resume.take_set_object();
                 let key = resume.take_set_key();
-                let value = runtime.root_and_release_jsvalue(resume.take_set_value())?;
+                let value = resume.take_set_value();
                 {
-                    let result = runtime.internal_set(
+                    let result = runtime.internal_set_jsvalue(
                         realm,
                         &object,
                         &key,
                         value,
-                        Value::Object(object.clone()),
+                        JsValue::Object(object.clone().into_handle()),
                     )?;
                     resume.set(runtime, key, result)?
                 }
@@ -258,6 +288,7 @@ pub(crate) fn finish(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::value::Value;
     #[test]
     fn pending_constructor_owns_arguments_and_new_target_until_abandoned() {
         let runtime = Runtime::new();

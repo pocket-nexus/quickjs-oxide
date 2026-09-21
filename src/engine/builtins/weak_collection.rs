@@ -329,24 +329,15 @@ impl Runtime {
 
     fn weak_collection_key(
         &self,
-        value: &Value,
-        role: &'static str,
+        value: &JsValue,
     ) -> Result<Option<WeakCollectionKey>, RuntimeError> {
         match value {
-            Value::Object(object) => {
-                if !object.belongs_to(self) {
-                    return Err(RuntimeError::WrongRuntime(role));
-                }
-                Ok(Some(WeakCollectionKey::Object(object.object_id())))
-            }
-            Value::Symbol(symbol) => {
-                if !symbol.belongs_to(self) {
-                    return Err(RuntimeError::WrongRuntime(role));
-                }
-                let atom = symbol.atom();
-                let can_be_held_weakly =
-                    self.0.state.borrow().atoms.kind(atom)? == AtomKind::Symbol;
-                Ok(can_be_held_weakly.then_some(WeakCollectionKey::Symbol(atom)))
+            JsValue::Object(object) => Ok(Some(WeakCollectionKey::Object(*object))),
+            JsValue::Symbol(index) => {
+                let state = self.0.state.borrow();
+                let atom = state.atoms.brand(*index)?;
+                Ok((state.atoms.kind(atom)? == AtomKind::Symbol)
+                    .then_some(WeakCollectionKey::Symbol(atom)))
             }
             _ => Ok(None),
         }
@@ -491,14 +482,12 @@ impl Runtime {
                 return Ok(Completion::Throw(self.into_jsvalue(value)?));
             }
         };
-        let key_value = self.root_value(
-            arguments
-                .readable
-                .first()
-                .ok_or(RuntimeError::Invariant("WeakMap key argv was not padded"))?,
-        )?;
+        let key_value = arguments
+            .readable
+            .first()
+            .ok_or(RuntimeError::Invariant("WeakMap key argv was not padded"))?;
 
-        let key = self.weak_collection_key(&key_value, "WeakMap key")?;
+        let key = self.weak_collection_key(key_value)?;
         match kind {
             WeakMapNativeKind::Set => {
                 let Some(key) = key else {
@@ -590,13 +579,11 @@ impl Runtime {
                 return Ok(Completion::Throw(self.into_jsvalue(value)?));
             }
         };
-        let key_value = self.root_value(
-            arguments
-                .readable
-                .first()
-                .ok_or(RuntimeError::Invariant("WeakSet value argv was not padded"))?,
-        )?;
-        let key = self.weak_collection_key(&key_value, "WeakSet key")?;
+        let key_value = arguments
+            .readable
+            .first()
+            .ok_or(RuntimeError::Invariant("WeakSet value argv was not padded"))?;
+        let key = self.weak_collection_key(key_value)?;
         match kind {
             WeakSetNativeKind::Add => {
                 let Some(key) = key else {

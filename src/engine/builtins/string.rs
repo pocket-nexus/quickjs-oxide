@@ -671,15 +671,15 @@ impl Runtime {
     /// Internal-class fallback of pinned QuickJS `js_is_regexp` after an
     /// object has produced `undefined` for `Symbol.match`.
     ///
-    pub(crate) fn is_regexp_from_match(
+    pub(crate) fn is_regexp_from_match_jsvalue(
         &self,
         object: &ObjectRef,
-        matcher: &Value,
+        matcher: &JsValue,
     ) -> Result<bool, RuntimeError> {
-        if matches!(matcher, Value::Undefined) {
+        if matches!(matcher, JsValue::Undefined) {
             self.native_object_has_regexp_brand(object)
         } else {
-            self.value_to_boolean(matcher)
+            self.value_to_boolean_jsvalue(matcher)
         }
     }
 

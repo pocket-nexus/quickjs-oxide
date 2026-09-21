@@ -333,6 +333,93 @@ impl Runtime {
         Ok(Some(true))
     }
 
+    pub(crate) fn define_arguments_index_owned(
+        &self,
+        object: &ObjectRef,
+        key: &PropertyKey,
+        descriptor: &crate::engine::object::OwnedPropertyDescriptor,
+    ) -> Result<Option<bool>, RuntimeError> {
+        use crate::engine::object::property::CompletePropertyDescriptor;
+        let Some((index, mapped, fast_len)) = self.arguments_index_state(object, key)? else {
+            return Ok(None);
+        };
+        if fast_len.is_some_and(|fast_len| index < fast_len) {
+            self.set_arguments_fast_len(object, None)?;
+        }
+        let Some(var_ref) = self.own_var_ref_root(object, key)? else {
+            return self
+                .define_ordinary_owned_property(object, key, descriptor)
+                .map(Some);
+        };
+        if !mapped {
+            return Err(RuntimeError::Invariant(
+                "unmapped Arguments object contains a mapped VarRef slot",
+            ));
+        }
+        let current = self
+            .get_own_property_owned(object, key)?
+            .ok_or(RuntimeError::Invariant(
+                "mapped Arguments VarRef lost its property",
+            ))?;
+        let record = descriptor.raw_record();
+        let extensible = self.is_extensible(object)?;
+        let complete = {
+            let state = self.0.state.borrow();
+            validate_and_apply_property_descriptor(
+                extensible,
+                &record,
+                Some(current.record()),
+                &RawValue::Undefined,
+                |a, b| crate::engine::value::collection_key::same_value(&state.heap, a, b),
+            )
+        };
+        let complete = match complete {
+            Ok(value) => value,
+            Err(PropertyDefinitionError::InvalidDescriptor) => {
+                return Err(PropertyDefinitionError::InvalidDescriptor.into());
+            }
+            Err(_) => return Ok(Some(false)),
+        };
+        match &complete {
+            CompletePropertyDescriptor::Data {
+                value,
+                writable: true,
+                enumerable,
+                configurable,
+            } => {
+                self.write_var_ref(
+                    &var_ref,
+                    self.dup_jsvalue(
+                        &JsValue::from_raw(value.clone()).expect("initialized mapped argument"),
+                    )?,
+                )?;
+                self.store_property_slot(
+                    object,
+                    key,
+                    PropertyFlags::data(true, *enumerable, *configurable),
+                    PropertySlot::VarRef(var_ref.id()),
+                )?;
+            }
+            CompletePropertyDescriptor::Data {
+                value,
+                writable: false,
+                ..
+            } => {
+                self.write_var_ref(
+                    &var_ref,
+                    self.dup_jsvalue(
+                        &JsValue::from_raw(value.clone()).expect("initialized mapped argument"),
+                    )?,
+                )?;
+                self.store_complete_raw_property(object, key, complete)?;
+            }
+            CompletePropertyDescriptor::Accessor { .. } => {
+                self.store_complete_raw_property(object, key, complete)?
+            }
+        }
+        Ok(Some(true))
+    }
+
     /// Direct ordinary assignment to an existing Arguments index uses the
     /// fast element path and must not trigger the explicit-define conversion.
     pub(crate) fn set_arguments_index_value(
