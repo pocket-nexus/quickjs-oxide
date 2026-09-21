@@ -519,16 +519,28 @@ impl ConversionTask {
         target: ReturnTarget,
         completion: Completion,
     ) -> Result<Self, Error> {
-        let parent = execution.frames.current_mut(target.frame()?)?;
-        let wait = parent
-            .cold
-            .conversion
-            .take()
-            .ok_or_else(|| Error::internal("conversion reply has no pending owner"))?;
-        if target.operation != Some(super::frame::OperationTarget::Conversion(wait.identity)) {
-            return Err(Error::internal("conversion reply identity mismatch"));
-        }
-        Self::from_wait(runtime, target.frame()?, wait, completion)
+        let selected = (|| {
+            let frame = target.frame()?;
+            let parent = execution.frames.current_mut(frame)?;
+            let wait = parent
+                .cold
+                .conversion
+                .take()
+                .ok_or_else(|| Error::internal("conversion reply has no pending owner"))?;
+            if target.operation != Some(super::frame::OperationTarget::Conversion(wait.identity)) {
+                return Err(Error::internal("conversion reply identity mismatch"));
+            }
+            Ok((frame, wait))
+        })();
+        let (frame, wait) = match selected {
+            Ok(selected) => selected,
+            Err(error) => {
+                let (Completion::Return(value) | Completion::Throw(value)) = completion;
+                let _ = runtime.release_jsvalue(value);
+                return Err(error);
+            }
+        };
+        Self::from_wait(runtime, frame, wait, completion)
     }
 
     pub(super) fn from_wait(
@@ -539,10 +551,11 @@ impl ConversionTask {
     ) -> Result<Self, Error> {
         let mut task = wait.0;
         task.frame = frame;
-        let resume = task
-            .resume
-            .take()
-            .ok_or_else(|| Error::internal("conversion wait lost its resume"))?;
+        let Some(resume) = task.resume.take() else {
+            let (Completion::Return(value) | Completion::Throw(value)) = completion;
+            let _ = runtime.release_jsvalue(value);
+            return Err(Error::internal("conversion wait lost its resume"));
+        };
         task.step = Some(
             resume
                 .resume(runtime, completion)

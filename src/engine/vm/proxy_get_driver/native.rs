@@ -11,7 +11,12 @@ pub(super) fn finish(
     result: Result<NativeInvokeOutcome, Error>,
 ) -> Result<Step, Error> {
     let mut output = Step::Complete(Some(Completion::Return(JsValue::Undefined)));
-    finish_into(runtime, slots, call, &mut resume, result, &mut output)?;
+    let result = finish_into(runtime, slots, call, &mut resume, result, &mut output);
+    resume.release_owned();
+    if let Err(error) = result {
+        output.release_owned(runtime);
+        return Err(error);
+    }
     Ok(output)
 }
 
@@ -53,9 +58,18 @@ pub(super) fn finish_result(
     let invocation = call.invocation;
     let (result, arguments) = call.activation.finish_reusing(result);
     slots.recycle_native_argument_buffer(arguments);
-    invocation
-        .release(runtime)
-        .map_err(runtime_error_to_vm_error)?;
+    if let Err(error) = invocation.release(runtime) {
+        if let Ok(result) = result {
+            let value = match result {
+                NativeInvokeOutcome::Completion(
+                    Completion::Return(value) | Completion::Throw(value),
+                )
+                | NativeInvokeOutcome::IteratorNextRaw { value, .. } => value,
+            };
+            let _ = runtime.release_jsvalue(value);
+        }
+        return Err(runtime_error_to_vm_error(error));
+    }
     result.map_err(runtime_error_to_vm_error)
 }
 
@@ -226,9 +240,12 @@ pub(super) fn begin_synchronous(
     let invocation = call.invocation;
     let (result, arguments) = call.activation.finish_completion_reusing(result);
     slots.recycle_native_argument_buffer(arguments);
-    invocation
-        .release(runtime)
-        .map_err(runtime_error_to_vm_error)?;
+    if let Err(error) = invocation.release(runtime) {
+        if let Ok(Completion::Return(value) | Completion::Throw(value)) = result {
+            let _ = runtime.release_jsvalue(value);
+        }
+        return Err(runtime_error_to_vm_error(error));
+    }
     result.map_err(runtime_error_to_vm_error)
 }
 
@@ -292,9 +309,9 @@ fn capture_native_step(
     // Bound, Proxy and custom methods retain their general Call continuation.
     if let NativeStep::StringReplace(StringReplaceStep::Call { mut resume }) = step {
         let target = resume.take_call_target();
-        let receiver = resume.take_call_receiver();
-        let arguments = resume.take_call_arguments();
         let DirectCallTarget::Callable(callable) = target else {
+            let receiver = resume.take_call_receiver();
+            let arguments = resume.take_call_arguments();
             return capture_waiting_step(
                 runtime,
                 storage,
@@ -313,6 +330,8 @@ fn capture_native_step(
                     })
             {
                 let result = if !nested_budget || runtime.host_stack_would_overflow() {
+                    let receiver = resume.take_call_receiver();
+                    let arguments = resume.take_call_arguments();
                     let _ = runtime.release_jsvalue(receiver);
                     for argument in arguments {
                         let _ = runtime.release_jsvalue(argument);
@@ -325,7 +344,10 @@ fn capture_native_step(
                     let kind = selected
                         .take_operation()
                         .ok_or_else(|| Error::internal("selected replace has no continuation"))?;
-
+                    // Keep raw inputs in the concrete resume owner until every
+                    // fallible selection step has completed.
+                    let receiver = resume.take_call_receiver();
+                    let arguments = resume.take_call_arguments();
                     begin_local(
                         runtime,
                         slots,
@@ -396,6 +418,8 @@ fn capture_native_step(
                 };
             }
         }
+        let receiver = resume.take_call_receiver();
+        let arguments = resume.take_call_arguments();
         return capture_waiting_step(
             runtime,
             storage,
@@ -656,9 +680,18 @@ pub(super) fn start_selected_into(
     selected: Option<super::super::frames::NativeClassification>,
 ) -> Result<(), Error> {
     let realm = query.realm;
-    let Some(kind) = super::super::frames::native_operation(runtime, &callable)
-        .map_err(runtime_error_to_vm_error)?
-    else {
+    let kind = match super::super::frames::native_operation(runtime, &callable) {
+        Ok(kind) => kind,
+        Err(error) => {
+            let _ = invocation.release(runtime);
+            for argument in arguments {
+                let _ = runtime.release_jsvalue(argument);
+            }
+            resume.release_owned();
+            return Err(runtime_error_to_vm_error(error));
+        }
+    };
+    let Some(kind) = kind else {
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("native_leaf_completion");
         let native_realm = if matches!(mode, super::super::call::NativeInvokeMode::IteratorNextRaw)
@@ -678,8 +711,13 @@ pub(super) fn start_selected_into(
                 arguments,
                 mode,
             )
-            .map_err(runtime_error_to_vm_error)?;
-        return apply_into(runtime, &mut resume, result, output);
+            .map_err(runtime_error_to_vm_error);
+        let result = match result {
+            Ok(result) => apply_into(runtime, &mut resume, result, output),
+            Err(error) => Err(error),
+        };
+        resume.release_owned();
+        return result;
     };
     if !execution
         .frames
@@ -689,22 +727,41 @@ pub(super) fn start_selected_into(
         for argument in arguments {
             let _ = runtime.release_jsvalue(argument);
         }
-        invocation
-            .release(runtime)
-            .map_err(runtime_error_to_vm_error)?;
+        if let Err(error) = invocation.release(runtime) {
+            resume.release_owned();
+            return Err(runtime_error_to_vm_error(error));
+        }
+        let result = match overflow(runtime, realm) {
+            Ok(result) => result,
+            Err(error) => {
+                resume.release_owned();
+                return Err(error);
+            }
+        };
         *output = resume
-            .resume(runtime, overflow(runtime, realm)?)
+            .resume(runtime, result)
             .map_err(runtime_error_to_vm_error)?;
         return Ok(());
     }
-    storage::reserve(&mut query.natives, 1, "query.native_scopes")
-        .map_err(|_| Error::internal("native continuation allocation failed"))?;
-    storage::reserve(
-        &mut query.spare_parents,
-        query.natives.len() + 1,
-        "query.spare_parents",
-    )
-    .map_err(|_| Error::internal("native parent storage allocation failed"))?;
+    let reserved = (|| {
+        storage::reserve(&mut query.natives, 1, "query.native_scopes")
+            .map_err(|_| Error::internal("native continuation allocation failed"))?;
+        storage::reserve(
+            &mut query.spare_parents,
+            query.natives.len() + 1,
+            "query.spare_parents",
+        )
+        .map_err(|_| Error::internal("native parent storage allocation failed"))?;
+        Ok::<_, Error>(())
+    })();
+    if let Err(error) = reserved {
+        let _ = invocation.release(runtime);
+        for argument in arguments {
+            let _ = runtime.release_jsvalue(argument);
+        }
+        resume.release_owned();
+        return Err(error);
+    }
     let mut waiting_call = None;
     let immediate = begin_selected_into(
         runtime,
@@ -721,9 +778,18 @@ pub(super) fn start_selected_into(
         output,
         &mut waiting_call,
         selected,
-    )?;
+    );
+    let immediate = match immediate {
+        Ok(immediate) => immediate,
+        Err(error) => {
+            resume.release_owned();
+            return Err(error);
+        }
+    };
     if let Some(result) = immediate {
-        return apply_into(runtime, &mut resume, result, output);
+        let result = apply_into(runtime, &mut resume, result, output);
+        resume.release_owned();
+        return result;
     }
     install_waiting(
         query,

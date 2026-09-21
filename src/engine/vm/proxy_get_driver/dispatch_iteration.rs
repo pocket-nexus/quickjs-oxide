@@ -35,12 +35,12 @@ pub(super) fn advance(
         let realm = query.realm;
         match &mut *step {
             Step::RegExpSpecies { regexp, resume } => {
-                let regexp = regexp.take().expect("selected Step field");
-                let resume = resume.take().expect("selected Step field");
-
                 query.parents.try_reserve(1).map_err(|_| {
                     Error::internal("RegExp species continuation allocation failed")
                 })?;
+                let regexp = regexp.take().expect("selected Step field");
+                let resume = resume.take().expect("selected Step field");
+
                 query.parents.push(resume);
                 *step = crate::engine::builtins::RegExpSpeciesStep::start(runtime, realm, regexp)
                     .map_err(runtime_error_to_vm_error)?
@@ -48,12 +48,11 @@ pub(super) fn advance(
                 continue;
             }
             Step::RegExpSpeciesComplete(result) => {
-                let result = result.take().expect("selected Step field");
-
                 let resume = query
                     .parents
                     .pop()
                     .ok_or_else(|| Error::internal("RegExp species lost parent"))?;
+                let result = result.take().expect("selected Step field");
                 *step = resume
                     .regexp_species(runtime, result)
                     .map_err(runtime_error_to_vm_error)?;
@@ -76,14 +75,14 @@ pub(super) fn advance(
                 length,
                 resume,
             } => {
-                let source = source.take().expect("selected Step field");
-                let length = length.take().expect("selected Step field");
-                let resume = resume.take().expect("selected Step field");
-
                 query
                     .parents
                     .try_reserve(1)
                     .map_err(|_| Error::internal("Array species continuation allocation failed"))?;
+                let source = source.take().expect("selected Step field");
+                let length = length.take().expect("selected Step field");
+                let resume = resume.take().expect("selected Step field");
+
                 query.parents.push(resume);
                 *step = crate::engine::builtins::ArraySpeciesStep::start(
                     runtime, realm, &source, length,
@@ -97,14 +96,14 @@ pub(super) fn advance(
                 value,
                 resume,
             } => {
-                let object = object.take().expect("selected Step field");
-                let value = value.take().expect("selected Step field");
-                let resume = resume.take().expect("selected Step field");
-
                 query
                     .parents
                     .try_reserve(1)
                     .map_err(|_| Error::internal("Array push continuation allocation failed"))?;
+                let object = object.take().expect("selected Step field");
+                let value = value.take().expect("selected Step field");
+                let resume = resume.take().expect("selected Step field");
+
                 query.parents.push(resume);
                 *step = crate::engine::builtins::ArrayMutationStep::start_values(
                     runtime,
@@ -124,14 +123,14 @@ pub(super) fn advance(
                 method,
                 resume,
             } => {
-                let iterator = iterator.take().expect("selected Step field");
-                let method = method.take().expect("selected Step field");
-                let resume = resume.take().expect("selected Step field");
-
                 query
                     .parents
                     .try_reserve(1)
                     .map_err(|_| Error::internal("iterator continuation allocation failed"))?;
+                let iterator = iterator.take().expect("selected Step field");
+                let method = method.take().expect("selected Step field");
+                let resume = resume.take().expect("selected Step field");
+
                 query.parents.push(resume);
                 *step = crate::engine::builtins::IteratorNextStep::start_jsvalue(
                     runtime, realm, iterator, method,
@@ -159,11 +158,11 @@ pub(super) fn advance(
             } => {
                 let callable = callable.take().expect("selected Step field");
                 let iterator = iterator.take().expect("selected Step field");
-                let resume = resume.take().expect("selected Step field");
 
                 let metadata = runtime
                     .direct_native_callable_metadata(&callable)
                     .map_err(runtime_error_to_vm_error)?;
+                let resume = resume.take().expect("selected Step field");
                 if let Some((target, defining_realm, min_readable_args)) = metadata
                     && target.descriptor().cproto
                         == crate::engine::builtins::native::NativeCProto::IteratorNext
@@ -256,13 +255,13 @@ pub(super) fn advance(
                 completion,
                 resume,
             } => {
+                query.parents.try_reserve(1).map_err(|_| {
+                    Error::internal("iterator close continuation allocation failed")
+                })?;
                 let iterator = iterator.take().expect("selected Step field");
                 let completion = completion.take().expect("selected Step field");
                 let resume = resume.take().expect("selected Step field");
 
-                query.parents.try_reserve(1).map_err(|_| {
-                    Error::internal("iterator close continuation allocation failed")
-                })?;
                 query.parents.push(resume);
                 *step = crate::engine::builtins::IteratorCloseStep::start(
                     runtime, realm, iterator, completion,
@@ -277,14 +276,14 @@ pub(super) fn advance(
                 value,
                 resume,
             } => {
-                let constructor = constructor.take().expect("selected Step field");
-                let value = value.take().expect("selected Step field");
-                let resume = resume.take().expect("selected Step field");
-
                 query
                     .parents
                     .try_reserve(1)
                     .map_err(|_| Error::internal("instance continuation allocation failed"))?;
+                let constructor = constructor.take().expect("selected Step field");
+                let value = value.take().expect("selected Step field");
+                let resume = resume.take().expect("selected Step field");
+
                 query.parents.push(resume);
                 *step = crate::engine::builtins::InstanceStep::ordinary(
                     runtime,
@@ -297,12 +296,12 @@ pub(super) fn advance(
                 continue;
             }
             Step::ParseIterator { result, resume } => {
-                let result = result.take().expect("selected Step field");
-                let resume = resume.take().expect("selected Step field");
-
                 query.parents.try_reserve(1).map_err(|_| {
                     Error::internal("iterator parse continuation allocation failed")
                 })?;
+                let result = result.take().expect("selected Step field");
+                let resume = resume.take().expect("selected Step field");
+
                 query.parents.push(resume);
                 *step =
                     crate::engine::builtins::IteratorNextStep::parse_result(runtime, realm, result)
@@ -318,6 +317,10 @@ pub(super) fn advance(
                 backwards,
                 resume,
             } => {
+                query
+                    .parents
+                    .try_reserve(1)
+                    .map_err(|_| Error::internal("Array copy continuation allocation failed"))?;
                 let object = object.take().expect("selected Step field");
                 let to = to.take().expect("selected Step field");
                 let from = from.take().expect("selected Step field");
@@ -325,10 +328,6 @@ pub(super) fn advance(
                 let backwards = backwards.take().expect("selected Step field");
                 let resume = resume.take().expect("selected Step field");
 
-                query
-                    .parents
-                    .try_reserve(1)
-                    .map_err(|_| Error::internal("Array copy continuation allocation failed"))?;
                 query.parents.push(resume);
                 *step = crate::engine::builtins::ArrayCopyStep::start(
                     runtime, realm, object, to, from, count, backwards,
@@ -360,9 +359,16 @@ fn complete_next(
         return Ok(None);
     }
     let Some(Finish::IteratorNext(id)) = query.finish.take() else {
+        release_next(runtime, result);
         return Err(Error::internal("iterator lost its continuation"));
     };
-    let mut pending = super::take_iterator_finish(execution, id)?;
+    let mut pending = match super::take_iterator_finish(execution, id) {
+        Ok(pending) => pending,
+        Err(error) => {
+            release_next(runtime, result);
+            return Err(error);
+        }
+    };
     let action = pending.next_query(runtime, result)?;
     match continue_iterator(runtime, execution, query, pending, action)? {
         IteratorProgress::Step(next) => {
@@ -370,5 +376,15 @@ fn complete_next(
             Ok(None)
         }
         IteratorProgress::Done(result) => Ok(Some(result)),
+    }
+}
+
+fn release_next(runtime: &Runtime, result: crate::engine::builtins::ObjectIteratorStep) {
+    match result {
+        crate::engine::builtins::ObjectIteratorStep::Yield(value)
+        | crate::engine::builtins::ObjectIteratorStep::Throw(value) => {
+            let _ = runtime.release_jsvalue(value);
+        }
+        crate::engine::builtins::ObjectIteratorStep::Done => {}
     }
 }
