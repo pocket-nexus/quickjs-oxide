@@ -3,7 +3,6 @@ use crate::engine::api::Value;
 use crate::engine::code::function::metadata::{ClosureVariableKind, VariableDefinition};
 use crate::engine::code::runtime::PublishedFunctionSnapshot;
 use crate::engine::value::JsValue;
-use crate::engine::vm::bindings::release_frame_binding;
 use crate::engine::vm::stack::{FrameStorage, RunSlots};
 use std::rc::Rc;
 
@@ -20,7 +19,7 @@ impl Target {
         runtime: &Runtime,
         index: u16,
         mode: StoreMode,
-    ) -> Result<Option<FrameBinding>, Error> {
+    ) -> Result<Option<JsValue>, Error> {
         match self {
             Self::Local => slots.store_local_from_top(runtime, index, mode),
             Self::Parameter => slots.store_parameter_from_top(runtime, index, mode),
@@ -110,7 +109,7 @@ fn direct_store_consume_moves_and_keep_retains_exactly_one_owner() {
                     .object_strong_count(previous_id),
                 Ok(1)
             );
-            release_frame_binding(&runtime, old).unwrap();
+            runtime.release_jsvalue(old).unwrap();
             assert!(runtime.0.state.borrow().heap.object(previous_id).is_err());
             if keep {
                 runtime
@@ -161,7 +160,7 @@ fn direct_store_self_alias_keeps_each_live_slot_owned() {
                 runtime.0.state.borrow().heap.object_strong_count(id),
                 Ok(if keep { 3 } else { 2 })
             );
-            release_frame_binding(&runtime, old).unwrap();
+            runtime.release_jsvalue(old).unwrap();
             assert_eq!(
                 runtime.0.state.borrow().heap.object_strong_count(id),
                 Ok(if keep { 2 } else { 1 })
@@ -329,7 +328,7 @@ fn direct_store_neither_releases_displaced_owners_nor_drains_pending_releases() 
             assert_eq!(state.heap.object_strong_count(previous_id), Ok(1));
             assert_eq!(state.heap.object_strong_count(pending_id), Ok(1));
             assert!(runtime.0.deferred_references.has_pending());
-            release_frame_binding(&runtime, old).unwrap();
+            runtime.release_jsvalue(old).unwrap();
             assert_eq!(state.heap.object_strong_count(previous_id), Ok(1));
         }
         drop(runtime.operation());
@@ -364,7 +363,7 @@ fn direct_store_keep_preserves_string_bigint_and_symbol_after_top_release() {
                 )
                 .unwrap()
                 .unwrap();
-            release_frame_binding(&runtime, old).unwrap();
+            runtime.release_jsvalue(old).unwrap();
             runtime
                 .release_jsvalue(store.pop(&mut window).unwrap())
                 .unwrap();

@@ -325,7 +325,7 @@ pub(super) fn dispatch(
         }
         RunExit::Bridge => Disposition::Bridge,
         RunExit::Suspend(kind) => Disposition::Suspend(kind),
-        RunExit::PrimitiveThrow | RunExit::AddLocal | RunExit::Materialize => {
+        RunExit::PrimitiveThrow | RunExit::Materialize => {
             return Err(Error::internal("resident-only exit reached cold dispatch"));
         }
     })

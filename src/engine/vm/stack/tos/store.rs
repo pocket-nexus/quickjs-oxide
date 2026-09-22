@@ -1,9 +1,10 @@
-use super::{Error, FrameBinding, FrameWindow, ScalarTos, SlotStore, event};
+use super::{Error, FrameBinding, FrameWindow, JsValue, ScalarTos, SlotStore, event};
 #[cfg(feature = "profiling")]
 use crate::engine::vm::stack::{Cost, record_owned_storage};
 use crate::engine::vm::stack::{Runtime, StoreMode, copy_value};
 
 impl SlotStore {
+    #[inline(always)]
     pub(in crate::engine::vm::stack) fn tos_store_local(
         &mut self,
         window: &mut FrameWindow,
@@ -11,7 +12,7 @@ impl SlotStore {
         runtime: &Runtime,
         index: u16,
         mode: StoreMode,
-    ) -> Result<Option<FrameBinding>, Error> {
+    ) -> Result<Option<JsValue>, Error> {
         tos.debug_validate(self, window);
         #[cfg(any(test, oxide_owned_tos))]
         if matches!(mode, StoreMode::Keep) && tos.has_owned_numeric_output() {
@@ -36,6 +37,7 @@ impl SlotStore {
         )
     }
 
+    #[inline(always)]
     pub(in crate::engine::vm::stack) fn tos_store_parameter(
         &mut self,
         window: &mut FrameWindow,
@@ -43,7 +45,7 @@ impl SlotStore {
         runtime: &Runtime,
         index: u16,
         mode: StoreMode,
-    ) -> Result<Option<FrameBinding>, Error> {
+    ) -> Result<Option<JsValue>, Error> {
         tos.debug_validate(self, window);
         #[cfg(any(test, oxide_owned_tos))]
         if matches!(mode, StoreMode::Keep) && tos.has_owned_numeric_output() {
@@ -68,6 +70,7 @@ impl SlotStore {
         )
     }
 
+    #[inline(always)]
     fn tos_store_binding(
         &mut self,
         window: &mut FrameWindow,
@@ -76,25 +79,29 @@ impl SlotStore {
         destination: usize,
         mode: StoreMode,
         vacant: &'static str,
-    ) -> Result<Option<FrameBinding>, Error> {
+    ) -> Result<Option<JsValue>, Error> {
         let destination = self.slots[destination]
             .as_mut()
             .ok_or_else(|| Error::internal(vacant))?;
-        if !matches!(destination, FrameBinding::Direct(_)) {
+        let FrameBinding::Direct(destination) = destination else {
             return Ok(None);
-        }
+        };
         let depth = window
             .depth
             .checked_sub(1)
             .ok_or_else(Self::operand_stack_underflow)?;
-        let source = tos.value.as_ref().expect("authenticated cached top");
         // Keep duplicates the scalar through the same copy boundary as C1.
         // All target/source checks and the copy precede the first mutation.
         let next = match mode {
-            StoreMode::Keep => copy_value(runtime, source)?,
+            StoreMode::Keep => copy_value(
+                runtime,
+                tos.value.as_ref().expect("authenticated cached top"),
+            )?,
             StoreMode::Consume => tos.value.take().expect("authenticated cached top"),
         };
-        let old = std::mem::replace(destination, FrameBinding::Direct(next));
+        // The destination stays Direct: exchange only its 16-byte value,
+        // never the larger binding's discriminant and unused payload bytes.
+        let old = std::mem::replace(destination, next);
         if matches!(mode, StoreMode::Consume) {
             window.depth = depth;
             #[cfg(feature = "profiling")]

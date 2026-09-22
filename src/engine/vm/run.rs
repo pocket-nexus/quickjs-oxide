@@ -10,7 +10,7 @@ use crate::engine::vm::bindings::FrameBinding;
 use crate::engine::vm::exception::{heap_error_to_vm_error, runtime_error_to_vm_error};
 use crate::engine::vm::execution::RunningExecution;
 use crate::engine::vm::frame::FrameId;
-use crate::engine::vm::stack::{RunSlots, StoreMode, copy_value};
+use crate::engine::vm::stack::{RunSlots, StoreMode, copy_scalar, copy_value};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum BindingSource {
@@ -70,7 +70,6 @@ pub(super) enum RunExit {
     InitDerivedConstructor,
     Construct(u16),
     ConvertAdd,
-    AddLocal,
     ConvertPlus,
     ConvertPropertyKey,
     NormalizeThis,
@@ -149,7 +148,6 @@ impl RunExit {
             Self::InitDerivedConstructor => "run_exit.InitDerivedConstructor",
             Self::Construct(..) => "run_exit.Construct",
             Self::ConvertAdd => "run_exit.ConvertAdd",
-            Self::AddLocal => "run_exit.AddLocal",
             Self::ConvertPlus => "run_exit.ConvertPlus",
             Self::ConvertPropertyKey => "run_exit.ConvertPropertyKey",
             Self::NormalizeThis => "run_exit.NormalizeThis",
@@ -295,22 +293,40 @@ fn release_displaced(
     runtime: &crate::engine::api::runtime::Runtime,
     old: FrameBinding,
 ) -> Result<(), Error> {
-    let FrameBinding::Direct(mut old) = old else {
+    let FrameBinding::Direct(old) = old else {
         return Err(cold::internal(
             "non-direct binding passed a direct release preflight",
         ));
     };
+    release_displaced_value(runtime, old)
+}
+
+fn release_displaced_value(
+    runtime: &crate::engine::api::runtime::Runtime,
+    old: JsValue,
+) -> Result<(), Error> {
     // Between the initial proof and this commit, only moves and possibly one
     // retain occurred. Neither can invalidate the no-drain proof.
-    if !runtime
-        .try_release_slot_value_jsvalue(&mut old)
+    if runtime
+        .slot_value_release_readiness_jsvalue(&old)
         .map_err(runtime_error_to_vm_error)?
+        != SlotReleaseReadiness::Ready
     {
         return Err(cold::internal(
             "slot release proof changed without a callback",
         ));
     }
-    Ok(())
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_storage(
+        crate::engine::api::profiling::OwnedStorageEvent::HotRelease {
+            heap_root: matches!(&old, JsValue::Object(_) | JsValue::Symbol(_)),
+        },
+    );
+    // This is an owned displaced value, not a live slot. Preserve the release
+    // preflight without first overwriting a temporary slot with Undefined.
+    runtime
+        .release_jsvalue(old)
+        .map_err(runtime_error_to_vm_error)
 }
 
 /// Only inline scalars can be discarded without touching runtime storage.
@@ -351,7 +367,11 @@ fn borrowed_base_field_read(
 
 // Explicit drops end the NoJs slot borrow before publication or owner release.
 #[allow(clippy::drop_non_drop)]
-pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunExit, Error> {
+pub(super) fn run_with_identity(
+    execution: &mut RunningExecution,
+    id: FrameId,
+    next_operation: &mut u64,
+) -> Result<RunExit, Error> {
     #[cfg(test)]
     {
         let mode = execution
@@ -364,13 +384,27 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             .execution_mode_override
             .get();
         match mode {
-            Some(0) => return run_with_modes::<false, false, false, false>(execution, id),
-            Some(1) => return run_with_modes::<true, false, false, false>(execution, id),
-            Some(2) => return run_with_modes::<false, true, false, false>(execution, id),
-            Some(4) => return run_with_modes::<false, false, true, false>(execution, id),
-            Some(5) => return run_with_modes::<true, false, true, false>(execution, id),
-            Some(8) => return run_with_modes::<false, false, false, true>(execution, id),
-            Some(15) => return run_with_modes::<true, true, true, true>(execution, id),
+            Some(0) => {
+                return run_with_modes::<false, false, false, false>(execution, id, next_operation);
+            }
+            Some(1) => {
+                return run_with_modes::<true, false, false, false>(execution, id, next_operation);
+            }
+            Some(2) => {
+                return run_with_modes::<false, true, false, false>(execution, id, next_operation);
+            }
+            Some(4) => {
+                return run_with_modes::<false, false, true, false>(execution, id, next_operation);
+            }
+            Some(5) => {
+                return run_with_modes::<true, false, true, false>(execution, id, next_operation);
+            }
+            Some(8) => {
+                return run_with_modes::<false, false, false, true>(execution, id, next_operation);
+            }
+            Some(15) => {
+                return run_with_modes::<true, true, true, true>(execution, id, next_operation);
+            }
             Some(_) => return Err(cold::internal("invalid test execution mode")),
             None => {}
         }
@@ -380,7 +414,14 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
         { cfg!(oxide_owned_tos) },
         { cfg!(oxide_quick_dispatch) },
         { cfg!(oxide_store_drop_fusion) },
-    >(execution, id)
+    >(execution, id, next_operation)
+}
+
+// Single-entry unit fixtures do not own a driver's conversion identity. Every
+// production entry receives the driver's persistent counter above.
+#[cfg(test)]
+pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunExit, Error> {
+    run_with_identity(execution, id, &mut 0)
 }
 
 #[cfg(test)]
@@ -388,7 +429,7 @@ fn run_impl<const SCALAR_TOS: bool>(
     execution: &mut RunningExecution,
     id: FrameId,
 ) -> Result<RunExit, Error> {
-    run_with_modes::<SCALAR_TOS, false, false, false>(execution, id)
+    run_with_modes::<SCALAR_TOS, false, false, false>(execution, id, &mut 0)
 }
 
 #[allow(clippy::drop_non_drop)]
@@ -400,6 +441,7 @@ fn run_with_modes<
 >(
     execution: &mut RunningExecution,
     id: FrameId,
+    next_operation: &mut u64,
 ) -> Result<RunExit, Error> {
     let frame = execution.frames.current_mut(id)?;
     #[cfg(any(test, oxide_quick_dispatch))]
@@ -409,13 +451,26 @@ fn run_with_modes<
             .executable
             .quick
             .as_ref()
-            .is_some_and(|program| program.has_words())
+            .is_some_and(|program| program.execution_words().is_some())
     {
         // Entirely generic functions choose canonical once per run entry.
-        return run_with_modes::<SCALAR_TOS, OWNED_TOS, false, STORE_DROP>(execution, id);
+        return run_with_modes::<SCALAR_TOS, OWNED_TOS, false, STORE_DROP>(
+            execution,
+            id,
+            next_operation,
+        );
     }
     let body = &mut *frame.cold;
     let executable = &*body.executable;
+    #[cfg(any(test, oxide_quick_dispatch))]
+    let quick_words = if QUICK {
+        executable
+            .quick
+            .as_ref()
+            .and_then(|program| program.execution_words())
+    } else {
+        None
+    };
     #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
     let mut transaction = if SCALAR_TOS || OWNED_TOS {
         execution
@@ -426,7 +481,25 @@ fn run_with_modes<
     };
     #[cfg(not(any(test, oxide_scalar_tos, oxide_owned_tos)))]
     let mut transaction = execution.slots.frame_transaction(&mut body.window)?;
-    let mut slots = transaction.slots();
+    // This condition must match transaction construction above. Cached runs
+    // can borrow directly without reloading the transaction's fixed mode.
+    macro_rules! resident_slots {
+        () => {{
+            #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
+            {
+                if SCALAR_TOS || OWNED_TOS {
+                    transaction.cache_slots()
+                } else {
+                    transaction.slots()
+                }
+            }
+            #[cfg(not(any(test, oxide_scalar_tos, oxide_owned_tos)))]
+            {
+                transaction.slots()
+            }
+        }};
+    }
+    let mut slots = resident_slots!();
     let cold = &mut body.owners;
     let runtime = cold.function.runtime();
     let mut pc = ProgramCounter::new(&mut frame.fault_pc, &mut frame.resume_pc);
@@ -434,6 +507,44 @@ fn run_with_modes<
         ($exit:expr) => {{
             slots.canonicalize("tos.spill.exit");
             return Ok($exit);
+        }};
+    }
+    macro_rules! resident_local_add {
+        ($instructions:lifetime) => {{
+            if !frame.active_frame.is_materialized() {
+                exit!(RunExit::Materialize);
+            }
+            slots.canonicalize("tos.spill.local_add");
+            drop(slots);
+            let start = pc.fault;
+            match super::conversion_driver::complete_local_add_resident(
+                runtime,
+                executable,
+                &mut transaction,
+                frame.active_frame,
+                start,
+                next_operation,
+                |fault, resume| {
+                    pc.fault = fault;
+                    pc.resume = resume;
+                    pc.publish_fault();
+                },
+            )? {
+                super::conversion_driver::PrimitiveCompletion::Completed => {
+                    #[cfg(feature = "profiling")]
+                    cold::event("local_add_completed_in_run");
+                    slots = resident_slots!();
+                    continue $instructions;
+                }
+                super::conversion_driver::PrimitiveCompletion::Throw(value) => {
+                    execution.pending = Some(value);
+                    transaction.canonicalize("tos.spill.exit");
+                    return Ok(RunExit::PrimitiveThrow);
+                }
+                super::conversion_driver::PrimitiveCompletion::Declined => {
+                    return Err(cold::internal("local addition lost its primitive guard"));
+                }
+            }
         }};
     }
     // Preserve the cold path's observation order, but keep this authenticated
@@ -454,7 +565,7 @@ fn run_with_modes<
             slots.canonicalize("tos.spill.release");
             drop(slots);
             release_dropped(runtime, released)?;
-            slots = transaction.slots();
+            slots = resident_slots!();
         }};
     }
     macro_rules! resident_property {
@@ -470,7 +581,7 @@ fn run_with_modes<
                 .map_err(runtime_error_to_vm_error)?;
             let handled =
                 property::complete(runtime, executable, pc.fault, &mut transaction, $operation)?;
-            slots = transaction.slots();
+            slots = resident_slots!();
             handled
         }};
     }
@@ -489,39 +600,31 @@ fn run_with_modes<
             // and a side-effect-free guard decline fetch the canonical instruction.
             #[cfg(any(test, oxide_quick_dispatch))]
             if QUICK
-                && let Some(operation) = executable
-                    .quick
-                    .as_ref()
-                    .and_then(|program| program.operation(pc.fault))
+                && let Some(operation) = quick_words.and_then(|words| words.get(pc.fault)).copied()
             {
                 #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
                 {
                     #[cfg(any(test, oxide_owned_tos))]
                     let owned_resident = OWNED_TOS
-                        && slots.has_owned_numeric_output()
                         && matches!(
-                            operation,
-                            crate::engine::code::quick::DecodedOp::PutLocal(_)
-                                | crate::engine::code::quick::DecodedOp::PutArg(_)
+                            operation.tag(),
+                            crate::engine::code::quick::tag::PUT_LOCAL
+                                | crate::engine::code::quick::tag::PUT_ARG
                         );
                     #[cfg(not(any(test, oxide_owned_tos)))]
                     let owned_resident = false;
                     drop(slots);
                     slots = if SCALAR_TOS || owned_resident {
-                        transaction.slots()
+                        resident_slots!()
                     } else {
                         transaction.canonical_slots("tos.spill.quick")
                     };
                 }
-                match quick::execute(
-                    operation,
-                    runtime,
-                    executable,
-                    &mut slots,
-                    pc.fault,
-                    &mut next_pc,
-                )? {
-                    quick::Outcome::Completed => {
+                // Expand the continuation here: returning a Result<Outcome>
+                // through a second match kept success-path stack temporaries
+                // and classification branches even after LTO inlining.
+                macro_rules! quick_finish {
+                    () => {{
                         #[cfg(feature = "profiling")]
                         {
                             cold::event("quick.dispatch.hot");
@@ -529,19 +632,35 @@ fn run_with_modes<
                         }
                         pc.resume = next_pc;
                         continue 'instructions;
-                    }
-                    quick::Outcome::Numeric(kind) => {
-                        #[cfg(feature = "profiling")]
-                        cold::event("quick.dispatch.numeric");
-                        break 'dispatch Some(kind);
-                    }
-                    quick::Outcome::Canonical => {}
+                    }};
                 }
+                macro_rules! quick_finish_span {
+                    ($length:expr) => {{
+                        let span_length = $length;
+                        #[cfg(feature = "profiling")]
+                        {
+                            cold::event("quick.dispatch.span");
+                            fusion::record_span(
+                                &executable.code[pc.fault..pc.fault + span_length],
+                                observed_depth,
+                            );
+                        }
+                        #[cfg(not(feature = "profiling"))]
+                        let _ = span_length;
+                        pc.resume = next_pc;
+                        continue 'instructions;
+                    }};
+                }
+                quick::execute!(
+                    operation, runtime, executable, slots, pc.fault, next_pc, STORE_DROP;
+                    finish = quick_finish, finish_span = quick_finish_span,
+                    dispatch = 'dispatch
+                );
                 #[cfg(feature = "profiling")]
                 cold::event(
                     if matches!(
-                        operation,
-                        crate::engine::code::quick::DecodedOp::GenericCanonical
+                        operation.tag(),
+                        crate::engine::code::quick::tag::GENERIC_CANONICAL
                     ) {
                         "quick.dispatch.generic"
                     } else {
@@ -557,18 +676,16 @@ fn run_with_modes<
             {
                 #[cfg(any(test, oxide_owned_tos))]
                 let owned_resident = OWNED_TOS
-                    && slots.has_owned_numeric_output()
                     && matches!(
                         instruction,
                         Instruction::PutLocal(_) | Instruction::PutArg(_)
                     );
                 #[cfg(not(any(test, oxide_owned_tos)))]
                 let owned_resident = false;
-                let resident = (SCALAR_TOS && tos::resident(instruction, executable, &slots))
-                    || owned_resident;
+                let resident = (SCALAR_TOS && tos::resident(instruction)) || owned_resident;
                 drop(slots);
                 slots = if resident {
-                    transaction.slots()
+                    resident_slots!()
                 } else {
                     transaction.canonical_slots("tos.spill.opcode")
                 };
@@ -578,7 +695,13 @@ fn run_with_modes<
                 cold::event("quick.canonical_fetch");
             }
             #[cfg(any(test, oxide_store_drop_fusion))]
-            if STORE_DROP && let Some(kind) = executable.fusion.store_drop(pc.fault) {
+            if STORE_DROP
+                && matches!(
+                    instruction,
+                    Instruction::SetLocal(_) | Instruction::SetArg(_)
+                )
+                && let Some(kind) = executable.fusion.store_drop(pc.fault)
+            {
                 #[cfg(feature = "profiling")]
                 cold::event("fusion.StoreDropCandidate");
                 if fusion::store_drop(runtime, &mut slots, kind, instruction)? {
@@ -1340,7 +1463,7 @@ fn run_with_modes<
                         executable.code.get(pc.fault + 1)
                     && slots.local_add_constant_supported(runtime, *right)?
                 {
-                    exit!(RunExit::AddLocal);
+                    resident_local_add!('instructions);
                 }
                 // The published bytecode node owns the constant-pool edge;
                 // the pushed operand duplicates it (scalars copy for free).
@@ -1595,7 +1718,7 @@ fn run_with_modes<
                         _ => false,
                     };
                     if supported {
-                        exit!(RunExit::AddLocal);
+                        resident_local_add!('instructions);
                     }
                 }
                 if let Some(update) = executable.fusion.update(pc.fault) {
@@ -1611,36 +1734,32 @@ fn run_with_modes<
                 }
                 match slots.local(*index)? {
                     FrameBinding::Direct(value) => {
-                        // Borrowed-base fusion: the frame slot keeps this base
-                        // alive, so a following linked field read borrows it
-                        // instead of copying an owner edge that the read would
-                        // release right away.
-                        // Check the operand kind first: scalar-heavy loops
-                        // must not pay the next-instruction load.
-                        let fused = if matches!(value, JsValue::Object(_)) {
-                            match executable.code.get(next_pc) {
-                                Some(Instruction::GetField(key)) => borrowed_base_field_read(
-                                    runtime, executable, next_pc, *key, value,
-                                ),
-                                _ => None,
-                            }
-                        } else {
-                            None
-                        };
-                        if let Some(result) = fused {
-                            #[cfg(feature = "profiling")]
-                            cold::instruction(observed_depth + 1);
-                            slots.push(result)?;
-                            next_pc += 1;
-                        } else if immediate(value) {
-                            if !hot::read_scalar(runtime, &mut slots, *index, false)? {
-                                return Err(cold::internal(
-                                    "scalar local changed without an effect",
-                                ));
-                            }
-                        } else {
-                            let copied = copy_value(runtime, value)?;
+                        if let Some(copied) = copy_scalar(value) {
                             slots.push(copied)?;
+                        } else {
+                            // Borrowed-base fusion: the frame slot keeps this base
+                            // alive, so a following linked field read borrows it
+                            // instead of copying an owner edge that the read would
+                            // release right away.
+                            let fused = if matches!(value, JsValue::Object(_)) {
+                                match executable.code.get(next_pc) {
+                                    Some(Instruction::GetField(key)) => borrowed_base_field_read(
+                                        runtime, executable, next_pc, *key, value,
+                                    ),
+                                    _ => None,
+                                }
+                            } else {
+                                None
+                            };
+                            if let Some(result) = fused {
+                                #[cfg(feature = "profiling")]
+                                cold::instruction(observed_depth + 1);
+                                slots.push(result)?;
+                                next_pc += 1;
+                            } else {
+                                let copied = copy_value(runtime, value)?;
+                                slots.push(copied)?;
+                            }
                         }
                         true
                     }
@@ -1855,7 +1974,7 @@ fn run_with_modes<
                         .store_local_from_top(runtime, *index, mode)?
                         .ok_or_else(|| cold::internal("direct local store target changed"))?;
                     slots.canonicalize("tos.spill.displaced");
-                    release_displaced(runtime, old)?;
+                    release_displaced_value(runtime, old)?;
                     true
                 } else if matches!(slots.local(*index)?, FrameBinding::Direct(old) if primitive_release_owner(old))
                 {
@@ -1900,7 +2019,7 @@ fn run_with_modes<
                         .store_parameter_from_top(runtime, *index, mode)?
                         .ok_or_else(|| cold::internal("direct parameter store target changed"))?;
                     slots.canonicalize("tos.spill.displaced");
-                    release_displaced(runtime, old)?;
+                    release_displaced_value(runtime, old)?;
                     true
                 } else if matches!(slots.parameter(*index)?, FrameBinding::Direct(old) if primitive_release_owner(old))
                 {
@@ -1958,7 +2077,20 @@ fn run_with_modes<
                 true
             }
             Instruction::Drop => {
-                if slots.release_operand(0, runtime)? {
+                // An edge-free top has no release boundary. In particular,
+                // do not spill it just to replace backing with Undefined
+                // before popping the same slot. Owning values retain the
+                // canonical release/publication protocol below.
+                if immediate(slots.peek(0)?) {
+                    #[cfg(feature = "profiling")]
+                    crate::engine::api::profiling::record_owned_storage(
+                        crate::engine::api::profiling::OwnedStorageEvent::HotRelease {
+                            heap_root: false,
+                        },
+                    );
+                    drop(slots.pop()?);
+                    true
+                } else if slots.release_operand(0, runtime)? {
                     drop(slots.pop()?);
                     true
                 } else if primitive_release_owner(slots.peek(0)?) {
@@ -2139,7 +2271,7 @@ fn run_with_modes<
                         slots.canonicalize("tos.spill.release");
                         drop(slots);
                         release_dropped(runtime, (left, right))?;
-                        slots = transaction.slots();
+                        slots = resident_slots!();
                     }
                     true
                 }
@@ -2165,7 +2297,7 @@ fn run_with_modes<
                     slots.canonicalize("tos.spill.release");
                     drop(slots);
                     release_dropped(runtime, input)?;
-                    slots = transaction.slots();
+                    slots = resident_slots!();
                 }
                 true
             }
@@ -2344,7 +2476,7 @@ fn run_with_modes<
                     transaction.canonicalize("tos.spill.exit");
                     return Ok(RunExit::PrimitiveThrow);
                 }
-                slots = transaction.slots();
+                slots = resident_slots!();
             } else {
                 exit!(RunExit::Numeric(kind));
             }

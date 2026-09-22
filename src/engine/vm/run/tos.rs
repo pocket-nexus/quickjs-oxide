@@ -1,20 +1,19 @@
-//! Conservative scalar-cache admission. An unlisted opcode receives a
-//! canonical-only facade for its entire handler, including scalar outputs.
-use super::{BytecodeConstant, FrameBinding, Instruction, RawValue, RunSlots, immediate};
-use crate::engine::code::runtime::PublishedFunctionSnapshot;
+//! Select the cache-aware facade by opcode, not by repeating the handler's
+//! binding/value proofs. The listed handlers use checked stack operations;
+//! heap retains cannot observe the activation, and all releases/publications
+//! still canonicalize at their actual boundary. Ordinary push itself admits
+//! only scalars. Unlisted handlers keep their whole borrow canonical.
+use super::Instruction;
 
 #[cfg(test)]
 mod tests;
 
 #[inline]
-pub(super) fn resident(
-    instruction: &Instruction,
-    executable: &PublishedFunctionSnapshot,
-    slots: &RunSlots<'_>,
-) -> bool {
+pub(super) fn resident(instruction: &Instruction) -> bool {
     use Instruction as I;
     match instruction {
         I::Nop
+        | I::Drop
         | I::PushI32(_)
         | I::Undefined
         | I::Null
@@ -48,36 +47,19 @@ pub(super) fn resident(
         | I::Inc
         | I::Dec
         | I::PostInc
-        | I::PostDec => true,
-        I::IfTrue(_) | I::IfFalse(_) => slots.peek(0).is_ok_and(immediate),
-        I::PushConst(index) => matches!(
-            executable.constant(*index),
-            Some(BytecodeConstant::Value(
-                RawValue::Undefined
-                    | RawValue::Null
-                    | RawValue::Bool(_)
-                    | RawValue::Int(_)
-                    | RawValue::Float(_)
-                    | RawValue::ShortBigInt(_)
-            ))
-        ),
-        I::GetLocal(index) | I::GetLocalCheck(index) => {
-            matches!(slots.local(*index), Ok(FrameBinding::Direct(value)) if immediate(value))
-        }
-        I::GetArg(index) => {
-            matches!(slots.parameter(*index), Ok(FrameBinding::Direct(value)) if immediate(value))
-        }
-        I::PutLocal(index)
-        | I::SetLocal(index)
-        | I::PutLocalCheck(index)
-        | I::SetLocalCheck(index) => {
-            slots.peek(0).is_ok_and(immediate)
-                && matches!(slots.local(*index), Ok(FrameBinding::Direct(value)) if immediate(value))
-        }
-        I::PutArg(index) | I::SetArg(index) => {
-            slots.peek(0).is_ok_and(immediate)
-                && matches!(slots.parameter(*index), Ok(FrameBinding::Direct(value)) if immediate(value))
-        }
+        | I::PostDec
+        | I::IfTrue(_)
+        | I::IfFalse(_)
+        | I::PushConst(_)
+        | I::GetLocal(_)
+        | I::GetLocalCheck(_)
+        | I::GetArg(_)
+        | I::PutLocal(_)
+        | I::SetLocal(_)
+        | I::PutLocalCheck(_)
+        | I::SetLocalCheck(_)
+        | I::PutArg(_)
+        | I::SetArg(_) => true,
         _ => false,
     }
 }

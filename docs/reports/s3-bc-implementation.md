@@ -1,10 +1,10 @@
 # S3-B/C 实现交付记录
 
-> 日期：2026-09-22。C1–C4 与 B1a–B1d 已实现并通过本轮集中正确性验收。
+> 日期：2026-09-22。C1–C4 与 B1a–B1d 已实现，§1–§2 描述修复后的接口与接线。
 > **实现完成、测试通过、性能接受是三个不同结论。**默认未启用实验路径；
-> §5 记录当前源码验证，§4 的旧 C1 数据不能代表本轮整合收益。
-> 完成实现后，使用冻结版本集中对照 CPU profile 和执行计数，结果另见 §7。
-> 当前定向结果为负：C/BC 八项时间中位数均高于当前 canonical；实验继续默认关闭。
+> §4 为旧 C1 数据，§5 为修复前 `d1b52c9a` 的集中正确性验证，§7 为该版本的
+> profile，二者归档于 `f3f152d8`。这些历史数值与结论保留，不能代表修复后源码。
+> 修复后的验证与性能结果待新的 §9 补录；这里不预先声明收益或性能验收。
 
 本文记录 [C 计划](s3-c-plan.md) 和 [B 首批计划](s3-b-initial-plan.md) 的实际交付，
 补充此前 [开头记录](s3-c-b-opening.md) 与 [第二批记录](s3-c-b-next.md)。
@@ -14,9 +14,9 @@
 
 | 阶段 | 已实现接口与行为 | 主要源码 |
 | --- | --- | --- |
-| C1 | `store_local_from_top`、`store_parameter_from_top` 使用 `StoreMode::{Consume, Keep}`。Consume 将 top owner 移入 direct binding；Keep 先复制独立 owner；返回 displaced binding，由原 handler 决定释放。目标、容量、TDZ/captured/mapped 边界保持原路径。 | [stack/store.rs](../../src/engine/vm/stack/store.rs)、[stack/window.rs](../../src/engine/vm/stack/window.rs)、[run.rs](../../src/engine/vm/run.rs) |
+| C1 | `store_local_from_top`、`store_parameter_from_top` 使用 `StoreMode::{Consume, Keep}`，返回 `Result<Option<JsValue>, Error>`。Consume 将 top owner 移入已认证 Direct 的值成员；Keep 先复制独立 owner；返回 displaced `JsValue`，由原 handler 决定释放。目标、容量、TDZ/captured/mapped 边界保持原路径。 | [stack/store.rs](../../src/engine/vm/stack/store.rs)、[stack/window.rs](../../src/engine/vm/stack/window.rs)、[run.rs](../../src/engine/vm/run.rs) |
 | C2 | `FrameTransaction` 拥有单个 TOS 和已认证 backing hole；短 `RunSlots` 借用共享该状态。普通 push/pending 只缓存 Undefined/Null/Bool/Int/Float/ShortBigInt；peek/pop、Number binary/compare/local update、C1 store 复用同一逻辑深度。`canonical_slots` 保持整个 helper 借用规范化；事务 Drop 只做 move 恢复。 | [stack/tos.rs](../../src/engine/vm/stack/tos.rs)、[tos/number.rs](../../src/engine/vm/stack/tos/number.rs)、[run/tos.rs](../../src/engine/vm/run/tos.rs) |
-| C3 | 专用 `FrameTransaction::cache_numeric_output(&mut Option<JsValue>) -> Result<bool, Error>` 仅接收 String/heap BigInt；失败保留 pending。`FrameTransaction/RunSlots::has_owned_numeric_output()` 只读查询。仅 numeric 的 `previous=None` 且紧接 PutLocal/PutArg 时接入缓存；Consume 移动原 owner，Keep 遇 owning cache 先恢复再走 canonical store。 | [run/numeric.rs](../../src/engine/vm/run/numeric.rs)、[tos/store.rs](../../src/engine/vm/stack/tos/store.rs)、[stack/window.rs](../../src/engine/vm/stack/window.rs) |
+| C3 | 专用 `FrameTransaction::cache_numeric_output(&mut Option<JsValue>) -> Result<bool, Error>` 仅接收 String/heap BigInt；失败保留 pending。`has_owned_numeric_output()` 用于 Keep 的 owning-cache 防护及调试/测试检查，run 入口按 opcode 选择 facade，不再逐步查询 owner。仅 numeric 的 `previous=None` 且紧接 PutLocal/PutArg 时接入缓存；Consume 移动原 owner，Keep 遇 owning cache 先恢复再走 canonical store。 | [run/numeric.rs](../../src/engine/vm/run/numeric.rs)、[tos/store.rs](../../src/engine/vm/stack/tos/store.rs)、[stack/window.rs](../../src/engine/vm/stack/window.rs) |
 | C4 | `FusionKind` 显式解码既有 u8 tag；新增 `StoreDrop::{Local, Argument}`，编码 96/97。只认证相邻 SetLocal/SetArg + Drop，拒绝内部控制流入口。执行时 source/displaced 均须为六类无堆边标量，使用 Consume 消除临时 Keep owner；guard decline 从原 PC 走原 handler，错误保持 fault PC，成功跳过两条规范指令。 | [code/fusion.rs](../../src/engine/code/fusion.rs)、[run/fusion.rs](../../src/engine/vm/run/fusion.rs) |
 
 C3 同时修复 resident numeric 的 pending cleanup：第二次输出失败时，仅释放尚未
@@ -45,7 +45,7 @@ guard decline、numeric handoff 和 canonical fetch 另计，因此二次分类�
 | B1a | [code/quick.rs](../../src/engine/code/quick.rs) 与 [quick/translate.rs](../../src/engine/code/quick/translate.rs) 提供 8B `QuickOp` 编解码、规范 opcode 翻译及逐 PC 合同验证。保留位、非法 tag/operand、长度和语义不匹配均拒绝。 |
 | B1b | 在 [heap/allocation.rs](../../src/engine/heap/allocation.rs) 的原认证发布链从确切 canonical code 建表；`QuickProgram` 的全冷 `CanonicalOnly` 状态不分配 word buffer，`Words` 共享不可变 `Rc<Vec<QuickOp>>`。snapshot/closure 共享投影，BC5 仍只保存规范字节码。发布失败清理与共享释放均有独立测试。 |
 | B1c | [run/hot.rs](../../src/engine/vm/run/hot.rs) 提取 Number binary、标量 branch、direct scalar binding read/store；canonical 与 Quick 共用语义和 C 的槽位接口。 |
-| B1d | [run/quick.rs](../../src/engine/vm/run/quick.rs) 返回 `Outcome::{Completed, Canonical, Numeric}`。热成功直接推进规范 PC；Numeric 携带解码后的运算种类进入既有 primitive 路径；其它 guard decline 以未消费输入回同一 canonical PC。全冷函数在 run 入口选择 canonical，已有 fusion 认证和 borrowed-base 路径继续保留。 |
+| B1d | run 入口通过 `QuickProgram::execution_words()` 借用已认证的不可变 word slice，直接读取 tag/operand；[run/quick.rs](../../src/engine/vm/run/quick.rs) 的 continuation macro 将成功、span 完成与 Numeric handoff 接到主循环。热成功推进规范 PC；Numeric 携带已知运算种类、保留输入与 fault PC 进入既有路径，其它 guard decline 回同一 canonical PC。认证 span 共用原 fusion body 并按原指令计数；全冷函数在 run 入口选择 canonical，borrowed-base 路径继续保留。 |
 
 当前共有 **33 个 tag**，不是最初只读投影的 7 个：
 
@@ -106,7 +106,7 @@ before-C1、C1、pre-A 的同协议构建 receipt 均存在；before-C1 是保�
 [C0-CLOSURE-DRAFT.md](../../target/s3-bc-completion/c0-audit/C0-CLOSURE-DRAFT.md)
 是草案，不充当已验收决定。
 
-## 4. 已存 C1 全 58 项结果
+## 4. 历史数据：已存 C1 全 58 项结果
 
 这是此前独立 C1 候选的数据，不能代表当前 C2/C3/C4/Quick 整合结果。
 原始目录：[c1-matrix](../../target/s3-bc-completion/c1-matrix/)，包含 protocol、
@@ -199,14 +199,17 @@ A/B 每引擎每项 10 次；普通 release、fat LTO、CGU=1、无 PGO/profilin
 [noise.json](../../target/s3-bc-completion/c1-matrix/noise.json) SHA-256：
 `6c7255470bc74ad6aff15752ac6edc75dcaacba995e316d3e56c62484473b34a`。
 
-## 5. 集中正确性验收与交付状态
+## 5. 历史验证：修复前的集中正确性验收与交付状态
+
+本节固定记录 `d1b52c9a` 的验证，随 `f3f152d8` 归档；不覆盖之后的性能修复。
+修复后验证待 §9 补录，下列命令、计数、耗时和 receipt 均保留原版本身份。
 
 本轮先完成核心接线，再集中验证；未为各个修正单独重跑 benchmark。
 新的测试覆盖 C2 状态机、Materialize 和 PC/缓存联合 unwind，C3 String/BigInt
 last-owner、Borrowed/Deferred 预检与 Symbol canonical 回退，C4 认证/执行 guard、
 B 编码/发布/共享/回滚，以及七模式的真实编译器/driver 差分。
 
-当前代码提交：
+本节验证对象的代码提交：
 
 - `3e116f75`：缓存事务、数值 owner 准入、边界恢复及 MSRV 接线。
 - `d1b52c9a`：共享热 handler、QuickOp 取指、StoreDrop、真实执行差分与诊断。
@@ -235,7 +238,7 @@ B 编码/发布/共享/回滚，以及七模式的真实编译器/driver 差分�
 `oxide_quick_dispatch`。Quick dispatch 同时包含发布投影；不需额外 projection cfg。
 Test262 使用相同组合、普通 release、fat LTO、CGU=1、无 profiling/PGO；
 保留原 `dev-support/test262/current.conf`，不重基线。
-完整执行耗时 697.14 秒，当前 engine fingerprint 为
+完整执行耗时 697.14 秒，当时的 engine fingerprint 为
 `5f66e16f48837b2e1e8483b5c7da959730e0692b2e382079edddf9cbae297ac8`；
 runner SHA-256 为 `c7ef3312d6687c801c09ce9af4c1c780ebab6ee7bbeb409734d15993ac18d7f5`。
 [完整 receipt](../../target/s3-bc-completion/integration/test262/receipt.json)
@@ -246,18 +249,22 @@ runner SHA-256 为 `c7ef3312d6687c801c09ce9af4c1c780ebab6ee7bbeb409734d15993ac18
 | 项目 | 决定 |
 | --- | --- |
 | C1 | 现有直接存储实现保留；§4 数据仍不构成稳定净加速或完整性能接受 |
-| C2/C3/C4 | 实现与集中 Rust 正确性检查完成；以内部 cfg 保留，默认不启用，性能接受未关闭 |
+| C2/C3/C4 | 已实现，修复前集中 Rust 正确性检查见 §5，修复后验证待 §9；以内部 cfg 保留，默认不启用，性能接受未关闭 |
 | C5 | not-started；尚无证据将当前成本归因于中央间接跳转，不投入函数指针实验 |
-| B1a–B1d | 编码、发布、共享 handler 与执行入口均已实现；当前正确性覆盖包含七模式及组合生产构建 |
+| B1a–B1d | 编码、发布、共享 handler 与执行入口均已实现；§5 历史正确性覆盖包含七模式及组合生产构建，修复后验证待 §9 |
 | B1e | 保持默认 canonical、不生成 eager sidecar；尚未通过 M0/M1/M2 完整成本门槛，不宣称默认启用或 quickening 收益 |
 | C0/C6 | 输入/源码身份、接口与本轮一致性记录已交付；前置 E/残余/A4 正式裁决、完整性能/内存接受仍未关闭 |
 
-本轮定向 profile 见 §7；尚无完整 RSS、compile 与性能矩阵的接受结果。
+修复前定向 profile 见 §7，修复后的实测结果待 §9；尚无完整 RSS、compile 与性能矩阵的接受结果。
 默认行为不依赖实验 cfg；单测通过或成功编译不替代速度、内存与启动成本证据。
 后续 B 使用当前 TOS facade、已认证的规范 PC 与 fusion 列表，不重新定义 owner、
 挂起或错误恢复协议。B2 的自适应重写、反馈状态、IC slot 和 deopt 不属于本首批。
 
-## 7. 实现后的集中 profile
+## 7. 历史 profile：修复前实现的集中测量
+
+本节全部数据及结论属于修复前 `d1b52c9a` 的冻结导出，归档于 `f3f152d8`。
+下文“本批”均指这一历史测量；其中旧准入查询、解码与返回形状已经进入修复范围，
+不能据此描述当前实现或判定修复后的收益。新结果待 §9 补录。
 
 ### 7.1 冻结版本与测量口径
 
@@ -268,7 +275,7 @@ CGU=1、无 PGO，三档均保留一级调试符号以定位 CPU 热点。在当
 
 | 本批名称 | 实际构建 | 比较的含义 |
 | --- | --- | --- |
-| M0 | 全部实验 cfg 关闭 | 当前 canonical；已经包含 C1 和共享热 body，不是 before-C1 或 pre-A |
+| M0 | 全部实验 cfg 关闭 | 当时的 canonical；已经包含 C1 和共享热 body，不是 before-C1 或 pre-A |
 | C | scalar TOS + owned TOS + StoreDrop | C/M0 是 C2–C4 打包增量，不能拆成单个阶段的独立收益 |
 | BC | C + Quick dispatch/发布投影 | BC/C 是 Quick 发布、派发及交互的净增量；没有 projection-only 档，不能当作纯派发收益 |
 
@@ -291,7 +298,7 @@ profiling 构建只对同算法的小输入记录计数，时间不用于加速�
 本批用于定位实际成本，没有 A/A 噪声门禁、第二轮独立复现或完整内存/编译矩阵，
 不将定向时间变化升级为 C6/B1e 性能接受。
 
-### 7.2 时间与硬件指令：当前组合没有净收益
+### 7.2 时间与硬件指令：修复前组合没有净收益
 
 以下为五次普通进程 wall 中位数（秒）及三次 `perf stat` 的用户态指令数
 中位数比值；比值大于 1 表示成本增加。八项没有删除异常值或失败样本。
@@ -337,7 +344,7 @@ profiling 构建只对同算法的小输入记录计数，时间不用于加速�
   归咎于 C4 本身，也不能用 dispatch 减少冒充最终加速。
 - **Quick 保留已有优化**：八项 C→BC 的 fusion、dispatch、spill 及其原因
   分项完全相同；string 的 borrowed local-add 和 prop 的 BorrowedBaseField
-  仍命中。当前新增成本并非这些输入中旧融合消失或额外 spill 所致。
+  仍命中。当时的新增成本并非这些输入中旧融合消失或额外 spill 所致。
 - **Quick 二次分类明显**：回到 canonical 的执行比例在八项中为
   25.0%–72.5%；prop_read 为 45.5%，其中 Generic 仅 242 次，guard decline
   却有 100,006 次。C4 输入 Generic 仅 15 次，但 decline 有 40,001 次。
@@ -381,16 +388,16 @@ BC 的全冷函数入口另选 canonical，留下两份 run 实例。整体 `.te
 owning-output 查询链约 2.93%。`ScalarTos::install` self 为 9.43%，
 `tos_store_binding` 为 5.01%。这些路径对应以下已存在的重复工作：
 
-- canonical 每条指令先选择 cache/canonical facade，并查询 owning cache。
+- 当时的 canonical 每条指令先选择 cache/canonical facade，并查询 owning cache。
 - local/arg 准入读取 binding、检查标量；共享 handler 再读取/证明同一输入，
   store facade 继续认证目标和缓存状态。
 - push 安装新缓存前恢复旧 top；单槽缓存使下一次 push 的驱逐成为主要 spill。
 
 M0 本来就有安全检查和共享 handler，不能把整个 handler 的样本算作新增。
-但新增准入/缓存调用与机器指令增长的方向一致，当前失败不能仅归因于计时噪声。
+但新增准入/缓存调用与机器指令增长的方向一致，当时的失败不能仅归因于计时噪声。
 
-**Quick 的取指还在执行认证后的解码。**
-[QuickProgram::operation](../../src/engine/code/quick.rs) 每次从不可变投影取 word，
+**修复前 Quick 的取指仍执行认证后的解码。**
+`d1b52c9a` 中的 `QuickProgram::operation` 每次从不可变投影取 word，
 调用带错误结果的 `decode().expect(...)`。认证发布时已经验证过这份投影；
 采样却显示这个运行期成功路径占据相当份额：
 
@@ -410,17 +417,102 @@ M0 本来就有安全检查和共享 handler，不能把整个 handler 的样本
 二次分类工作。完整逐项 CPU 解释见
 [cpu-analysis.md](../../target/s3-bc-profile/cpu-analysis.md)。
 
-### 7.6 本批结论
+### 7.6 修复前的批次结论
 
-这批实现完成了所有权与执行接线，但 **C2–C4/Quick 的当前组合没有证明净收益，
+这批实现完成了所有权与执行接线，但 **C2–C4/Quick 的当时组合没有证明净收益，
 定向数据反而显示明确成本增加**。C3/C4 并非未命中，旧融合也未丢失；应优先
 减少 C 的重复准入/缓存状态判断，以及 Quick 的认证后解码和先探测再退回的工作。
 这些是 profile 支持的下一轮修改目标，不是尚未测量的收益承诺。
 
-保持默认 canonical，当前候选不进入默认启用。C5 的函数指针实验没有证据
+当时决定保持默认 canonical，该批候选不进入默认启用。C5 的函数指针实验没有证据
 能直接解决上述具体工作，继续不启动。C6/B1e 的完整性能/内存接受仍未完成，
 本批不冒充整个 B/C 性能计划已验收，也不据组合结果单独否定 C3 或 C4。
 
 本批共 256 次执行：Node 16、计数 24、wall 120、perf stat 72、perf record 24，
 全部通过各自精确 stdout/退出码契约。源码/二进制身份、原始文件哈希、采样
 有效性与协议边界见 [receipt.json](../../target/s3-bc-profile/receipt.json)。
+
+## 8. Git 变更范围核对
+
+以下统计固定到 `f3f152d8ebf8499b2563b54ac9e92b3b3672ace6`，
+不包含后续性能修复；未执行 fetch，另经只读 `git ls-remote` 核对远端 `main`、`session/dd42dc95` 的 tip 与本地 tracking refs 一致。
+
+| 比较基线 → 固定提交 | 提交数 | 文件数 | 新增 / 删除 |
+| --- | ---: | ---: | ---: |
+| `origin/main` 的 merge-base `49d1a299` | 84 | 537 | +60,063 / −22,278 |
+| B/C 起点 `bcfb4fe5` | 11 | 77 | +11,106 / −422 |
+| 当时 upstream `origin/session/dd42dc95`（`2b615277`） | 3 | 46 | +3,399 / −315 |
+
+约六万行来自与 main 的累计差异。`49d1a299` 到 B/C 起点已有
+73 个提交、+49,020 / −21,919，主要是前置 A 阶段的值表示与所有权迁移。
+两个时段的 numstat 不能直接相加，后续修改会重写此前新增的行。
+B/C 的 +11,106 行中，独立测试文件占 +5,088，源码（含内嵌测试）
+占 +3,637，文档占 +1,415，非测试脚本占 +965，Cargo.toml 占 +1。
+
+未发现误提交的 benchmark 结果、冻结源码/语料或生成物；`target` 均未跟踪，
+B/C diff 无 JSON/JSONL/TSV/log/snapshot/generated、Cargo.lock 或 vendor/submodule 变化。
+核对到的 41 个历史数据/生成物路径，其 blob 在 main merge-base、B/C 起点
+与固定提交中完全一致，包括旧 Test262 ledger 和 Unicode 表；无需为缩小行数删除。
+逐文件统计、提交来源与 blob 身份见 [git-audit.json](../../target/s3-bc-repair/git-audit.json)
+及 [审计说明](../../target/s3-bc-repair/git-audit.md)。B/C 范围应按 `bcfb4fe5` 比较；
+对 main 的审阅仍需包含其依赖的 A 阶段历史，当前 upstream 的较小差异是另一比较范围。
+
+## 9. 性能回退修复：技术说明与测量协议
+
+### 9.1 修复内容与保持的合同
+
+修复针对 §7 暴露的重复准入、认证后解码及值传递成本。原实现将标量路径
+接到通用 owner/错误处理接口，又在短借用之间重复分类；宽枚举与结果载体
+还使局部抽象产生额外搬运。以下改动收窄已证明成功的路径，最终影响须由
+同协议实测判断，不能从源码行数、内联提示或分支减少直接推导收益。
+
+| 改动 | 技术目的与保持的边界 |
+| --- | --- |
+| `JsValue` 使用 `#[repr(u64)]` | 将 tag 与 payload 按 word 对齐，避免小 tag 枚举经 Option/Result 传递时形成重叠搬运。编译期仍要求 `JsValue` 和 `Option<JsValue>` 均为 16B；完整 handle generation、ShortBigInt 位宽与 owner 语义保留，不是 A4 的 8B 表示或序列化格式改造。 |
+| 认证 Quick word 借用与 continuation macro | run 入口借用不可变 `execution_words()`；派发直接读取认证后的 tag/operand，成功和 span 完成直接进入主循环 continuation。发布时仍完整验证编码及规范 PC 合同；Numeric handoff 保留输入和 fault PC，其余 decline 回原 canonical handler，认证 fusion 继续复用共享 body。 |
+| opcode 准入与固定 `cache_slots` | opcode 决定 facade，handler 负责具体值和 binding 的认证，避免两层重复查询。缓存事务的启用状态与缓存是否为空分开；`cache_slots` 仅在与缓存事务构造相同的 const 条件下借用。`canonical_slots` 仍保持整个观察/释放 helper 的借用规范化。 |
+| 标量 Drop 与 displaced 标量直接丢弃 | 仅六类无堆边标量走 `pop`/`discard_scalar`，不再进入 Runtime 的通用释放路径。这些值在旧路径恒为 Ready，不处理 deferred 队列、不借 heap、不触发 GC；保留一次 `HotRelease(false)`。堆 owner 仍按原 readiness、publication 和释放协议处理。 |
+| C1 只传递 Direct 的 `JsValue` | 两种 store 在认证 Direct 后只替换其值成员，返回 displaced `JsValue`；不再搬运完整 `FrameBinding` 或引入 captured/private 的 Drop 分派。目标和源认证、Keep 的 retain 均先于提交；Consume 移动原 owner，decline/错误保持原顺序。 |
+| 分离 `copy_scalar` | 六类标量返回 `Option<JsValue>`，堆 retain 继续使用可失败的 `copy_reference`。标量成功只记录一次 copy，非标量 decline 不记 copy、不消费输入；避免标量读取承担通用错误结果载体。 |
+| 空缓存的 owning push 复用 canonical | 普通 `tos_push` 遇非标量且缓存为空时直接使用 `push_current`，共享容量认证和提交，再记录相同安装事件。非空缓存仍先按原规则恢复；普通 push 不扩大 heap owner 的缓存准入，C3 专用 pending API 保持原失败合同。 |
+| LocalAdd 复用当前 run 事务 | 已认证的局部字符串/primitive 加法直接调用共享 completion，不再每次退出 run、重建事务。保留 Materialize、同一 conversion identity、Add/Store fault PC、constant owner 清理和 span 逻辑计数；错误仍进入原 throw 路径。 |
+| displaced owner 直接释放 | `release_displaced_value` 已拥有被替换值，保留 Ready 复核和 HotRelease 计数后直接释放，不再为调用槽位 API 把临时变量改写成 Undefined。 |
+| 错误详情移出成功结果载体 | 私有 `ErrorData` 使用 Box；原有 kind/message/native payload/span、Clone/Eq/Debug/Display、线程 traits 和 const 方法保持。错误构造及 Clone 多一次详情分配，成功返回与错误传播不增加分配；不改变 JS owner、BC5 或公共值表示。原 80B 错误载体对热 Result 的影响及新布局由实际构建验证。 |
+
+这些改动共同保持：逻辑 depth/live slots 包含缓存 owner；观察、释放、调用与
+退出前恢复 backing；unwind 只移动恢复，不新增 Runtime release。外部异常、
+IC、挂起和恢复使用规范 PC；span 按原指令记录逻辑计数，不能重复计入循环
+尾部，也不能用 dispatch 减少替代逻辑工作量。具体正确性结果与源码身份另行验收。
+
+### 9.2 冻结对照与测量口径
+
+本轮候选源码已冻结于 [round7/source.json](../../target/s3-bc-repair/round7/source.json)。
+各档从同一导出构建，receipt 记录源码清单、flags 和 binary SHA，并在构建前后
+认证源码。修复前保存二进制与修复后候选在同一轮轮换运行，标签固定如下：
+
+| 标签 | 二进制来源 | 用途 |
+| --- | --- | --- |
+| `baseline` | `s3-bc-profile/m0/plain` | 修复前保存 M0，已含 C1 与共享 body；检验共享代码的变化 |
+| `old_bc` | `s3-bc-profile/bc/plain` | §7 的修复前保存 BC；比较组合修复前后 |
+| `m0` | `s3-bc-repair/round7/m0/plain` | 修复后 canonical，全部实验 cfg 关闭 |
+| `c` | `s3-bc-repair/round7/c/plain` | 修复后 scalar TOS + owned TOS + StoreDrop |
+| `bc` | `s3-bc-repair/round7/bc/plain` | 修复后 C + Quick dispatch/发布投影 |
+
+五档保持 Rust 1.88.0、普通 release、fat LTO、CGU=1、DEBUG=1、无 PGO，
+不使用 profiling feature 的耗时作速度结果；运行固定 CPU 2。构建、正确性
+验证与测量串行。复用 §7 冻结 full 输入及精确 expected stdout，不改变工作量；
+运行前认证输入与 binary SHA，记录每次命令、退出码及原始 stdout/stderr。
+普通执行要求精确 stdout、退出码 0、空 stderr；perf 自身诊断单独保留。
+
+wall 测量整个进程；`perf stat` 独立运行 `instructions:u`、`cycles:u`、
+`branches:u`、`branch-misses:u`，各轮旋转引擎顺序。实际重复次数、事件可用性
+和 running/enabled 比例随本轮 protocol/raw 记录，失败样本不作为零耗时，
+各模式的占比变化也不替代绝对时间比较。构建及测量入口分别为
+[build_round.py](../../target/s3-bc-repair/build_round.py) 与
+[evaluate.py](../../target/s3-bc-repair/evaluate.py)。
+
+`m0/baseline` 检验共享代码，`bc/old_bc` 检验修复幅度，`c/m0` 与 `bc/c`
+区分缓存组合和 Quick 增量；修复前后改善不自动等于相对 canonical 的净收益。
+这组诊断也不代替完整保护矩阵、内存/编译成本及 C6/B1e 的接受门槛。
+
+**本节最终性能与验证数据由后续验收补录。**

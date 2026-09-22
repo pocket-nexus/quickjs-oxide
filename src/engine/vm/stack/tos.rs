@@ -14,6 +14,7 @@ pub(super) struct ScalarTos {
 }
 
 impl ScalarTos {
+    #[inline]
     pub(super) fn new() -> Self {
         Self {
             value: None,
@@ -22,12 +23,14 @@ impl ScalarTos {
     }
 
     #[cfg(any(test, oxide_owned_tos))]
+    #[inline]
     pub(super) fn has_owned_numeric_output(&self) -> bool {
         self.value.as_ref().is_some_and(owned_numeric_output)
     }
 
     /// Pure move for transaction Drop. In particular, do not call profiling
     /// TLS or add assertions here: this is also used while unwinding.
+    #[inline]
     pub(super) fn restore(&mut self, store: &mut SlotStore) {
         if self.value.is_some() {
             let destination = &mut store.slots[self.hole];
@@ -51,6 +54,7 @@ impl ScalarTos {
         let _ = (store, window);
     }
 
+    #[inline]
     pub(super) fn canonicalize(
         &mut self,
         store: &mut SlotStore,
@@ -66,6 +70,7 @@ impl ScalarTos {
         }
     }
 
+    #[inline(always)]
     pub(super) fn peek<'a>(
         &'a self,
         store: &'a SlotStore,
@@ -73,35 +78,61 @@ impl ScalarTos {
         from_top: usize,
     ) -> Result<&'a JsValue, Error> {
         self.debug_validate(store, window);
-        from_top
-            .checked_add(1)
-            .and_then(|offset| window.depth.checked_sub(offset))
-            .ok_or_else(SlotStore::operand_stack_underflow)?;
         if from_top == 0
             && let Some(value) = &self.value
         {
+            if window.depth == 0 {
+                return Err(SlotStore::operand_stack_underflow());
+            }
             event("tos.hit");
             return Ok(value);
         }
-        event("tos.miss");
-        event("tos.backing_operand_read");
+        // Canonical peek authenticates depth, index and binding once. Do not
+        // repeat its depth arithmetic merely because a cache facade is active.
+        #[cfg(feature = "profiling")]
+        {
+            // Keep failed-read counters at their historical boundary without
+            // adding this duplicate proof to ordinary release execution.
+            from_top
+                .checked_add(1)
+                .and_then(|offset| window.depth.checked_sub(offset))
+                .ok_or_else(SlotStore::operand_stack_underflow)?;
+            event("tos.miss");
+            event("tos.backing_operand_read");
+        }
         store.peek_current(window, from_top)
     }
 
-    fn install(&mut self, store: &mut SlotStore, index: usize, value: JsValue) -> (bool, bool) {
+    /// The caller already authenticated the new hole and admitted the value.
+    /// On replacement authenticate the old hole before moving either owner,
+    /// then exchange the cached top without an intermediate empty cache write.
+    #[inline(always)]
+    fn install_cached(&mut self, store: &mut SlotStore, index: usize, value: JsValue) -> bool {
         let spilled = self.value.is_some();
-        self.restore(store);
-        if scalar(&value) {
-            self.hole = index;
-            self.value = Some(value);
-            (spilled, true)
+        if spilled {
+            let destination = &mut store.slots[self.hole];
+            *destination = self.value.replace(value).map(FrameBinding::Direct);
         } else {
+            self.value = Some(value);
+        }
+        self.hole = index;
+        spilled
+    }
+
+    #[inline(always)]
+    fn install(&mut self, store: &mut SlotStore, index: usize, value: JsValue) -> (bool, bool) {
+        if scalar(&value) {
+            (self.install_cached(store, index, value), true)
+        } else {
+            let spilled = self.value.is_some();
+            self.restore(store);
             store.slots[index] = Some(FrameBinding::Direct(value));
             (spilled, false)
         }
     }
 }
 
+#[inline]
 pub(super) fn scalar(value: &JsValue) -> bool {
     matches!(
         value,
@@ -115,6 +146,7 @@ pub(super) fn scalar(value: &JsValue) -> bool {
 }
 
 #[cfg(any(test, oxide_owned_tos))]
+#[inline]
 fn owned_numeric_output(value: &JsValue) -> bool {
     matches!(value, JsValue::String(_) | JsValue::BigInt(_))
 }
@@ -127,6 +159,7 @@ fn event(name: &'static str) {
     let _ = name;
 }
 
+#[inline]
 fn record_install((spilled, cached): (bool, bool)) {
     if spilled {
         event("tos.spill");
@@ -141,6 +174,7 @@ fn record_install((spilled, cached): (bool, bool)) {
 }
 
 impl SlotStore {
+    #[inline(always)]
     pub(super) fn tos_push(
         &mut self,
         window: &mut FrameWindow,
@@ -148,6 +182,14 @@ impl SlotStore {
         value: JsValue,
     ) -> Result<(), Error> {
         tos.debug_validate(self, window);
+        if !scalar(&value) && tos.value.is_none() {
+            // This value cannot enter the cache, and there is no hole to
+            // restore. Share the canonical push's single authentication and
+            // commit instead of building another full binding in the facade.
+            self.push_current(window, value)?;
+            record_install((false, false));
+            return Ok(());
+        }
         let index = self.operand_push_index(window)?;
         let installed = tos.install(self, index, value);
         self.tos_pushed(window);
@@ -155,6 +197,7 @@ impl SlotStore {
         Ok(())
     }
 
+    #[inline]
     pub(super) fn tos_push_pending(
         &mut self,
         window: &mut FrameWindow,
@@ -176,6 +219,7 @@ impl SlotStore {
     /// backing destination. Decline and every error leave the pending owner
     /// and any previously cached top untouched.
     #[cfg(any(test, oxide_owned_tos))]
+    #[inline]
     pub(super) fn tos_cache_numeric_output(
         &mut self,
         window: &mut FrameWindow,
@@ -187,17 +231,15 @@ impl SlotStore {
         }
         tos.debug_validate(self, window);
         let index = self.operand_push_index(window)?;
-        let spilled = tos.value.is_some();
         let next = value.take().expect("authenticated owning numeric output");
-        tos.restore(self);
-        tos.hole = index;
-        tos.value = Some(next);
+        let spilled = tos.install_cached(self, index, next);
         self.tos_pushed(window);
         record_install((spilled, true));
         event("tos.owned_numeric_output");
         Ok(true)
     }
 
+    #[inline]
     fn tos_pushed(&mut self, window: &mut FrameWindow) {
         window.depth += 1;
         #[cfg(feature = "profiling")]
@@ -208,6 +250,7 @@ impl SlotStore {
         }
     }
 
+    #[inline(always)]
     pub(super) fn tos_pop(
         &mut self,
         window: &mut FrameWindow,

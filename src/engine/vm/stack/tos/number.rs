@@ -8,20 +8,38 @@ use crate::engine::vm::stack::{Cost, record_owned_storage};
 impl SlotStore {
     /// Inspect in canonical left/right order, before evaluating a callback or
     /// taking either input. Number copies carry no heap edges.
+    #[inline(always)]
     fn tos_number_pair(
         &self,
         window: &FrameWindow,
         tos: &ScalarTos,
     ) -> Result<Option<(usize, Number, Number)>, Error> {
+        tos.debug_validate(self, window);
         let offset = window
             .depth
             .checked_sub(2)
             .ok_or_else(Self::operand_stack_underflow)?;
         let index = window.operands().start + offset;
-        let left = tos.peek(self, window, 1)?;
-        let right = tos.peek(self, window, 0)?;
+        event("tos.miss");
+        event("tos.backing_operand_read");
+        let Some(FrameBinding::Direct(left)) = &self.slots[index] else {
+            return Err(Self::operand_slot_not_a_value());
+        };
+        let right = if let Some(right) = &tos.value {
+            event("tos.hit");
+            right
+        } else {
+            event("tos.miss");
+            event("tos.backing_operand_read");
+            let Some(FrameBinding::Direct(right)) = &self.slots[index + 1] else {
+                return Err(Self::operand_slot_not_a_value());
+            };
+            right
+        };
         // Validate both physical locations before any callback can return an
-        // owning result. Commit below has no fallible indexing left to do.
+        // owning result, including the cached right's backing hole. The pair
+        // shares one depth calculation instead of two general peeks repeating
+        // it. Both bindings are authenticated before a non-Number decline.
         let _ = &self.slots[index..index + 2];
         let (Some(left), Some(right)) = (left.as_number_repr(), right.as_number_repr()) else {
             return Ok(None);
@@ -29,6 +47,7 @@ impl SlotStore {
         Ok(Some((index, left, right)))
     }
 
+    #[inline]
     pub(in crate::engine::vm::stack) fn tos_binary_number(
         &mut self,
         window: &mut FrameWindow,
@@ -72,6 +91,7 @@ impl SlotStore {
         Ok(true)
     }
 
+    #[inline]
     pub(in crate::engine::vm::stack) fn tos_consume_number_pair(
         &mut self,
         window: &mut FrameWindow,
@@ -102,6 +122,7 @@ impl SlotStore {
         Ok(Some(result))
     }
 
+    #[inline]
     pub(in crate::engine::vm::stack) fn tos_update_number_local(
         &mut self,
         window: &mut FrameWindow,

@@ -3,6 +3,7 @@ use crate::engine::code::function::UnlinkedFunction;
 use crate::engine::code::verify::verify_unlinked_tree;
 use crate::engine::compiler::compile_unlinked_script;
 
+mod execution_view;
 mod expanded;
 mod generic_cases;
 mod publication;

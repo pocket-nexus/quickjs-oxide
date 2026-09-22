@@ -345,12 +345,10 @@ mod layout_tests {
     }
 
     #[test]
-    fn unified_call_entry_keeps_the_ordinary_result_abi_size() {
-        // Error already determines the old result's size. Adding the native
-        // completion must not enlarge every ordinary Call return transaction.
-        assert_eq!(
-            std::mem::size_of::<Result<super::Entry, super::Error>>(),
-            std::mem::size_of::<Result<bool, super::Error>>(),
-        );
+    fn unified_call_entry_keeps_the_result_within_the_previous_budget() {
+        // Native completion now determines the success payload; diagnostics
+        // are boxed. Keep the whole handoff within its former 80-byte budget
+        // without requiring it to equal the newly smaller Result<bool, Error>.
+        assert!(std::mem::size_of::<Result<super::Entry, super::Error>>() <= 80);
     }
 }

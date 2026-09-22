@@ -28,7 +28,7 @@ pub(super) fn run(
     next_operation: &mut u64,
 ) -> Result<Boundary, Error> {
     loop {
-        let result = super::run(execution, id);
+        let result = super::run_with_identity(execution, id, next_operation);
         #[cfg(feature = "profiling")]
         record_exit(&result);
         // Ordinary Call/Return need no observable activation. Cold operations
@@ -111,21 +111,6 @@ pub(super) fn run(
                     NumericProgress::Deferred(CallStep::Bridge) => {
                         return Err(invariant("numeric operation attempted replay"));
                     }
-                }
-            }
-            RunExit::AddLocal => {
-                use crate::engine::vm::conversion_driver::PrimitiveCompletion;
-                match crate::engine::vm::conversion_driver::complete_local_add(
-                    runtime,
-                    execution,
-                    id,
-                    next_operation,
-                )? {
-                    PrimitiveCompletion::Completed => {}
-                    PrimitiveCompletion::Throw(value) => {
-                        return Ok(Boundary::Complete(Completion::Throw(value)));
-                    }
-                    _ => return Err(invariant("local addition lost its primitive guard")),
                 }
             }
             RunExit::ConvertPlus | RunExit::ConvertAdd => {

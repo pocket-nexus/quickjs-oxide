@@ -1,190 +1,248 @@
-//! Small guarded dispatch over authenticated words; hot success never reads
-//! canonical Instruction. Guards preserve the inputs; numeric fallback carries
-//! its decoded kind, while other declines re-enter the same canonical PC.
-use super::{Error, JsValue, RunSlots, StoreMode, cold, hot};
-use crate::engine::api::Runtime;
-use crate::engine::code::function::metadata::ClosureVariableKind;
-use crate::engine::code::quick::DecodedOp;
-use crate::engine::code::runtime::PublishedFunctionSnapshot;
-use crate::engine::vm::numeric::operation::NumericKind;
+//! Guarded dispatch over authenticated words, expanded in the running loop.
+//!
+//! Successful bodies enter the caller's completion continuation directly. There
+//! is no intermediate Result<Outcome, Error> to construct and classify. Scalar
+//! and certified-span semantics still live only in the shared hot/fusion bodies.
 
-pub(super) enum Outcome {
-    Completed,
-    Canonical,
-    Numeric(NumericKind),
-}
+/// `finish!()` and `finish_span!(usize)` must publish the resume PC, record the
+/// appropriate logical instructions, and continue the caller's instruction loop.
+/// Numeric declines leave through `dispatch`; all other declines fall through
+/// to the caller's canonical handler without changing its PC or inputs. Every
+/// `?` propagates directly from the caller's running function.
+macro_rules! execute {
+    (
+        $operation:expr, $runtime:expr, $executable:expr, $slots:ident,
+        $pc:expr, $next_pc:ident, $store_drop:expr;
+        finish = $finish:ident, finish_span = $finish_span:ident,
+        dispatch = $dispatch:lifetime
+    ) => {{
+        use $crate::engine::code::quick::tag as Q;
+        use $crate::engine::value::JsValue;
+        use $crate::engine::vm::numeric::operation::NumericKind as N;
+        use $crate::engine::vm::stack::StoreMode;
 
-#[inline]
-pub(super) fn execute(
-    operation: DecodedOp,
-    runtime: &Runtime,
-    executable: &PublishedFunctionSnapshot,
-    slots: &mut RunSlots<'_>,
-    pc: usize,
-    next_pc: &mut usize,
-) -> Result<Outcome, Error> {
-    use DecodedOp as Q;
-    use NumericKind as N;
-    match operation {
-        Q::GenericCanonical => Ok(Outcome::Canonical),
-        Q::Nop => Ok(Outcome::Completed),
-        Q::PushI32(number) => {
-            slots.push(JsValue::Int(number))?;
-            Ok(Outcome::Completed)
-        }
-        Q::Undefined => {
-            slots.push(JsValue::Undefined)?;
-            Ok(Outcome::Completed)
-        }
-        Q::Null => {
-            slots.push(JsValue::Null)?;
-            Ok(Outcome::Completed)
-        }
-        Q::Bool(boolean) => {
-            slots.push(JsValue::Bool(boolean))?;
-            Ok(Outcome::Completed)
-        }
-        Q::Goto(target) => {
-            *next_pc = usize::try_from(target)
-                .map_err(|_| cold::internal("jump target does not fit PC"))?;
-            Ok(Outcome::Completed)
-        }
-        Q::Add => binary(slots, N::Add),
-        Q::Sub => binary(slots, N::Sub),
-        Q::Mul => binary(slots, N::Mul),
-        Q::Div => binary(slots, N::Div),
-        Q::Mod => binary(slots, N::Mod),
-        Q::Pow => binary(slots, N::Pow),
-        Q::Shl => binary(slots, N::Shl),
-        Q::Sar => binary(slots, N::Sar),
-        Q::Shr => binary(slots, N::Shr),
-        Q::BitAnd => binary(slots, N::BitAnd),
-        Q::BitOr => binary(slots, N::BitOr),
-        Q::BitXor => binary(slots, N::BitXor),
-        Q::Eq => comparison(executable, slots, pc, N::Eq),
-        Q::Neq => comparison(executable, slots, pc, N::Neq),
-        Q::Lt => comparison(executable, slots, pc, N::Lt),
-        Q::Lte => comparison(executable, slots, pc, N::Lte),
-        Q::Gt => comparison(executable, slots, pc, N::Gt),
-        Q::Gte => comparison(executable, slots, pc, N::Gte),
-        Q::IfTrue(target) => branch(slots, target, true, next_pc),
-        Q::IfFalse(target) => branch(slots, target, false, next_pc),
-        Q::GetLocal(index) => {
-            if executable.fusion.update(pc).is_some()
-                || executable.fusion.local_add_span(pc).is_some()
-            {
-                return Ok(Outcome::Canonical);
+        let operation = $operation;
+        let runtime = $runtime;
+        let executable = $executable;
+        let pc = $pc;
+        match operation.tag() {
+            Q::GENERIC_CANONICAL => {}
+            Q::NOP => $finish!(),
+            Q::PUSH_I32 => {
+                $slots.push(JsValue::Int(operation.i32_operand()))?;
+                $finish!();
             }
-            // Object/captured cases decline inside read_scalar, preserving
-            // borrowed-base field and other canonical read protocols.
-            canonical_or_completed(hot::read_scalar(runtime, slots, index, false))
+            Q::UNDEFINED => {
+                $slots.push(JsValue::Undefined)?;
+                $finish!();
+            }
+            Q::NULL => {
+                $slots.push(JsValue::Null)?;
+                $finish!();
+            }
+            Q::BOOL => {
+                $slots.push(JsValue::Bool(operation.boolean()))?;
+                $finish!();
+            }
+            Q::GOTO => {
+                $next_pc = usize::try_from(operation.operand()).map_err(|_| {
+                    $crate::engine::vm::run::cold::internal("jump target does not fit PC")
+                })?;
+                $finish!();
+            }
+            Q::ADD => $crate::engine::vm::run::quick::execute!(
+                @binary $slots, N::Add, $finish, $dispatch
+            ),
+            Q::SUB => $crate::engine::vm::run::quick::execute!(
+                @binary $slots, N::Sub, $finish, $dispatch
+            ),
+            Q::MUL => $crate::engine::vm::run::quick::execute!(
+                @binary $slots, N::Mul, $finish, $dispatch
+            ),
+            Q::DIV => $crate::engine::vm::run::quick::execute!(
+                @binary $slots, N::Div, $finish, $dispatch
+            ),
+            Q::MOD => $crate::engine::vm::run::quick::execute!(
+                @binary $slots, N::Mod, $finish, $dispatch
+            ),
+            Q::POW => $crate::engine::vm::run::quick::execute!(
+                @binary $slots, N::Pow, $finish, $dispatch
+            ),
+            Q::SHL => $crate::engine::vm::run::quick::execute!(
+                @binary $slots, N::Shl, $finish, $dispatch
+            ),
+            Q::SAR => $crate::engine::vm::run::quick::execute!(
+                @binary $slots, N::Sar, $finish, $dispatch
+            ),
+            Q::SHR => $crate::engine::vm::run::quick::execute!(
+                @binary $slots, N::Shr, $finish, $dispatch
+            ),
+            Q::BIT_AND => $crate::engine::vm::run::quick::execute!(
+                @binary $slots, N::BitAnd, $finish, $dispatch
+            ),
+            Q::BIT_OR => $crate::engine::vm::run::quick::execute!(
+                @binary $slots, N::BitOr, $finish, $dispatch
+            ),
+            Q::BIT_XOR => $crate::engine::vm::run::quick::execute!(
+                @binary $slots, N::BitXor, $finish, $dispatch
+            ),
+            Q::EQ => $crate::engine::vm::run::quick::execute!(
+                @comparison executable, $slots, pc, N::Eq, $next_pc, $finish, $finish_span,
+                $dispatch
+            ),
+            Q::NEQ => $crate::engine::vm::run::quick::execute!(
+                @comparison executable, $slots, pc, N::Neq, $next_pc, $finish, $finish_span,
+                $dispatch
+            ),
+            Q::LT => $crate::engine::vm::run::quick::execute!(
+                @comparison executable, $slots, pc, N::Lt, $next_pc, $finish, $finish_span,
+                $dispatch
+            ),
+            Q::LTE => $crate::engine::vm::run::quick::execute!(
+                @comparison executable, $slots, pc, N::Lte, $next_pc, $finish, $finish_span,
+                $dispatch
+            ),
+            Q::GT => $crate::engine::vm::run::quick::execute!(
+                @comparison executable, $slots, pc, N::Gt, $next_pc, $finish, $finish_span,
+                $dispatch
+            ),
+            Q::GTE => $crate::engine::vm::run::quick::execute!(
+                @comparison executable, $slots, pc, N::Gte, $next_pc, $finish, $finish_span,
+                $dispatch
+            ),
+            Q::IF_TRUE => $crate::engine::vm::run::quick::execute!(
+                @branch $slots, operation.operand(), true, $next_pc, $finish
+            ),
+            Q::IF_FALSE => $crate::engine::vm::run::quick::execute!(
+                @branch $slots, operation.operand(), false, $next_pc, $finish
+            ),
+            Q::GET_LOCAL => {
+                let index = operation.slot();
+                if let Some(update) = executable.fusion.update(pc)
+                    && $crate::engine::vm::run::fusion::update_local(&mut $slots, index, update)?
+                {
+                    $next_pc = pc + update.instructions;
+                    $finish_span!(update.instructions);
+                }
+                if executable.fusion.local_add_span(pc).is_none()
+                    && $crate::engine::vm::run::hot::read_scalar(runtime, &mut $slots, index, false)?
+                {
+                    $finish!();
+                }
+            }
+            Q::GET_ARG => {
+                if $crate::engine::vm::run::hot::read_scalar(runtime, &mut $slots, operation.slot(), true)? {
+                    $finish!();
+                }
+            }
+            Q::PUT_LOCAL => $crate::engine::vm::run::quick::execute!(
+                @store runtime, executable, $slots, pc, operation.slot(), false,
+                StoreMode::Consume, $next_pc, $store_drop, $finish, $finish_span
+            ),
+            Q::SET_LOCAL => $crate::engine::vm::run::quick::execute!(
+                @store runtime, executable, $slots, pc, operation.slot(), false,
+                StoreMode::Keep, $next_pc, $store_drop, $finish, $finish_span
+            ),
+            Q::PUT_ARG => $crate::engine::vm::run::quick::execute!(
+                @store runtime, executable, $slots, pc, operation.slot(), true,
+                StoreMode::Consume, $next_pc, $store_drop, $finish, $finish_span
+            ),
+            Q::SET_ARG => $crate::engine::vm::run::quick::execute!(
+                @store runtime, executable, $slots, pc, operation.slot(), true, StoreMode::Keep,
+                $next_pc, $store_drop, $finish, $finish_span
+            ),
+            _ => return Err($crate::engine::vm::run::cold::internal(
+                "published QuickOp has an invalid tag"
+            )),
         }
-        Q::GetArg(index) => canonical_or_completed(hot::read_scalar(runtime, slots, index, true)),
-        Q::PutLocal(index) => store(
-            runtime,
-            executable,
-            slots,
-            pc,
-            index,
-            false,
-            StoreMode::Consume,
-        ),
-        Q::SetLocal(index) => store(
-            runtime,
-            executable,
-            slots,
-            pc,
-            index,
-            false,
-            StoreMode::Keep,
-        ),
-        Q::PutArg(index) => store(
-            runtime,
-            executable,
-            slots,
-            pc,
-            index,
-            true,
-            StoreMode::Consume,
-        ),
-        Q::SetArg(index) => store(runtime, executable, slots, pc, index, true, StoreMode::Keep),
-    }
-}
-
-#[inline]
-fn canonical_or_completed(result: Result<bool, Error>) -> Result<Outcome, Error> {
-    result.map(|completed| {
-        if completed {
-            Outcome::Completed
+    }};
+    (@numeric $kind:expr, $dispatch:lifetime) => {{
+        #[cfg(feature = "profiling")]
+        $crate::engine::vm::run::cold::event("quick.dispatch.numeric");
+        break $dispatch Some($kind);
+    }};
+    (@binary $slots:ident, $kind:expr, $finish:ident, $dispatch:lifetime) => {{
+        if $crate::engine::vm::run::hot::binary(&mut $slots, $kind)? {
+            $finish!();
         } else {
-            Outcome::Canonical
+            $crate::engine::vm::run::quick::execute!(@numeric $kind, $dispatch);
         }
-    })
+    }};
+    (
+        @comparison $executable:ident, $slots:ident, $pc:ident, $kind:expr,
+        $next_pc:ident, $finish:ident, $finish_span:ident, $dispatch:lifetime
+    ) => {{
+        if $executable.fusion.compare_branch($pc) {
+            #[cfg(feature = "profiling")]
+            {
+                $crate::engine::vm::run::cold::event("quick.span_canonical_fetch");
+                $crate::engine::vm::run::cold::event("quick.span_canonical_fetch");
+            }
+            if let Some(target) = $crate::engine::vm::run::fusion::compare_branch(
+                &mut $slots, &$executable.code[$pc], &$executable.code[$pc + 1],
+            )? {
+                $next_pc = if target == usize::MAX { $pc + 2 } else { target };
+                $finish_span!(2_usize);
+            } else {
+                // The span already proved the pair is not Number without
+                // consuming it. Carry the kind directly; never re-probe it.
+                $crate::engine::vm::run::quick::execute!(@numeric $kind, $dispatch);
+            }
+        } else {
+            $crate::engine::vm::run::quick::execute!(@binary $slots, $kind, $finish, $dispatch);
+        }
+    }};
+    (@branch $slots:ident, $target:expr, $when:expr, $next_pc:ident, $finish:ident) => {{
+        if let Some(target) = $crate::engine::vm::run::hot::branch(&mut $slots, $target, $when)? {
+            if target != usize::MAX {
+                $next_pc = target;
+            }
+            $finish!();
+        }
+    }};
+    (
+        @store $runtime:ident, $executable:ident, $slots:ident, $pc:ident,
+        $index:expr, $argument:expr, $mode:expr, $next_pc:ident, $store_drop:expr,
+        $finish:ident, $finish_span:ident
+    ) => {{
+        let index = $index;
+        let argument = $argument;
+        let mode = $mode;
+        'quick_store: {
+            #[cfg(any(test, oxide_store_drop_fusion))]
+            if $store_drop
+                && matches!(mode, $crate::engine::vm::stack::StoreMode::Keep)
+                && let Some(kind) = $executable.fusion.store_drop($pc)
+            {
+                #[cfg(feature = "profiling")]
+                $crate::engine::vm::run::cold::event("quick.span_canonical_fetch");
+                let result = $crate::engine::vm::run::fusion::store_drop(
+                    $runtime, &mut $slots, kind, &$executable.code[$pc],
+                );
+                if matches!(result, Ok(false)) {
+                    // The canonical handler owns the decline and its counters.
+                    // Do not probe a second scalar store here.
+                    break 'quick_store;
+                }
+                #[cfg(feature = "profiling")]
+                $crate::engine::vm::run::cold::event("fusion.StoreDropCandidate");
+                result?;
+                $next_pc = $pc + 2;
+                $finish_span!(2_usize);
+            }
+            if !argument
+                && !$executable.local_definitions.get(usize::from(index)).is_some_and(|definition| {
+                    definition.kind == $crate::engine::code::function::metadata::ClosureVariableKind::Normal
+                        && !definition.is_const
+                })
+            {
+                break 'quick_store;
+            }
+            if $crate::engine::vm::run::hot::store_scalar($runtime, &mut $slots, index, argument, mode)? {
+                $finish!();
+            }
+        }
+    }};
 }
 
-#[inline]
-fn binary(slots: &mut RunSlots<'_>, kind: NumericKind) -> Result<Outcome, Error> {
-    Ok(if hot::binary(slots, kind)? {
-        Outcome::Completed
-    } else {
-        Outcome::Numeric(kind)
-    })
-}
-
-#[inline]
-fn comparison(
-    executable: &PublishedFunctionSnapshot,
-    slots: &mut RunSlots<'_>,
-    pc: usize,
-    kind: NumericKind,
-) -> Result<Outcome, Error> {
-    if executable.fusion.compare_branch(pc) {
-        return Ok(Outcome::Canonical);
-    }
-    binary(slots, kind)
-}
-
-#[inline]
-fn branch(
-    slots: &mut RunSlots<'_>,
-    target: u32,
-    when: bool,
-    next_pc: &mut usize,
-) -> Result<Outcome, Error> {
-    let Some(target) = hot::branch(slots, target, when)? else {
-        return Ok(Outcome::Canonical);
-    };
-    if target != usize::MAX {
-        *next_pc = target;
-    }
-    Ok(Outcome::Completed)
-}
-
-#[inline]
-fn store(
-    runtime: &Runtime,
-    executable: &PublishedFunctionSnapshot,
-    slots: &mut RunSlots<'_>,
-    pc: usize,
-    index: u16,
-    argument: bool,
-    mode: StoreMode,
-) -> Result<Outcome, Error> {
-    #[cfg(any(test, oxide_store_drop_fusion))]
-    if executable.fusion.store_drop(pc).is_some() {
-        return Ok(Outcome::Canonical);
-    }
-    #[cfg(not(any(test, oxide_store_drop_fusion)))]
-    let _ = pc;
-    if !argument
-        && !executable
-            .local_definitions
-            .get(usize::from(index))
-            .is_some_and(|definition| {
-                definition.kind == ClosureVariableKind::Normal && !definition.is_const
-            })
-    {
-        return Ok(Outcome::Canonical);
-    }
-    canonical_or_completed(hot::store_scalar(runtime, slots, index, argument, mode))
-}
+pub(super) use execute;

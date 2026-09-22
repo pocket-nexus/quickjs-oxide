@@ -242,7 +242,7 @@ fn scalar_tos_result_error_and_unwind_restore_the_committed_prefix() {
                         .slots()
                         .store_local_from_top(&runtime, 0, StoreMode::Consume)?
                         .unwrap();
-                    assert!(matches!(old, FrameBinding::Direct(JsValue::Int(7))));
+                    assert!(matches!(old, JsValue::Int(7)));
                     tx.slots().push(JsValue::Int(23))?;
                     if unwind {
                         panic!("committed scalar prefix");

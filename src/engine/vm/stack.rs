@@ -1739,6 +1739,16 @@ pub(in crate::engine::vm) fn copy_value(
     runtime: &Runtime,
     value: &JsValue,
 ) -> Result<JsValue, Error> {
+    match copy_scalar(value) {
+        Some(copied) => Ok(copied),
+        None => copy_reference(runtime, value),
+    }
+}
+
+/// Copy only edge-free values, without a fallible heap-copy result carrier.
+/// A declined value remains borrowed and records no copy.
+#[inline(always)]
+pub(in crate::engine::vm) fn copy_scalar(value: &JsValue) -> Option<JsValue> {
     let copied = match value {
         JsValue::Undefined => JsValue::Undefined,
         JsValue::Null => JsValue::Null,
@@ -1746,11 +1756,11 @@ pub(in crate::engine::vm) fn copy_value(
         JsValue::Int(value) => JsValue::Int(*value),
         JsValue::Float(value) => JsValue::Float(*value),
         JsValue::ShortBigInt(value) => JsValue::ShortBigInt(*value),
-        _ => return copy_reference(runtime, value),
+        _ => return None,
     };
     #[cfg(feature = "profiling")]
     record_copy(value);
-    Ok(copied)
+    Some(copied)
 }
 
 // Keep fallible heap retains and their error formatting out of scalar copies.

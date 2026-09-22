@@ -1,7 +1,11 @@
 //! Authenticated local addition without temporary operand roots.
 use super::*;
 use crate::engine::code::bytecode::Instruction;
+use crate::engine::code::runtime::PublishedFunctionSnapshot;
+use crate::engine::vm::frames::ActiveFrameToken;
+use crate::engine::vm::stack::FrameTransaction;
 
+#[cfg(test)]
 pub(in crate::engine::vm) fn complete_local_add(
     runtime: &Runtime,
     execution: &mut RunningExecution,
@@ -10,8 +14,40 @@ pub(in crate::engine::vm) fn complete_local_add(
 ) -> Result<PrimitiveCompletion, Error> {
     let frame = execution.frames.current_mut(id)?;
     let start = frame.fault_pc;
-    let span = frame
-        .executable
+    let body = &mut *frame.cold;
+    let mut transaction = execution.slots.frame_transaction(&mut body.window)?;
+    complete_local_add_resident(
+        runtime,
+        &body.executable,
+        &mut transaction,
+        frame.active_frame,
+        start,
+        next_operation,
+        |fault, resume| {
+            frame.fault_pc = fault;
+            frame.resume_pc = resume;
+        },
+    )
+}
+
+/// Reuse the running frame's authenticated transaction. All short slot borrows
+/// stay canonical, including cold reconstruction of the original Add operands.
+/// The caller materializes the activation before entry and publishes each PC
+/// update before a possible error allocation or owner release.
+#[inline(never)]
+pub(in crate::engine::vm) fn complete_local_add_resident(
+    runtime: &Runtime,
+    executable: &PublishedFunctionSnapshot,
+    transaction: &mut FrameTransaction<'_>,
+    active_frame: ActiveFrameToken,
+    start: usize,
+    next_operation: &mut u64,
+    mut publish_pc: impl FnMut(usize, usize),
+) -> Result<PrimitiveCompletion, Error> {
+    transaction.canonicalize("tos.spill.local_add");
+    #[cfg(feature = "profiling")]
+    let depth = transaction.canonical_slots("tos.spill.local_add").depth();
+    let span = executable
         .fusion
         .local_add_span(start)
         .ok_or_else(|| Error::internal("local addition lost authenticated span"))?;
@@ -22,7 +58,7 @@ pub(in crate::engine::vm) fn complete_local_add(
         LocalConstant(JsValue),
         ConstantLocal(JsValue),
     }
-    let (store, operands, prepend) = match &frame.executable.code[start..] {
+    let (store, operands, prepend) = match &executable.code[start..] {
         [
             Instruction::GetLocal(left) | Instruction::GetLocalCheck(left),
             Instruction::GetLocal(right) | Instruction::GetLocalCheck(right),
@@ -33,7 +69,7 @@ pub(in crate::engine::vm) fn complete_local_add(
             Instruction::PushConst(index),
             ..,
         ] => {
-            let Some(constant) = constant_string(runtime, &frame.executable, *index) else {
+            let Some(constant) = constant_string(runtime, executable, *index) else {
                 return Ok(PrimitiveCompletion::Declined);
             };
             (*left, Operands::LocalConstant(constant), false)
@@ -43,16 +79,13 @@ pub(in crate::engine::vm) fn complete_local_add(
             Instruction::GetLocal(right) | Instruction::GetLocalCheck(right),
             ..,
         ] => {
-            let Some(constant) = constant_string(runtime, &frame.executable, *index) else {
+            let Some(constant) = constant_string(runtime, executable, *index) else {
                 return Ok(PrimitiveCompletion::Declined);
             };
             (*right, Operands::ConstantLocal(constant), true)
         }
         _ => return Err(Error::internal("local addition span lost operands")),
     };
-    #[cfg(feature = "profiling")]
-    let depth = execution.slots.depth(&frame.window);
-    let mut transaction = execution.slots.frame_transaction(&mut frame.cold.window)?;
     // All preflight remains non-mutating; checked/captured/TDZ fallbacks retain
     // the canonical first operand PC and original operand stack.
     enum PreparedAdd {
@@ -61,8 +94,7 @@ pub(in crate::engine::vm) fn complete_local_add(
         Appended,
     }
     let consume = |left: &mut JsValue, right: &JsValue| {
-        frame.fault_pc = start + 2;
-        frame.resume_pc = frame.fault_pc;
+        publish_pc(start + 2, start + 2);
         #[cfg(feature = "profiling")]
         {
             crate::engine::api::profiling::record_owned_instruction(depth);
@@ -134,15 +166,14 @@ pub(in crate::engine::vm) fn complete_local_add(
     };
     let mut constant_operand = None;
     let prepared = match operands {
-        Operands::Locals(left, right) => transaction.with_local_add_inputs(left, right, consume)?,
+        Operands::Locals(left, right) => transaction.with_local_add_inputs(left, right, consume),
         Operands::LocalConstant(right) => {
-            let prepared = transaction.with_local_add_constant(store, &right, consume)?;
+            let prepared = transaction.with_local_add_constant(store, &right, consume);
             constant_operand = Some(right);
             prepared
         }
         Operands::ConstantLocal(mut constant) => {
-            let prepared =
-                transaction.with_local_add_constant_left(store, &mut constant, consume)?;
+            let prepared = transaction.with_local_add_constant_left(store, &mut constant, consume);
             constant_operand = Some(constant);
             prepared
         }
@@ -152,12 +183,12 @@ pub(in crate::engine::vm) fn complete_local_add(
             .release_jsvalue(constant)
             .map_err(runtime_error_to_vm_error)?;
     }
-    let Some(prepared) = prepared else {
+    let Some(prepared) = prepared? else {
         return Ok(PrimitiveCompletion::Declined);
     };
     let result = match prepared? {
         PreparedAdd::Exhausted(left, right) => {
-            let mut slots = transaction.slots();
+            let mut slots = transaction.canonical_slots("tos.spill.local_add_error");
             slots.push(left)?;
             slots.push(right)?;
             return Err(Error::internal("conversion identity exhausted"));
@@ -178,21 +209,20 @@ pub(in crate::engine::vm) fn complete_local_add(
                 else {
                     return Err(error);
                 };
-                #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
-                drop(transaction);
+                transaction.canonicalize("tos.spill.local_add_error");
                 // The JavaScript error is the only observation point; publish the
-                // canonical Add PC first (the frame is materialized for AddLocal).
-                if frame.active_frame.is_materialized() {
+                // canonical Add PC first (the caller materialized this frame).
+                if active_frame.is_materialized() {
                     runtime
                         .update_active_bytecode_pc(
-                            frame.active_frame,
-                            super::super::BytecodePc::new(frame.fault_pc),
+                            active_frame,
+                            super::super::BytecodePc::new(start + 2),
                         )
                         .map_err(runtime_error_to_vm_error)?;
                 }
                 return Ok(PrimitiveCompletion::Throw(
                     runtime
-                        .new_native_error_from_error_jsvalue(frame.executable.realm, kind, &error)
+                        .new_native_error_from_error_jsvalue(executable.realm, kind, &error)
                         .map_err(runtime_error_to_vm_error)?,
                 ));
             }
@@ -204,27 +234,30 @@ pub(in crate::engine::vm) fn complete_local_add(
         // Add PC above and the store PC below.
         let mut pending = Some(super::super::bindings::FrameBinding::Direct(value));
         let old = {
-            let mut slots = transaction.slots();
+            let mut slots = transaction.canonical_slots("tos.spill.local_add_store");
             slots.replace_local_pending(store, &mut pending)
         };
         let old = match old {
             Ok(old) => old,
             Err(error) => {
-                (frame.fault_pc, frame.resume_pc) = (start + 3, start + 3);
+                publish_pc(start + 3, start + 3);
                 // An invariant error still identifies the canonical store, and the
                 // pending output is released only after its active PC is published.
                 runtime
                     .update_active_bytecode_pc(
-                        frame.active_frame,
-                        super::super::BytecodePc::new(frame.fault_pc),
+                        active_frame,
+                        super::super::BytecodePc::new(start + 3),
                     )
                     .map_err(runtime_error_to_vm_error)?;
+                if let Some(pending) = pending.take() {
+                    let _ = super::super::bindings::release_frame_binding(runtime, pending);
+                }
                 return Err(error);
             }
         };
         super::super::bindings::release_frame_binding(runtime, old)?;
     }
-    (frame.fault_pc, frame.resume_pc) = (start + span - 1, start + span);
+    publish_pc(start + span - 1, start + span);
     #[cfg(feature = "profiling")]
     {
         // Canonical virtual stack depths even though operand copies disappear.
@@ -264,6 +297,57 @@ fn constant_string(
 mod tests {
     use crate::engine::api::{Runtime, Value};
     use crate::engine::value::JsValue;
+
+    #[cfg(feature = "profiling")]
+    #[test]
+    fn local_add_resident_modes_keep_logical_counts_and_one_transaction() {
+        for expression in ["r=r+s", "r=r+'xy'", "r='xy'+r"] {
+            let mut canonical_counts = None;
+            for mode in [0, 1, 2, 4, 5, 8, 15] {
+                let mut authentication = None;
+                let mut logical = Vec::new();
+                for iterations in [4, 9] {
+                    let runtime = Runtime::new();
+                    runtime.0.execution_mode_override.set(Some(mode));
+                    let mut context = runtime.new_context();
+                    let profile = crate::engine::api::profiling::CostProfile::start();
+                    let source = format!(
+                        "(function(){{var r='r',s='xy';for(var i=0;i<{iterations};i++){{{expression};}}return r.length}})()"
+                    );
+                    assert_eq!(
+                        context.eval(&source).unwrap(),
+                        Value::number(f64::from(1 + 2 * iterations)),
+                        "{expression}, mode {mode}"
+                    );
+                    let costs = profile.snapshot();
+                    let events = &costs.owned_execution_events;
+                    assert_eq!(
+                        events
+                            .get("local_add_completed_in_run")
+                            .copied()
+                            .unwrap_or(0),
+                        iterations as u64,
+                        "{expression}, mode {mode}: {events:?}"
+                    );
+                    assert_eq!(events.get("run_exit.AddLocal").copied().unwrap_or(0), 0);
+                    let current = events["slot_authentication"];
+                    if let Some(previous) = authentication {
+                        assert_eq!(
+                            current, previous,
+                            "local-add loops must reuse their authenticated window: {expression}, mode {mode}"
+                        );
+                    }
+                    authentication = Some(current);
+                    logical.push((costs.owned_instructions, costs.owned_max_operand_depth));
+                }
+                if let Some(expected) = &canonical_counts {
+                    assert_eq!(&logical, expected, "{expression}, mode {mode}");
+                } else {
+                    canonical_counts = Some(logical);
+                }
+            }
+        }
+    }
     #[cfg(feature = "profiling")]
     #[test]
     fn local_string_append_reaches_unique_storage_and_preserves_failure_binding() {
@@ -358,6 +442,12 @@ mod tests {
 
     #[test]
     fn local_add_identity_exhaustion_retains_canonical_operands_and_add_pc() {
+        for mode in [None, Some(0), Some(1), Some(4), Some(5), Some(15)] {
+            assert_identity_exhaustion(mode);
+        }
+    }
+
+    fn assert_identity_exhaustion(mode: Option<u8>) {
         use crate::engine::vm::{
             bindings::FrameBinding,
             call::{BytecodeCallRequest, CallableExecution},
@@ -442,8 +532,16 @@ mod tests {
             start
         };
         let mut identity = u64::MAX;
-        let result = super::complete_local_add(&runtime, &mut execution, id, &mut identity);
-        assert!(matches!(result,Err(ref e) if e.message()=="conversion identity exhausted"));
+        let error = if let Some(mode) = mode {
+            runtime.0.execution_mode_override.set(Some(mode));
+            // The production entry must reuse this caller-owned identity after
+            // activation admission, not reset a counter on each run entry.
+            execution.frames.materialize(&runtime).unwrap();
+            crate::engine::vm::run::run_with_identity(&mut execution, id, &mut identity).err()
+        } else {
+            super::complete_local_add(&runtime, &mut execution, id, &mut identity).err()
+        };
+        assert!(matches!(error,Some(ref e) if e.message()=="conversion identity exhausted"));
         assert_eq!(identity, u64::MAX);
         let frame = execution.frames.current_mut(id).unwrap();
         assert_eq!(frame.fault_pc, start + 2);
@@ -456,13 +554,16 @@ mod tests {
 
     #[test]
     fn local_add_throw_reports_add_line_before_error_allocation() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        let result = context.eval("(function pcProbe(){\nlet a=1n,b=2;\ntry { a=a+b; } catch(e) { return e.stack; }\n})()").unwrap();
-        let Value::String(stack) = result else {
-            panic!("expected stack");
-        };
-        assert!(stack.to_string().contains(":3:"), "{stack}");
+        for mode in [0, 1, 4, 5, 15] {
+            let runtime = Runtime::new();
+            runtime.0.execution_mode_override.set(Some(mode));
+            let mut context = runtime.new_context();
+            let result = context.eval("(function pcProbe(){\nlet a=1n,b=2;\ntry { a=a+b; } catch(e) { return e.stack; }\n})()").unwrap();
+            let Value::String(stack) = result else {
+                panic!("expected stack");
+            };
+            assert!(stack.to_string().contains(":3:"), "mode {mode}: {stack}");
+        }
     }
 
     #[test]

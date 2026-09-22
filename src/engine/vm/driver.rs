@@ -16,7 +16,9 @@ use crate::engine::vm::call::{BytecodeCallRequest, CallableExecution};
 use crate::engine::vm::exception::runtime_error_to_vm_error;
 use crate::engine::vm::execution::{ExecutionLimits, RunningExecution};
 use crate::engine::vm::frame::{Frame, FrameEntry, FrameId, ReturnTarget};
-use crate::engine::vm::run::{RunExit, run};
+#[cfg(test)]
+use crate::engine::vm::run::run;
+use crate::engine::vm::run::{RunExit, run_with_identity};
 
 pub(super) fn push_frame(
     execution: &mut RunningExecution,

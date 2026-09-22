@@ -37,7 +37,7 @@ pub(super) fn store_drop(
         slots.store_local_from_top(runtime, index, super::StoreMode::Consume)?
     }
     .ok_or_else(|| Error::internal("scalar store/drop target changed"))?;
-    super::release_displaced(runtime, old)?;
+    super::hot::discard_scalar(old);
     #[cfg(feature = "profiling")]
     super::cold::event(if argument {
         "fusion.StoreDropArgument"

@@ -1,7 +1,7 @@
 //! Guarded arithmetic, branch and direct-slot tags retain full canonical effects.
 use super::*;
 
-fn cases() -> Vec<(Instruction, DecodedOp, u8)> {
+pub(super) fn cases() -> Vec<(Instruction, DecodedOp, u8)> {
     vec![
         (Instruction::Add, DecodedOp::Add, 7),
         (Instruction::Sub, DecodedOp::Sub, 8),

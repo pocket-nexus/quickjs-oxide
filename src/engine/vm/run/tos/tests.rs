@@ -96,6 +96,43 @@ fn observation<const CACHE: bool>(
 }
 
 #[test]
+fn scalar_drop_preserves_underflow_pc_and_needs_no_runtime_borrow() {
+    let code = vec![I::PushI32(42), I::Drop, I::Drop];
+    let canonical = observation::<false>(code.clone(), 1);
+    let cached = observation::<true>(code, 1);
+    assert_eq!(canonical, cached);
+    assert!(cached.1.is_empty());
+    assert_eq!((cached.3, cached.4), (2, 2));
+
+    for cached in [false, true] {
+        let runtime = Runtime::new();
+        let context = runtime.new_context();
+        let code = vec![
+            I::Undefined,
+            I::Drop,
+            I::Null,
+            I::Drop,
+            I::PushTrue,
+            I::Drop,
+            I::PushI32(42),
+            I::Drop,
+            I::ReturnUndefined,
+        ];
+        let (mut execution, id) = fixture(&runtime, context.realm, code, 1);
+        let borrow = runtime.0.state.borrow_mut();
+        let result = if cached {
+            super::super::run_impl::<true>(&mut execution, id)
+        } else {
+            super::super::run_impl::<false>(&mut execution, id)
+        };
+        assert!(result.is_ok());
+        drop(borrow);
+        let frame = execution.frames.current_mut(id).unwrap();
+        assert_eq!(execution.slots.depth(&frame.window), 0);
+    }
+}
+
+#[test]
 fn scalar_tos_run_matches_canonical_arithmetic_fusion_and_mixed_handlers() {
     for code in [
         vec![

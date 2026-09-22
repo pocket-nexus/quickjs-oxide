@@ -19,7 +19,12 @@ pub(in crate::engine::vm) struct FrameTransaction<'a> {
     store: &'a mut SlotStore,
     window: &'a mut FrameWindow,
     #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
-    tos: Option<super::tos::ScalarTos>,
+    tos: super::tos::ScalarTos,
+    // Admission is fixed for the transaction, independently of the mutable
+    // cached value. An outer Option<ScalarTos> shares the value's enum niche,
+    // forcing each short borrow to reload that tag after cache mutations.
+    #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
+    tos_enabled: bool,
 }
 impl FrameTransaction<'_> {
     /// Dedicated admission for a completed numeric String/heap-BigInt output.
@@ -30,24 +35,23 @@ impl FrameTransaction<'_> {
         &mut self,
         value: &mut Option<JsValue>,
     ) -> Result<bool, Error> {
-        let Some(tos) = &mut self.tos else {
+        if !self.tos_enabled {
             return Ok(false);
-        };
-        self.store.tos_cache_numeric_output(self.window, tos, value)
+        }
+        self.store
+            .tos_cache_numeric_output(self.window, &mut self.tos, value)
     }
 
     #[cfg(any(test, oxide_owned_tos))]
     pub(in crate::engine::vm) fn has_owned_numeric_output(&self) -> bool {
-        self.tos
-            .as_ref()
-            .is_some_and(|tos| tos.has_owned_numeric_output())
+        self.tos_enabled && self.tos.has_owned_numeric_output()
     }
 
     #[inline]
     pub(in crate::engine::vm) fn canonicalize(&mut self, reason: &'static str) {
         #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
-        if let Some(tos) = &mut self.tos {
-            tos.canonicalize(self.store, self.window, reason);
+        if self.tos_enabled {
+            self.tos.canonicalize(self.store, self.window, reason);
         }
         #[cfg(not(any(test, oxide_scalar_tos, oxide_owned_tos)))]
         let _ = reason;
@@ -55,6 +59,7 @@ impl FrameTransaction<'_> {
 
     /// A helper may push scalars and then release owners before returning.
     /// Keep that entire short borrow canonical, not just its entry.
+    #[inline(always)]
     pub(in crate::engine::vm) fn canonical_slots(&mut self, reason: &'static str) -> RunSlots<'_> {
         self.canonicalize(reason);
         RunSlots {
@@ -65,10 +70,11 @@ impl FrameTransaction<'_> {
         }
     }
 
+    #[inline(always)]
     pub(in crate::engine::vm) fn peek(&self, offset: usize) -> Result<&JsValue, Error> {
         #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
-        if let Some(tos) = &self.tos {
-            return tos.peek(self.store, self.window, offset);
+        if self.tos_enabled {
+            return self.tos.peek(self.store, self.window, offset);
         }
         self.store.peek_current(self.window, offset)
     }
@@ -208,12 +214,27 @@ impl FrameTransaction<'_> {
         }
         Ok(Some(consume(constant, local)))
     }
+    /// Only for a transaction made by `frame_transaction_with_scalar_tos`.
+    /// The run loop proves this with the same const condition as construction;
+    /// other callers use `slots` or `canonical_slots` to retain mode checks.
+    #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
+    #[inline(always)]
+    pub(in crate::engine::vm) fn cache_slots(&mut self) -> RunSlots<'_> {
+        debug_assert!(self.tos_enabled);
+        RunSlots {
+            store: self.store,
+            window: self.window,
+            tos: Some(&mut self.tos),
+        }
+    }
+
+    #[inline(always)]
     pub(in crate::engine::vm) fn slots(&mut self) -> RunSlots<'_> {
         RunSlots {
             store: self.store,
             window: self.window,
             #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
-            tos: self.tos.as_mut(),
+            tos: self.tos_enabled.then_some(&mut self.tos),
         }
     }
 }
@@ -221,8 +242,8 @@ impl FrameTransaction<'_> {
 #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
 impl Drop for FrameTransaction<'_> {
     fn drop(&mut self) {
-        if let Some(tos) = &mut self.tos {
-            tos.restore(self.store);
+        if self.tos_enabled {
+            self.tos.restore(self.store);
         }
     }
 }
@@ -237,7 +258,9 @@ impl SlotStore {
             store: self,
             window,
             #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
-            tos: None,
+            tos: super::tos::ScalarTos::new(),
+            #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
+            tos_enabled: false,
         })
     }
 
@@ -250,7 +273,8 @@ impl SlotStore {
         Ok(FrameTransaction {
             store: self,
             window,
-            tos: Some(super::tos::ScalarTos::new()),
+            tos: super::tos::ScalarTos::new(),
+            tos_enabled: true,
         })
     }
 
@@ -347,7 +371,7 @@ pub(in crate::engine::vm) struct RunSlots<'a> {
     pub(super) tos: Option<&'a mut super::tos::ScalarTos>,
 }
 impl RunSlots<'_> {
-    #[cfg(any(test, oxide_owned_tos))]
+    #[cfg(test)]
     pub(in crate::engine::vm) fn has_owned_numeric_output(&self) -> bool {
         self.tos
             .as_deref()
@@ -396,6 +420,7 @@ impl RunSlots<'_> {
     pub(in crate::engine::vm) fn depth(&self) -> usize {
         self.window.depth
     }
+    #[inline(always)]
     pub(in crate::engine::vm) fn peek(&self, from_top: usize) -> Result<&JsValue, Error> {
         #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
         if let Some(tos) = self.tos.as_deref() {
@@ -404,6 +429,7 @@ impl RunSlots<'_> {
         self.store.peek_current(self.window, from_top)
     }
 
+    #[inline(always)]
     pub(in crate::engine::vm) fn push(&mut self, value: JsValue) -> Result<(), Error> {
         #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
         if let Some(tos) = self.tos.as_deref_mut() {
@@ -434,7 +460,7 @@ impl RunSlots<'_> {
     }
 
     // Preserve the direct SlotStore call at numeric operand consumers.
-    #[inline]
+    #[inline(always)]
     pub(in crate::engine::vm) fn pop(&mut self) -> Result<JsValue, Error> {
         #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
         if let Some(tos) = self.tos.as_deref_mut() {
@@ -493,10 +519,12 @@ impl RunSlots<'_> {
         Ok(local_add_values(left, right))
     }
 
+    #[inline]
     pub(in crate::engine::vm) fn local(&self, index: u16) -> Result<&FrameBinding, Error> {
         self.store.local_current(self.window, index)
     }
 
+    #[inline]
     pub(in crate::engine::vm) fn parameter(&self, index: u16) -> Result<&FrameBinding, Error> {
         self.store.parameter_current(self.window, index)
     }
@@ -511,12 +539,14 @@ impl RunSlots<'_> {
 
     /// A non-direct target declines without consuming or retaining the top.
     /// The caller must establish the binding and displaced-release semantics.
+    /// Success transfers the displaced Direct payload to the caller.
+    #[inline(always)]
     pub(in crate::engine::vm) fn store_local_from_top(
         &mut self,
         runtime: &Runtime,
         index: u16,
         mode: StoreMode,
-    ) -> Result<Option<FrameBinding>, Error> {
+    ) -> Result<Option<JsValue>, Error> {
         #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
         if let Some(tos) = self.tos.as_deref_mut() {
             return self
@@ -527,12 +557,13 @@ impl RunSlots<'_> {
             .store_local_from_top_current(self.window, runtime, index, mode)
     }
 
+    #[inline(always)]
     pub(in crate::engine::vm) fn store_parameter_from_top(
         &mut self,
         runtime: &Runtime,
         index: u16,
         mode: StoreMode,
-    ) -> Result<Option<FrameBinding>, Error> {
+    ) -> Result<Option<JsValue>, Error> {
         #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
         if let Some(tos) = self.tos.as_deref_mut() {
             return self
@@ -673,6 +704,7 @@ impl RunSlots<'_> {
         )
     }
 
+    #[inline(always)]
     pub(in crate::engine::vm) fn binary_number(
         &mut self,
         operation: impl FnOnce(
@@ -686,6 +718,7 @@ impl RunSlots<'_> {
         }
         self.store.binary_number_current(self.window, operation)
     }
+    #[inline(always)]
     pub(in crate::engine::vm) fn consume_number_pair(
         &mut self,
         operation: impl FnOnce(
@@ -703,6 +736,7 @@ impl RunSlots<'_> {
             .consume_number_pair_current(self.window, operation)
     }
 
+    #[inline(always)]
     pub(in crate::engine::vm) fn update_number_local(
         &mut self,
         index: u16,

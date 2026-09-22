@@ -4,7 +4,6 @@ use crate::engine::code::function::metadata::{ClosureVariableKind, VariableDefin
 use crate::engine::code::runtime::PublishedFunctionSnapshot;
 use crate::engine::heap::{BigIntId, StringId};
 use crate::engine::value::{JsString, Value, bigint::JsBigInt};
-use crate::engine::vm::bindings::release_frame_binding;
 use crate::engine::vm::stack::{FrameStorage, StoreMode};
 use std::rc::Rc;
 
@@ -216,7 +215,7 @@ fn owned_tos_consume_moves_last_owner_to_local_or_parameter_and_returns_displace
                 runtime.0.state.borrow().heap.object_strong_count(displaced),
                 Ok(1)
             );
-            release_frame_binding(&runtime, old).unwrap();
+            runtime.release_jsvalue(old).unwrap();
             assert!(runtime.0.state.borrow().heap.object(displaced).is_err());
             store.clear_frame(&runtime, window).unwrap();
             assert!(!owner.alive(&runtime));
@@ -245,7 +244,7 @@ fn owned_tos_keep_canonicalizes_before_duplicating_and_keeps_exactly_two_owners(
                 }
                 .unwrap()
                 .unwrap();
-                release_frame_binding(&runtime, old).unwrap();
+                runtime.release_jsvalue(old).unwrap();
                 assert!(!tx.has_owned_numeric_output());
                 assert!(!owner.unique(&runtime));
                 let mut slots = tx.slots();
@@ -567,7 +566,7 @@ fn owned_tos_consume_release_preflight_preserves_cached_owner_for_borrowed_and_d
                 assert_eq!(slots.window.depth, 0);
             }
             assert!(owner.unique(&runtime));
-            release_frame_binding(&runtime, old).unwrap();
+            runtime.release_jsvalue(old).unwrap();
             assert_eq!(runtime.0.state.borrow().heap.object_strong_count(id), Ok(1));
             drop(root);
             assert!(runtime.0.state.borrow().heap.object(id).is_err());

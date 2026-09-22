@@ -70,7 +70,7 @@ impl FusionKind {
         }
     }
 
-    #[inline]
+    #[cfg(test)]
     fn decode(tag: u8) -> Option<Self> {
         Some(match tag {
             16..=31 => Self::UpdateLocal(UpdateLocal {
@@ -337,71 +337,62 @@ impl FusionPlan {
             .copied()
             .unwrap_or(0)
     }
+    // Each hot query reads only its own tag family. Decoding the whole
+    // descriptor union here repeats unrelated range checks on every opcode.
     #[inline]
     pub(crate) fn update(&self, pc: usize) -> Option<UpdateLocal> {
-        match FusionKind::decode(self.flag(pc)) {
-            Some(FusionKind::UpdateLocal(update)) => Some(update),
-            _ => None,
+        let tag = self.flag(pc);
+        if !(16..=31).contains(&tag) {
+            return None;
         }
+        Some(UpdateLocal {
+            increment: tag & 1 != 0,
+            postfix: tag & 2 != 0,
+            discard: tag & 4 != 0,
+            instructions: if tag & 8 != 0 { 4 } else { 3 },
+        })
     }
     #[inline]
     pub(crate) fn compare_branch(&self, pc: usize) -> bool {
-        matches!(
-            FusionKind::decode(self.flag(pc)),
-            Some(FusionKind::CompareBranch)
-        )
+        self.flag(pc) == 32
     }
     #[inline]
     pub(crate) fn add_store(&self, pc: usize) -> bool {
-        matches!(
-            FusionKind::decode(self.flag(pc)),
-            Some(FusionKind::AddStore { .. })
-        )
+        matches!(self.flag(pc), 64 | 65)
     }
     /// Only literals and direct binding reads may join a completed own read.
     /// Runtime guards retain canonical evaluation for TDZ/captured bindings.
+    #[inline]
     pub(crate) fn method_call(&self, pc: usize) -> Option<usize> {
-        match FusionKind::decode(self.flag(pc)) {
-            Some(FusionKind::MethodCall { arguments }) => Some(usize::from(arguments)),
-            _ => None,
-        }
+        let tag = self.flag(pc);
+        (160..=167).contains(&tag).then(|| usize::from(tag - 160))
     }
     /// Full borrowed-local addition begins before either operand copy.
+    #[inline]
     pub(crate) fn local_add_span(&self, pc: usize) -> Option<usize> {
-        match FusionKind::decode(self.flag(pc)) {
-            Some(kind @ FusionKind::LocalAdd { .. }) => Some(kind.instructions()),
-            _ => None,
-        }
+        let tag = self.flag(pc);
+        (128..=131).contains(&tag).then(|| 4 + usize::from(tag & 1))
     }
     /// Constant-left (prepend) LocalAdd span length. Admission is structural;
-    /// the runtime still proves the constant is a String and the local is a
-    /// direct, non-Object, domain-valid binding.
+    /// the runtime still proves the constant and binding before execution.
+    #[inline]
     pub(crate) fn const_add_span(&self, pc: usize) -> Option<usize> {
-        match FusionKind::decode(self.flag(pc)) {
-            Some(
-                kind @ FusionKind::LocalAdd {
-                    constant_left: true,
-                    ..
-                },
-            ) => Some(kind.instructions()),
-            _ => None,
-        }
+        let tag = self.flag(pc);
+        matches!(tag, 130 | 131).then(|| 4 + usize::from(tag & 1))
     }
+    #[inline]
     pub(crate) fn add_store_span(&self, pc: usize) -> usize {
-        match FusionKind::decode(self.flag(pc)) {
-            Some(kind @ FusionKind::AddStore { .. }) => kind.instructions(),
-            _ => 2,
-        }
+        if self.flag(pc) == 65 { 3 } else { 2 }
     }
 
-    /// Structural certificate only: the caller must inspect the canonical
-    /// SetLocal/SetArg index and prove direct scalar source/displaced bindings.
-    /// Captured/mapped/TDZ bindings must retain the original single-op path.
+    /// Structural certificate only; execution still proves direct scalar
+    /// source and displaced bindings at the authenticated SetLocal/SetArg.
     #[cfg(any(test, oxide_store_drop_fusion))]
     #[inline]
     pub(crate) fn store_drop(&self, pc: usize) -> Option<StoreDrop> {
-        match FusionKind::decode(self.flag(pc)) {
-            Some(FusionKind::StoreDrop(target)) => Some(target),
+        match self.flag(pc) {
+            96 => Some(StoreDrop::Local),
+            97 => Some(StoreDrop::Argument),
             _ => None,
         }
     }

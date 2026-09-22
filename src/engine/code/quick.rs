@@ -28,52 +28,68 @@ mod tests;
 /// Flags and aux are reserved and must both be zero in this read-only version.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(transparent)]
-struct QuickOp(u64);
+pub(crate) struct QuickOp(u64);
 
 const _: () = assert!(std::mem::size_of::<QuickOp>() == 8);
 const RESERVED_MASK: u64 = 0x0000_0000_ffff_ff00;
 
-/// These discriminants are private execution metadata, never BC5 wire tags.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u8)]
-enum QuickTag {
-    GenericCanonical = 0,
-    Nop = 1,
-    PushI32 = 2,
-    Undefined = 3,
-    Null = 4,
-    Bool = 5,
-    Goto = 6,
-    Add = 7,
-    Sub = 8,
-    Mul = 9,
-    Div = 10,
-    Mod = 11,
-    Pow = 12,
-    Shl = 13,
-    Sar = 14,
-    Shr = 15,
-    BitAnd = 16,
-    BitOr = 17,
-    BitXor = 18,
-    Eq = 19,
-    Neq = 20,
-    Lt = 21,
-    Lte = 22,
-    Gt = 23,
-    Gte = 24,
-    IfTrue = 25,
-    IfFalse = 26,
-    GetLocal = 27,
-    PutLocal = 28,
-    SetLocal = 29,
-    GetArg = 30,
-    PutArg = 31,
-    SetArg = 32,
+// Define codec discriminants and execution match constants together. Reading
+// a certified word must not convert u8 -> enum -> DecodedOp before dispatch.
+macro_rules! quick_tags {
+    ($($variant:ident => $constant:ident = $value:literal),+ $(,)?) => {
+        /// Private execution metadata, never BC5 wire tags.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        #[repr(u8)]
+        enum QuickTag {
+            $($variant = $value,)+
+        }
+
+        #[cfg(any(test, oxide_quick_dispatch))]
+        pub(crate) mod tag {
+            $(pub(crate) const $constant: u8 = super::QuickTag::$variant as u8;)+
+        }
+    };
 }
 
-pub(crate) const QUICK_TAG_COUNT: usize = 33;
-const _: () = assert!(QuickTag::SetArg as usize + 1 == QUICK_TAG_COUNT);
+quick_tags! {
+    GenericCanonical => GENERIC_CANONICAL = 0,
+    Nop => NOP = 1,
+    PushI32 => PUSH_I32 = 2,
+    Undefined => UNDEFINED = 3,
+    Null => NULL = 4,
+    Bool => BOOL = 5,
+    Goto => GOTO = 6,
+    Add => ADD = 7,
+    Sub => SUB = 8,
+    Mul => MUL = 9,
+    Div => DIV = 10,
+    Mod => MOD = 11,
+    Pow => POW = 12,
+    Shl => SHL = 13,
+    Sar => SAR = 14,
+    Shr => SHR = 15,
+    BitAnd => BIT_AND = 16,
+    BitOr => BIT_OR = 17,
+    BitXor => BIT_XOR = 18,
+    Eq => EQ = 19,
+    Neq => NEQ = 20,
+    Lt => LT = 21,
+    Lte => LTE = 22,
+    Gt => GT = 23,
+    Gte => GTE = 24,
+    IfTrue => IF_TRUE = 25,
+    IfFalse => IF_FALSE = 26,
+    GetLocal => GET_LOCAL = 27,
+    PutLocal => PUT_LOCAL = 28,
+    SetLocal => SET_LOCAL = 29,
+    GetArg => GET_ARG = 30,
+    PutArg => PUT_ARG = 31,
+    SetArg => SET_ARG = 32,
+}
+
+#[cfg(any(test, feature = "profiling"))]
+pub(crate) const QUICK_TAG_COUNT: usize = QuickTag::SetArg as usize + 1;
+const _: () = assert!(QuickTag::SetArg as usize + 1 == 33);
 
 #[cfg(feature = "profiling")]
 pub(crate) const QUICK_TAG_PROFILE_NAMES: [&str; QUICK_TAG_COUNT] = [
@@ -339,6 +355,40 @@ impl QuickOp {
     }
 }
 
+/// Execution access is confined to immutable words supplied by the certified
+/// publisher. All bit/width/operand checks remain in decode + validate_words;
+/// these accessors neither classify the tag nor reconstruct an Instruction.
+#[cfg(any(test, oxide_quick_dispatch))]
+impl QuickOp {
+    #[inline(always)]
+    pub(crate) const fn tag(self) -> u8 {
+        (self.0 & 0xff) as u8
+    }
+
+    #[inline(always)]
+    pub(crate) const fn operand(self) -> u32 {
+        (self.0 >> 32) as u32
+    }
+
+    #[inline(always)]
+    pub(crate) const fn i32_operand(self) -> i32 {
+        i32::from_le_bytes(self.operand().to_le_bytes())
+    }
+
+    /// Call only for an authenticated local/argument tag. Publication has
+    /// already rejected every operand above u16::MAX, before the word escapes.
+    #[inline(always)]
+    pub(crate) const fn slot(self) -> u16 {
+        self.operand() as u16
+    }
+
+    /// Call only for BOOL, whose complete validator accepts exactly 0 or 1.
+    #[inline(always)]
+    pub(crate) const fn boolean(self) -> bool {
+        self.operand() != 0
+    }
+}
+
 /// A certified all-cold function owns no word buffer. Words retains one word
 /// for *every* canonical PC, including Generic opcodes and fusion interiors.
 /// There is no Default/absent state and no fallback on malformed Words.
@@ -393,8 +443,20 @@ pub(crate) enum ValidationError {
 }
 
 impl QuickProgram {
-    /// Select certified all-cold programs before entering the dispatch loop.
+    /// Borrow once at function entry; None is the certified all-cold mode.
+    /// Sharing this slice does not allocate or increment the word buffer's Rc.
+    /// QuickOp's private field/constructors keep raw words out of execution.
     #[cfg(any(test, oxide_quick_dispatch))]
+    #[inline]
+    pub(crate) fn execution_words(&self) -> Option<&[QuickOp]> {
+        match &self.0 {
+            ProgramKind::CanonicalOnly => None,
+            ProgramKind::Words(words) => Some(words.as_slice()),
+        }
+    }
+
+    /// Test-only counterpart of execution_words' function-level selection.
+    #[cfg(test)]
     #[inline]
     pub(crate) fn has_words(&self) -> bool {
         matches!(&self.0, ProgramKind::Words(_))
@@ -403,7 +465,7 @@ impl QuickProgram {
     /// Read one authenticated word at its unchanged canonical PC. A certified
     /// all-cold program and an absent PC select the caller's canonical path.
     /// Corrupt words are invariant failures, never a silent Generic fallback.
-    #[cfg(any(test, oxide_quick_dispatch))]
+    #[cfg(test)]
     #[inline]
     pub(crate) fn operation(&self, pc: usize) -> Option<DecodedOp> {
         match &self.0 {

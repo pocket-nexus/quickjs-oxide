@@ -2,7 +2,7 @@
 
 #[cfg(feature = "profiling")]
 use super::{Cost, record_owned_storage};
-use super::{Error, FrameBinding, FrameWindow, Runtime, SlotStore, copy_value};
+use super::{Error, FrameBinding, FrameWindow, JsValue, Runtime, SlotStore, copy_value};
 
 #[derive(Clone, Copy)]
 pub(in crate::engine::vm) enum StoreMode {
@@ -18,7 +18,7 @@ impl SlotStore {
         runtime: &Runtime,
         index: u16,
         mode: StoreMode,
-    ) -> Result<Option<FrameBinding>, Error> {
+    ) -> Result<Option<JsValue>, Error> {
         if usize::from(index) >= window.locals().len() {
             return Err(Error::internal("owned local index is out of bounds"));
         }
@@ -39,7 +39,7 @@ impl SlotStore {
         runtime: &Runtime,
         index: u16,
         mode: StoreMode,
-    ) -> Result<Option<FrameBinding>, Error> {
+    ) -> Result<Option<JsValue>, Error> {
         if usize::from(index) >= window.parameters().len() {
             return Err(Error::internal("owned parameter index is out of bounds"));
         }
@@ -56,7 +56,7 @@ impl SlotStore {
     /// No owner is moved until destination, source and any retain have passed.
     /// A non-direct target declines unchanged; the handler retains authority
     /// over TDZ/const/captured bindings and release-readiness publication.
-    /// The displaced owner is always returned for release by that handler.
+    /// Success returns only the Direct payload for release by that handler.
     #[inline]
     fn store_binding_from_top_current(
         &mut self,
@@ -65,7 +65,7 @@ impl SlotStore {
         destination: usize,
         mode: StoreMode,
         vacant: &'static str,
-    ) -> Result<Option<FrameBinding>, Error> {
+    ) -> Result<Option<JsValue>, Error> {
         // All parameter/local slots precede the operand region. Keep their
         // disjoint mutable views through preflight and commit, avoiding a
         // second destination lookup after removing the operand owner.
@@ -73,9 +73,9 @@ impl SlotStore {
         let destination = bindings[destination]
             .as_mut()
             .ok_or_else(|| Error::internal(vacant))?;
-        if !matches!(destination, FrameBinding::Direct(_)) {
+        let FrameBinding::Direct(destination) = destination else {
             return Ok(None);
-        }
+        };
         let top = window
             .depth
             .checked_sub(1)
@@ -85,11 +85,16 @@ impl SlotStore {
             return Err(Self::operand_slot_not_a_value());
         };
         let next = match mode {
-            StoreMode::Keep => FrameBinding::Direct(copy_value(runtime, value)?),
+            StoreMode::Keep => copy_value(runtime, value)?,
             StoreMode::Consume => {
-                // Move the existing binding directly, without a temporary
-                // JsValue owner handed from pop() to replace_local().
-                source.take().expect("authenticated direct operand")
+                // Move the authenticated value directly into the binding's
+                // payload. No pop-to-caller temporary or binding tag rewrite.
+                let FrameBinding::Direct(value) =
+                    source.take().expect("authenticated direct operand")
+                else {
+                    unreachable!("authenticated direct operand");
+                };
+                value
             }
         };
         let old = std::mem::replace(destination, next);

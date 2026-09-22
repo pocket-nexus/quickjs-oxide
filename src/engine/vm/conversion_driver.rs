@@ -11,7 +11,7 @@ use crate::engine::vm::exception::runtime_error_to_vm_error;
 use crate::engine::vm::execution::RunningExecution;
 use crate::engine::vm::frame::{FrameId, ReturnTarget};
 use crate::engine::vm::{Completion, ToPrimitiveHint};
-pub(super) use local_add::complete_local_add;
+pub(super) use local_add::complete_local_add_resident;
 
 enum Finish {
     Predicate(Option<Box<super::predicate_driver::Input>>),

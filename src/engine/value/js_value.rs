@@ -39,6 +39,11 @@ use crate::engine::value::Value;
 /// equality (two distinct string nodes can hold equal text), so equality must
 /// go through the heap-aware helpers instead.
 #[must_use]
+// Keep the tag and payload word-aligned when LLVM moves this enum through
+// Option/Result. A byte tag leaves a 15-byte aggregate payload; its overlapping
+// loads/stores add dependencies to the VM's value-transfer hot paths.
+// This is still a 16-byte owning value, not a packed handle or wire format.
+#[repr(u64)]
 pub enum JsValue {
     Undefined,
     Null,
@@ -53,6 +58,7 @@ pub enum JsValue {
 }
 
 const _: () = assert!(std::mem::size_of::<JsValue>() == 16);
+const _: () = assert!(std::mem::size_of::<Option<JsValue>>() == 16);
 const _: () = assert!(std::mem::size_of::<AtomIdx>() == 4);
 
 #[cfg(test)]

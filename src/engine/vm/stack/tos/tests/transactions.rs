@@ -1,6 +1,5 @@
 use super::*;
 use crate::engine::value::number::operations::Number;
-use crate::engine::vm::bindings::release_frame_binding;
 
 #[test]
 fn scalar_tos_direct_store_modes_preserve_displaced_owner_and_source() {
@@ -43,7 +42,7 @@ fn scalar_tos_direct_store_modes_preserve_displaced_owner_and_source() {
                     store.slots[destination],
                     Some(FrameBinding::Direct(JsValue::Int(42)))
                 ));
-                release_frame_binding(&runtime, old).unwrap();
+                runtime.release_jsvalue(old).unwrap();
                 assert!(runtime.0.state.borrow().heap.object(id).is_err());
                 store.clear_frame(&runtime, window).unwrap();
             }
@@ -262,4 +261,97 @@ fn scalar_tos_number_local_capacity_and_compare_transactions_match_canonical() {
         assert_eq!(store.live_slots, 3);
         store.clear_frame(&runtime, window).unwrap();
     }
+}
+
+#[test]
+fn scalar_tos_number_pair_authenticates_both_bindings_before_decline() {
+    let runtime = Runtime::new();
+    let (mut store, mut window) = frame(&runtime, 2);
+    {
+        let mut tx = transaction(&mut store, &mut window, true);
+        // Exercise the cache-aware Number facade with both inputs in backing.
+        // A non-Number left must not hide a malformed right operand.
+        {
+            let mut slots = tx.canonical_slots("tos.spill.test_pair_setup");
+            slots.push(JsValue::Bool(true)).unwrap();
+            slots.push(JsValue::Int(4)).unwrap();
+            let right = slots.window.operands().start + 1;
+            slots.store.slots[right] = Some(FrameBinding::Uninitialized);
+        }
+        let mut slots = tx.slots();
+        assert!(
+            slots
+                .binary_number(|_, _| panic!("malformed right must precede decline"))
+                .is_err()
+        );
+        assert!(
+            slots
+                .consume_number_pair(|_, _| panic!("malformed right must precede decline"))
+                .is_err()
+        );
+        assert_eq!(slots.window.depth, 2);
+        assert!(!cached_top(&slots));
+        let left = slots.window.operands().start;
+        assert!(matches!(
+            slots.store.slots[left],
+            Some(FrameBinding::Direct(JsValue::Bool(true)))
+        ));
+        assert!(matches!(
+            slots.store.slots[left + 1],
+            Some(FrameBinding::Uninitialized)
+        ));
+        slots.store.slots[left + 1] = Some(FrameBinding::Direct(JsValue::Int(4)));
+        assert!(
+            !slots
+                .binary_number(|_, _| panic!("non-Number pair must decline"))
+                .unwrap()
+        );
+        assert_eq!(slots.window.depth, 2);
+        slots.store.slots[left] = Some(FrameBinding::Direct(JsValue::Int(10)));
+        let mut calls = 0;
+        assert!(
+            slots
+                .binary_number(|a, b| {
+                    calls += 1;
+                    a.sub(b).into()
+                })
+                .unwrap()
+        );
+        assert_eq!(calls, 1);
+        assert_eq!(slots.pop().unwrap(), JsValue::Int(6));
+    }
+    store.clear_frame(&runtime, window).unwrap();
+}
+
+#[test]
+fn scalar_tos_number_pair_invalid_left_preserves_cached_right_for_retry() {
+    let runtime = Runtime::new();
+    let (mut store, mut window) = frame(&runtime, 2);
+    {
+        let mut tx = transaction(&mut store, &mut window, true);
+        tx.slots().push(JsValue::Int(10)).unwrap();
+        tx.slots().push(JsValue::Int(4)).unwrap();
+        let mut slots = tx.slots();
+        let left = slots.window.operands().start;
+        slots.store.slots[left] = Some(FrameBinding::Uninitialized);
+        assert!(
+            slots
+                .binary_number(|_, _| panic!("malformed left must not evaluate"))
+                .is_err()
+        );
+        assert_eq!(slots.window.depth, 2);
+        assert!(cached_top(&slots));
+        assert_eq!(slots.peek(0).unwrap(), &JsValue::Int(4));
+        assert!(slots.store.slots[left + 1].is_none());
+        slots.store.slots[left] = Some(FrameBinding::Direct(JsValue::Int(10)));
+        assert_eq!(
+            slots
+                .consume_number_pair(|a, b| a.float() > b.float())
+                .unwrap(),
+            Some(true)
+        );
+        assert_eq!(slots.window.depth, 0);
+        assert!(!cached_top(&slots));
+    }
+    store.clear_frame(&runtime, window).unwrap();
 }

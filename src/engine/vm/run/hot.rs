@@ -1,15 +1,14 @@
 //! Shared scalar bodies for canonical and QuickOp dispatch.
 //! A declined guard has neither consumed operands nor changed a binding.
 use super::{
-    Error, FrameBinding, JsValue, Number, RunSlots, StoreMode, cold, copy_value, immediate,
-    release_displaced, value,
+    Error, FrameBinding, JsValue, Number, RunSlots, StoreMode, cold, copy_scalar, immediate, value,
 };
 use crate::engine::api::Runtime;
 use crate::engine::vm::numeric::operation::NumericKind;
 
 /// The successful Number path uses exactly the canonical arithmetic kernels.
 /// Non-Number inputs stay resident and unchanged for ordered conversion.
-#[inline]
+#[inline(always)]
 pub(super) fn binary(slots: &mut RunSlots<'_>, kind: NumericKind) -> Result<bool, Error> {
     use NumericKind as N;
     match kind {
@@ -43,7 +42,7 @@ pub(super) fn binary(slots: &mut RunSlots<'_>, kind: NumericKind) -> Result<bool
 
 /// None declines without consuming. Some(usize::MAX) is consumed fallthrough;
 /// every other Some is the taken canonical target, matching compare fusion.
-#[inline]
+#[inline(always)]
 pub(super) fn branch(
     slots: &mut RunSlots<'_>,
     target: u32,
@@ -58,9 +57,9 @@ pub(super) fn branch(
     Ok(Some(if truthy == when { target } else { usize::MAX }))
 }
 
-#[inline]
+#[inline(always)]
 pub(super) fn read_scalar(
-    runtime: &Runtime,
+    _runtime: &Runtime,
     slots: &mut RunSlots<'_>,
     index: u16,
     argument: bool,
@@ -73,17 +72,16 @@ pub(super) fn read_scalar(
     let FrameBinding::Direct(source) = binding else {
         return Ok(false);
     };
-    if !immediate(source) {
+    let Some(copied) = copy_scalar(source) else {
         return Ok(false);
-    }
-    let copied = copy_value(runtime, source)?;
+    };
     slots.push(copied)?;
     Ok(true)
 }
 
 /// The caller authenticates local kind/const semantics. This body accepts only
 /// direct scalar source/displaced values, so it needs no publication boundary.
-#[inline]
+#[inline(always)]
 pub(super) fn store_scalar(
     runtime: &Runtime,
     slots: &mut RunSlots<'_>,
@@ -106,8 +104,24 @@ pub(super) fn store_scalar(
         slots.store_local_from_top(runtime, index, mode)?
     }
     .ok_or_else(|| cold::internal("direct scalar store target changed"))?;
-    release_displaced(runtime, displaced)?;
+    discard_scalar(displaced);
     Ok(true)
+}
+
+/// The store preflight proved the displaced binding is an edge-free scalar.
+/// Its move and scalar copy cannot invalidate that proof. Keep the logical
+/// release counter without transporting the owner through Runtime's general
+/// release path, which rechecks readiness and materializes a wide result.
+#[inline(always)]
+pub(super) fn discard_scalar(value: JsValue) {
+    debug_assert!(immediate(&value));
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_storage(
+        crate::engine::api::profiling::OwnedStorageEvent::HotRelease { heap_root: false },
+    );
+    // Drop the internal value, which has no destructor. Dropping the whole
+    // binding would retain dispatch to captured/private owner drop glue.
+    drop(value);
 }
 
 #[cfg(test)]
