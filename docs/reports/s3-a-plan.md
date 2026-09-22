@@ -1,9 +1,14 @@
 # S3-A 计划：8B 值表示——融合实施
 
-> 状态：阶段 A 阻塞于性能回退；先完成 §8 全部回退修复，再推进 W6 验收及后续优化。W1–W5 已有 16B 实现快照，但不代表收益达标。最新实现/性能/完整正确性证据见 §8.12（提交 3a3042ca，基于 ea7aeb54）：scaling 几何均值已转为优于 pre-A，多数台账关闭或反超，但 map-string、长 BigInt、部分 V8 项仍有残余，门禁未全部通过。历史证据见 本地记录（不纳入 Git）。起点为 pre-A 代码基线。本文档是
-> `performance-architecture.md` §4（方案 A）的实施计划与验收规则；若两处
-> 表述冲突，**以本文档为准**。约束与证据附录继承
-> `performance-architecture.md` §0/§11/附录。
+> 状态：W1–W5 的 16B 实现与两轮修复已落地，但阶段 A 的性能门禁尚未全部通过。
+> 最新补丁及发布配置对照见 §8.13（`d4f78697`）；完整正确性记录见 §8.12，
+> §8.13 另列补丁后的验证范围。双方 fat LTO + CGU=1、无 PGO 下，scaling
+> 几何均值约持平，V8 八项仍落后于 pre-A；不得沿用旧无 LTO 结果宣告关闭。
+> 后续按 `performance-architecture.md` §11 的 E → 有界残余批 → A4 → C → B → D
+> 推进，保留每项未关闭回退的台账，不代表阶段 A 已验收完成。
+> 本文负责方案 A 的表示与所有权设计；性能比较以 §5 和
+> [benchmark README](../../scripts/benchmark/README.md) 的现行协议为准，
+> 阶段顺序以架构文档 §11 为准。历史实测保留各自构建口径，不混算。
 
 ---
 
@@ -246,18 +251,22 @@ current-source receipt，不改 `current.conf`）→
 
 ## 5. 阶段性能比较协议
 
-1. **固定基线**：S3-A 开工前保存一份基线——无 PGO、无 LTO 的 release
-   构建（`CARGO_PROFILE_RELEASE_LTO=off
-   CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16`），全量基准数字记入报告，
-   作为所有阶段的固定分母之一；
-2. **每阶段只比两次**：本阶段 vs 上一阶段、本阶段 vs 保存的基线；两侧
-   都是无 PGO、无 LTO 的同 flags 构建。**不做每阶段 PGO 重训**；
-3. **例外与复核**：E 阶段测的就是构建配置本身，按
-   `performance-architecture.md` §3 已有口径；每个大阶段（A/B/D）收尾时
-   **建议**（非强制）做一次 LTO+PGO 双方复核——LTO 会改变内联与代码
-   布局，无-LTO 下的阶段胜率偶尔会在最终构建配置下翻转，复核只为确认
-   符号不变；
-4. 跨协议对比允许用于累计/用户口径的报告，须标注双方构建协议。
+现行协议（2026-09-22 修订）与
+[benchmark README](../../scripts/benchmark/README.md) 一致：
+
+1. **固定基线**：从 pre-A `85afd564`（代码与 `deac0a39` 相同）按发布配置
+   重建：`CARGO_PROFILE_RELEASE_LTO=fat`、`CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1`，
+   **无 PGO、无 profiling**。候选使用相同 toolchain、target 与 flags；记录
+   源码、构建环境、二进制及 workload 哈希，不能直接复用旧无 LTO 二进制。
+2. **阶段与累计对照**：本阶段 vs 上一阶段、本阶段 vs 保存基线，双方均使用
+   上述协议。后续 E 若另存 post-A 的 `saved` 基线，明确其源码身份，并继续
+   单列相对同协议 pre-A 的结果；相对 E 后基线变快不等于阶段 A 回退已关闭。
+3. **PGO 复核**：不要求每阶段重训；每个大阶段收尾建议（非强制）双方按
+   相同训练负载分别重训并单列 LTO+PGO 结果，不能冲抵无 PGO 发布配置的回退。
+   E 的构建配置实验单独标注双方协议，不代替上述阶段门禁。
+4. **历史与跨协议报告**：§8.12 及之前的无 LTO/CGU16 数据继续只与各自旧基线
+   比较；§8.13 同时保留两套结果，现行回退裁决使用 LTO 列。跨协议对比只用于
+   标明双方构建协议的累计/用户口径报告，不用于阶段门禁或性能归因。
 
 ## 6. 风险
 
@@ -573,10 +582,15 @@ A4 的 8B NaN-box 仍是独立测量阶段，不计入本轮 16B 工作流。
 不能据表示收口宣称全部性能目标完成；回退、部分采样与后续顺序见收口报告。
 
 
-## 8. 回退修复优先门禁（2026-09-21，当前执行顺序）
+## 8. 回退修复计划与实测记录（2026-09-21 起）
 
-**先解决所有回退，再推进。** 本节优先于前文里可以继续推进的历史排期。
-现在只进入 A 内部的回退修复 R0–R5；A4、B 及其他阶段的新优化全部暂停。
+> 历史规则说明：以下原始修复计划及 §8.1–§8.12 保留当时的执行顺序、
+> 构建协议和裁决，不再作为当前后续阶段的暂停指令。现行路线见
+> `performance-architecture.md` §11；现行比较按本文 §5，发布配置结果见 §8.13。
+> 允许按路线推进不等于历史回退已关闭，仍须在同协议台账中逐项追踪。
+
+**当时的顺序是先解决所有回退，再推进。** 以下为 2026-09-21 的修复安排：
+只进入 A 内部的回退修复 R0–R5；A4、B 及其他阶段的新优化全部暂停。
 修复可以并行实施在不重叠的模块，但性能采样必须串行。已有属性读取收益必须
 保留，不能用其平均收益抵消 BigInt、容器、编译或任一规模的回退；也不能
 通过恢复内部公共 Value 双管道、弱化 oracle 期望或删除 teardown 断言换速度。
@@ -1193,7 +1207,7 @@ property probe（20M 次、3 repeats）：prop_read_int 227.69→159.44 ns（−
 
 ### 8.13 窄补丁收尾与 LTO 双协议对照（2026-09-22）
 
-#### 两个 bigint256 窄补丁（已实施，git 待本节提交）
+#### 两个 bigint256 窄补丁（已实施，提交 d4f78697）
 
 1. **`vm/run/numeric.rs::complete` 冷错误物化外提**：错误物化（NativeErrorKind 跳转表、0x50B Error 搬运、PC 发布、Vec drop、unwind pad）原全部内联在热函数体内（栈帧 504B）。外提为 `#[cold] #[inline(never)] materialize_thrown` 后帧 504B→280B，drop glue 与 unwind pad 移出。独立 A/B 为布局中性（错误路径不执行，insn ±0.00%），但叠加在补丁 2 之后四 workload 全部不劣化且小幅改善（bigint64 −1.7~−2.4%），按叠加序保留。
 2. **`heap/gc.rs::try_release_leaf_reference` 释放链融合**：原路径 out-of-line `validate_slot_identity`（sret Result 搬运）→ 冗余 bounds 复查 → retire 再调 `reclaim_vacant_slot`（内部 3 次槽查找）。重写为一次槽查找完成全部判定，非终递减零函数调用；新增 `retire_validated_leaf` 保留 weak-link/generation/free-list/ledger 语义。bigint256 **insn −1.71% 稳定复现**；cycles 在 ±2% 布局噪声内。
@@ -1239,4 +1253,4 @@ property probe（20M 次、3 repeats）：prop_read_int 227.69→159.44 ns（−
 1. **fat LTO 给 pre-A 的提升显著大于给当前实现**（pre-A 各 workload −22~−31%，当前实现 −15~−22%）。机制：pre-A 的 Rc/Result 管道是大量本地小操作，LTO 几乎能全部内联消解；而句柄化的结构性成本（集中校验、440B 槽跨步、16B/32B 编组）不是内联能消掉的；同时本轮手工 `#[inline]` 已提前收割了我们这侧的部分 LTO 红利。
 2. **发布配置（LTO）下阶段 A 仍是净回退**：V8 八项全负（−3~−19%），scaling 约持平；LTO off 下的净收益картина有相当成分来自「pre-A 没机会做跨模块内联」。navier-stokes/typed-index 的翻转（insn 持平、cycles 大幅变差）是典型样本。
 3. 属性读、Map 构造、insert、prop-delete（insn 口径）在两个协议下都是真实结构性收益。
-4. **门禁含义**：按新协议（LTO 双方同开，见 README 修订），回退台账须以 lto 列为准重新裁决；E 阶段（补 PGO）后再冻结正式分母。这组数据同时是 A4 决策点与 C（栈流量）优先级的直接输入：LTO 消不掉的差距即结构税清单。
+4. **门禁含义**：按 §5 的发布协议（双方 fat LTO + CGU=1、无 PGO、无 profiling），回退台账须以 lto 列为准重新裁决。E 使用现有构建与 PGO 管线重测并冻结同协议基线、补 RSS；PGO 双边复核另列，不是普通阶段比较的前提。保留同协议 pre-A 对照，不能因冻结 E 后基线而抹去阶段 A 的回退。这组数据用于 A4/C 的候选排序，但 LTO 后仍有差距并不证明全部来自值宽度或栈流量；应在发布配置下重新归因，再分配给残余批或 C/B/D。

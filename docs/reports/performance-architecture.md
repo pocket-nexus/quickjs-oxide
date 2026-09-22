@@ -27,9 +27,10 @@
 4. **一致性门禁**：Test262 冻结向量（`pass=79982 / eligible=80032 /
    total=102037`）零回归；不得为性能改动修订一致性基线
    （`scripts/benchmark/README.md:175-176`）。
-5. **测量纪律**：正式计时用非 profiling 的普通 release 构建、串行、独立输出
-   目录、留 receipts（`profiling.md:288`；benchmark README）。S3 第一阶段
-   必须先重定基线（方案 E）。
+5. **测量纪律**：正式比较双方同用 fat LTO + CGU=1、无 PGO、无 profiling 的
+   普通 release 构建；基线同 flags 重建，串行、独立输出目录、留 receipts
+   （细则见 benchmark README）。方案 E 冻结当前比较基线，并保留 pre-A
+   累计对照；PGO 双边重训复核另列，不替代普通 release 门禁。
 6. 单线程执行核心：`Rc`/`RefCell`/`Cell` 语义不变；不引入 `Send`/`Sync`
    共享（`parity.md:243` worker 模型不变）。
 
@@ -80,9 +81,10 @@
    - 派发循环每步付 bounds-checked fetch + `checked_add` + `Result` 管道
      （`src/engine/vm/run.rs:316-328`），指令是 ~16B/条的 198-variant enum
      （`code/bytecode.rs:123`）。
-7. **`[profile.release]` 从未调过**：`Cargo.toml:51-57` 只有 web profile；
-   native release 是 cargo 默认（无 LTO、16 CGU）。PGO/LTO 是未领取的
-   免费收益。
+7. **构建配置已落地**：`Cargo.toml:51-53` 的 `[profile.release]` 已启用
+   fat LTO + CGU=1；`scripts/benchmark/pgo.py` 提供显式 PGO 管线。
+   pre-S3 曾使用 cargo 默认的无 LTO、16 CGU；该历史构建收益见 §3，
+   不代表当前 release 仍有同等收益可领取。
 
 ## 2. 方案总览
 
@@ -91,7 +93,7 @@
 
 | 方案 | 内容 | unsafe | 预期量级 | 依据 |
 | --- | --- | --- | --- | --- |
-| **E** | 构建基线：fat LTO + CGU=1 + PGO（BOLT 可选） | 无 | 8–20% | 附录 A.7 |
+| **E** | 构建基线：fat LTO + CGU=1、无 PGO；PGO 双边复核及 BOLT 可选 | 无 | 历史估计 8–20%，当前需重测 | 附录 A.7 |
 | **A4** | 8B 值表示决策点：索引 NaN-box spike + 验收矩阵，不达标停在 16B | 无 | 视裁决（值流量密集路径上限 ~1.5–2×） | §1.1–1.3、§4.3 |
 | **C** | 派发与栈流量：TOS/accumulator 缓存、扩展静态超指令、可选 fn-pointer threading | 无 | +5–15% | 附录 A.4–A.6 |
 | **B** | quickening + 可变执行 IR（QuickJS 没有） | 无 | +10–25% | 附录 A.1–A.3 |
@@ -102,22 +104,28 @@
 动态复制（理由见 §9）。**S4 候选：RC → tracing GC——推迟而非否决**，
 双门禁见 §10。
 
-## 3. E：构建基线（第一阶段，先于一切测量）
+## 3. E：构建基线（当前先冻结基线，再推进后续阶段）
 
-- `Cargo.toml` 增加 `[profile.release] lto = "fat", codegen-units = 1`；
-  建立 PGO 流程（`-Cprofile-generate` / `-Cprofile-use`），训练负载用
-  `scripts/benchmark/scaling.py` + v8-v7 套件。BOLT 作为可选后续。
-- 用同一 flags 重建 pre-S3 基线二进制并留 receipts；S3 之后所有对比都以
-  **PGO 后的基线**为分母（否则把编译器布局噪声当设计收益）。
-- 提交粒度：profile 改动与 PGO 流程脚本各一个 commit；无语义变更，门禁走
-  `cargo test --locked --workspace --all-targets` + test262 `--check`（源码
-  哈希会变，需重跑 `--full` 出 current-source receipt，不改 `current.conf`）。
+- `Cargo.toml` 已有 `[profile.release] lto = "fat", codegen-units = 1`，
+  `scripts/benchmark/pgo.py` 已实现 `-Cprofile-generate` / `-Cprofile-use`
+  流程，训练负载为 `scaling.py` + v8-v7 套件。当前任务是沿用并验证管线、
+  重建双方产物和冻结基线；BOLT 作为可选后续。
+- 正式比较双方使用 **fat LTO + CGU=1、无 PGO、无 profiling**，所有基线均
+  以相同 flags 重建并留 receipts。每阶段保留相对上一阶段、E 后冻结源码
+  基线和 pre-A `85afd564` 的对照；E 后冻结基线不替代 pre-A 累计对照。
+- PGO 不作为日常比较或门禁的前提。大阶段收尾建议双方各自重训后单列
+  LTO+PGO 复核，其收益不能冲抵无 PGO release 门禁中的回退。
+- 已实施的 profile 与 PGO 脚本改动没有语义变更；当时的验证结果见下方
+  历史实测记录，后续阶段继续按 §11 门禁执行。
 - 生效范围：`lto = "fat"` + `codegen-units = 1` 对**任何 `cargo build --release`
   自动生效**（含 CLI、`build.py`）；**PGO 不会**——它需要 `pgo.py` 的两阶段
   `RUSTFLAGS=-Cprofile-use`，默认 release 构建没有 profile，需显式跑 PGO 流程
-  才能得到完整方案 E 的二进制。
+  才能得到单列复核用的 PGO 二进制。
 
-### E 实测（相对 pre-S3 HEAD `06386457`）
+### E 历史实测（相对 pre-S3 HEAD `06386457`）
+
+以下保留当时三种构建协议及原始结果，用于说明构建收益；不替代当前双方
+同用 fat LTO + CGU=1、无 PGO 的比较，也不作为当前实现的 PGO 收益预告。
 
 在独立 worktree、同机串行构建并测量三个普通 release 二进制，无并发构建/测试：
 
@@ -163,8 +171,8 @@
 
 **结论：** 方案 E 的实测收益超出 §2 预计的 8–20%——LTO+CGU=1 约 5–9%，
 PGO 把属性读延迟压低 27–37%、V8-v7 Score 整体抬高 **1.60×**、混合整进程负载
-geomean **0.696×**（≈1.44× 吞吐）。这是纯构建层收益、无语义改动，成功为
-后续 A/B/D 建立更高的比较基线。
+geomean **0.696×**（≈1.44× 吞吐）。这是当时的纯构建层收益、无语义改动；
+当前阶段的比较基线和协议按本节及 §11 执行。
 
 **门禁：** `cargo fmt --check`、`check-source-layout.py`、workspace
 `cargo test --locked --workspace --all-targets`、benchmark 单测（22）全部通过；
@@ -437,7 +445,9 @@ codec 自测门禁（`status.md:319-320`）、修订 `status.md:3` 的 "unsafe-f
 可回退，严禁跨阶段混合提交。S4（RC → tracing GC）不在此路线内，按
 §10.6 双门禁另行决策。
 
-支撑本顺序的三条实测规律（证据见 `s3-a-plan.md` §8.12）：
+支撑本顺序的三条历史实测规律（证据见 `s3-a-plan.md` §8.12，使用旧
+LTO-off 协议）：以下热点与反超结论只作后续归因线索；当前回退按 §8.13
+LTO 列及后续同协议重测结果裁决，不直接继承旧协议的关闭结论。
 
 1. **布局噪声是第一税**：LTO off + CGU16 下任意源改动引起无关 case
    ±5–10% 摆动（跨 CGU 内联翻转、`matches!` Result drop 折叠翻转均有
@@ -452,9 +462,11 @@ codec 自测门禁（`status.md:319-320`）、修订 `status.md:3` 的 "unsafe-f
 
 各步内容与关闭条件：
 
-1. **E 构建基线**：fat LTO + CGU=1（比较协议已同步改为双方同开，见
-   `scripts/benchmark/README.md`）+ PGO 管线；以 E 后基线重测完整台账，
-   并补齐阶段 A 缺失的 RSS/内存证据。此后所有数字以 E 后基线为分母。
+1. **E 构建基线**：双方 fat LTO + CGU=1、无 PGO、无 profiling，基线
+   同 flags 重建（见 `scripts/benchmark/README.md`）；冻结 E 后源码与
+   receipts，重测完整台账并补齐阶段 A 缺失的 RSS/内存证据。后续同时
+   保留上一阶段、E 后冻结源码和 pre-A `85afd564` 累计对照。沿用已有
+   PGO 管线作可选双边复核，结果另列。
 2. **残余批（E 基线下，有界）**：只修 E 后仍显著的项——map-string 的
    arena 键哈希/比较与批末 teardown、V8 regexp 归因、native 编组重叠
    拷贝。纪律：配对 A/B、指令数为主信号、串行采样。
@@ -469,20 +481,29 @@ codec 自测门禁（`status.md:319-320`）、修订 `status.md:3` 的 "unsafe-f
 6. **D：数据导向堆**：BigInt/String 叶子紧凑 arena（收 440B 槽跨步的
    分配局部性）、atom/string 便宜化（收 map-string）；与 B 按测量交替。
 
-bigint256 残余（LTO off 下约 +18% cycles / +32% insn）不设专项：其构成
-已逐块归属 E（外联/布局）、A4 决策（宽度税）、C（栈往返）、B（分派与
-边管理指令数）、D（分配局部性），作为各阶段验收矩阵中的固定一行随阶段
-过境关闭。
+bigint256 当前回退按 `s3-a-plan.md` §8.13 的 LTO 列判断（相对同 flags
+重建的 pre-A，+32.1% cycles / +38.8% insn）；旧 LTO-off 下约 +18%
+cycles / +32% insn 仅保留为历史记录，不与新序列混算。不另设专项，待查
+成本分别归属 E（外联/布局）、A4 决策（宽度税）、C（栈往返）、B（分派与
+边管理指令数）、D（分配局部性）；作为各阶段验收矩阵中的固定一行，
+关闭与否以同协议实测为准。
+
+typed-index、prop-delete、navier-stokes 等在新 LTO 协议下翻转的项目，须在
+E/C0 重新采样并登记根因及后续归属，不能继承旧协议的关闭状态。只有经证据
+确认属于栈流量的部分交 C；布局、arena 或其它成本继续按残余批/A4/B/D 分工。
 
 ### 预期（诚实口径）
 
-- 累积约 **2.5–4×** vs PGO 后基线。对 QuickJS 的 10–25× microbench 差距
-  （`performance-plan.md:319-320`）大概率收敛到**同数量级、仍差 2–5×**——
-  见附录 B 的税种分析。
+- **历史假设，待新协议重估**：原先预计相对 PGO 后基线累积约
+  **2.5–4×**，并将当时对 QuickJS 的 10–25× microbench 差距
+  （`performance-plan.md:319-320`）收敛到**同数量级、仍差 2–5×**。
+  这些不是实测，也不能直接改称无 PGO LTO 口径的预期；税种分析见附录 B。
 - 「超过 QuickJS」按轴成立：**算术/特化密集**（QuickJS 无 quickening）与
   **原型链/多态属性**（validity cell + 更深 IC vs QuickJS 静态快路径）可
   反超；纯字符串/正则轴不奢望（表示层同源）。
-- 所有数字以方案 E 后的基线为分母；无 PGO 基线之前的对比数字不得引用。
+- 当前阶段收益使用同协议的上一阶段、E 后冻结源码与 pre-A 累计对照。
+  历史数据可连同当时基线及协议引用，不得与新序列混算；跨协议累计展示
+  必须标注双方构建协议，不能用于普通 release 门禁裁决。
 
 ### 验证门禁（每阶段）
 
@@ -494,11 +515,13 @@ bigint256 残余（LTO off 下约 +18% cycles / +32% insn）不设专项：其�
 5. `python3 scripts/checks/check-source-layout.py` + rust-only 门禁；
 6. 基准：`property_read_probe.py` + `scaling.py` + `run.py`（v8-v7 /
    microbench），串行、独立输出目录、receipts 齐全。**比较协议
-   （2026-09-22 修订）**：双方同用发布配置 fat LTO + CGU=1、无 PGO；
-   基线须以相同 flags 重建。此前的无 LTO/CGU16 序列与其自身基线继续
-   成立，不得与 LTO 序列混算。大阶段收尾建议（非强制）一次 LTO+PGO
-   双方复核；跨协议对比须标注双方构建协议（细则见
-   `scripts/benchmark/README.md`）；
+   （2026-09-22 修订）**：双方同用发布配置 fat LTO + CGU=1、无 PGO、
+   无 profiling；基线须以相同 flags 重建。每阶段保留相对上一阶段、
+   E 后冻结源码基线和 pre-A `85afd564` 的累计对照。此前的无 LTO/CGU16
+   序列与其自身基线继续成立，不得与 LTO 序列混算。大阶段收尾建议
+   （非强制）一次双方各自重训的 LTO+PGO 复核，结果单列且不能冲抵
+   普通 release 回退；跨协议对比仅作标明双方协议的累计展示，不用于
+   门禁（细则见 `scripts/benchmark/README.md`）；
 7. profiling 构建核对计数器无异常漂移；
 8. 每阶段结束更新本文档对应章节的实测结果。
 
