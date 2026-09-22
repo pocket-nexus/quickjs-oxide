@@ -1190,3 +1190,53 @@ property probe（20M 次、3 repeats）：prop_read_int 227.69→159.44 ns（−
 3. **Map 覆盖更新 +5.3%、set-churn +8~9%**：native 调用编组（`take_native_call_operands`、`prepare_native_arguments` 的重叠 8B 拷贝失速）与剩余 ownership 往返。
 4. **V8 crypto −3.1%、earley-boyer −4.6%、regexp −10%、splay −1.8%**：本轮首次补齐全套覆盖；regexp 与 scaling 的 regexp-groups（−15%）方向相反，说明残余在正则执行/子串路径而非 groups 组装，未逐项归因。
 5. **布局敏感性**：LTO off + CGU16 下任意源改动可使无关 case 摆动 ±5–10%（本轮多次复现，指令数为稳定副指标）；insert 曾因 std BTree drop 失去内联出现 +13% teardown，重建后自然消失。评估小幅残余时必须配对同构建采样。
+
+### 8.13 窄补丁收尾与 LTO 双协议对照（2026-09-22）
+
+#### 两个 bigint256 窄补丁（已实施，git 待本节提交）
+
+1. **`vm/run/numeric.rs::complete` 冷错误物化外提**：错误物化（NativeErrorKind 跳转表、0x50B Error 搬运、PC 发布、Vec drop、unwind pad）原全部内联在热函数体内（栈帧 504B）。外提为 `#[cold] #[inline(never)] materialize_thrown` 后帧 504B→280B，drop glue 与 unwind pad 移出。独立 A/B 为布局中性（错误路径不执行，insn ±0.00%），但叠加在补丁 2 之后四 workload 全部不劣化且小幅改善（bigint64 −1.7~−2.4%），按叠加序保留。
+2. **`heap/gc.rs::try_release_leaf_reference` 释放链融合**：原路径 out-of-line `validate_slot_identity`（sret Result 搬运）→ 冗余 bounds 复查 → retire 再调 `reclaim_vacant_slot`（内部 3 次槽查找）。重写为一次槽查找完成全部判定，非终递减零函数调用；新增 `retire_validated_leaf` 保留 weak-link/generation/free-list/ledger 语义。bigint256 **insn −1.71% 稳定复现**；cycles 在 ±2% 布局噪声内。
+3. **证伪记录**：`allocate_bigint`（self ~4%）反汇编确认 reserve→publish 已完全融合、无重复工作可删，剩余为 440B 槽跨步固有访存（归 D）；`finish_bigint_operands` 单借用融合实测使 short BigInt 明显回退（+4.65% insn），已回退不保留。
+4. 合并态（安静配对，5 次轮换）：bigint64 +4.2%→**+2.1%**，bigint256 +18.3%→+17.8% cyc、insn +34.2%→**+31.9%**；bigint32/map-int 无交叉回退。补丁后全库 2304 测试、MSRV 1.88 clippy、fmt 全绿。
+
+#### LTO 双协议对照（同日、同源码、双方同 flags；证据 target/lto-compare/）
+
+配置：nolto = LTO off + CGU16（旧协议）；lto = fat LTO + CGU=1（新协议，即发布配置）。基线 pre-A `85afd564` 按各自配置重建。
+
+**固定工作量（final vs 各自配置的 pre-A，cycles / insn 中位）**：
+
+| workload | nolto | lto |
+| --- | --- | --- |
+| construct | **−20.1% / −17.6%** | **−18.1% / −16.5%** |
+| insert | **−7.7% / −1.7%** | **−10.5% / −1.8%** |
+| prop-delete | **−6.6% / −10.1%** | +9.7% / −2.8% |
+| typed-index | **−3.7% / +0.5%** | +9.1% / −0.1% |
+| bigint32 | −4.6% / −4.4% | −0.2% / +5.1% |
+| map-int | +3.4% / −2.0% | +6.0% / −0.3% |
+| update | +3.2% / −0.2% | +8.0% / +0.7% |
+| map-string | +8.0% / +5.3% | +13.3% / +6.9% |
+| bigint64 | +5.2% / +5.4% | +13.6% / +14.4% |
+| bigint256 | +21.7% / +31.9% | +32.1% / +38.8% |
+
+**scaling 86 组几何均值**：nolto **−2.19%**（34/86 为正）；lto **−0.29%**（42/86 为正）。
+**property probe**：nolto −30/−30/−43%；lto 仍全胜但收窄为 **−18.5/−13.0/−17.4%**。
+**V8 全套（score，final vs pre-A）**：
+
+| case | nolto | lto |
+| --- | ---: | ---: |
+| richards | +1.7% | −4.8% |
+| deltablue | −2.1% | −8.7% |
+| crypto | −3.1% | −4.3% |
+| raytrace | −0.7% | −3.1% |
+| earley-boyer | −4.1% | −8.7% |
+| regexp | −10.2% | −11.2% |
+| splay | −1.8% | −6.9% |
+| navier-stokes | **+7.9%** | **−19.2%** |
+
+#### 结论（诚实口径）
+
+1. **fat LTO 给 pre-A 的提升显著大于给当前实现**（pre-A 各 workload −22~−31%，当前实现 −15~−22%）。机制：pre-A 的 Rc/Result 管道是大量本地小操作，LTO 几乎能全部内联消解；而句柄化的结构性成本（集中校验、440B 槽跨步、16B/32B 编组）不是内联能消掉的；同时本轮手工 `#[inline]` 已提前收割了我们这侧的部分 LTO 红利。
+2. **发布配置（LTO）下阶段 A 仍是净回退**：V8 八项全负（−3~−19%），scaling 约持平；LTO off 下的净收益картина有相当成分来自「pre-A 没机会做跨模块内联」。navier-stokes/typed-index 的翻转（insn 持平、cycles 大幅变差）是典型样本。
+3. 属性读、Map 构造、insert、prop-delete（insn 口径）在两个协议下都是真实结构性收益。
+4. **门禁含义**：按新协议（LTO 双方同开，见 README 修订），回退台账须以 lto 列为准重新裁决；E 阶段（补 PGO）后再冻结正式分母。这组数据同时是 A4 决策点与 C（栈流量）优先级的直接输入：LTO 消不掉的差距即结构税清单。

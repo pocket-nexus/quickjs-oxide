@@ -1254,31 +1254,97 @@ impl Heap {
         // retains the common path; reclamation still clears the debug ledger.
         if matches!(id, RawId::String(_) | RawId::BigInt(_)) && self.zero_queue.is_empty() {
             #[cfg(debug_assertions)]
-            let traced =
-                matches!(id, RawId::String(id) if super::ownership::trace_string_matches(id));
-            #[cfg(not(debug_assertions))]
-            let traced = false;
-            let index = self.validate_slot_identity(id)?;
-            if !traced
-                && let SlotState::Live(node) = &self.slots[index].state
-                && node.strong.get() > 1
-            {
+            if matches!(id, RawId::String(id) if super::ownership::trace_string_matches(id)) {
+                // The traced decline reaches the full path, which reproduces
+                // the identity validation this fused lookup would have done.
+                return Ok(None);
+            }
+            // One fused lookup covers the bounds/generation/kind checks of
+            // validate_slot_identity and then serves the decrement or retire
+            // decision.
+            let index = id.index();
+            let Some(slot) = self.slots.get_mut(index as usize) else {
+                return Err(HeapError::Stale {
+                    index,
+                    generation: id.generation(),
+                });
+            };
+            if slot.generation != id.generation() {
+                return Err(HeapError::Stale {
+                    index,
+                    generation: id.generation(),
+                });
+            }
+            let SlotState::Live(node) = &slot.state else {
+                // Non-live owned states decline to the full path unchanged;
+                // dead states surface the same stale diagnostic as before.
+                return match slot.state.kind() {
+                    Some(actual) if actual != id.kind() => Err(HeapError::WrongKind {
+                        expected: id.kind(),
+                        actual,
+                    }),
+                    Some(_) => Ok(None),
+                    None => Err(HeapError::Stale {
+                        index,
+                        generation: id.generation(),
+                    }),
+                };
+            };
+            let actual = node.data.kind();
+            if actual != id.kind() {
+                return Err(HeapError::WrongKind {
+                    expected: id.kind(),
+                    actual,
+                });
+            }
+            let strong = node.strong.get();
+            if strong > 1 {
                 // The live leaf and its identity are already validated. With
                 // no queued work this decrement cannot trigger finalization.
-                node.strong.set(node.strong.get() - 1);
+                node.strong.set(strong - 1);
                 return Ok(Some(false));
             }
-            if !traced
-                && matches!(&self.slots[index].state, SlotState::Live(node) if node.strong.get() == 1)
-            {
-                // Identity validation also checked the payload kind. Assignment
-                // drops the leaf in place, without moving the whole Node enum.
-                self.slots[index].state = SlotState::Vacant;
-                self.reclaim_vacant_slot(id.index())?;
+            if strong == 1 {
+                self.retire_validated_leaf(index, id.generation())?;
                 return Ok(Some(true));
             }
         }
         Ok(None)
+    }
+
+    /// Retire one identity-validated, sole-owned live leaf slot. This mirrors
+    /// `Vacant` assignment plus [`Heap::reclaim_vacant_slot`] on a slot borrow
+    /// the caller already validated: same weak-link invariant, generation
+    /// bump/retire and free-list push, without redoing the slot lookup and
+    /// vacancy checks.
+    fn retire_validated_leaf(&mut self, index: u32, generation: u32) -> Result<(), HeapError> {
+        let weak_head = self.weak_head;
+        let weak_tail = self.weak_tail;
+        let slot = self
+            .slots
+            .get_mut(index as usize)
+            .ok_or(HeapError::Invariant("reclaimed slot disappeared"))?;
+        // Assignment drops the leaf in place, without moving the whole Node enum.
+        slot.state = SlotState::Vacant;
+        let weak_identity = Some(ObjectId { index, generation });
+        if slot.weak_prev.is_some()
+            || slot.weak_next.is_some()
+            || weak_head == weak_identity
+            || weak_tail == weak_identity
+        {
+            return Err(HeapError::Invariant(
+                "weak-collection slot was reclaimed while still linked",
+            ));
+        }
+        if let Some(generation) = slot.generation.checked_add(1) {
+            slot.generation = generation;
+            self.free.push(index);
+        } else {
+            slot.state = SlotState::Retired;
+        }
+        #[cfg(debug_assertions)]
+        self.clear_alloc_site(index);
+        Ok(())
     }
 
     /// Shared-count fast release: decrement in place when another owner
