@@ -8,7 +8,6 @@ use super::{CallableRef, FrameBinding, PrivateNameRef, VarRefRoot};
 use crate::engine::value::JsValue;
 
 #[repr(transparent)]
-#[expect(dead_code, reason = "Only the counterfactual word layout is measured.")]
 struct CandidateWord(u64);
 
 #[expect(

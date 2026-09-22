@@ -7,7 +7,8 @@
 
 use super::*;
 use crate::engine::api::runtime::Runtime;
-use crate::engine::value::{JsBigInt, JsValue, Value};
+use crate::engine::value::bigint::JsBigInt;
+use crate::engine::value::{JsValue, Value};
 
 const PAYLOAD_BITS: u32 = 52;
 const INDEX_BITS: u32 = u32::BITS;

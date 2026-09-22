@@ -159,7 +159,7 @@ fn scalar_tos_run_restores_before_call_suspend_throw_and_cold_exits() {
         assert_eq!(canonical, cached);
         assert_eq!(
             cached.1,
-            vec!["Int(42)"],
+            vec!["JsValue::Int(42)"],
             "an exit cannot hide a scalar owner from the driver"
         );
     }
@@ -171,8 +171,54 @@ fn scalar_tos_run_capacity_error_restores_committed_prefix_and_both_pcs() {
     let canonical = observation::<false>(code.clone(), 1);
     let cached = observation::<true>(code, 1);
     assert_eq!(canonical, cached);
-    assert_eq!(cached.1, vec!["Int(41)"]);
+    assert_eq!(cached.1, vec!["JsValue::Int(41)"]);
     assert_eq!((cached.3, cached.4), (1, 1));
+}
+
+#[test]
+fn scalar_tos_materialize_restores_both_operands_at_the_original_pc() {
+    let code = vec![I::PushI32(42), I::PushI32(0), I::GetArrayEl2];
+    let canonical = observation::<false>(code.clone(), 2);
+    let cached = observation::<true>(code, 2);
+    assert_eq!(canonical, cached);
+    assert_eq!(cached.0, "Materialize");
+    assert_eq!(cached.1, vec!["JsValue::Int(0)", "JsValue::Int(42)"]);
+    assert_eq!((cached.3, cached.4), (2, 2));
+}
+
+#[test]
+fn scalar_tos_unwind_restores_committed_stack_and_program_counter_together() {
+    let runtime = Runtime::new();
+    let context = runtime.new_context();
+    let (mut execution, id) = fixture(&runtime, context.realm, vec![I::ReturnUndefined], 2);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let frame = execution.frames.current_mut(id).unwrap();
+        // Match the declaration/drop order in run_with_modes. A live Runtime
+        // borrow also prevents restoration from accidentally calling the heap.
+        let _borrow = runtime.0.state.borrow_mut();
+        let mut transaction = execution
+            .slots
+            .frame_transaction_with_scalar_tos(&mut frame.cold.window)
+            .unwrap();
+        let mut pc = super::super::ProgramCounter::new(&mut frame.fault_pc, &mut frame.resume_pc);
+        transaction.slots().push(JsValue::Int(41)).unwrap();
+        transaction.slots().push(JsValue::Int(42)).unwrap();
+        pc.fault = 7;
+        pc.resume = 8;
+        panic!("combined stack/PC unwind probe");
+    }));
+    assert!(result.is_err());
+    let frame = execution.frames.current_mut(id).unwrap();
+    assert_eq!((frame.fault_pc, frame.resume_pc), (7, 8));
+    assert_eq!(execution.slots.depth(&frame.window), 2);
+    assert!(matches!(
+        execution.slots.peek(&frame.window, 0).unwrap(),
+        JsValue::Int(42)
+    ));
+    assert!(matches!(
+        execution.slots.peek(&frame.window, 1).unwrap(),
+        JsValue::Int(41)
+    ));
 }
 
 #[cfg(feature = "profiling")]
@@ -191,7 +237,7 @@ fn scalar_tos_run_really_retains_cache_between_short_facades() {
         ],
         2,
     );
-    assert_eq!(result.2, "Some(Int(42))");
+    assert_eq!(result.2, "Some(JsValue::Int(42))");
     let costs = profile.snapshot();
     for event in ["tos.commit", "tos.hit"] {
         assert!(

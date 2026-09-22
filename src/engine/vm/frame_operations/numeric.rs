@@ -91,6 +91,7 @@ pub(in crate::engine::vm) fn try_complete_primitive(
         }
     };
     if !kind.primitive_arithmetic() {
+        #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
         drop(transaction);
         return match NumericStep::start(runtime, kind, left, right) {
             Ok(step) => crate::engine::vm::proxy_get_driver::start_numeric(
@@ -132,6 +133,7 @@ pub(in crate::engine::vm) fn try_complete_primitive(
     if let Some(value) = previous {
         let _ = runtime.release_jsvalue(value);
     }
+    #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
     drop(transaction);
     frame.resume_pc = result?;
     #[cfg(feature = "profiling")]

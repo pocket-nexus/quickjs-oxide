@@ -1,4 +1,6 @@
-use super::{Error, FrameBinding, FrameWindow, JsValue, ScalarTos, SlotStore, event, record_install, scalar};
+use super::{
+    Error, FrameBinding, FrameWindow, JsValue, ScalarTos, SlotStore, event, record_install, scalar,
+};
 use crate::engine::value::number::operations::Number;
 #[cfg(feature = "profiling")]
 use crate::engine::vm::stack::{Cost, record_owned_storage};
@@ -11,7 +13,10 @@ impl SlotStore {
         window: &FrameWindow,
         tos: &ScalarTos,
     ) -> Result<Option<(usize, Number, Number)>, Error> {
-        let offset = window.depth.checked_sub(2).ok_or_else(Self::operand_stack_underflow)?;
+        let offset = window
+            .depth
+            .checked_sub(2)
+            .ok_or_else(Self::operand_stack_underflow)?;
         let index = window.operands().start + offset;
         let left = tos.peek(self, window, 1)?;
         let right = tos.peek(self, window, 0)?;
@@ -39,7 +44,9 @@ impl SlotStore {
         // backing, once, rather than declining and replaying the callback.
         let cached_input = tos.value.is_some();
         tos.value = None;
-        if !cached_input { self.slots[index + 1] = None; }
+        if !cached_input {
+            self.slots[index + 1] = None;
+        }
         let cached_result = scalar(&result);
         if cached_result {
             self.slots[index] = None;
@@ -56,8 +63,12 @@ impl SlotStore {
         }
         event("binary_number_in_place");
         event("tos.backing_operand_write");
-        if !cached_input { event("tos.backing_operand_write"); }
-        if cached_result { event("tos.commit"); }
+        if !cached_input {
+            event("tos.backing_operand_write");
+        }
+        if cached_result {
+            event("tos.commit");
+        }
         Ok(true)
     }
 
@@ -74,7 +85,9 @@ impl SlotStore {
         let cached_input = tos.value.is_some();
         tos.value = None;
         self.slots[index] = None;
-        if !cached_input { self.slots[index + 1] = None; }
+        if !cached_input {
+            self.slots[index + 1] = None;
+        }
         window.depth -= 2;
         #[cfg(feature = "profiling")]
         {
@@ -83,7 +96,9 @@ impl SlotStore {
         }
         event("number_pair_consumed_in_place");
         event("tos.backing_operand_write");
-        if !cached_input { event("tos.backing_operand_write"); }
+        if !cached_input {
+            event("tos.backing_operand_write");
+        }
         Ok(Some(result))
     }
 
@@ -98,9 +113,14 @@ impl SlotStore {
         let FrameBinding::Direct(previous) = self.local_current(window, index)? else {
             return Ok(false);
         };
-        let Some(previous) = previous.as_number_repr() else { return Ok(false); };
+        let Some(previous) = previous.as_number_repr() else {
+            return Ok(false);
+        };
         let (replacement, result) = operation(previous);
-        let destination = result.as_ref().map(|_| self.operand_push_index(window)).transpose()?;
+        let destination = result
+            .as_ref()
+            .map(|_| self.operand_push_index(window))
+            .transpose()?;
         // Authenticate the local place before taking any cached owner.
         let local = window.locals().start + usize::from(index);
         let _ = &self.slots[local];

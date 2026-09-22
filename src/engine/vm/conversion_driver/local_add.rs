@@ -178,6 +178,8 @@ pub(in crate::engine::vm) fn complete_local_add(
                 else {
                     return Err(error);
                 };
+                #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
+                drop(transaction);
                 // The JavaScript error is the only observation point; publish the
                 // canonical Add PC first (the frame is materialized for AddLocal).
                 if frame.active_frame.is_materialized() {

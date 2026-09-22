@@ -45,7 +45,7 @@ wasm-bindgen = "=0.2.126"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(oxide_quick_projection)', 'cfg(oxide_scalar_tos)', 'cfg(oxide_store_drop_fusion)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(oxide_quick_projection)', 'cfg(oxide_scalar_tos)', 'cfg(oxide_store_drop_fusion)', 'cfg(oxide_owned_tos)', 'cfg(oxide_quick_dispatch)'] }
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 

@@ -1,10 +1,13 @@
-//! Experimental scalar top, owned only by an authenticated frame transaction.
-use super::{Error, FrameBinding, FrameWindow, JsValue, SlotStore};
+//! Experimental top, owned only by an authenticated frame transaction.
 #[cfg(feature = "profiling")]
 use super::{Cost, record_owned_storage};
+use super::{Error, FrameBinding, FrameWindow, JsValue, SlotStore};
 
 /// The occupied entry owns the logical top; its authenticated backing hole is
-/// empty. No heap-backed value is admitted, even when it is a JS primitive.
+/// empty. Ordinary pushes admit only six edge-free scalar kinds. The separate
+/// numeric-output admission may move a String or heap BigInt into this same
+/// hole; it neither retains the value nor borrows a Runtime. The historical
+/// name distinguishes this small cache from the canonical operand storage.
 pub(super) struct ScalarTos {
     value: Option<JsValue>,
     hole: usize,
@@ -12,7 +15,15 @@ pub(super) struct ScalarTos {
 
 impl ScalarTos {
     pub(super) fn new() -> Self {
-        Self { value: None, hole: 0 }
+        Self {
+            value: None,
+            hole: 0,
+        }
+    }
+
+    #[cfg(any(test, oxide_owned_tos))]
+    pub(super) fn has_owned_numeric_output(&self) -> bool {
+        self.value.as_ref().is_some_and(owned_numeric_output)
     }
 
     /// Pure move for transaction Drop. In particular, do not call profiling
@@ -28,7 +39,10 @@ impl ScalarTos {
     fn debug_validate(&self, store: &SlotStore, window: &FrameWindow) {
         #[cfg(debug_assertions)]
         if let Some(value) = &self.value {
-            debug_assert!(scalar(value));
+            let admitted = scalar(value);
+            #[cfg(any(test, oxide_owned_tos))]
+            let admitted = admitted || owned_numeric_output(value);
+            debug_assert!(admitted);
             debug_assert!(window.depth > 0 && window.depth <= window.operands().len());
             debug_assert_eq!(self.hole, window.operands().start + window.depth - 1);
             debug_assert!(store.slots[self.hole].is_none());
@@ -37,7 +51,12 @@ impl ScalarTos {
         let _ = (store, window);
     }
 
-    pub(super) fn canonicalize(&mut self, store: &mut SlotStore, window: &FrameWindow, reason: &'static str) {
+    pub(super) fn canonicalize(
+        &mut self,
+        store: &mut SlotStore,
+        window: &FrameWindow,
+        reason: &'static str,
+    ) {
         self.debug_validate(store, window);
         if self.value.is_some() {
             self.restore(store);
@@ -95,6 +114,11 @@ pub(super) fn scalar(value: &JsValue) -> bool {
     )
 }
 
+#[cfg(any(test, oxide_owned_tos))]
+fn owned_numeric_output(value: &JsValue) -> bool {
+    matches!(value, JsValue::String(_) | JsValue::BigInt(_))
+}
+
 #[inline]
 fn event(name: &'static str) {
     #[cfg(feature = "profiling")]
@@ -109,7 +133,11 @@ fn record_install((spilled, cached): (bool, bool)) {
         event("tos.spill.push_next");
         event("tos.backing_operand_write");
     }
-    event(if cached { "tos.commit" } else { "tos.backing_operand_write" });
+    event(if cached {
+        "tos.commit"
+    } else {
+        "tos.backing_operand_write"
+    });
 }
 
 impl SlotStore {
@@ -144,6 +172,32 @@ impl SlotStore {
         Ok(())
     }
 
+    /// Move an already-owned numeric result only after authenticating its
+    /// backing destination. Decline and every error leave the pending owner
+    /// and any previously cached top untouched.
+    #[cfg(any(test, oxide_owned_tos))]
+    pub(super) fn tos_cache_numeric_output(
+        &mut self,
+        window: &mut FrameWindow,
+        tos: &mut ScalarTos,
+        value: &mut Option<JsValue>,
+    ) -> Result<bool, Error> {
+        if !value.as_ref().is_some_and(owned_numeric_output) {
+            return Ok(false);
+        }
+        tos.debug_validate(self, window);
+        let index = self.operand_push_index(window)?;
+        let spilled = tos.value.is_some();
+        let next = value.take().expect("authenticated owning numeric output");
+        tos.restore(self);
+        tos.hole = index;
+        tos.value = Some(next);
+        self.tos_pushed(window);
+        record_install((spilled, true));
+        event("tos.owned_numeric_output");
+        Ok(true)
+    }
+
     fn tos_pushed(&mut self, window: &mut FrameWindow) {
         window.depth += 1;
         #[cfg(feature = "profiling")]
@@ -167,9 +221,12 @@ impl SlotStore {
             event("tos.backing_operand_write");
             return Ok(value);
         }
-        let depth = window.depth.checked_sub(1).ok_or_else(Self::operand_stack_underflow)?;
+        let depth = window
+            .depth
+            .checked_sub(1)
+            .ok_or_else(Self::operand_stack_underflow)?;
         // The index and empty hole were certified by the successful admission.
-        let value = tos.value.take().expect("authenticated scalar top");
+        let value = tos.value.take().expect("authenticated cached top");
         window.depth = depth;
         #[cfg(feature = "profiling")]
         {
@@ -182,6 +239,8 @@ impl SlotStore {
 }
 
 mod number;
+#[cfg(test)]
+mod owned_tests;
 mod store;
 #[cfg(test)]
 mod tests;

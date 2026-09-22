@@ -18,17 +18,38 @@ pub(in crate::engine::vm) enum LinkedReadCompletion {
 pub(in crate::engine::vm) struct FrameTransaction<'a> {
     store: &'a mut SlotStore,
     window: &'a mut FrameWindow,
-    #[cfg(any(test, oxide_scalar_tos))]
+    #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
     tos: Option<super::tos::ScalarTos>,
 }
 impl FrameTransaction<'_> {
+    /// Dedicated admission for a completed numeric String/heap-BigInt output.
+    /// Ordinary push remains scalar-only. A canonical transaction declines;
+    /// decline/error preserve the pending owner for the caller's normal path.
+    #[cfg(any(test, oxide_owned_tos))]
+    pub(in crate::engine::vm) fn cache_numeric_output(
+        &mut self,
+        value: &mut Option<JsValue>,
+    ) -> Result<bool, Error> {
+        let Some(tos) = &mut self.tos else {
+            return Ok(false);
+        };
+        self.store.tos_cache_numeric_output(self.window, tos, value)
+    }
+
+    #[cfg(any(test, oxide_owned_tos))]
+    pub(in crate::engine::vm) fn has_owned_numeric_output(&self) -> bool {
+        self.tos
+            .as_ref()
+            .is_some_and(|tos| tos.has_owned_numeric_output())
+    }
+
     #[inline]
     pub(in crate::engine::vm) fn canonicalize(&mut self, reason: &'static str) {
-        #[cfg(any(test, oxide_scalar_tos))]
+        #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
         if let Some(tos) = &mut self.tos {
             tos.canonicalize(self.store, self.window, reason);
         }
-        #[cfg(not(any(test, oxide_scalar_tos)))]
+        #[cfg(not(any(test, oxide_scalar_tos, oxide_owned_tos)))]
         let _ = reason;
     }
 
@@ -39,29 +60,40 @@ impl FrameTransaction<'_> {
         RunSlots {
             store: self.store,
             window: self.window,
-            #[cfg(any(test, oxide_scalar_tos))]
+            #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
             tos: None,
         }
     }
 
     pub(in crate::engine::vm) fn peek(&self, offset: usize) -> Result<&JsValue, Error> {
-        #[cfg(any(test, oxide_scalar_tos))]
+        #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
         if let Some(tos) = &self.tos {
             return tos.peek(self.store, self.window, offset);
         }
         self.store.peek_current(self.window, offset)
     }
     pub(in crate::engine::vm) fn validate_call_value_domains(
-        &mut self,
+        &self,
         runtime: &Runtime,
         count: usize,
         method: bool,
     ) -> Result<bool, Error> {
-        self.canonicalize("tos.spill.call");
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("call_value_domain_validation");
-        self.store
-            .validate_call_value_domains_current(self.window, runtime, count, method)
+        // Authentication is read-only and may coexist with a borrowed callable.
+        // Read the logical stack, including a cached top, without moving owners.
+        let _ = runtime;
+        if method {
+            self.peek(
+                count
+                    .checked_add(1)
+                    .ok_or_else(SlotStore::operand_stack_underflow)?,
+            )?;
+        }
+        for offset in (0..count).rev() {
+            self.peek(offset)?;
+        }
+        Ok(true)
     }
     pub(in crate::engine::vm) fn take_native_call_operands(
         &mut self,
@@ -180,13 +212,13 @@ impl FrameTransaction<'_> {
         RunSlots {
             store: self.store,
             window: self.window,
-            #[cfg(any(test, oxide_scalar_tos))]
+            #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
             tos: self.tos.as_mut(),
         }
     }
 }
 
-#[cfg(any(test, oxide_scalar_tos))]
+#[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
 impl Drop for FrameTransaction<'_> {
     fn drop(&mut self) {
         if let Some(tos) = &mut self.tos {
@@ -204,12 +236,12 @@ impl SlotStore {
         Ok(FrameTransaction {
             store: self,
             window,
-            #[cfg(any(test, oxide_scalar_tos))]
+            #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
             tos: None,
         })
     }
 
-    #[cfg(any(test, oxide_scalar_tos))]
+    #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
     pub(in crate::engine::vm) fn frame_transaction_with_scalar_tos<'a>(
         &'a mut self,
         window: &'a mut FrameWindow,
@@ -277,7 +309,7 @@ impl SlotStore {
                     let mut slots = RunSlots {
                         store: self,
                         window,
-                        #[cfg(any(test, oxide_scalar_tos))]
+                        #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
                         tos: None,
                     };
                     #[cfg(feature = "profiling")]
@@ -311,17 +343,24 @@ impl SlotStore {
 pub(in crate::engine::vm) struct RunSlots<'a> {
     pub(super) store: &'a mut SlotStore,
     pub(super) window: &'a mut FrameWindow,
-    #[cfg(any(test, oxide_scalar_tos))]
+    #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
     pub(super) tos: Option<&'a mut super::tos::ScalarTos>,
 }
 impl RunSlots<'_> {
+    #[cfg(any(test, oxide_owned_tos))]
+    pub(in crate::engine::vm) fn has_owned_numeric_output(&self) -> bool {
+        self.tos
+            .as_deref()
+            .is_some_and(|tos| tos.has_owned_numeric_output())
+    }
+
     #[inline]
     pub(in crate::engine::vm) fn canonicalize(&mut self, reason: &'static str) {
-        #[cfg(any(test, oxide_scalar_tos))]
+        #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
         if let Some(tos) = self.tos.as_deref_mut() {
             tos.canonicalize(self.store, self.window, reason);
         }
-        #[cfg(not(any(test, oxide_scalar_tos)))]
+        #[cfg(not(any(test, oxide_scalar_tos, oxide_owned_tos)))]
         let _ = reason;
     }
 
@@ -358,7 +397,7 @@ impl RunSlots<'_> {
         self.window.depth
     }
     pub(in crate::engine::vm) fn peek(&self, from_top: usize) -> Result<&JsValue, Error> {
-        #[cfg(any(test, oxide_scalar_tos))]
+        #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
         if let Some(tos) = self.tos.as_deref() {
             return tos.peek(self.store, self.window, from_top);
         }
@@ -366,7 +405,7 @@ impl RunSlots<'_> {
     }
 
     pub(in crate::engine::vm) fn push(&mut self, value: JsValue) -> Result<(), Error> {
-        #[cfg(any(test, oxide_scalar_tos))]
+        #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
         if let Some(tos) = self.tos.as_deref_mut() {
             return self.store.tos_push(self.window, tos, value);
         }
@@ -378,7 +417,7 @@ impl RunSlots<'_> {
         &mut self,
         value: &mut Option<JsValue>,
     ) -> Result<(), Error> {
-        #[cfg(any(test, oxide_scalar_tos))]
+        #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
         if let Some(tos) = self.tos.as_deref_mut() {
             return self.store.tos_push_pending(self.window, tos, value);
         }
@@ -397,7 +436,7 @@ impl RunSlots<'_> {
     // Preserve the direct SlotStore call at numeric operand consumers.
     #[inline]
     pub(in crate::engine::vm) fn pop(&mut self) -> Result<JsValue, Error> {
-        #[cfg(any(test, oxide_scalar_tos))]
+        #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
         if let Some(tos) = self.tos.as_deref_mut() {
             return self.store.tos_pop(self.window, tos);
         }
@@ -478,9 +517,11 @@ impl RunSlots<'_> {
         index: u16,
         mode: StoreMode,
     ) -> Result<Option<FrameBinding>, Error> {
-        #[cfg(any(test, oxide_scalar_tos))]
+        #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
         if let Some(tos) = self.tos.as_deref_mut() {
-            return self.store.tos_store_local(self.window, tos, runtime, index, mode);
+            return self
+                .store
+                .tos_store_local(self.window, tos, runtime, index, mode);
         }
         self.store
             .store_local_from_top_current(self.window, runtime, index, mode)
@@ -492,9 +533,11 @@ impl RunSlots<'_> {
         index: u16,
         mode: StoreMode,
     ) -> Result<Option<FrameBinding>, Error> {
-        #[cfg(any(test, oxide_scalar_tos))]
+        #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
         if let Some(tos) = self.tos.as_deref_mut() {
-            return self.store.tos_store_parameter(self.window, tos, runtime, index, mode);
+            return self
+                .store
+                .tos_store_parameter(self.window, tos, runtime, index, mode);
         }
         self.store
             .store_parameter_from_top_current(self.window, runtime, index, mode)
@@ -564,7 +607,9 @@ impl RunSlots<'_> {
             JsValue::String(id) => {
                 if !keep_key
                     && !matches!(
-                        runtime.slot_value_release_readiness_jsvalue(self.store.peek_current(self.window, 0)?),
+                        runtime.slot_value_release_readiness_jsvalue(
+                            self.store.peek_current(self.window, 0)?
+                        ),
                         Ok(crate::engine::heap::SlotReleaseReadiness::Ready)
                     )
                 {
@@ -579,7 +624,9 @@ impl RunSlots<'_> {
             }
             _ => return Ok(false),
         };
-        let Some(value) = runtime.try_dense_array_kept_read(self.store.peek_current(self.window, 1)?, index) else {
+        let Some(value) =
+            runtime.try_dense_array_kept_read(self.store.peek_current(self.window, 1)?, index)
+        else {
             return Ok(false);
         };
         if !keep_key {
@@ -633,7 +680,7 @@ impl RunSlots<'_> {
             crate::engine::value::number::operations::Number,
         ) -> JsValue,
     ) -> Result<bool, Error> {
-        #[cfg(any(test, oxide_scalar_tos))]
+        #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
         if let Some(tos) = self.tos.as_deref_mut() {
             return self.store.tos_binary_number(self.window, tos, operation);
         }
@@ -646,9 +693,11 @@ impl RunSlots<'_> {
             crate::engine::value::number::operations::Number,
         ) -> bool,
     ) -> Result<Option<bool>, Error> {
-        #[cfg(any(test, oxide_scalar_tos))]
+        #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
         if let Some(tos) = self.tos.as_deref_mut() {
-            return self.store.tos_consume_number_pair(self.window, tos, operation);
+            return self
+                .store
+                .tos_consume_number_pair(self.window, tos, operation);
         }
         self.store
             .consume_number_pair_current(self.window, operation)
@@ -664,9 +713,11 @@ impl RunSlots<'_> {
             Option<crate::engine::value::number::operations::Number>,
         ),
     ) -> Result<bool, Error> {
-        #[cfg(any(test, oxide_scalar_tos))]
+        #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
         if let Some(tos) = self.tos.as_deref_mut() {
-            return self.store.tos_update_number_local(self.window, tos, index, operation);
+            return self
+                .store
+                .tos_update_number_local(self.window, tos, index, operation);
         }
         self.store
             .update_number_local_current(self.window, index, operation)
