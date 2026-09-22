@@ -241,6 +241,31 @@ impl Runtime {
         state.heap.retain_object_shared(id)
     }
 
+    /// Trusted duplicate of an object handle the caller proves live by holding
+    /// another owned edge across the whole operation (for example a receiver
+    /// argv edge, or a collection record edge owned by a live receiver).
+    ///
+    /// Skips the redundant slot identity revalidation on the hot path; debug
+    /// builds still assert full identity through [`Heap::retain_object_fast`],
+    /// and trace diagnostics fall back to the fully validated path. The count
+    /// saturates at `u32::MAX` exactly like the established fast retain used
+    /// by the inline caches.
+    #[inline]
+    #[track_caller]
+    pub(crate) fn retain_live_object_handle(&self, id: ObjectId) -> Result<(), HeapError> {
+        #[cfg(debug_assertions)]
+        if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
+            return self.retain_object_handle(id);
+        }
+        if let Ok(state) = self.0.state.try_borrow() {
+            state.heap.retain_object_fast(id);
+            return Ok(());
+        }
+        // The state is mutably borrowed: report the same boundary error the
+        // fully validated retain would surface here.
+        self.retain_object_handle(id)
+    }
+
     #[track_caller]
     pub(crate) fn release_object_handle(&self, id: ObjectId) {
         #[cfg(debug_assertions)]
@@ -527,6 +552,12 @@ impl Drop for ConvertedValue<'_> {
 impl RuntimeState {
     #[inline]
     fn release_heap_reference(&mut self, id: RawId) -> Result<(), RuntimeError> {
+        // Nonfinal shared decrements are the VM hot path; they cannot produce
+        // cleanup or queue work. Possible finalizations, older queued nodes,
+        // and invalid handles all decline into the full checked path.
+        if self.heap.try_release_nonfinal(id) {
+            return Ok(());
+        }
         if let Some(cleanup) = self.heap.release_reference(id)? {
             self.apply_cleanup(cleanup)?;
         }

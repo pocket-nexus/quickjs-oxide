@@ -5,6 +5,9 @@ use super::{Error, FrameBinding, FrameWindow, SlotStore};
 use crate::engine::value::number::operations::Number;
 
 impl SlotStore {
+    // Keep fused compare-branch at one call level even when the caller's own
+    // inlining decision flips between builds.
+    #[inline]
     pub(super) fn consume_number_pair_current(
         &mut self,
         window: &mut FrameWindow,
@@ -13,14 +16,14 @@ impl SlotStore {
         let offset = window
             .depth
             .checked_sub(2)
-            .ok_or_else(|| Error::internal("owned operand stack underflow"))?;
+            .ok_or_else(Self::operand_stack_underflow)?;
         let index = window.operands().start + offset;
         let [
             Some(FrameBinding::Direct(left)),
             Some(FrameBinding::Direct(right)),
         ] = &self.slots[index..index + 2]
         else {
-            return Err(Error::internal("owned operand slot is not a value"));
+            return Err(Self::operand_slot_not_a_value());
         };
         let (Some(left), Some(right)) = (left.as_number_repr(), right.as_number_repr()) else {
             return Ok(None);

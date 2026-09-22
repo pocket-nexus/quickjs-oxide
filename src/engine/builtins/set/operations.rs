@@ -208,6 +208,15 @@ impl SetResume {
             .clone()
             .ok_or(RuntimeError::Invariant("Set operation result missing"))
     }
+    /// Borrowed identity of the resident result owner for record mutations.
+    fn result_id(&self) -> Result<crate::engine::heap::ObjectId, RuntimeError> {
+        Ok(self
+            .0
+            .result
+            .as_ref()
+            .ok_or(RuntimeError::Invariant("Set operation result missing"))?
+            .object_id())
+    }
     fn complete(self) -> Result<SetStep, RuntimeError> {
         let value = match self.0.kind {
             SetOperation::Disjoint | SetOperation::Subset | SetOperation::Superset => {
@@ -262,18 +271,24 @@ impl SetResume {
         ))
     }
     fn probe(mut self, runtime: &Runtime) -> Result<SetStep, RuntimeError> {
+        // Borrow the resident owner instead of cloning a root per record; the
+        // resume state keeps `set`/`result` alive across this whole probe.
         let source = if matches!(self.0.kind, SetOperation::Difference) {
-            self.result()?
+            self.0
+                .result
+                .as_ref()
+                .ok_or(RuntimeError::Invariant("Set operation result missing"))?
+                .object_id()
         } else {
-            self.0.set.clone()
+            self.0.set.object_id()
         };
         let Some((record_index, value)) =
-            runtime.next_live_set_record(&source, &mut self.0.index)?
+            runtime.next_live_set_record_id(source, &mut self.0.index)?
         else {
             return self.complete();
         };
         let record = runtime.push_active_collection_record(ActiveCollectionRecord::Set {
-            object: source.object_id(),
+            object: source,
             index: record_index,
         });
         let arguments = vec![runtime.dup_jsvalue(&value)?];
@@ -293,9 +308,7 @@ impl SetResume {
     }
     fn next_step(mut self, runtime: &Runtime) -> Result<SetStep, RuntimeError> {
         let callable = match &self.0.next {
-            JsValue::Object(id) => {
-                runtime.as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)?
-            }
+            JsValue::Object(id) => runtime.as_callable_object(*id)?,
             _ => None,
         };
         let Some(callable) = callable else {
@@ -360,8 +373,7 @@ impl SetResume {
                     )));
                 }
                 let callable = match &value {
-                    JsValue::Object(id) => runtime
-                        .as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)?,
+                    JsValue::Object(id) => runtime.as_callable_object(*id)?,
                     _ => None,
                 };
                 runtime.release_jsvalue(value)?;
@@ -443,12 +455,20 @@ impl SetResume {
                     }
                     SetOperation::Intersection if present => {
                         if let Some(item) = item.take() {
-                            runtime.insert_set_record(&self.result()?, item)?;
+                            // The resident result owner outlives this borrowed
+                            // mutation; no per-record root clone is needed.
+                            let result = self.result_id()?;
+                            let inserted = runtime.insert_set_record_borrowed(result, &item);
+                            runtime.release_jsvalue(item)?;
+                            inserted?;
                         }
                     }
                     SetOperation::Difference if present => {
                         if let Some(item) = item.take() {
-                            runtime.delete_set_record(&self.result()?, item)?;
+                            let result = self.result_id()?;
+                            let deleted = runtime.delete_set_record_borrowed(result, &item);
+                            runtime.release_jsvalue(item)?;
+                            deleted?;
                         }
                     }
                     _ => {}
@@ -460,8 +480,7 @@ impl SetResume {
             }
             Phase::CloseMethod => {
                 let callable = match &value {
-                    JsValue::Object(id) => runtime
-                        .as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)?,
+                    JsValue::Object(id) => runtime.as_callable_object(*id)?,
                     _ => None,
                 };
                 runtime.release_jsvalue(value)?;

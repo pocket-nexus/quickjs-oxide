@@ -43,6 +43,15 @@ impl Heap {
         }
     }
 
+    /// Trusted shared read for a live `BigIntId` held by an owning edge.
+    #[inline]
+    pub(crate) fn bigint_fast(&self, id: BigIntId) -> &JsBigInt {
+        match &self.live_node_fast(RawId::BigInt(id)).data {
+            NodeData::BigInt(value) => value,
+            _ => unreachable!("trusted bigint handle reached another node payload"),
+        }
+    }
+
     /// Replace a consumed operand's payload only when its arena edge is unique.
     /// Callers must own (not merely borrow) that edge and transfer it to the result.
     /// The old Rc payload may still be shared by public values or other nodes;

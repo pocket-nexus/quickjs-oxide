@@ -395,6 +395,51 @@ impl Runtime {
         Ok(NativeConversion::Value(*id))
     }
 
+    /// Root one collection-stored payload as an owned internal value.
+    ///
+    /// Immediates copy without touching the heap; handle payloads retain
+    /// their edge directly. This replaces the generic `JsValue::from_raw` +
+    /// `dup_jsvalue` round trip on the `Map.prototype.get` hot path, which
+    /// spilled the 16-byte value through overlapping stack temporaries.
+    pub(in crate::engine::builtins) fn retain_collection_stored_value(
+        &self,
+        value: RawValue,
+    ) -> Result<JsValue, RuntimeError> {
+        Ok(match value {
+            RawValue::Undefined => JsValue::Undefined,
+            RawValue::Null => JsValue::Null,
+            RawValue::Bool(value) => JsValue::Bool(value),
+            RawValue::Int(value) => JsValue::Int(value),
+            RawValue::Float(value) => JsValue::Float(value),
+            RawValue::ShortBigInt(value) => JsValue::ShortBigInt(value),
+            RawValue::String(id) => {
+                self.retain_string_handle(id)?;
+                JsValue::String(id)
+            }
+            RawValue::BigInt(id) => {
+                self.retain_bigint_handle(id)?;
+                JsValue::BigInt(id)
+            }
+            RawValue::Object(id) => {
+                // The collection record owns this edge and the live receiver
+                // keeps the record alive for the whole native call, so the
+                // trusted retain skips the redundant identity revalidation.
+                self.retain_live_object_handle(id)?;
+                JsValue::Object(id)
+            }
+            RawValue::Symbol(index) => {
+                let atom = self.0.state.borrow().atoms.brand(index)?;
+                self.retain_atom_handle(atom)?;
+                JsValue::Symbol(index)
+            }
+            RawValue::Private(_) | RawValue::Uninitialized | RawValue::Exception => {
+                return Err(RuntimeError::Invariant(
+                    "collection record stored an internal value sentinel",
+                ));
+            }
+        })
+    }
+
     pub(in crate::engine::builtins) fn normalized_map_key(value: JsValue) -> JsValue {
         match value {
             JsValue::Float(0.0) => JsValue::Int(0),
@@ -517,7 +562,12 @@ impl Runtime {
             "Map.prototype.set value argv was not padded",
         ))?;
         self.set_map_record_borrowed(map, key, value)?;
-        Ok(Completion::Return(self.dup_jsvalue(&JsValue::Object(map))?))
+        // Return the receiver without routing the already-validated object id
+        // through the generic `dup_jsvalue` value round trip. The receiver argv
+        // edge keeps the map live for the whole call, so the trusted retain
+        // skips the redundant slot identity revalidation.
+        self.retain_live_object_handle(map)?;
+        Ok(Completion::Return(JsValue::Object(map)))
     }
 
     fn call_map_get(
@@ -535,14 +585,22 @@ impl Runtime {
         let key = arguments.readable.first().ok_or(RuntimeError::Invariant(
             "Map.prototype.get key argv was not padded",
         ))?;
-        let value = match self.find_map_record_id(map, key)? {
-            Some((_, value)) => self.dup_jsvalue(
-                &JsValue::from_raw(value)
-                    .ok_or(RuntimeError::Invariant("Map value is uninitialized"))?,
-            )?,
-            None => JsValue::Undefined,
-        };
-        Ok(Completion::Return(value))
+        // Build the completion per payload arm so scalar results reach the
+        // caller-provided return slot directly. Funnelling the 16-byte value
+        // through nested `Result`/`Completion` temporaries compiled into
+        // overlapping stack copies that stall on store forwarding.
+        Ok(match self.find_map_record_id(map, key)? {
+            None => Completion::Return(JsValue::Undefined),
+            Some((_, RawValue::Undefined)) => Completion::Return(JsValue::Undefined),
+            Some((_, RawValue::Null)) => Completion::Return(JsValue::Null),
+            Some((_, RawValue::Bool(value))) => Completion::Return(JsValue::Bool(value)),
+            Some((_, RawValue::Int(value))) => Completion::Return(JsValue::Int(value)),
+            Some((_, RawValue::Float(value))) => Completion::Return(JsValue::Float(value)),
+            Some((_, RawValue::ShortBigInt(value))) => {
+                Completion::Return(JsValue::ShortBigInt(value))
+            }
+            Some((_, value)) => Completion::Return(self.retain_collection_stored_value(value)?),
+        })
     }
 
     fn call_map_has(
@@ -806,25 +864,11 @@ impl Runtime {
             .heap
             .set_map_iterator_current(iterator_id, record_index)?;
         let value = match kind {
-            MapIteratorKind::Key => self.dup_jsvalue(
-                &JsValue::from_raw(key)
-                    .ok_or(RuntimeError::Invariant("Map key is uninitialized"))?,
-            )?,
-            MapIteratorKind::Value => {
-                self.dup_jsvalue(&JsValue::from_raw(value.clone()).ok_or(
-                    RuntimeError::Invariant("stored collection value is uninitialized"),
-                )?)?
-            }
+            MapIteratorKind::Key => self.retain_collection_stored_value(key)?,
+            MapIteratorKind::Value => self.retain_collection_stored_value(value.clone())?,
             MapIteratorKind::KeyAndValue => {
-                let key = self.dup_jsvalue(
-                    &JsValue::from_raw(key)
-                        .ok_or(RuntimeError::Invariant("Map key is uninitialized"))?,
-                )?;
-                let value = (|| {
-                    self.dup_jsvalue(&JsValue::from_raw(value.clone()).ok_or(
-                        RuntimeError::Invariant("stored collection value is uninitialized"),
-                    )?)
-                })();
+                let key = self.retain_collection_stored_value(key)?;
+                let value = self.retain_collection_stored_value(value.clone());
                 let value = match value {
                     Ok(value) => value,
                     Err(error) => {

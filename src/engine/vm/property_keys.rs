@@ -22,19 +22,9 @@ pub(super) fn canonical(
             PropertyKey::from_borrowed_atom(runtime.clone(), atom)
                 .map_err(|error| Error::internal(error.to_string()))
         }
-        crate::engine::value::JsValue::String(id) => {
-            let string = runtime
-                .0
-                .state
-                .borrow()
-                .heap
-                .string(*id)
-                .map_err(|error| Error::internal(error.to_string()))?
-                .clone();
-            runtime
-                .intern_property_key_js_string(&string)
-                .map_err(|error| Error::internal(error.to_string()))
-        }
+        crate::engine::value::JsValue::String(id) => runtime
+            .intern_property_key_string_id(*id)
+            .map_err(|error| Error::internal(error.to_string())),
         JsValue::Int(value) => runtime
             .intern_property_key_js_string(&super::to_js_string_jsvalue(
                 runtime,

@@ -44,6 +44,29 @@ fn is_ordinary(data: &crate::engine::heap::ObjectData) -> bool {
     )
 }
 
+/// These payloads keep every own property in their ordinary shape/slot
+/// arrays, so their reads can use the borrowed probe instead of the
+/// owned-descriptor kernel. Functions matter for the
+/// `Get(constructor, "prototype")` step of every `new` expression; strong
+/// collections and their iterators matter for uncached method reads such as
+/// `set.has`. Lazy slots (`name`, `length`, function `prototype`) are
+/// AutoInit entries and decline per slot below; collection records live in
+/// the payload, never as virtual own properties.
+fn reads_are_slot_faithful(data: &crate::engine::heap::ObjectData) -> bool {
+    matches!(
+        &data.payload,
+        ObjectPayload::NativeFunction { .. }
+            | ObjectPayload::BoundFunction { .. }
+            | ObjectPayload::BytecodeFunction { .. }
+            | ObjectPayload::Map { .. }
+            | ObjectPayload::Set { .. }
+            | ObjectPayload::WeakMap { .. }
+            | ObjectPayload::WeakSet { .. }
+            | ObjectPayload::MapIterator { .. }
+            | ObjectPayload::SetIterator { .. }
+    )
+}
+
 // The caller keeps the state borrowed until the located slot is consumed.
 fn locate(
     state: &RuntimeState,
@@ -549,7 +572,7 @@ impl Runtime {
                 && let Some(value) = data.dense_array_value(index)
             {
                 Selected::Value(value.clone())
-            } else if !is_ordinary(data) && !is_array {
+            } else if !is_ordinary(data) && !is_array && !reads_are_slot_faithful(data) {
                 return Ok(ReadProbe::Special(special_kind(data)));
             } else {
                 match locate(&state, id, atom)? {
@@ -1628,11 +1651,10 @@ mod ordinary_field_leaf_tests {
                 crate::engine::value::JsString::from_owned_utf16(vec![97, 0xd800]),
             ))
             .unwrap();
-        assert!(
-            runtime
-                .try_ordinary_field_immediate_read(&unique, &code, index)
-                .is_none()
-        );
+        // A final string owner is ready when retirement cannot allocate.
+        drop(runtime.new_object(None).unwrap());
+        let keep_capacity = runtime.new_object(None).unwrap();
+        let unique_read = runtime.try_ordinary_field_immediate_read(&unique, &code, index);
         let unique_retained = runtime.dup_jsvalue(&unique).unwrap();
         let actual = runtime
             .try_ordinary_field_immediate_read(&unique, &code, index)
@@ -1642,6 +1664,8 @@ mod ordinary_field_leaf_tests {
         runtime.release_jsvalue(proxy).unwrap();
         runtime.release_jsvalue(unique_retained).unwrap();
         runtime.release_jsvalue(unique).unwrap();
+        drop(keep_capacity);
+        assert_eq!(unique_read, Some(JsValue::Int(2)));
     }
 
     #[test]

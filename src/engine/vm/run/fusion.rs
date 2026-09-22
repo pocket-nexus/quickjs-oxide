@@ -25,6 +25,10 @@ pub(super) fn update_local(
     Ok(true)
 }
 
+// Keep the number-pair comparison inlined into `run`: without the hint the
+// inlining decision flips between builds and the comparison degrades into a
+// two-level call chain through `consume_number_pair`.
+#[inline]
 pub(super) fn compare_branch(
     slots: &mut RunSlots<'_>,
     instruction: &Instruction,

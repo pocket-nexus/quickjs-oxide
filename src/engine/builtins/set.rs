@@ -453,7 +453,7 @@ impl Runtime {
         Ok(result)
     }
     // The native invocation/argv keeps receiver and key alive until commit.
-    fn insert_set_record_borrowed(
+    pub(in crate::engine::builtins) fn insert_set_record_borrowed(
         &self,
         set: crate::engine::heap::ObjectId,
         key: &JsValue,
@@ -484,7 +484,7 @@ impl Runtime {
         released?;
         Ok(result)
     }
-    fn delete_set_record_borrowed(
+    pub(in crate::engine::builtins) fn delete_set_record_borrowed(
         &self,
         set: crate::engine::heap::ObjectId,
         key: &JsValue,
@@ -511,12 +511,21 @@ impl Runtime {
         set: &ObjectRef,
         index: &mut usize,
     ) -> Result<Option<(usize, JsValue)>, RuntimeError> {
+        self.next_live_set_record_id(set.object_id(), index)
+    }
+
+    // The caller's resident owner keeps `set` alive across this borrowed read.
+    pub(in crate::engine::builtins) fn next_live_set_record_id(
+        &self,
+        set: crate::engine::heap::ObjectId,
+        index: &mut usize,
+    ) -> Result<Option<(usize, JsValue)>, RuntimeError> {
         let record = self
             .0
             .state
             .borrow()
             .heap
-            .set_records(set.object_id())?
+            .set_records(set)?
             .next_at_or_after(*index)
             .map(|(id, record)| (id, record.key.clone()));
         let Some((record_index, key)) = record else {
@@ -527,11 +536,7 @@ impl Runtime {
             .ok_or(RuntimeError::Invariant("Set record index overflowed"))?;
         Ok(Some((
             record_index,
-            self.dup_jsvalue(
-                &JsValue::from_raw(key.clone()).ok_or(RuntimeError::Invariant(
-                    "stored collection value is uninitialized",
-                ))?,
-            )?,
+            self.retain_collection_stored_value(key)?,
         )))
     }
 
@@ -561,7 +566,12 @@ impl Runtime {
             "Set.prototype.add value argv was not padded",
         ))?;
         self.insert_set_record_borrowed(set, value)?;
-        Ok(Completion::Return(self.dup_jsvalue(&JsValue::Object(set))?))
+        // Return the receiver without routing the already-validated object id
+        // through the generic `dup_jsvalue` value round trip. The receiver argv
+        // edge keeps the set live for the whole call, so the trusted retain
+        // skips the redundant slot identity revalidation.
+        self.retain_live_object_handle(set)?;
+        Ok(Completion::Return(JsValue::Object(set)))
     }
 
     fn call_set_has(
@@ -789,9 +799,7 @@ impl Runtime {
             .borrow_mut()
             .heap
             .set_set_iterator_current(iterator_id, record_index)?;
-        let value = self.dup_jsvalue(
-            &JsValue::from_raw(key).ok_or(RuntimeError::Invariant("Set key is uninitialized"))?,
-        )?;
+        let value = self.retain_collection_stored_value(key)?;
         let value = match kind {
             SetIteratorKind::Value => value,
             SetIteratorKind::KeyAndValue => {

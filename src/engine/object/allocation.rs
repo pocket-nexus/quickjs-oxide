@@ -776,7 +776,15 @@ impl Runtime {
     /// Returns `None` for objects without `[[Call]]`; runtime-domain and stale
     /// handle failures remain explicit errors.
     pub fn as_callable(&self, object: &ObjectRef) -> Result<Option<CallableRef>, RuntimeError> {
-        self.as_callable_object(object.object_id())
+        let _operation = self.operation();
+        // A public root may belong to another runtime whose arena assigned a
+        // numerically equal handle; promoting it here would manufacture a
+        // callable for an unrelated local object. Reject foreign roots before
+        // the id is interpreted in this runtime's heap.
+        if !object.belongs_to(self) {
+            return Err(RuntimeError::WrongRuntime("object"));
+        }
+        self.as_callable_object_after_operation(object.object_id())
     }
 
     /// Handle form of [`Runtime::as_callable`]; borrows the object's edge.
@@ -785,6 +793,13 @@ impl Runtime {
         object: crate::engine::heap::ObjectId,
     ) -> Result<Option<CallableRef>, RuntimeError> {
         let _operation = self.operation();
+        self.as_callable_object_after_operation(object)
+    }
+
+    fn as_callable_object_after_operation(
+        &self,
+        object: crate::engine::heap::ObjectId,
+    ) -> Result<Option<CallableRef>, RuntimeError> {
         if !self.object_id_has_call_capability(object)? {
             return Ok(None);
         }
@@ -1120,6 +1135,37 @@ mod owned_callable_tests {
         assert!(matches!(
             runtime.direct_call_target_from_value(value).unwrap(),
             DirectCallTarget::Callable(_)
+        ));
+    }
+
+    #[test]
+    fn public_callable_promotion_rejects_foreign_matching_handles() {
+        let runtime = Runtime::new();
+        let foreign = Runtime::new();
+        let mut local_context = runtime.new_context();
+        let mut foreign_context = foreign.new_context();
+        let Value::Object(local) = local_context.eval("(function(){return 1})").unwrap() else {
+            panic!("local function");
+        };
+        let Value::Object(other) = foreign_context.eval("(function(){return 1})").unwrap() else {
+            panic!("foreign function");
+        };
+        assert_eq!(local.object_id(), other.object_id());
+        assert!(matches!(
+            runtime.as_callable(&other),
+            Err(RuntimeError::WrongRuntime("object"))
+        ));
+        assert!(
+            runtime
+                .as_callable(&local)
+                .unwrap()
+                .unwrap()
+                .belongs_to(&runtime)
+        );
+        let plain = foreign.new_object(None).unwrap();
+        assert!(matches!(
+            runtime.as_callable(&plain),
+            Err(RuntimeError::WrongRuntime("object"))
         ));
     }
 

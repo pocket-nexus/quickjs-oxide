@@ -26,7 +26,7 @@ use crate::engine::value::Value;
 /// heap handle into a public root.  Equality includes the runtime domain, so
 /// numerically equal arena handles from different runtimes never alias.
 pub struct ObjectRef {
-    runtime: Runtime,
+    runtime: Option<Runtime>,
     id: ObjectId,
 }
 
@@ -37,21 +37,27 @@ impl ObjectRef {
     /// that `id` is live in `runtime`; it deliberately does not retain again.
     #[must_use]
     pub(crate) const fn from_owned_handle(runtime: Runtime, id: ObjectId) -> Self {
-        Self { runtime, id }
+        Self {
+            runtime: Some(runtime),
+            id,
+        }
     }
 
     /// Promote a borrowed raw heap edge to a public owning root.
     pub(crate) fn from_borrowed_handle(runtime: Runtime, id: ObjectId) -> Result<Self, HeapError> {
         runtime.retain_object_handle(id)?;
-        Ok(Self { runtime, id })
+        Ok(Self {
+            runtime: Some(runtime),
+            id,
+        })
     }
 
     /// Duplicate this root without turning a runtime invariant failure into a
     /// panic.  The public [`Clone`] implementation delegates to this method.
     pub(crate) fn try_clone(&self) -> Result<Self, HeapError> {
-        self.runtime.retain_object_handle(self.id)?;
+        self.runtime().retain_object_handle(self.id)?;
         Ok(Self {
-            runtime: self.runtime.clone(),
+            runtime: Some(self.runtime().clone()),
             id: self.id,
         })
     }
@@ -59,25 +65,25 @@ impl ObjectRef {
     /// Return the runtime which owns this root.
     #[must_use]
     pub const fn runtime(&self) -> &Runtime {
-        &self.runtime
+        self.runtime.as_ref().expect("live root owns its runtime")
     }
 
     /// Return whether this object belongs to `runtime`.
     #[must_use]
     pub fn belongs_to(&self, runtime: &Runtime) -> bool {
-        self.runtime.is_same_runtime(runtime)
+        self.runtime().is_same_runtime(runtime)
     }
 
     /// Return whether two roots belong to the same runtime domain.
     #[must_use]
     pub fn is_same_runtime(&self, other: &Self) -> bool {
-        self.runtime.is_same_runtime(&other.runtime)
+        self.runtime().is_same_runtime(other.runtime())
     }
 
     /// Stable identity of the owning runtime domain.
     #[must_use]
     pub fn domain_id(&self) -> u64 {
-        self.runtime.domain_id()
+        self.runtime().domain_id()
     }
 
     /// Raw identity for runtime and heap internals.
@@ -88,17 +94,29 @@ impl ObjectRef {
 
     /// Consume this root and transfer its owned reference to the caller.
     ///
-    /// The edge count is unchanged: this root retains the edge so its own
-    /// release on drop nets to a transfer. `ObjectRef::drop` still runs, so the
-    /// owned runtime handle is disposed instead of leaked. A live root always
-    /// resolves, mirroring [`ObjectRef::clone`]'s invariant treatment.
+    /// The existing edge moves without changing its reference count. Taking
+    /// the runtime out disarms this root's `Drop`, so only its `Rc` owner is
+    /// disposed instead of paying a retain plus a queued release round trip.
+    /// A release is also a drain point for deferred cleanup; when cleanup is
+    /// pending the transfer keeps the historical retain/drop path so that
+    /// boundary still runs. Only an idle cleanup state transfers directly.
     #[must_use]
-    pub(crate) fn into_handle(self) -> ObjectId {
-        let id = self.id;
-        self.runtime
-            .retain_object_handle(id)
-            .expect("transferring a live object root must retain its handle");
-        id
+    pub(crate) fn into_handle(mut self) -> ObjectId {
+        let runtime = self.runtime();
+        let cleanup_pending = runtime.0.deferred_references.has_pending()
+            || runtime
+                .0
+                .state
+                .try_borrow()
+                .map_or(true, |state| state.heap.has_pending_zero_cleanup());
+        if cleanup_pending {
+            runtime
+                .retain_object_handle(self.id)
+                .expect("transferring a live object root must retain its handle");
+            return self.id;
+        }
+        drop(self.runtime.take());
+        self.id
     }
 }
 
@@ -112,13 +130,15 @@ impl Clone for ObjectRef {
 
 impl Drop for ObjectRef {
     fn drop(&mut self) {
-        self.runtime.release_object_handle(self.id);
+        if let Some(runtime) = self.runtime.as_ref() {
+            runtime.release_object_handle(self.id);
+        }
     }
 }
 
 impl PartialEq for ObjectRef {
     fn eq(&self, other: &Self) -> bool {
-        self.id == other.id && self.runtime.is_same_runtime(&other.runtime)
+        self.id == other.id && self.runtime().is_same_runtime(other.runtime())
     }
 }
 
@@ -126,7 +146,7 @@ impl Eq for ObjectRef {}
 
 impl Hash for ObjectRef {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.runtime.domain_id().hash(state);
+        self.runtime().domain_id().hash(state);
         self.id.hash(state);
     }
 }
@@ -135,7 +155,7 @@ impl fmt::Debug for ObjectRef {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("ObjectRef")
-            .field("domain_id", &self.runtime.domain_id())
+            .field("domain_id", &self.runtime().domain_id())
             .field("id", &self.id)
             .finish()
     }
@@ -148,7 +168,7 @@ impl fmt::Debug for ObjectRef {
 /// [`SymbolRef`].  This prevents safe callers from manufacturing a symbol out
 /// of a string atom while keeping retain/release behavior in one place.
 struct AtomOwner {
-    runtime: Runtime,
+    runtime: Option<Runtime>,
     atom: Atom,
 }
 
@@ -156,26 +176,32 @@ impl AtomOwner {
     /// Consume one atom reference already owned by the caller.
     #[must_use]
     const fn from_owned_handle(runtime: Runtime, atom: Atom) -> Self {
-        Self { runtime, atom }
+        Self {
+            runtime: Some(runtime),
+            atom,
+        }
     }
 
     /// Promote a borrowed raw atom edge to an owning root.
     fn from_borrowed_handle(runtime: Runtime, atom: Atom) -> Result<Self, AtomError> {
         runtime.retain_atom_handle(atom)?;
-        Ok(Self { runtime, atom })
+        Ok(Self {
+            runtime: Some(runtime),
+            atom,
+        })
     }
 
     fn try_clone(&self) -> Result<Self, AtomError> {
-        self.runtime.retain_atom_handle(self.atom)?;
+        self.runtime().retain_atom_handle(self.atom)?;
         Ok(Self {
-            runtime: self.runtime.clone(),
+            runtime: Some(self.runtime().clone()),
             atom: self.atom,
         })
     }
 
     #[must_use]
     const fn runtime(&self) -> &Runtime {
-        &self.runtime
+        self.runtime.as_ref().expect("live root owns its runtime")
     }
 
     #[must_use]
@@ -185,31 +211,29 @@ impl AtomOwner {
 
     #[must_use]
     fn belongs_to(&self, runtime: &Runtime) -> bool {
-        self.runtime.is_same_runtime(runtime)
+        self.runtime().is_same_runtime(runtime)
     }
 
     #[must_use]
     fn is_same_runtime(&self, other: &Self) -> bool {
-        self.runtime.is_same_runtime(&other.runtime)
+        self.runtime().is_same_runtime(other.runtime())
     }
 
     #[must_use]
     fn domain_id(&self) -> u64 {
-        self.runtime.domain_id()
+        self.runtime().domain_id()
     }
 
     /// Consume this root and transfer its owned atom reference to the caller.
     ///
-    /// The edge count is unchanged: the atom is retained here so this owner's
-    /// release on drop nets to a transfer, and the runtime handle is disposed
-    /// normally. A live root always resolves.
+    /// The atom edge moves unchanged; only this wrapper's runtime `Rc` owner
+    /// is disposed. Like a non-final shared atom release, this never drains
+    /// deferred operations, so the surrounding runtime operation remains
+    /// their boundary and no retain/release round trip is needed.
     #[must_use]
-    fn into_atom(self) -> Atom {
-        let atom = self.atom;
-        self.runtime
-            .retain_atom_handle(atom)
-            .expect("transferring a live atom root must retain its handle");
-        atom
+    fn into_atom(mut self) -> Atom {
+        drop(self.runtime.take());
+        self.atom
     }
 }
 
@@ -223,13 +247,15 @@ impl Clone for AtomOwner {
 
 impl Drop for AtomOwner {
     fn drop(&mut self) {
-        self.runtime.release_atom_handle(self.atom);
+        if let Some(runtime) = self.runtime.as_ref() {
+            runtime.release_atom_handle(self.atom);
+        }
     }
 }
 
 impl PartialEq for AtomOwner {
     fn eq(&self, other: &Self) -> bool {
-        self.atom == other.atom && self.runtime.is_same_runtime(&other.runtime)
+        self.atom == other.atom && self.runtime().is_same_runtime(other.runtime())
     }
 }
 
@@ -237,7 +263,7 @@ impl Eq for AtomOwner {}
 
 impl Hash for AtomOwner {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.runtime.domain_id().hash(state);
+        self.runtime().domain_id().hash(state);
         self.atom.hash(state);
     }
 }
@@ -246,7 +272,7 @@ impl fmt::Debug for AtomOwner {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("AtomOwner")
-            .field("domain_id", &self.runtime.domain_id())
+            .field("domain_id", &self.runtime().domain_id())
             .field("atom", &self.atom)
             .finish()
     }
@@ -697,6 +723,126 @@ impl CompleteOrdinaryPropertyDescriptor {
 mod tests {
     use super::{AccessorValue, DescriptorField, OrdinaryPropertyDescriptor};
     use crate::engine::value::Value;
+
+    #[test]
+    fn consuming_roots_transfers_edges_without_queueing_releases() {
+        use super::{AtomOwner, ObjectRef};
+        use crate::engine::api::runtime::Runtime;
+        use std::rc::Rc;
+
+        assert_eq!(size_of::<Option<Runtime>>(), size_of::<Runtime>());
+        assert_eq!(
+            size_of::<ObjectRef>(),
+            size_of::<(Runtime, crate::engine::heap::ObjectId)>()
+        );
+        assert_eq!(
+            size_of::<AtomOwner>(),
+            size_of::<(Runtime, crate::engine::atom::Atom)>()
+        );
+        let runtime = Runtime::new();
+        let object = runtime.new_object(None).unwrap();
+        let id = object.object_id();
+        let owners = Rc::strong_count(&runtime.0);
+        let (transferred, count, count_after, pending) = {
+            let state = runtime.0.state.borrow();
+            let count = state.heap.object_strong_count(id).unwrap();
+            let transferred = object.into_handle();
+            (
+                transferred,
+                count,
+                state.heap.object_strong_count(id),
+                runtime.0.deferred_references.has_pending(),
+            )
+        };
+        let owners_after = Rc::strong_count(&runtime.0);
+        runtime.release_object_handle(transferred);
+        assert_eq!(transferred, id);
+        assert_eq!(count_after.unwrap(), count);
+        assert!(!pending);
+        assert_eq!(owners_after, owners - 1);
+        assert!(runtime.0.state.borrow().heap.object(id).is_err());
+
+        let atom = runtime
+            .0
+            .state
+            .borrow_mut()
+            .atoms
+            .intern("transferred atom")
+            .unwrap();
+        let owner = AtomOwner::from_owned_handle(runtime.clone(), atom);
+        let owners = Rc::strong_count(&runtime.0);
+        let (transferred, count, count_after, pending) = {
+            let state = runtime.0.state.borrow_mut();
+            let count = state.atoms.resolve(atom).unwrap().ref_count;
+            let transferred = owner.into_atom();
+            (
+                transferred,
+                count,
+                state.atoms.resolve(atom).map(|info| info.ref_count),
+                runtime.0.deferred_references.has_pending(),
+            )
+        };
+        let owners_after = Rc::strong_count(&runtime.0);
+        runtime.release_atom_handle(transferred);
+        assert_eq!(transferred, atom);
+        assert_eq!(count_after.unwrap(), count);
+        assert!(!pending);
+        assert_eq!(owners_after, owners - 1);
+        assert!(runtime.0.state.borrow().atoms.resolve(atom).is_err());
+    }
+
+    #[test]
+    fn consuming_roots_preserves_pending_release_boundary() {
+        use super::AtomOwner;
+        use crate::engine::api::runtime::Runtime;
+
+        let runtime = Runtime::new();
+        for atom_transfer in [false, true] {
+            let object = runtime.new_object(None).unwrap();
+            let doomed = runtime.new_object(None).unwrap();
+            let doomed_id = doomed.object_id();
+            let atom = runtime
+                .0
+                .state
+                .borrow_mut()
+                .atoms
+                .intern("pending transfer")
+                .unwrap();
+            let owner = AtomOwner::from_owned_handle(runtime.clone(), atom);
+            {
+                let _state = runtime.0.state.borrow_mut();
+                drop(doomed);
+            }
+            let queued_before = runtime.0.deferred_references.has_pending();
+            let (queued_after, doomed_live) = if atom_transfer {
+                let atom = owner.into_atom();
+                let observed = (
+                    runtime.0.deferred_references.has_pending(),
+                    runtime.0.state.borrow().heap.object(doomed_id).is_ok(),
+                );
+                runtime.release_atom_handle(atom);
+                drop(object);
+                observed
+            } else {
+                let id = object.into_handle();
+                let observed = (
+                    runtime.0.deferred_references.has_pending(),
+                    runtime.0.state.borrow().heap.object(doomed_id).is_ok(),
+                );
+                runtime.release_object_handle(id);
+                drop(owner);
+                observed
+            };
+            // Dispose every transferred raw edge before assertions, so a
+            // failed expectation cannot turn into a second teardown panic.
+            let drained = runtime.drain_deferred_references();
+            assert!(queued_before);
+            assert_eq!(queued_after, atom_transfer);
+            assert_eq!(doomed_live, atom_transfer);
+            drained.unwrap();
+            assert!(runtime.0.state.borrow().heap.object(doomed_id).is_err());
+        }
+    }
 
     #[test]
     fn descriptor_field_preserves_absent_and_present_undefined() {

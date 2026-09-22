@@ -3,10 +3,58 @@ use super::ConstructorPrototypeSource;
 use crate::engine::{
     api::{runtime::Runtime, runtime_error::RuntimeError},
     heap::ContextId,
-    object::{ObjectRef, PropertyKey},
+    object::{ObjectRef, OrdinaryRead, PropertyKey},
     value::{JsValue, conversion::NativeConversion},
     vm::Completion,
 };
+
+impl Runtime {
+    /// Resolve `Get(newTarget, "prototype")` synchronously when the lookup
+    /// cannot re-enter user code (an ordinary data property, or absence with
+    /// the realm fallback). Returns `None` when a getter or Proxy trap must
+    /// run through the resumable [`ProtoSourceStep`] protocol instead.
+    ///
+    /// The constructor frame owns `new_target` for the whole construction, so
+    /// the lookup borrows it without duplicating its edge. Selecting (and
+    /// abandoning) a prepared read never invokes user code, so a decline is
+    /// unobservable.
+    pub(crate) fn constructor_prototype_source_now(
+        &self,
+        realm: ContextId,
+        new_target: &JsValue,
+    ) -> Result<Option<NativeConversion<ConstructorPrototypeSource>>, RuntimeError> {
+        if matches!(new_target, JsValue::Undefined) {
+            return Ok(Some(NativeConversion::Value(
+                ConstructorPrototypeSource::Realm(realm),
+            )));
+        }
+        let key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Prototype)?;
+        match self.prepare_value_property_read_borrowed_jsvalue(realm, new_target, &key)? {
+            OrdinaryRead::Complete(Some(JsValue::Object(prototype))) => Ok(Some(
+                NativeConversion::Value(ConstructorPrototypeSource::Explicit(
+                    ObjectRef::from_owned_handle(self.clone(), prototype),
+                )),
+            )),
+            OrdinaryRead::Complete(value) => {
+                if let Some(value) = value {
+                    self.release_jsvalue(value)?;
+                }
+                Ok(Some(
+                    match self.function_realm_from_jsvalue(realm, new_target)? {
+                        NativeConversion::Value(realm) => {
+                            NativeConversion::Value(ConstructorPrototypeSource::Realm(realm))
+                        }
+                        NativeConversion::Throw(value) => NativeConversion::Throw(value),
+                    },
+                ))
+            }
+            read @ (OrdinaryRead::Call { .. } | OrdinaryRead::Special { .. }) => {
+                read.release(self);
+                Ok(None)
+            }
+        }
+    }
+}
 pub(crate) enum ProtoSourceStep {
     Complete(NativeConversion<ConstructorPrototypeSource>),
     ReadValue {
@@ -49,10 +97,19 @@ impl ProtoSourceStep {
         realm: ContextId,
         new_target: JsValue,
     ) -> Result<Self, RuntimeError> {
-        if matches!(new_target, JsValue::Undefined) {
-            return Ok(Self::Complete(NativeConversion::Value(
-                ConstructorPrototypeSource::Realm(realm),
-            )));
+        // Complete the ordinary lookup in place: no resume Box, no duplicate
+        // of the constructor frame's `new_target` edge. Only a getter or a
+        // Proxy trap takes the resumable read below.
+        match runtime.constructor_prototype_source_now(realm, &new_target) {
+            Ok(Some(result)) => {
+                runtime.release_jsvalue(new_target)?;
+                return Ok(Self::Complete(result));
+            }
+            Ok(None) => {}
+            Err(error) => {
+                let _ = runtime.release_jsvalue(new_target);
+                return Err(error);
+            }
         }
         let mut resume = ProtoSourceResume(Box::new(ProtoSourceResumeState {
             runtime: runtime.clone(),

@@ -249,6 +249,35 @@ impl Runtime {
         }
     }
 
+    /// Trusted borrowed read of a proven live captured cell: return the cell's
+    /// object handle without creating any owner edge. The cell's own edge
+    /// keeps the object alive, so the handle stays valid until user JS runs,
+    /// the arena is mutated, or an owner is released; callers must finish
+    /// consuming it before any of those boundaries. Pending cleanup declines
+    /// exactly like the owned fast read so the canonical operation path keeps
+    /// draining it promptly.
+    #[inline]
+    pub(crate) fn borrow_cell_object_fast(
+        &self,
+        root: &impl crate::engine::heap::roots::VarRefHandle,
+    ) -> Option<crate::engine::heap::ObjectId> {
+        if !root.belongs_to(self) || self.0.deferred_references.has_pending() {
+            return None;
+        }
+        let state = self.0.state.try_borrow().ok()?;
+        if !state.heap.zero_queue.is_empty() {
+            return None;
+        }
+        let cell = state.heap.var_ref_fast(root.id());
+        if cell.kind.is_private() {
+            return None;
+        }
+        match &cell.value {
+            RawValue::Object(object) => Some(*object),
+            _ => None,
+        }
+    }
+
     /// Guarded global own-data read for an unresolved, non-lexical binding.
     /// No lookup fact escapes this borrow, and autoinit/accessor/prototype
     /// cases retain the normal environment driver. As with owned cell reads,
@@ -733,6 +762,86 @@ mod owned_cell_tests {
         }
         runtime.reset_var_ref_uninitialized(&root).unwrap();
         assert!(runtime.try_read_owned_var_ref(&root).unwrap().is_none());
+    }
+
+    #[test]
+    fn borrowed_cell_object_reads_claim_no_owner_and_decline_every_boundary() {
+        let runtime = Runtime::new();
+        let object = runtime.new_object(None).unwrap();
+        let id = object.object_id();
+        let root = runtime
+            .new_var_ref_rooted(
+                Value::Object(object),
+                false,
+                false,
+                ClosureVariableKind::Normal,
+            )
+            .unwrap();
+        let before = runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .object_strong_count(id)
+            .unwrap();
+        // The borrow hands out the live handle without any new edge.
+        assert_eq!(runtime.borrow_cell_object_fast(&root), Some(id));
+        assert_eq!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(id)
+                .unwrap(),
+            before
+        );
+        // Foreign runtime and busy state decline.
+        assert_eq!(Runtime::new().borrow_cell_object_fast(&root), None);
+        {
+            let _state = runtime.0.state.borrow_mut();
+            assert_eq!(runtime.borrow_cell_object_fast(&root), None);
+        }
+        // Pending deferred cleanup declines like the owned fast read.
+        let pending = runtime.new_object(None).unwrap();
+        {
+            let _state = runtime.0.state.borrow();
+            drop(pending);
+        }
+        assert!(runtime.0.deferred_references.has_pending());
+        assert_eq!(runtime.borrow_cell_object_fast(&root), None);
+        runtime.drain_deferred_references().unwrap();
+        assert_eq!(runtime.borrow_cell_object_fast(&root), Some(id));
+        // A pending zero queue declines before observing the cell.
+        let queued = runtime.new_object(None).unwrap();
+        let queued_id = queued.object_id();
+        runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .retain_object(queued_id)
+            .unwrap();
+        drop(queued);
+        runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .release_raw_no_drain(RawId::Object(queued_id))
+            .unwrap();
+        assert_eq!(runtime.borrow_cell_object_fast(&root), None);
+        {
+            let mut state = runtime.0.state.borrow_mut();
+            let cleanup = state.heap.drain_zero_queue().unwrap();
+            state.apply_cleanup(cleanup).unwrap();
+        }
+        assert_eq!(runtime.borrow_cell_object_fast(&root), Some(id));
+        // Non-object, uninitialized and private cells decline.
+        runtime.write_var_ref(&root, JsValue::Int(3)).unwrap();
+        assert_eq!(runtime.borrow_cell_object_fast(&root), None);
+        runtime.reset_var_ref_uninitialized(&root).unwrap();
+        assert_eq!(runtime.borrow_cell_object_fast(&root), None);
     }
 
     #[test]

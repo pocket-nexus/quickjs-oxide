@@ -310,6 +310,35 @@ fn primitive_release_owner(value: &JsValue) -> bool {
     immediate(value)
 }
 
+/// Fused "binding read + linked field read": complete the following GetField
+/// against a base object borrowed from a live binding (frame slot, this, or a
+/// captured/global cell). The binding keeps the base alive and neither the IC
+/// hit nor the immediate leaf read can execute JS, mutate the arena, or
+/// release an owner, so the canonical retain/release round trip on a
+/// temporary base owner is skipped entirely. Only the pushed property value
+/// gains a new owner edge. `None` declines back to the canonical two
+/// instruction pair, which also performs IC warm-up on misses.
+#[inline]
+fn borrowed_base_field_read(
+    runtime: &crate::engine::api::runtime::Runtime,
+    executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
+    field_pc: usize,
+    key: u32,
+    base: &JsValue,
+) -> Option<JsValue> {
+    // `keep_receiver = true` is the exact contract of this fused read: the
+    // borrowed base is never released afterwards, so the fast read must not
+    // demand the base-release readiness that canonical droppable-base reads
+    // pre-prove. The discarded native selection has no observable effect.
+    let mut native = None;
+    let value = runtime
+        .property_ic_read_fast(base, executable, field_pc, key, true, &mut native)
+        .or_else(|| runtime.try_ordinary_field_immediate_read(base, executable, key))?;
+    #[cfg(feature = "profiling")]
+    cold::event("fusion.BorrowedBaseField");
+    Some(value)
+}
+
 // Explicit drops end the NoJs slot borrow before publication or owner release.
 #[allow(clippy::drop_non_drop)]
 pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunExit, Error> {
@@ -401,12 +430,30 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     environment: *environment,
                 });
             }
-            Instruction::PushThis => {
-                let value = if let Some(value) = cold
+            Instruction::PushThis => 'push_this: {
+                let normalized = cold
                     .rare
                     .get()
-                    .and_then(|rare| rare.normalized_this.as_ref())
-                {
+                    .and_then(|rare| rare.normalized_this.as_ref());
+                // Borrowed-base fusion: the frame owns its (possibly
+                // normalized) this for the whole activation, so a following
+                // linked field read borrows it instead of copying and then
+                // releasing a temporary owner edge.
+                if let Some(Instruction::GetField(key)) = executable.code.get(next_pc) {
+                    let this_value = normalized.unwrap_or(&cold.input.this_value);
+                    if matches!(this_value, JsValue::Object(_)) {
+                        if let Some(value) =
+                            borrowed_base_field_read(runtime, executable, next_pc, *key, this_value)
+                        {
+                            #[cfg(feature = "profiling")]
+                            cold::instruction(observed_depth + 1);
+                            slots.push(value)?;
+                            next_pc += 1;
+                            break 'push_this true;
+                        }
+                    }
+                }
+                let value = if let Some(value) = normalized {
                     runtime
                         .dup_jsvalue(value)
                         .map_err(runtime_error_to_vm_error)?
@@ -674,8 +721,8 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     super::environment_driver::Operation::GlobalDelete(*index),
                 ));
             }
-            Instruction::GetVar(index) | Instruction::GetVarUndef(index) => {
-                let immediate = executable
+            Instruction::GetVar(index) | Instruction::GetVarUndef(index) => 'get_var: {
+                let root = executable
                     .closure_variables
                     .get(usize::from(*index))
                     .filter(|descriptor| {
@@ -687,8 +734,31 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                                 )
                             )
                     })
-                    .and_then(|_| cold.closure_slots.get(usize::from(*index)))
-                    .and_then(|root| super::bindings::read_run_cell(runtime, &root));
+                    .and_then(|_| cold.closure_slots.get(usize::from(*index)));
+                // Borrowed-base fusion: the live global cell keeps the base
+                // object alive across this non-reentrant linked field read,
+                // so no temporary base owner edge is created or released.
+                if let (Some(root), Some(Instruction::GetField(key))) =
+                    (root.as_ref(), executable.code.get(next_pc))
+                {
+                    if let Some(base) = runtime.borrow_cell_object_fast(root) {
+                        if let Some(value) = borrowed_base_field_read(
+                            runtime,
+                            executable,
+                            next_pc,
+                            *key,
+                            &JsValue::Object(base),
+                        ) {
+                            #[cfg(feature = "profiling")]
+                            cold::instruction(observed_depth + 1);
+                            slots.push(value)?;
+                            next_pc += 1;
+                            break 'get_var true;
+                        }
+                    }
+                }
+                let immediate =
+                    root.and_then(|root| super::bindings::read_run_cell(runtime, &root));
                 if let Some((value, _owned)) = immediate {
                     slots.push(value)?;
                     #[cfg(feature = "profiling")]
@@ -1121,7 +1191,30 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     ));
                 }
             }
-            Instruction::GetVarRef(index) | Instruction::GetVarRefCheck(index) => {
+            Instruction::GetVarRef(index) | Instruction::GetVarRefCheck(index) => 'get_var_ref: {
+                // Borrowed-base fusion: an initialized captured cell holding
+                // an object cannot be in TDZ, so the checked variant needs no
+                // separate authentication before completing the field read.
+                if let (Some(root), Some(Instruction::GetField(key))) = (
+                    cold.closure_slots.get(usize::from(*index)),
+                    executable.code.get(next_pc),
+                ) {
+                    if let Some(base) = runtime.borrow_cell_object_fast(&root) {
+                        if let Some(value) = borrowed_base_field_read(
+                            runtime,
+                            executable,
+                            next_pc,
+                            *key,
+                            &JsValue::Object(base),
+                        ) {
+                            #[cfg(feature = "profiling")]
+                            cold::instruction(observed_depth + 1);
+                            slots.push(value)?;
+                            next_pc += 1;
+                            break 'get_var_ref true;
+                        }
+                    }
+                }
                 if let Some((value, _owned)) = cold
                     .closure_slots
                     .get(usize::from(*index))
@@ -1325,12 +1418,55 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 }
                 match slots.local(*index)? {
                     FrameBinding::Direct(value) => {
-                        let copied = copy_value(runtime, value)?;
-                        slots.push(copied)?;
+                        // Borrowed-base fusion: the frame slot keeps this base
+                        // alive, so a following linked field read borrows it
+                        // instead of copying an owner edge that the read would
+                        // release right away.
+                        // Check the operand kind first: scalar-heavy loops
+                        // must not pay the next-instruction load.
+                        let fused = if matches!(value, JsValue::Object(_)) {
+                            match executable.code.get(next_pc) {
+                                Some(Instruction::GetField(key)) => borrowed_base_field_read(
+                                    runtime, executable, next_pc, *key, value,
+                                ),
+                                _ => None,
+                            }
+                        } else {
+                            None
+                        };
+                        if let Some(result) = fused {
+                            #[cfg(feature = "profiling")]
+                            cold::instruction(observed_depth + 1);
+                            slots.push(result)?;
+                            next_pc += 1;
+                        } else {
+                            let copied = copy_value(runtime, value)?;
+                            slots.push(copied)?;
+                        }
                         true
                     }
                     FrameBinding::Captured(root) => {
-                        if let Some((value, _owned)) =
+                        let fused = match executable.code.get(next_pc) {
+                            Some(Instruction::GetField(key)) => {
+                                runtime.borrow_cell_object_fast(root).and_then(|base| {
+                                    borrowed_base_field_read(
+                                        runtime,
+                                        executable,
+                                        next_pc,
+                                        *key,
+                                        &JsValue::Object(base),
+                                    )
+                                })
+                            }
+                            _ => None,
+                        };
+                        if let Some(result) = fused {
+                            #[cfg(feature = "profiling")]
+                            cold::instruction(observed_depth + 1);
+                            slots.push(result)?;
+                            next_pc += 1;
+                            true
+                        } else if let Some((value, _owned)) =
                             super::bindings::read_run_cell(runtime, &root)
                         {
                             slots.push(value)?;
@@ -1755,12 +1891,25 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         .strict_equal_jsvalue(slots.peek(1)?, slots.peek(0)?)
                         .map_err(runtime_error_to_vm_error)?
                         != negate;
-                    let observable = (0..2).any(|offset| {
-                        matches!(
-                            slots.peek(offset),
-                            Ok(JsValue::Object(_) | JsValue::Symbol(_))
-                        )
-                    });
+                    // Straight-line operand checks; see the numeric fallback
+                    // below for why a range loop is avoided here.
+                    // Destructure the Result (see the numeric fallback below):
+                    // moving the Err variant out keeps the whole-Result drop
+                    // glue off the Ok path.
+                    #[inline(always)]
+                    fn release_observable(operand: Result<&JsValue, Error>) -> bool {
+                        match operand {
+                            Ok(value) => {
+                                matches!(value, JsValue::Object(_) | JsValue::Symbol(_))
+                            }
+                            Err(error) => {
+                                drop(error);
+                                false
+                            }
+                        }
+                    }
+                    let observable =
+                        release_observable(slots.peek(0)) || release_observable(slots.peek(1));
                     if observable {
                         release_outside_slots!({
                             let right = slots.pop()?;
@@ -1920,15 +2069,28 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 if numeric::supported(&slots, kind) {
                     // Symbol release and BigInt errors may observe the stack.
                     // Number/String/bool coercions cannot construct a JS error.
+                    // Straight-line operand checks: a range loop materializes
+                    // the peek Result in memory and keeps its drop glue on the
+                    // success path of every iteration.
+                    // Destructure the Result instead of matching a temporary:
+                    // moving the Err variant out keeps the whole-Result drop
+                    // glue off the Ok path.
+                    #[inline(always)]
+                    fn observes_stack(operand: Result<&JsValue, Error>) -> bool {
+                        match operand {
+                            Ok(value) => matches!(
+                                value,
+                                JsValue::Symbol(_) | JsValue::BigInt(_) | JsValue::ShortBigInt(_)
+                            ),
+                            Err(error) => {
+                                drop(error);
+                                false
+                            }
+                        }
+                    }
                     if !frame.active_frame.is_materialized()
-                        && (0..if kind.unary() { 1 } else { 2 }).any(|i| {
-                            matches!(
-                                slots.peek(i),
-                                Ok(JsValue::Symbol(_)
-                                    | JsValue::BigInt(_)
-                                    | JsValue::ShortBigInt(_))
-                            )
-                        })
+                        && (observes_stack(slots.peek(0))
+                            || (!kind.unary() && observes_stack(slots.peek(1))))
                     {
                         return Ok(RunExit::Materialize);
                     }
@@ -1963,11 +2125,169 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
     }
 }
 
+#[cfg(test)]
+mod borrowed_base_field_tests {
+    use crate::engine::api::{Runtime, Value};
+
+    #[test]
+    fn borrowed_base_field_reads_observe_live_bindings_for_every_base_kind() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        drop(
+            context
+                .eval("var fusedGlobal = { x: 1, o: { answer: 40 } };")
+                .unwrap(),
+        );
+        assert_eq!(
+            context
+                .eval(
+                    r#"(function(){
+            var a = fusedGlobal.x + fusedGlobal.o.answer;
+            fusedGlobal = { x: 2, o: { answer: 50 } };
+            var b = fusedGlobal.x;
+            var local = { y: 7 };
+            var c = local.y;
+            let cell = { z: 1 };
+            function readZ() { return cell.z; }
+            function swap() { cell = { z: 9 }; }
+            var d = readZ(); swap(); var e = readZ();
+            var obj = { v: 5, read: function () { return this.v; } };
+            var f = obj.read();
+            return a + b + c + d + e + f;
+        })()"#
+                )
+                .unwrap(),
+            Value::Int(65)
+        );
+    }
+
+    #[test]
+    fn borrowed_base_field_reads_claim_no_base_owner() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        drop(context.eval("var countGlobal = { x: 3 };").unwrap());
+        let Value::Object(base) = context.eval("countGlobal").unwrap() else {
+            panic!("expected object global");
+        };
+        let id = base.object_id();
+        let strong = |runtime: &Runtime| {
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(id)
+                .unwrap()
+        };
+        let before = strong(&runtime);
+        assert_eq!(
+            context
+                .eval("(function(){var s=0;for(var i=0;i<100;i++)s+=countGlobal.x;return s;})()")
+                .unwrap(),
+            Value::Int(300)
+        );
+        assert_eq!(strong(&runtime), before);
+        drop(base);
+    }
+
+    #[test]
+    fn borrowed_base_field_fallback_preserves_getters_prototypes_tdz_and_invalidation() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        drop(
+            context
+                .eval("var getterGlobal = { count: 0, get g() { this.count++; return this.count; } };")
+                .unwrap(),
+        );
+        assert_eq!(
+            context
+                .eval("(function(){var a=getterGlobal.g,b=getterGlobal.g;return a===1&&b===2;})()")
+                .unwrap(),
+            Value::Bool(true)
+        );
+        drop(
+            context
+                .eval("var protoGlobal = Object.create({ p: 11 }); protoGlobal.own = 1;")
+                .unwrap(),
+        );
+        assert_eq!(
+            context
+                .eval("(function(){var s=0;for(var i=0;i<4;i++)s+=protoGlobal.p;return s;})()")
+                .unwrap(),
+            Value::Int(44)
+        );
+        // A captured lexical cell stays in TDZ until initialized, and the
+        // fused read must not observe the uninitialized cell.
+        assert_eq!(
+            context
+                .eval(
+                    r#"(function(){
+            var threw = false;
+            function readField() { return boxed.q; }
+            try { readField(); } catch (e) { threw = e instanceof ReferenceError; }
+            let boxed = { q: 3 };
+            return threw && readField() === 3;
+        })()"#
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+        // Warm fused reads must still observe a later accessor redefinition.
+        drop(context.eval("var swapGlobal = { x: 1 };").unwrap());
+        assert_eq!(
+            context
+                .eval(
+                    r#"(function(){
+            var s = 0;
+            for (var i = 0; i < 4; i++) s += swapGlobal.x;
+            Object.defineProperty(swapGlobal, 'x', { get() { return 42; } });
+            return s + swapGlobal.x;
+        })()"#
+                )
+                .unwrap(),
+            Value::Int(46)
+        );
+    }
+}
+
 #[cfg(all(test, feature = "profiling"))]
 mod tests {
     use crate::engine::api::profiling::CostProfile;
     use crate::engine::api::{Runtime, Value};
     use crate::engine::heap::SlotReleaseReadiness;
+
+    #[test]
+    fn borrowed_base_field_fusion_engages_for_global_captured_local_and_this_bases() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        drop(context.eval("var fusionGlobal = { x: 1 };").unwrap());
+        // Cold linked-read sites warm their inline caches through the
+        // canonical pair; the fused borrowed-base read takes over afterwards,
+        // even when the binding holds the base object's only owner edge.
+        let warm = r#"(function(){
+            let cell = { z: 2 };
+            function readZ() { return cell.z; }
+            var local = { y: 3 };
+            var obj = { v: 4, read: function () { return this.v; } };
+            var s = 0;
+            for (var i = 0; i < 5; i++) {
+                s += fusionGlobal.x + readZ() + local.y + obj.read();
+            }
+            return s;
+        })()"#;
+        let profile = CostProfile::start();
+        assert_eq!(context.eval(warm).unwrap(), Value::Int(50));
+        let costs = profile.snapshot();
+        assert!(
+            costs
+                .owned_execution_events
+                .get("fusion.BorrowedBaseField")
+                .copied()
+                .unwrap_or(0)
+                >= 12,
+            "{costs:?}"
+        );
+    }
 
     #[test]
     fn property_ic_resides_for_own_prototype_and_method_reads() {

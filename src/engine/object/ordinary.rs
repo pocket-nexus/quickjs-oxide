@@ -260,36 +260,39 @@ impl Runtime {
                     // Materializing a descriptor does not invoke its getter.
                     if let Some(own) = self.get_own_property_owned(current, key)? {
                         use crate::engine::object::property::CompletePropertyDescriptor;
-                        return Ok(match own.record() {
-                            CompletePropertyDescriptor::Data { value, .. } => {
-                                OrdinaryRead::Complete(Some(self.dup_jsvalue(
-                                    &JsValue::from_raw(value.clone()).ok_or(
-                                        RuntimeError::Invariant(
-                                            "own descriptor stored an internal sentinel",
-                                        ),
-                                    )?,
-                                )?))
+                        let getter = match own.record() {
+                            CompletePropertyDescriptor::Data { .. } => {
+                                // Transfer the descriptor's owned value edge
+                                // instead of duplicating it and releasing the
+                                // descriptor's copy right after.
+                                return Ok(OrdinaryRead::Complete(Some(
+                                    own.into_data_value().ok_or(RuntimeError::Invariant(
+                                        "own descriptor stored an internal sentinel",
+                                    ))?,
+                                )));
                             }
                             CompletePropertyDescriptor::Accessor {
                                 get: Some(crate::engine::heap::RawValue::Object(id)),
                                 ..
-                            } => {
+                            } => Some(*id),
+                            CompletePropertyDescriptor::Accessor { get: None, .. } => None,
+                            _ => {
+                                return Err(RuntimeError::Invariant(
+                                    "stored accessor getter was not an object",
+                                ));
+                            }
+                        };
+                        return Ok(match getter {
+                            Some(id) => {
                                 let getter = CallableRef::from_validated_object(
-                                    ObjectRef::from_borrowed_handle(self.clone(), *id)?,
+                                    ObjectRef::from_borrowed_handle(self.clone(), id)?,
                                 );
                                 OrdinaryRead::Call {
                                     getter,
                                     receiver: self.dup_jsvalue(receiver)?,
                                 }
                             }
-                            CompletePropertyDescriptor::Accessor { get: None, .. } => {
-                                OrdinaryRead::Complete(Some(JsValue::Undefined))
-                            }
-                            _ => {
-                                return Err(RuntimeError::Invariant(
-                                    "stored accessor getter was not an object",
-                                ));
-                            }
+                            None => OrdinaryRead::Complete(Some(JsValue::Undefined)),
                         });
                     }
                     // A non-Proxy object's prototype lookup has no user call.

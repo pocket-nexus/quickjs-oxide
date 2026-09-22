@@ -40,6 +40,40 @@ impl CollectionKind {
         matches!(self, Self::Map | Self::WeakMap)
     }
 }
+/// Create the empty collection object for one resolved prototype source.
+/// Shared by the synchronous no-iterable arm and the resumable protocol.
+fn new_collection_for_source(
+    runtime: &Runtime,
+    kind: CollectionKind,
+    source: ConstructorPrototypeSource,
+) -> Result<ObjectRef, RuntimeError> {
+    let prototype = match source {
+        ConstructorPrototypeSource::Explicit(prototype) => prototype,
+        ConstructorPrototypeSource::Realm(realm) => {
+            let prototype = match kind {
+                CollectionKind::Map => runtime.map_realm_data(realm)?.prototype,
+                CollectionKind::Set => runtime.set_realm_data(realm)?.prototype,
+                CollectionKind::WeakMap => {
+                    runtime.weak_collection_prototype(realm, WeakCollectionKind::Map)?
+                }
+                CollectionKind::WeakSet => {
+                    runtime.weak_collection_prototype(realm, WeakCollectionKind::Set)?
+                }
+            };
+            ObjectRef::from_borrowed_handle(runtime.clone(), prototype)?
+        }
+    };
+    match kind {
+        CollectionKind::Map => runtime.new_map_object(&prototype),
+        CollectionKind::Set => runtime.new_set_object(&prototype),
+        CollectionKind::WeakMap => {
+            runtime.new_weak_collection_object(&prototype, WeakCollectionKind::Map)
+        }
+        CollectionKind::WeakSet => {
+            runtime.new_weak_collection_object(&prototype, WeakCollectionKind::Set)
+        }
+    }
+}
 pub(crate) enum CollectionStep {
     Complete(Completion),
     Prototype { resume: CollectionResume },
@@ -131,6 +165,26 @@ impl CollectionStep {
                 "collection constructor did not receive a constructor invocation",
             ));
         };
+        // No-iterable fast arm: the spec resolves the prototype before it
+        // inspects the iterable, and a nullish iterable returns the fresh
+        // collection immediately. When the prototype lookup completes without
+        // re-entering user code, finish here without the resume Box and
+        // without duplicating the constructor frame's `new_target` edge.
+        let nullish_iterable = arguments.actual_arg_count == 0
+            || matches!(
+                arguments.readable.first(),
+                Some(JsValue::Null | JsValue::Undefined)
+            );
+        if nullish_iterable
+            && let Some(reply) = runtime.constructor_prototype_source_now(realm, new_target)?
+        {
+            return Ok(Self::Complete(match reply {
+                NativeConversion::Throw(value) => Completion::Throw(value),
+                NativeConversion::Value(source) => Completion::Return(JsValue::Object(
+                    new_collection_for_source(runtime, kind, source)?.into_handle(),
+                )),
+            }));
+        }
         Ok({
             let mut __pending_field_resume = CollectionResume(Box::new(CollectionResumeState {
                 runtime: runtime.clone(),
@@ -224,35 +278,13 @@ impl CollectionResume {
                 "collection prototype phase mismatch",
             ));
         }
-        let prototype = match reply {
+        let source = match reply {
             NativeConversion::Throw(value) => {
                 return Ok(CollectionStep::Complete(Completion::Throw(value)));
             }
-            NativeConversion::Value(ConstructorPrototypeSource::Explicit(prototype)) => prototype,
-            NativeConversion::Value(ConstructorPrototypeSource::Realm(realm)) => {
-                let prototype = match self.0.kind {
-                    CollectionKind::Map => runtime.map_realm_data(realm)?.prototype,
-                    CollectionKind::Set => runtime.set_realm_data(realm)?.prototype,
-                    CollectionKind::WeakMap => {
-                        runtime.weak_collection_prototype(realm, WeakCollectionKind::Map)?
-                    }
-                    CollectionKind::WeakSet => {
-                        runtime.weak_collection_prototype(realm, WeakCollectionKind::Set)?
-                    }
-                };
-                ObjectRef::from_borrowed_handle(runtime.clone(), prototype)?
-            }
+            NativeConversion::Value(source) => source,
         };
-        let collection = match self.0.kind {
-            CollectionKind::Map => runtime.new_map_object(&prototype)?,
-            CollectionKind::Set => runtime.new_set_object(&prototype)?,
-            CollectionKind::WeakMap => {
-                runtime.new_weak_collection_object(&prototype, WeakCollectionKind::Map)?
-            }
-            CollectionKind::WeakSet => {
-                runtime.new_weak_collection_object(&prototype, WeakCollectionKind::Set)?
-            }
-        };
+        let collection = new_collection_for_source(runtime, self.0.kind, source)?;
         self.0.collection = Some(collection.clone());
         if self
             .0
