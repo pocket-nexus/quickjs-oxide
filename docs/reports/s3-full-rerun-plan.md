@@ -97,3 +97,7 @@
   不冒充正式验收结论，正式验收仍需目标机复跑。
 - governor=powersave，与阶段 A 同协议；若与历史记录不同需在结果文档标注。
 - V8 套件按历史耗时约 23 分钟/引擎，是总时长主项。
+- original 套件实测极慢：crypto≈53s、raytrace≈25s、earley-boyer≈89s、`all` 约数分钟
+  （每引擎每轮），完整 9 项 × 5 轮 × 6 引擎可达数小时；首轮若被超时中断，
+  用 `original/samples.jsonl` 中已完成的样本 + 补跑 `original-rest/` 合并，
+  不把中断当失败丢弃。
