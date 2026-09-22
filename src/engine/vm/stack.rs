@@ -224,6 +224,8 @@ impl Drop for FrameStorageGuard {
 
 mod number;
 mod store;
+#[cfg(any(test, oxide_scalar_tos))]
+mod tos;
 mod window;
 pub(in crate::engine::vm) use store::StoreMode;
 pub(in crate::engine::vm) use window::{FrameTransaction, LinkedReadCompletion, RunSlots};
@@ -463,6 +465,8 @@ impl SlotStore {
         Ok(RunSlots {
             store: self,
             window,
+            #[cfg(any(test, oxide_scalar_tos))]
+            tos: None,
         })
     }
 

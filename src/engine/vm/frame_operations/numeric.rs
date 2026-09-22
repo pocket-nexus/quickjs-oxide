@@ -91,6 +91,7 @@ pub(in crate::engine::vm) fn try_complete_primitive(
         }
     };
     if !kind.primitive_arithmetic() {
+        drop(transaction);
         return match NumericStep::start(runtime, kind, left, right) {
             Ok(step) => crate::engine::vm::proxy_get_driver::start_numeric(
                 runtime, execution, id, step, depth,
@@ -131,6 +132,7 @@ pub(in crate::engine::vm) fn try_complete_primitive(
     if let Some(value) = previous {
         let _ = runtime.release_jsvalue(value);
     }
+    drop(transaction);
     frame.resume_pc = result?;
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_instruction(depth);

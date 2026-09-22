@@ -51,7 +51,7 @@ pub(super) fn complete(
     fault_pc: usize,
 ) -> Result<bool, Error> {
     let (left, right) = {
-        let mut slots = transaction.slots();
+        let mut slots = transaction.canonical_slots("tos.spill.numeric");
         let right = slots.pop()?;
         if kind.unary() {
             (right, None)
@@ -72,7 +72,7 @@ pub(super) fn complete(
     let mut value = Some(output.value);
     let mut previous = output.previous;
     let committed = (|| {
-        let mut slots = transaction.slots();
+        let mut slots = transaction.canonical_slots("tos.spill.numeric");
         if previous.is_some() {
             slots.push_pending(&mut previous)?;
         }

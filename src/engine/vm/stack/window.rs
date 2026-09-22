@@ -18,17 +18,46 @@ pub(in crate::engine::vm) enum LinkedReadCompletion {
 pub(in crate::engine::vm) struct FrameTransaction<'a> {
     store: &'a mut SlotStore,
     window: &'a mut FrameWindow,
+    #[cfg(any(test, oxide_scalar_tos))]
+    tos: Option<super::tos::ScalarTos>,
 }
 impl FrameTransaction<'_> {
+    #[inline]
+    pub(in crate::engine::vm) fn canonicalize(&mut self, reason: &'static str) {
+        #[cfg(any(test, oxide_scalar_tos))]
+        if let Some(tos) = &mut self.tos {
+            tos.canonicalize(self.store, self.window, reason);
+        }
+        #[cfg(not(any(test, oxide_scalar_tos)))]
+        let _ = reason;
+    }
+
+    /// A helper may push scalars and then release owners before returning.
+    /// Keep that entire short borrow canonical, not just its entry.
+    pub(in crate::engine::vm) fn canonical_slots(&mut self, reason: &'static str) -> RunSlots<'_> {
+        self.canonicalize(reason);
+        RunSlots {
+            store: self.store,
+            window: self.window,
+            #[cfg(any(test, oxide_scalar_tos))]
+            tos: None,
+        }
+    }
+
     pub(in crate::engine::vm) fn peek(&self, offset: usize) -> Result<&JsValue, Error> {
+        #[cfg(any(test, oxide_scalar_tos))]
+        if let Some(tos) = &self.tos {
+            return tos.peek(self.store, self.window, offset);
+        }
         self.store.peek_current(self.window, offset)
     }
     pub(in crate::engine::vm) fn validate_call_value_domains(
-        &self,
+        &mut self,
         runtime: &Runtime,
         count: usize,
         method: bool,
     ) -> Result<bool, Error> {
+        self.canonicalize("tos.spill.call");
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("call_value_domain_validation");
         self.store
@@ -41,6 +70,7 @@ impl FrameTransaction<'_> {
         count: usize,
         method: bool,
     ) -> Result<(Vec<JsValue>, JsValue), Error> {
+        self.canonicalize("tos.spill.call");
         self.store
             .reserve_native_argument_depth(logical_active_depth.saturating_add(1))?;
         self.store
@@ -57,6 +87,7 @@ impl FrameTransaction<'_> {
         right: u16,
         consume: impl FnOnce(&mut JsValue, &JsValue) -> T,
     ) -> Result<Option<T>, Error> {
+        self.canonicalize("tos.spill.local_add");
         let (left, right) = (usize::from(left), usize::from(right));
         let locals = &mut self.store.slots[self.window.locals()];
         if left >= locals.len() || right >= locals.len() {
@@ -108,6 +139,7 @@ impl FrameTransaction<'_> {
         right: &JsValue,
         consume: impl FnOnce(&mut JsValue, &JsValue) -> T,
     ) -> Result<Option<T>, Error> {
+        self.canonicalize("tos.spill.local_add");
         let local = self.store.slots[self.window.locals()]
             .get_mut(usize::from(left))
             .ok_or_else(|| Error::internal("owned local index is out of bounds"))?
@@ -130,6 +162,7 @@ impl FrameTransaction<'_> {
         constant: &mut JsValue,
         consume: impl FnOnce(&mut JsValue, &JsValue) -> T,
     ) -> Result<Option<T>, Error> {
+        self.canonicalize("tos.spill.local_add");
         let local = self.store.slots[self.window.locals()]
             .get(usize::from(local))
             .ok_or_else(|| Error::internal("owned local index is out of bounds"))?
@@ -147,6 +180,17 @@ impl FrameTransaction<'_> {
         RunSlots {
             store: self.store,
             window: self.window,
+            #[cfg(any(test, oxide_scalar_tos))]
+            tos: self.tos.as_mut(),
+        }
+    }
+}
+
+#[cfg(any(test, oxide_scalar_tos))]
+impl Drop for FrameTransaction<'_> {
+    fn drop(&mut self) {
+        if let Some(tos) = &mut self.tos {
+            tos.restore(self.store);
         }
     }
 }
@@ -160,6 +204,21 @@ impl SlotStore {
         Ok(FrameTransaction {
             store: self,
             window,
+            #[cfg(any(test, oxide_scalar_tos))]
+            tos: None,
+        })
+    }
+
+    #[cfg(any(test, oxide_scalar_tos))]
+    pub(in crate::engine::vm) fn frame_transaction_with_scalar_tos<'a>(
+        &'a mut self,
+        window: &'a mut FrameWindow,
+    ) -> Result<FrameTransaction<'a>, Error> {
+        self.check_current(window)?;
+        Ok(FrameTransaction {
+            store: self,
+            window,
+            tos: Some(super::tos::ScalarTos::new()),
         })
     }
 
@@ -218,6 +277,8 @@ impl SlotStore {
                     let mut slots = RunSlots {
                         store: self,
                         window,
+                        #[cfg(any(test, oxide_scalar_tos))]
+                        tos: None,
                     };
                     #[cfg(feature = "profiling")]
                     crate::engine::api::profiling::record_owned_execution_event(
@@ -250,8 +311,20 @@ impl SlotStore {
 pub(in crate::engine::vm) struct RunSlots<'a> {
     pub(super) store: &'a mut SlotStore,
     pub(super) window: &'a mut FrameWindow,
+    #[cfg(any(test, oxide_scalar_tos))]
+    pub(super) tos: Option<&'a mut super::tos::ScalarTos>,
 }
 impl RunSlots<'_> {
+    #[inline]
+    pub(in crate::engine::vm) fn canonicalize(&mut self, reason: &'static str) {
+        #[cfg(any(test, oxide_scalar_tos))]
+        if let Some(tos) = self.tos.as_deref_mut() {
+            tos.canonicalize(self.store, self.window, reason);
+        }
+        #[cfg(not(any(test, oxide_scalar_tos)))]
+        let _ = reason;
+    }
+
     pub(in crate::engine::vm) fn property_ic_read(
         &mut self,
         runtime: &Runtime,
@@ -261,6 +334,7 @@ impl RunSlots<'_> {
         keep_receiver: bool,
         native: &mut Option<crate::engine::object::LinkedNativeSelection>,
     ) -> Result<bool, Error> {
+        self.canonicalize("tos.spill.property");
         self.store.property_ic_read_current(
             self.window,
             runtime,
@@ -284,10 +358,18 @@ impl RunSlots<'_> {
         self.window.depth
     }
     pub(in crate::engine::vm) fn peek(&self, from_top: usize) -> Result<&JsValue, Error> {
+        #[cfg(any(test, oxide_scalar_tos))]
+        if let Some(tos) = self.tos.as_deref() {
+            return tos.peek(self.store, self.window, from_top);
+        }
         self.store.peek_current(self.window, from_top)
     }
 
     pub(in crate::engine::vm) fn push(&mut self, value: JsValue) -> Result<(), Error> {
+        #[cfg(any(test, oxide_scalar_tos))]
+        if let Some(tos) = self.tos.as_deref_mut() {
+            return self.store.tos_push(self.window, tos, value);
+        }
         self.store.push_current(self.window, value)
     }
 
@@ -296,6 +378,10 @@ impl RunSlots<'_> {
         &mut self,
         value: &mut Option<JsValue>,
     ) -> Result<(), Error> {
+        #[cfg(any(test, oxide_scalar_tos))]
+        if let Some(tos) = self.tos.as_deref_mut() {
+            return self.store.tos_push_pending(self.window, tos, value);
+        }
         self.store.push_pending_current(self.window, value)
     }
 
@@ -311,6 +397,10 @@ impl RunSlots<'_> {
     // Preserve the direct SlotStore call at numeric operand consumers.
     #[inline]
     pub(in crate::engine::vm) fn pop(&mut self) -> Result<JsValue, Error> {
+        #[cfg(any(test, oxide_scalar_tos))]
+        if let Some(tos) = self.tos.as_deref_mut() {
+            return self.store.tos_pop(self.window, tos);
+        }
         self.store.pop_current(self.window)
     }
 
@@ -388,6 +478,10 @@ impl RunSlots<'_> {
         index: u16,
         mode: StoreMode,
     ) -> Result<Option<FrameBinding>, Error> {
+        #[cfg(any(test, oxide_scalar_tos))]
+        if let Some(tos) = self.tos.as_deref_mut() {
+            return self.store.tos_store_local(self.window, tos, runtime, index, mode);
+        }
         self.store
             .store_local_from_top_current(self.window, runtime, index, mode)
     }
@@ -398,6 +492,10 @@ impl RunSlots<'_> {
         index: u16,
         mode: StoreMode,
     ) -> Result<Option<FrameBinding>, Error> {
+        #[cfg(any(test, oxide_scalar_tos))]
+        if let Some(tos) = self.tos.as_deref_mut() {
+            return self.store.tos_store_parameter(self.window, tos, runtime, index, mode);
+        }
         self.store
             .store_parameter_from_top_current(self.window, runtime, index, mode)
     }
@@ -408,6 +506,7 @@ impl RunSlots<'_> {
         count: usize,
         left: bool,
     ) -> Result<(), Error> {
+        self.canonicalize("tos.spill.shuffle");
         self.store
             .rotate_operands_current(self.window, skip_top, count, left)
     }
@@ -418,6 +517,7 @@ impl RunSlots<'_> {
         source_from_top: usize,
         destination_from_top: usize,
     ) -> Result<(), Error> {
+        self.canonicalize("tos.spill.shuffle");
         self.store
             .insert_copy_current(runtime, self.window, source_from_top, destination_from_top)
     }
@@ -427,6 +527,7 @@ impl RunSlots<'_> {
         runtime: &Runtime,
         count: usize,
     ) -> Result<(), Error> {
+        self.canonicalize("tos.spill.shuffle");
         self.store
             .duplicate_operands_current(runtime, self.window, count)
     }
@@ -436,6 +537,7 @@ impl RunSlots<'_> {
         from_top: usize,
         runtime: &Runtime,
     ) -> Result<bool, Error> {
+        self.canonicalize("tos.spill.release");
         self.store
             .release_operand_current(self.window, from_top, runtime)
     }
@@ -444,6 +546,7 @@ impl RunSlots<'_> {
         &mut self,
         runtime: &Runtime,
     ) -> Result<bool, Error> {
+        self.canonicalize("tos.spill.property");
         self.store
             .typed_array_number_write_current(self.window, runtime)
     }
@@ -453,12 +556,15 @@ impl RunSlots<'_> {
         runtime: &Runtime,
         keep_key: bool,
     ) -> Result<bool, Error> {
-        let index = match self.peek(0)? {
+        self.canonicalize("tos.spill.property");
+        // Keep the whole operation canonical, including the output push and
+        // any following release. Calling the cache-aware push would reopen a hole.
+        let index = match self.store.peek_current(self.window, 0)? {
             JsValue::Int(index) if *index >= 0 => *index as u32,
             JsValue::String(id) => {
                 if !keep_key
                     && !matches!(
-                        runtime.slot_value_release_readiness_jsvalue(self.peek(0)?),
+                        runtime.slot_value_release_readiness_jsvalue(self.store.peek_current(self.window, 0)?),
                         Ok(crate::engine::heap::SlotReleaseReadiness::Ready)
                     )
                 {
@@ -473,15 +579,15 @@ impl RunSlots<'_> {
             }
             _ => return Ok(false),
         };
-        let Some(value) = runtime.try_dense_array_kept_read(self.peek(1)?, index) else {
+        let Some(value) = runtime.try_dense_array_kept_read(self.store.peek_current(self.window, 1)?, index) else {
             return Ok(false);
         };
         if !keep_key {
             runtime
-                .release_jsvalue(self.pop()?)
+                .release_jsvalue(self.store.pop_current(self.window)?)
                 .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
         }
-        self.push(value)?;
+        self.store.push_current(self.window, value)?;
         Ok(true)
     }
     pub(in crate::engine::vm) fn property_ic_write_scalar(
@@ -491,6 +597,7 @@ impl RunSlots<'_> {
         pc: usize,
         key: u32,
     ) -> Result<bool, Error> {
+        self.canonicalize("tos.spill.property");
         self.store
             .property_ic_write_scalar_current(self.window, runtime, executable, pc, key)
     }
@@ -499,6 +606,7 @@ impl RunSlots<'_> {
         &mut self,
         runtime: &Runtime,
     ) -> Result<bool, Error> {
+        self.canonicalize("tos.spill.property");
         self.store
             .array_immediate_read_current(self.window, runtime)
     }
@@ -509,6 +617,7 @@ impl RunSlots<'_> {
         executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
         key_index: u32,
     ) -> Result<bool, Error> {
+        self.canonicalize("tos.spill.property");
         self.store.ordinary_field_immediate_read_current(
             self.window,
             runtime,
@@ -524,6 +633,10 @@ impl RunSlots<'_> {
             crate::engine::value::number::operations::Number,
         ) -> JsValue,
     ) -> Result<bool, Error> {
+        #[cfg(any(test, oxide_scalar_tos))]
+        if let Some(tos) = self.tos.as_deref_mut() {
+            return self.store.tos_binary_number(self.window, tos, operation);
+        }
         self.store.binary_number_current(self.window, operation)
     }
     pub(in crate::engine::vm) fn consume_number_pair(
@@ -533,6 +646,10 @@ impl RunSlots<'_> {
             crate::engine::value::number::operations::Number,
         ) -> bool,
     ) -> Result<Option<bool>, Error> {
+        #[cfg(any(test, oxide_scalar_tos))]
+        if let Some(tos) = self.tos.as_deref_mut() {
+            return self.store.tos_consume_number_pair(self.window, tos, operation);
+        }
         self.store
             .consume_number_pair_current(self.window, operation)
     }
@@ -547,6 +664,10 @@ impl RunSlots<'_> {
             Option<crate::engine::value::number::operations::Number>,
         ),
     ) -> Result<bool, Error> {
+        #[cfg(any(test, oxide_scalar_tos))]
+        if let Some(tos) = self.tos.as_deref_mut() {
+            return self.store.tos_update_number_local(self.window, tos, index, operation);
+        }
         self.store
             .update_number_local_current(self.window, index, operation)
     }

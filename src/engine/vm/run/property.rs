@@ -33,7 +33,7 @@ pub(super) fn complete(
 ) -> Result<bool, Error> {
     if matches!(operation, Operation::ElementWrite) {
         let (base, key, value) = {
-            let mut slots = transaction.slots();
+            let mut slots = transaction.canonical_slots("tos.spill.property");
             let value = slots.pop()?;
             let key = slots.pop()?;
             (slots.pop()?, key, value)
@@ -45,7 +45,7 @@ pub(super) fn complete(
             None => false,
         };
         if !handled {
-            let mut slots = transaction.slots();
+            let mut slots = transaction.canonical_slots("tos.spill.property");
             slots.push(base)?;
             slots.push(key)?;
             slots.push(value)?;
@@ -71,7 +71,7 @@ pub(super) fn complete(
         return Ok(handled);
     }
     let (base, value) = {
-        let mut slots = transaction.slots();
+        let mut slots = transaction.canonical_slots("tos.spill.property");
         let value = slots.pop()?;
         (slots.pop()?, value)
     };
@@ -104,7 +104,7 @@ pub(super) fn complete(
         Operation::ElementWrite => unreachable!(),
     };
     if !handled {
-        let mut slots = transaction.slots();
+        let mut slots = transaction.canonical_slots("tos.spill.property");
         slots.push(base)?;
         slots.push(value)?;
         return Ok(false);
@@ -114,10 +114,12 @@ pub(super) fn complete(
             runtime
                 .release_jsvalue(value)
                 .map_err(runtime_error_to_vm_error)?;
-            transaction.slots().push(base)?;
+            transaction
+                .canonical_slots("tos.spill.property")
+                .push(base)?;
         }
         Operation::ElementRead(keep_key) => {
-            let mut slots = transaction.slots();
+            let mut slots = transaction.canonical_slots("tos.spill.property");
             slots.push(base)?;
             if keep_key {
                 slots.push(value)?;
@@ -135,7 +137,9 @@ pub(super) fn complete(
             runtime
                 .release_jsvalue(base)
                 .map_err(runtime_error_to_vm_error)?;
-            transaction.slots().push(result.expect("delete result"))?;
+            transaction
+                .canonical_slots("tos.spill.property")
+                .push(result.expect("delete result"))?;
         }
         Operation::Write(_) => {
             runtime

@@ -188,6 +188,8 @@ mod program_counter;
 mod property;
 #[cfg(test)]
 mod store_tests;
+#[cfg(any(test, oxide_scalar_tos))]
+mod tos;
 use program_counter::ProgramCounter;
 
 #[cfg(test)]
@@ -344,28 +346,53 @@ fn borrowed_base_field_read(
 // Explicit drops end the NoJs slot borrow before publication or owner release.
 #[allow(clippy::drop_non_drop)]
 pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunExit, Error> {
+    run_impl::<{ cfg!(oxide_scalar_tos) }>(execution, id)
+}
+
+#[allow(clippy::drop_non_drop)]
+fn run_impl<const SCALAR_TOS: bool>(
+    execution: &mut RunningExecution,
+    id: FrameId,
+) -> Result<RunExit, Error> {
     let frame = execution.frames.current_mut(id)?;
     let body = &mut *frame.cold;
     let executable = &*body.executable;
+    #[cfg(any(test, oxide_scalar_tos))]
+    let mut transaction = if SCALAR_TOS {
+        execution
+            .slots
+            .frame_transaction_with_scalar_tos(&mut body.window)?
+    } else {
+        execution.slots.frame_transaction(&mut body.window)?
+    };
+    #[cfg(not(any(test, oxide_scalar_tos)))]
     let mut transaction = execution.slots.frame_transaction(&mut body.window)?;
     let mut slots = transaction.slots();
     let cold = &mut body.owners;
     let runtime = cold.function.runtime();
     let mut pc = ProgramCounter::new(&mut frame.fault_pc, &mut frame.resume_pc);
+    macro_rules! exit {
+        ($exit:expr) => {{
+            slots.canonicalize("tos.spill.exit");
+            return Ok($exit);
+        }};
+    }
     // Preserve the cold path's observation order, but keep this authenticated
     // frame resident. No slot borrow crosses active-PC publication or Drop.
     macro_rules! release_outside_slots {
         ($operation:expr) => {{
             if !frame.active_frame.is_materialized() {
-                return Ok(RunExit::Materialize);
+                exit!(RunExit::Materialize);
             }
+            slots.canonicalize("tos.spill.publication");
             drop(slots);
             pc.publish_fault();
             runtime
                 .update_active_bytecode_pc(frame.active_frame, super::BytecodePc::new(pc.fault))
                 .map_err(runtime_error_to_vm_error)?;
-            slots = transaction.slots();
+            slots = transaction.canonical_slots("tos.spill.release");
             let released = $operation;
+            slots.canonicalize("tos.spill.release");
             drop(slots);
             release_dropped(runtime, released)?;
             slots = transaction.slots();
@@ -374,8 +401,9 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
     macro_rules! resident_property {
         ($operation:expr) => {{
             if !frame.active_frame.is_materialized() {
-                return Ok(RunExit::Materialize);
+                exit!(RunExit::Materialize);
             }
+            slots.canonicalize("tos.spill.publication");
             drop(slots);
             pc.publish_fault();
             runtime
@@ -393,6 +421,16 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             .code
             .get(pc.fault)
             .ok_or_else(|| cold::internal("owned bytecode ended without return"))?;
+        #[cfg(any(test, oxide_scalar_tos))]
+        {
+            let resident = SCALAR_TOS && tos::resident(instruction, executable, &slots);
+            drop(slots);
+            slots = if resident {
+                transaction.slots()
+            } else {
+                transaction.canonical_slots("tos.spill.opcode")
+            };
+        }
         #[cfg(feature = "profiling")]
         let observed_depth = slots.depth();
         let mut next_pc = pc
@@ -404,7 +442,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             | Instruction::TailCall(arguments)
             | Instruction::CallMethod(arguments)
             | Instruction::TailCallMethod(arguments) => {
-                return Ok(RunExit::Call {
+                exit!(RunExit::Call {
                     arguments: *arguments,
                     method: matches!(
                         instruction,
@@ -416,18 +454,18 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     ),
                 });
             }
-            Instruction::Apply(kind) => return Ok(RunExit::Apply(*kind)),
+            Instruction::Apply(kind) => exit!(RunExit::Apply(*kind)),
             Instruction::ApplySuper => {
-                return Ok(RunExit::Apply(
+                exit!(RunExit::Apply(
                     crate::engine::code::bytecode::ApplyKind::Construct,
                 ));
             }
-            Instruction::ApplyEval { environment } => return Ok(RunExit::ApplyEval(*environment)),
+            Instruction::ApplyEval { environment } => exit!(RunExit::ApplyEval(*environment)),
             Instruction::Eval {
                 argument_count,
                 environment,
             } => {
-                return Ok(RunExit::Eval {
+                exit!(RunExit::Eval {
                     arguments: *argument_count,
                     environment: *environment,
                 });
@@ -473,31 +511,31 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         ),
                     )?
                 } else {
-                    return Ok(RunExit::NormalizeThis);
+                    exit!(RunExit::NormalizeThis);
                 };
                 slots.push(value)?;
                 true
             }
             Instruction::PutField(index) => {
                 let Some(identity) = frame.property_generation.checked_add(1) else {
-                    return Ok(RunExit::SetProperty(Some(*index)));
+                    exit!(RunExit::SetProperty(Some(*index)));
                 };
                 if !slots.property_ic_write_scalar(runtime, executable, pc.fault, *index)?
                     && !resident_property!(property::Operation::Write(*index))
                 {
-                    return Ok(RunExit::SetProperty(Some(*index)));
+                    exit!(RunExit::SetProperty(Some(*index)));
                 }
                 frame.property_generation = identity;
                 true
             }
             Instruction::PutArrayEl => {
                 let Some(identity) = frame.property_generation.checked_add(1) else {
-                    return Ok(RunExit::SetProperty(None));
+                    exit!(RunExit::SetProperty(None));
                 };
                 if !slots.typed_array_number_write(runtime)?
                     && !resident_property!(property::Operation::ElementWrite)
                 {
-                    return Ok(RunExit::SetProperty(None));
+                    exit!(RunExit::SetProperty(None));
                 }
                 frame.property_generation = identity;
                 true
@@ -513,7 +551,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     &mut native,
                 )? && !slots.ordinary_field_immediate_read(runtime, executable, *index)?
                 {
-                    return Ok(RunExit::GetField {
+                    exit!(RunExit::GetField {
                         index: *index,
                         keep_receiver: false,
                     });
@@ -530,7 +568,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     true,
                     &mut native,
                 )? {
-                    return Ok(RunExit::GetField {
+                    exit!(RunExit::GetField {
                         index: *index,
                         keep_receiver: true,
                     });
@@ -563,7 +601,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     #[cfg(feature = "profiling")]
                     cold::event("method_call_span");
                     execution.selected_native = native;
-                    return Ok(RunExit::Call {
+                    exit!(RunExit::Call {
                         arguments: count as u16,
                         method: true,
                         tail: matches!(executable.code[pc.fault], Instruction::TailCallMethod(_)),
@@ -573,7 +611,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             }
             Instruction::GetArrayEl => {
                 if !slots.array_immediate_read(runtime)? {
-                    return Ok(RunExit::GetElement {
+                    exit!(RunExit::GetElement {
                         keep_receiver: false,
                         keep_key: false,
                     });
@@ -588,7 +626,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     instruction,
                     Instruction::GetArrayEl3
                 ))) {
-                    return Ok(RunExit::GetElement {
+                    exit!(RunExit::GetElement {
                         keep_receiver: true,
                         keep_key: matches!(instruction, Instruction::GetArrayEl3),
                     });
@@ -596,17 +634,17 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 true
             }
             Instruction::Construct(count) | Instruction::ConstructSuper(count) => {
-                return Ok(RunExit::Construct(*count));
+                exit!(RunExit::Construct(*count));
             }
             Instruction::PushNewTarget => {
                 slots.push(copy_value(runtime, &cold.input.new_target)?)?;
                 true
             }
             Instruction::InitializeDerivedLocal(index) => {
-                return Ok(RunExit::InitializeDerived(*index));
+                exit!(RunExit::InitializeDerived(*index));
             }
             Instruction::CopyDataProperties => {
-                return Ok(RunExit::CopyData {
+                exit!(RunExit::CopyData {
                     target: 1,
                     source: 0,
                     excluded: None,
@@ -617,44 +655,44 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 source_depth,
                 excluded_depth,
             } => {
-                return Ok(RunExit::CopyData {
+                exit!(RunExit::CopyData {
                     target: *target_depth,
                     source: *source_depth,
                     excluded: Some(*excluded_depth),
                 });
             }
             Instruction::InstanceOf => {
-                return Ok(RunExit::Predicate(super::predicate_driver::Kind::Instance));
+                exit!(RunExit::Predicate(super::predicate_driver::Kind::Instance));
             }
-            Instruction::In => return Ok(RunExit::Predicate(super::predicate_driver::Kind::Has)),
+            Instruction::In => exit!(RunExit::Predicate(super::predicate_driver::Kind::Has)),
             Instruction::Delete => {
                 if !resident_property!(property::Operation::Delete) {
-                    return Ok(RunExit::Predicate(super::predicate_driver::Kind::Delete));
+                    exit!(RunExit::Predicate(super::predicate_driver::Kind::Delete));
                 }
                 frame.property_generation = frame.property_generation.saturating_add(1);
                 true
             }
-            Instruction::GetSuper => return Ok(RunExit::GetSuper),
-            Instruction::PushHomeObject => return Ok(RunExit::HomeObject),
+            Instruction::GetSuper => exit!(RunExit::GetSuper),
+            Instruction::PushHomeObject => exit!(RunExit::HomeObject),
             Instruction::GetSuperValue => {
-                return Ok(RunExit::SuperProperty(
+                exit!(RunExit::SuperProperty(
                     super::super_property_driver::Kind::Read,
                 ));
             }
             Instruction::GetSuperValueForCall => {
-                return Ok(RunExit::SuperProperty(
+                exit!(RunExit::SuperProperty(
                     super::super_property_driver::Kind::Call,
                 ));
             }
             Instruction::PutSuperValue => {
-                return Ok(RunExit::SuperProperty(
+                exit!(RunExit::SuperProperty(
                     super::super_property_driver::Kind::Write,
                 ));
             }
-            Instruction::ReturnDerived(index) => return Ok(RunExit::ReturnDerived(*index)),
+            Instruction::ReturnDerived(index) => exit!(RunExit::ReturnDerived(*index)),
             Instruction::CheckCtor if !matches!(cold.input.new_target, JsValue::Undefined) => true,
             Instruction::CheckCtor => {
-                return Ok(RunExit::Pure(
+                exit!(RunExit::Pure(
                     super::pure_operations::PureOperation::ConstructorWithoutNew,
                 ));
             }
@@ -670,7 +708,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 });
                 true
             }
-            Instruction::InitDerivedConstructor => return Ok(RunExit::InitDerivedConstructor),
+            Instruction::InitDerivedConstructor => exit!(RunExit::InitDerivedConstructor),
             Instruction::PutVar(index) | Instruction::PutVarInit(index) => {
                 let root = executable
                     .closure_variables
@@ -705,7 +743,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     cold::event("global_immediate_cell_write");
                     true
                 } else {
-                    return Ok(RunExit::Environment(
+                    exit!(RunExit::Environment(
                         super::environment_driver::Operation::Put {
                             source: super::environment_driver::WriteTarget::Global {
                                 index: *index,
@@ -719,7 +757,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 }
             }
             Instruction::DeleteVar(index) => {
-                return Ok(RunExit::Environment(
+                exit!(RunExit::Environment(
                     super::environment_driver::Operation::GlobalDelete(*index),
                 ));
             }
@@ -779,7 +817,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     slots.push(value)?;
                     true
                 } else {
-                    return Ok(RunExit::Environment(
+                    exit!(RunExit::Environment(
                         super::environment_driver::Operation::GlobalGet {
                             index: *index,
                             strict: matches!(instruction, Instruction::GetVar(_)),
@@ -788,12 +826,12 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 }
             }
             Instruction::GlobalReference(index) => {
-                return Ok(RunExit::Environment(
+                exit!(RunExit::Environment(
                     super::environment_driver::Operation::GlobalReference(*index),
                 ));
             }
             Instruction::GetRefValue(name) | Instruction::GetRefValueUndef(name) => {
-                return Ok(RunExit::Environment(
+                exit!(RunExit::Environment(
                     super::environment_driver::Operation::ReadReference {
                         name: *name,
                         strict: matches!(instruction, Instruction::GetRefValue(_))
@@ -802,7 +840,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 ));
             }
             Instruction::DeleteDynamicBinding { source, name } => {
-                return Ok(RunExit::Environment(
+                exit!(RunExit::Environment(
                     super::environment_driver::Operation::Delete {
                         source: *source,
                         name: *name,
@@ -810,7 +848,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 ));
             }
             Instruction::DeleteEvalVariable { source, name } => {
-                return Ok(RunExit::Environment(
+                exit!(RunExit::Environment(
                     super::environment_driver::Operation::Delete {
                         source: crate::engine::code::bytecode::DynamicEnvironmentSource::Eval(
                             *source,
@@ -820,12 +858,12 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 ));
             }
             Instruction::DynamicEnvironmentObject(source) => {
-                return Ok(RunExit::Environment(
+                exit!(RunExit::Environment(
                     super::environment_driver::Operation::Object(*source),
                 ));
             }
             Instruction::HasDynamicBinding { source, name } => {
-                return Ok(RunExit::Environment(
+                exit!(RunExit::Environment(
                     super::environment_driver::Operation::Has {
                         source: *source,
                         name: *name,
@@ -833,7 +871,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 ));
             }
             Instruction::PutDynamicBinding { source, name } => {
-                return Ok(RunExit::Environment(
+                exit!(RunExit::Environment(
                     super::environment_driver::Operation::Put {
                         source: super::environment_driver::WriteTarget::Dynamic(*source),
                         name: *name,
@@ -843,7 +881,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 ));
             }
             Instruction::PutEvalVariable { source, name } => {
-                return Ok(RunExit::Environment(
+                exit!(RunExit::Environment(
                     super::environment_driver::Operation::Put {
                         source: super::environment_driver::WriteTarget::Dynamic(
                             crate::engine::code::bytecode::DynamicEnvironmentSource::Eval(*source),
@@ -855,7 +893,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 ));
             }
             Instruction::PutRefValue(name) => {
-                return Ok(RunExit::Environment(
+                exit!(RunExit::Environment(
                     super::environment_driver::Operation::Put {
                         source: super::environment_driver::WriteTarget::Reference,
                         name: *name,
@@ -865,7 +903,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 ));
             }
             Instruction::HasEvalVariable { source, name } => {
-                return Ok(RunExit::Environment(
+                exit!(RunExit::Environment(
                     super::environment_driver::Operation::Has {
                         source: crate::engine::code::bytecode::DynamicEnvironmentSource::Eval(
                             *source,
@@ -875,7 +913,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 ));
             }
             Instruction::GetEvalVariable { source, name } => {
-                return Ok(RunExit::Environment(
+                exit!(RunExit::Environment(
                     super::environment_driver::Operation::Get {
                         source: crate::engine::code::bytecode::DynamicEnvironmentSource::Eval(
                             *source,
@@ -886,7 +924,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 ));
             }
             Instruction::DefineEvalVariable { source, name } => {
-                return Ok(RunExit::Environment(
+                exit!(RunExit::Environment(
                     super::environment_driver::Operation::Define {
                         source: *source,
                         name: *name,
@@ -894,7 +932,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 ));
             }
             Instruction::GetDynamicBinding { source, name } => {
-                return Ok(RunExit::Environment(
+                exit!(RunExit::Environment(
                     super::environment_driver::Operation::Get {
                         source: *source,
                         name: *name,
@@ -902,8 +940,8 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     },
                 ));
             }
-            Instruction::ForInStart => return Ok(RunExit::ForIn(false)),
-            Instruction::ForInNext => return Ok(RunExit::ForIn(true)),
+            Instruction::ForInStart => exit!(RunExit::ForIn(false)),
+            Instruction::ForInNext => exit!(RunExit::ForIn(true)),
             Instruction::IteratorStart
             | Instruction::AsyncIteratorStart
             | Instruction::ForAwaitOfStart
@@ -931,7 +969,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     Instruction::IteratorGetValueDone => Operation::Parse,
                     _ => unreachable!(),
                 };
-                return Ok(RunExit::Environment(
+                exit!(RunExit::Environment(
                     super::environment_driver::Operation::Iterator(
                         super::iterator_driver::Operation::Suspend(operation),
                     ),
@@ -953,32 +991,32 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     Instruction::IteratorDetachPreserve => Operation::DetachPreserve,
                     _ => unreachable!(),
                 };
-                return Ok(RunExit::Environment(
+                exit!(RunExit::Environment(
                     super::environment_driver::Operation::Iterator(op),
                 ));
             }
             Instruction::Append => {
-                return Ok(RunExit::Environment(
+                exit!(RunExit::Environment(
                     super::environment_driver::Operation::Append,
                 ));
             }
             Instruction::DefineArrayEl => {
-                return Ok(RunExit::Environment(
+                exit!(RunExit::Environment(
                     super::environment_driver::Operation::DefineArrayElement,
                 ));
             }
             Instruction::ArrayFrom(count) => {
-                return Ok(RunExit::Environment(
+                exit!(RunExit::Environment(
                     super::environment_driver::Operation::CreateArray(*count),
                 ));
             }
             Instruction::Object => {
-                return Ok(RunExit::Environment(
+                exit!(RunExit::Environment(
                     super::environment_driver::Operation::CreateObject,
                 ));
             }
             Instruction::VariableEnvironment => {
-                return Ok(RunExit::Environment(
+                exit!(RunExit::Environment(
                     super::environment_driver::Operation::CreateVariable,
                 ));
             }
@@ -986,7 +1024,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 if matches!(slots.peek(0)?, JsValue::Object(_)) {
                     true
                 } else {
-                    return Ok(RunExit::Environment(
+                    exit!(RunExit::Environment(
                         super::environment_driver::Operation::ToObject,
                     ));
                 }
@@ -994,23 +1032,23 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             Instruction::ToPropKey => match slots.peek(0)? {
                 JsValue::Int(_) | JsValue::String(_) => true,
                 JsValue::Symbol(_) => true,
-                _ => return Ok(RunExit::ConvertPropertyKey),
+                _ => exit!(RunExit::ConvertPropertyKey),
             },
             Instruction::DefineFieldComputed => {
-                return Ok(RunExit::DefineProperty {
+                exit!(RunExit::DefineProperty {
                     key: None,
                     method: None,
                 });
             }
             Instruction::DefineMethodComputed { kind, enumerable } => {
-                return Ok(RunExit::DefineProperty {
+                exit!(RunExit::DefineProperty {
                     key: None,
                     method: Some((*kind, *enumerable)),
                 });
             }
             Instruction::DefineField(key) => {
                 if !resident_property!(property::Operation::Define(*key)) {
-                    return Ok(RunExit::DefineProperty {
+                    exit!(RunExit::DefineProperty {
                         key: Some(*key),
                         method: None,
                     });
@@ -1023,60 +1061,60 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 kind,
                 enumerable,
             } => {
-                return Ok(RunExit::DefineProperty {
+                exit!(RunExit::DefineProperty {
                     key: Some(*key),
                     method: Some((*kind, *enumerable)),
                 });
             }
             Instruction::DefineClass { name, has_heritage } => {
-                return Ok(RunExit::DefineClass {
+                exit!(RunExit::DefineClass {
                     name: *name,
                     has_heritage: *has_heritage,
                 });
             }
             Instruction::InstallClassInstanceInitializer => {
-                return Ok(RunExit::ClassInitializer(
+                exit!(RunExit::ClassInitializer(
                     super::construct_driver::InitializerKind::Install,
                 ));
             }
             Instruction::CallClassInstanceInitializer => {
-                return Ok(RunExit::ClassInitializer(
+                exit!(RunExit::ClassInitializer(
                     super::construct_driver::InitializerKind::Instance,
                 ));
             }
             Instruction::RunClassStaticInitializer => {
-                return Ok(RunExit::ClassInitializer(
+                exit!(RunExit::ClassInitializer(
                     super::construct_driver::InitializerKind::Static,
                 ));
             }
             Instruction::CallClassStaticBlock => {
-                return Ok(RunExit::ClassInitializer(
+                exit!(RunExit::ClassInitializer(
                     super::construct_driver::InitializerKind::Block,
                 ));
             }
             Instruction::PushAtomValueIndex(value) => {
-                return Ok(RunExit::Pure(
+                exit!(RunExit::Pure(
                     super::pure_operations::PureOperation::AtomValue(*value),
                 ));
             }
             Instruction::RegExp(index) => {
-                return Ok(RunExit::Pure(
+                exit!(RunExit::Pure(
                     super::pure_operations::PureOperation::RegExp(*index),
                 ));
             }
             Instruction::ThrowDeleteSuper => {
-                return Ok(RunExit::Pure(
+                exit!(RunExit::Pure(
                     super::pure_operations::PureOperation::DeleteSuper,
                 ));
             }
-            Instruction::Import => return Ok(RunExit::Import),
+            Instruction::Import => exit!(RunExit::Import),
             Instruction::InitializeModuleImportCollision(index) => {
-                return Ok(RunExit::Pure(
+                exit!(RunExit::Pure(
                     super::pure_operations::PureOperation::InitializeModuleImportCollision(*index),
                 ));
             }
             Instruction::InitializeVarRef(index) | Instruction::InitializeDerivedVarRef(index) => {
-                return Ok(RunExit::Pure(
+                exit!(RunExit::Pure(
                     super::pure_operations::PureOperation::InitializeClosure {
                         index: *index,
                         derived: matches!(instruction, Instruction::InitializeDerivedVarRef(_)),
@@ -1084,17 +1122,17 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 ));
             }
             Instruction::SetProto => {
-                return Ok(RunExit::Pure(
+                exit!(RunExit::Pure(
                     super::pure_operations::PureOperation::SetPrototype,
                 ));
             }
             Instruction::IteratorCheckObject => {
-                return Ok(RunExit::Pure(
+                exit!(RunExit::Pure(
                     super::pure_operations::PureOperation::IteratorCheckObject,
                 ));
             }
             Instruction::ThrowIteratorMissingThrow => {
-                return Ok(RunExit::Pure(
+                exit!(RunExit::Pure(
                     super::pure_operations::PureOperation::IteratorMissingThrow,
                 ));
             }
@@ -1113,7 +1151,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     Instruction::TypeOfIsUndefined => P::TypeOfIsUndefined,
                     _ => P::TypeOfIsFunction,
                 };
-                return Ok(RunExit::Pure(kind));
+                exit!(RunExit::Pure(kind));
             }
             Instruction::Nop | Instruction::MarkSuperCall => true,
             Instruction::PushI32(number) => {
@@ -1149,7 +1187,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         executable.code.get(pc.fault + 1)
                     && slots.local_add_constant_supported(runtime, *right)?
                 {
-                    return Ok(RunExit::AddLocal);
+                    exit!(RunExit::AddLocal);
                 }
                 // The published bytecode node owns the constant-pool edge;
                 // the pushed operand duplicates it (scalars copy for free).
@@ -1188,7 +1226,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     slots.push(value)?;
                     true
                 } else {
-                    return Ok(RunExit::Pure(
+                    exit!(RunExit::Pure(
                         super::pure_operations::PureOperation::Constant(*index),
                     ));
                 }
@@ -1231,7 +1269,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     });
                     true
                 } else {
-                    return Ok(RunExit::Binding {
+                    exit!(RunExit::Binding {
                         source: BindingSource::Closure,
                         index: *index,
                         write: false,
@@ -1264,7 +1302,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     cold::event("captured_immediate_cell_write");
                     true
                 } else {
-                    return Ok(RunExit::Binding {
+                    exit!(RunExit::Binding {
                         source: BindingSource::Closure,
                         index: *index,
                         write: true,
@@ -1303,7 +1341,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     cold::event("captured_immediate_cell_write");
                     true
                 } else {
-                    return Ok(RunExit::Binding {
+                    exit!(RunExit::Binding {
                         source: BindingSource::Local,
                         index: *index,
                         write: true,
@@ -1365,7 +1403,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     cold::event("captured_immediate_cell_write");
                     true
                 } else {
-                    return Ok(RunExit::Binding {
+                    exit!(RunExit::Binding {
                         source: BindingSource::Argument,
                         index: *index,
                         write: !matches!(instruction, Instruction::GetArg(_)),
@@ -1379,7 +1417,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     && executable.local_definitions[usize::from(*index)].kind
                         == crate::engine::code::function::metadata::ClosureVariableKind::Normal =>
             {
-                return Ok(RunExit::Binding {
+                exit!(RunExit::Binding {
                     source: BindingSource::Local,
                     index: *index,
                     write: true,
@@ -1404,7 +1442,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         _ => false,
                     };
                     if supported {
-                        return Ok(RunExit::AddLocal);
+                        exit!(RunExit::AddLocal);
                     }
                 }
                 if let Some(update) = executable.fusion.update(pc.fault) {
@@ -1480,7 +1518,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                             });
                             true
                         } else {
-                            return Ok(RunExit::Binding {
+                            exit!(RunExit::Binding {
                                 source: BindingSource::Local,
                                 index: *index,
                                 write: false,
@@ -1492,14 +1530,14 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     FrameBinding::Uninitialized
                         if matches!(instruction, Instruction::GetLocalCheck(_)) =>
                     {
-                        return Ok(RunExit::LexicalUninitialized(*index));
+                        exit!(RunExit::LexicalUninitialized(*index));
                     }
                     _ => false,
                 }
             }
 
             Instruction::ThrowReadOnly(index) | Instruction::ThrowRedeclaration(index) => {
-                return Ok(RunExit::BindingError {
+                exit!(RunExit::BindingError {
                     index: *index,
                     redeclaration: matches!(instruction, Instruction::ThrowRedeclaration(_)),
                 });
@@ -1513,7 +1551,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     Instruction::InitializePrivateMethod(_) => Initialization::Method,
                     _ => Initialization::Accessor,
                 };
-                return Ok(RunExit::PrivateInitialize {
+                exit!(RunExit::PrivateInitialize {
                     index: *index,
                     kind,
                 });
@@ -1531,21 +1569,21 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     Instruction::DefinePrivateField(_) => Access::Define,
                     _ => Access::In,
                 };
-                return Ok(RunExit::PrivateAccess {
+                exit!(RunExit::PrivateAccess {
                     source: *source,
                     access,
                 });
             }
-            Instruction::Arguments(kind) => return Ok(RunExit::Arguments(*kind)),
-            Instruction::Rest(start) => return Ok(RunExit::Rest(*start)),
-            Instruction::SetName(index) => return Ok(RunExit::SetName(Some(*index))),
-            Instruction::SetNameComputed => return Ok(RunExit::SetName(None)),
-            Instruction::FClosure(index) => return Ok(RunExit::InstantiateClosure(*index)),
+            Instruction::Arguments(kind) => exit!(RunExit::Arguments(*kind)),
+            Instruction::Rest(start) => exit!(RunExit::Rest(*start)),
+            Instruction::SetName(index) => exit!(RunExit::SetName(Some(*index))),
+            Instruction::SetNameComputed => exit!(RunExit::SetName(None)),
+            Instruction::FClosure(index) => exit!(RunExit::InstantiateClosure(*index)),
             Instruction::CloseLocal(index) => {
                 // An uncaptured local keeps its value until the next scope entry.
                 // Captured cells must first root and detach their shared value.
                 if matches!(slots.local(*index)?, FrameBinding::Captured(_)) {
-                    return Ok(RunExit::CloseCaptured(*index));
+                    exit!(RunExit::CloseCaptured(*index));
                 } else {
                     if let Some(flag) = cold.reusable_captured_locals.get_mut(usize::from(*index)) {
                         *flag = false;
@@ -1555,7 +1593,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             }
             Instruction::SetLocalUninitialized(index) => {
                 if matches!(slots.local(*index)?, FrameBinding::Captured(_)) {
-                    return Ok(RunExit::ResetCaptured(*index));
+                    exit!(RunExit::ResetCaptured(*index));
                 }
                 let ready = match slots.local(*index)? {
                     FrameBinding::Uninitialized => true,
@@ -1594,7 +1632,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 if definition.kind
                     == crate::engine::code::function::metadata::ClosureVariableKind::WithObject
                 {
-                    return Ok(RunExit::Environment(
+                    exit!(RunExit::Environment(
                         super::environment_driver::Operation::InitializeWith(*index),
                     ));
                 }
@@ -1636,7 +1674,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             Instruction::PutLocalCheck(index) | Instruction::SetLocalCheck(index)
                 if matches!(slots.local(*index)?, FrameBinding::Uninitialized) =>
             {
-                return Ok(RunExit::LexicalUninitialized(*index));
+                exit!(RunExit::LexicalUninitialized(*index));
             }
             Instruction::PutLocal(index)
             | Instruction::SetLocal(index)
@@ -1830,12 +1868,12 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     fusion::compare_branch(&mut slots, instruction, &executable.code[branch_pc])?
                 else {
                     if matches!(instruction, Instruction::StrictEq | Instruction::StrictNeq) {
-                        return Ok(RunExit::StrictEquality(matches!(
+                        exit!(RunExit::StrictEquality(matches!(
                             instruction,
                             Instruction::StrictNeq
                         )));
                     }
-                    return Ok(RunExit::Numeric(
+                    exit!(RunExit::Numeric(
                         super::numeric::operation::NumericKind::for_instruction(instruction)
                             .ok_or_else(|| cold::internal("comparison has no numeric operation"))?,
                     ));
@@ -1874,7 +1912,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                             _ => false,
                         };
                         if rope {
-                            return Ok(RunExit::StrictEquality(negate));
+                            exit!(RunExit::StrictEquality(negate));
                         }
                     }
                     let equal = runtime
@@ -1911,6 +1949,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         let right = slots.pop()?;
                         let left = slots.pop()?;
                         slots.push(JsValue::Bool(equal))?;
+                        slots.canonicalize("tos.spill.release");
                         drop(slots);
                         release_dropped(runtime, (left, right))?;
                         slots = transaction.slots();
@@ -1934,6 +1973,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 } else {
                     let input = slots.pop()?;
                     slots.push(JsValue::Bool(result))?;
+                    slots.canonicalize("tos.spill.release");
                     drop(slots);
                     release_dropped(runtime, input)?;
                     slots = transaction.slots();
@@ -1963,7 +2003,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     slots.push(value(next))?;
                     true
                 } else if matches!(instruction, Instruction::Plus) {
-                    return Ok(RunExit::ConvertPlus);
+                    exit!(RunExit::ConvertPlus);
                 } else {
                     false
                 }
@@ -1982,17 +2022,17 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 true
             }
             Instruction::IfTrue(target) | Instruction::IfFalse(target) => {
-                return Ok(RunExit::Pure(
+                exit!(RunExit::Pure(
                     super::pure_operations::PureOperation::Branch {
                         target: *target,
                         when: matches!(instruction, Instruction::IfTrue(_)),
                     },
                 ));
             }
-            Instruction::Catch(target) => return Ok(RunExit::Catch(*target)),
-            Instruction::DropCatch => return Ok(RunExit::DropCatch),
-            Instruction::NipCatch => return Ok(RunExit::NipCatch),
-            Instruction::Throw => return Ok(RunExit::Throw),
+            Instruction::Catch(target) => exit!(RunExit::Catch(*target)),
+            Instruction::DropCatch => exit!(RunExit::DropCatch),
+            Instruction::NipCatch => exit!(RunExit::NipCatch),
+            Instruction::Throw => exit!(RunExit::Throw),
             Instruction::Gosub(target) => {
                 let pc = i32::try_from(next_pc)
                     .map_err(|_| cold::internal("gosub return PC does not fit Int"))?;
@@ -2036,21 +2076,21 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 pc.resume = next_pc;
                 #[cfg(feature = "profiling")]
                 cold::instruction(observed_depth);
-                return Ok(RunExit::Suspend(kind));
+                exit!(RunExit::Suspend(kind));
             }
             Instruction::Return => {
                 execution.pending = Some(slots.pop()?);
                 pc.resume = next_pc;
                 #[cfg(feature = "profiling")]
                 cold::instruction(observed_depth);
-                return Ok(RunExit::Complete);
+                exit!(RunExit::Complete);
             }
             Instruction::ReturnUndefined => {
                 execution.pending = Some(JsValue::Undefined);
                 pc.resume = next_pc;
                 #[cfg(feature = "profiling")]
                 cold::instruction(observed_depth);
-                return Ok(RunExit::Complete);
+                exit!(RunExit::Complete);
             }
         };
         if !handled {
@@ -2082,12 +2122,13 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         && (observes_stack(slots.peek(0))
                             || (!kind.unary() && observes_stack(slots.peek(1))))
                     {
-                        return Ok(RunExit::Materialize);
+                        exit!(RunExit::Materialize);
                     }
                     // Preserve active-PC admission before consuming operands,
                     // then keep this transaction and run frame across parsing.
                     // The active PC is published lazily by numeric::complete
                     // only if a JavaScript error is materialized.
+                    slots.canonicalize("tos.spill.numeric");
                     drop(slots);
                     pc.publish_fault();
                     if !numeric::complete(
@@ -2099,14 +2140,15 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         frame.active_frame,
                         pc.fault,
                     )? {
+                        transaction.canonicalize("tos.spill.exit");
                         return Ok(RunExit::PrimitiveThrow);
                     }
                     slots = transaction.slots();
                 } else {
-                    return Ok(RunExit::Numeric(kind));
+                    exit!(RunExit::Numeric(kind));
                 }
             } else {
-                return Ok(RunExit::Bridge);
+                exit!(RunExit::Bridge);
             }
         }
         #[cfg(feature = "profiling")]
