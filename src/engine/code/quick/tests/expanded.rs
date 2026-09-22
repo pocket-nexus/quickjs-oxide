@@ -130,7 +130,8 @@ fn quick_numeric_tags_keep_observable_fallback_effects() {
 
 #[test]
 fn quick_slot_operands_never_truncate_to_u16() {
-    let operations: [(fn(u16) -> Instruction, fn(u16) -> DecodedOp); 6] = [
+    type SlotConstructors = (fn(u16) -> Instruction, fn(u16) -> DecodedOp);
+    let operations: [SlotConstructors; 6] = [
         (Instruction::GetLocal, DecodedOp::GetLocal),
         (Instruction::PutLocal, DecodedOp::PutLocal),
         (Instruction::SetLocal, DecodedOp::SetLocal),

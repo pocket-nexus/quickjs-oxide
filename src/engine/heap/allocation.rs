@@ -192,7 +192,7 @@ impl Heap {
         // them before any verification; only this publication may certify
         // the immutable code that will actually enter the arena.
         bytecode.executable = Default::default();
-        #[cfg(any(test, oxide_quick_projection))]
+        #[cfg(any(test, oxide_quick_projection, oxide_quick_dispatch))]
         {
             bytecode.quick = None;
         }
@@ -1335,7 +1335,7 @@ impl Heap {
                 &bytecode.local_definitions,
             );
         }
-        #[cfg(any(test, oxide_quick_projection))]
+        #[cfg(any(test, oxide_quick_projection, oxide_quick_dispatch))]
         {
             use crate::engine::code::quick::{BuildError, QuickProgram};
             bytecode.quick = Some(QuickProgram::build_verified(&bytecode.code).map_err(

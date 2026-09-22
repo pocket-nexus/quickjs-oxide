@@ -32,9 +32,16 @@ pub(crate) enum StoreDrop {
 enum FusionKind {
     UpdateLocal(UpdateLocal),
     CompareBranch,
-    AddStore { discard: bool },
-    LocalAdd { constant_left: bool, discard: bool },
-    MethodCall { arguments: u8 },
+    AddStore {
+        discard: bool,
+    },
+    LocalAdd {
+        constant_left: bool,
+        discard: bool,
+    },
+    MethodCall {
+        arguments: u8,
+    },
     #[cfg(any(test, oxide_store_drop_fusion))]
     StoreDrop(StoreDrop),
 }
@@ -51,9 +58,10 @@ impl FusionKind {
             }
             Self::CompareBranch => 32,
             Self::AddStore { discard } => 64 | u8::from(discard),
-            Self::LocalAdd { constant_left, discard } => {
-                128 | (u8::from(constant_left) << 1) | u8::from(discard)
-            }
+            Self::LocalAdd {
+                constant_left,
+                discard,
+            } => 128 | (u8::from(constant_left) << 1) | u8::from(discard),
             Self::MethodCall { arguments } => 160 + arguments,
             #[cfg(any(test, oxide_store_drop_fusion))]
             Self::StoreDrop(StoreDrop::Local) => 96,
@@ -77,7 +85,9 @@ impl FusionKind {
                 constant_left: tag & 2 != 0,
                 discard: tag & 1 != 0,
             },
-            160..=167 => Self::MethodCall { arguments: tag - 160 },
+            160..=167 => Self::MethodCall {
+                arguments: tag - 160,
+            },
             #[cfg(any(test, oxide_store_drop_fusion))]
             96 => Self::StoreDrop(StoreDrop::Local),
             #[cfg(any(test, oxide_store_drop_fusion))]
@@ -90,8 +100,20 @@ impl FusionKind {
         match self {
             Self::UpdateLocal(update) => update.instructions,
             Self::CompareBranch => 2,
-            Self::AddStore { discard } => if discard { 3 } else { 2 },
-            Self::LocalAdd { discard, .. } => if discard { 5 } else { 4 },
+            Self::AddStore { discard } => {
+                if discard {
+                    3
+                } else {
+                    2
+                }
+            }
+            Self::LocalAdd { discard, .. } => {
+                if discard {
+                    5
+                } else {
+                    4
+                }
+            }
             Self::MethodCall { arguments } => usize::from(arguments) + 2,
             #[cfg(any(test, oxide_store_drop_fusion))]
             Self::StoreDrop(_) => 2,
@@ -197,19 +219,27 @@ impl FusionPlan {
                         Instruction::PutLocal(index) | Instruction::PutLocalCheck(index)
                             if index == left =>
                         {
-                            Some(FusionKind::LocalAdd { constant_left: false, discard: false })
+                            Some(FusionKind::LocalAdd {
+                                constant_left: false,
+                                discard: false,
+                            })
                         }
                         Instruction::SetLocal(index) | Instruction::SetLocalCheck(index)
                             if index == left && matches!(rest.get(4), Some(Instruction::Drop)) =>
                         {
-                            Some(FusionKind::LocalAdd { constant_left: false, discard: true })
+                            Some(FusionKind::LocalAdd {
+                                constant_left: false,
+                                discard: true,
+                            })
                         }
                         _ => None,
                     }
                 }
                 _ => None,
             };
-            let method = method_call_count(rest).map(|count| FusionKind::MethodCall { arguments: count as u8 });
+            let method = method_call_count(rest).map(|count| FusionKind::MethodCall {
+                arguments: count as u8,
+            });
             let const_local_add = match rest {
                 [
                     Instruction::PushConst(_constant),
@@ -225,12 +255,18 @@ impl FusionPlan {
                         Instruction::PutLocal(index) | Instruction::PutLocalCheck(index)
                             if index == right =>
                         {
-                            Some(FusionKind::LocalAdd { constant_left: true, discard: false })
+                            Some(FusionKind::LocalAdd {
+                                constant_left: true,
+                                discard: false,
+                            })
                         }
                         Instruction::SetLocal(index) | Instruction::SetLocalCheck(index)
                             if index == right && matches!(rest.get(4), Some(Instruction::Drop)) =>
                         {
-                            Some(FusionKind::LocalAdd { constant_left: true, discard: true })
+                            Some(FusionKind::LocalAdd {
+                                constant_left: true,
+                                discard: true,
+                            })
                         }
                         _ => None,
                     }
@@ -310,11 +346,17 @@ impl FusionPlan {
     }
     #[inline]
     pub(crate) fn compare_branch(&self, pc: usize) -> bool {
-        matches!(FusionKind::decode(self.flag(pc)), Some(FusionKind::CompareBranch))
+        matches!(
+            FusionKind::decode(self.flag(pc)),
+            Some(FusionKind::CompareBranch)
+        )
     }
     #[inline]
     pub(crate) fn add_store(&self, pc: usize) -> bool {
-        matches!(FusionKind::decode(self.flag(pc)), Some(FusionKind::AddStore { .. }))
+        matches!(
+            FusionKind::decode(self.flag(pc)),
+            Some(FusionKind::AddStore { .. })
+        )
     }
     /// Only literals and direct binding reads may join a completed own read.
     /// Runtime guards retain canonical evaluation for TDZ/captured bindings.
@@ -336,7 +378,12 @@ impl FusionPlan {
     /// direct, non-Object, domain-valid binding.
     pub(crate) fn const_add_span(&self, pc: usize) -> Option<usize> {
         match FusionKind::decode(self.flag(pc)) {
-            Some(kind @ FusionKind::LocalAdd { constant_left: true, .. }) => Some(kind.instructions()),
+            Some(
+                kind @ FusionKind::LocalAdd {
+                    constant_left: true,
+                    ..
+                },
+            ) => Some(kind.instructions()),
             _ => None,
         }
     }
@@ -366,7 +413,10 @@ fn store_drop_kind(rest: &[Instruction], locals: &[VariableDefinition]) -> Optio
         [Instruction::SetLocal(index), Instruction::Drop, ..]
             if locals.get(usize::from(*index)).is_some_and(|definition| {
                 definition.kind == ClosureVariableKind::Normal && !definition.is_const
-            }) => StoreDrop::Local,
+            }) =>
+        {
+            StoreDrop::Local
+        }
         // Mapped arguments and physical argument bounds are runtime/verifier
         // obligations; local metadata cannot establish either property.
         [Instruction::SetArg(_), Instruction::Drop, ..] => StoreDrop::Argument,

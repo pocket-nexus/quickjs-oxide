@@ -1,6 +1,51 @@
-//! Number-only execution of publication-authenticated canonical spans.
+//! Scalar execution of publication-authenticated canonical spans.
 use super::{Error, Instruction, RunSlots};
 use crate::engine::code::fusion::UpdateLocal;
+
+#[cfg(test)]
+mod store_drop_tests;
+
+/// Set+Drop can consume directly only when removing its transient scalar copy
+/// cannot change a retain failure, final release, callback or observed stack.
+#[cfg(any(test, oxide_store_drop_fusion))]
+pub(super) fn store_drop(
+    runtime: &crate::engine::api::runtime::Runtime,
+    slots: &mut RunSlots<'_>,
+    kind: crate::engine::code::fusion::StoreDrop,
+    instruction: &Instruction,
+) -> Result<bool, Error> {
+    use crate::engine::code::fusion::StoreDrop;
+    let (index, argument) = match (kind, instruction) {
+        (StoreDrop::Local, Instruction::SetLocal(index)) => (*index, false),
+        (StoreDrop::Argument, Instruction::SetArg(index)) => (*index, true),
+        _ => return Err(Error::internal("authenticated store/drop opcode mismatch")),
+    };
+    if !super::immediate(slots.peek(0)?) {
+        return Ok(false);
+    }
+    let destination = if argument {
+        slots.parameter(index)?
+    } else {
+        slots.local(index)?
+    };
+    if !matches!(destination, super::FrameBinding::Direct(value) if super::immediate(value)) {
+        return Ok(false);
+    }
+    let old = if argument {
+        slots.store_parameter_from_top(runtime, index, super::StoreMode::Consume)?
+    } else {
+        slots.store_local_from_top(runtime, index, super::StoreMode::Consume)?
+    }
+    .ok_or_else(|| Error::internal("scalar store/drop target changed"))?;
+    super::release_displaced(runtime, old)?;
+    #[cfg(feature = "profiling")]
+    super::cold::event(if argument {
+        "fusion.StoreDropArgument"
+    } else {
+        "fusion.StoreDropLocal"
+    });
+    Ok(true)
+}
 
 pub(super) fn update_local(
     slots: &mut RunSlots<'_>,

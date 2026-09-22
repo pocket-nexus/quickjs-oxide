@@ -183,12 +183,17 @@ impl RunExit {
 
 mod cold;
 mod fusion;
+mod hot;
+#[cfg(test)]
+mod mode_tests;
 mod numeric;
 mod program_counter;
 mod property;
+#[cfg(any(test, oxide_quick_dispatch))]
+mod quick;
 #[cfg(test)]
 mod store_tests;
-#[cfg(any(test, oxide_scalar_tos))]
+#[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
 mod tos;
 use program_counter::ProgramCounter;
 
@@ -218,6 +223,7 @@ pub(super) fn test_complete_numeric(
         thrown,
         active_frame,
         fault_pc,
+        false,
     )
 }
 
@@ -346,26 +352,79 @@ fn borrowed_base_field_read(
 // Explicit drops end the NoJs slot borrow before publication or owner release.
 #[allow(clippy::drop_non_drop)]
 pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunExit, Error> {
-    run_impl::<{ cfg!(oxide_scalar_tos) }>(execution, id)
+    #[cfg(test)]
+    {
+        let mode = execution
+            .frames
+            .current_mut(id)?
+            .cold
+            .function
+            .runtime()
+            .0
+            .execution_mode_override
+            .get();
+        match mode {
+            Some(0) => return run_with_modes::<false, false, false, false>(execution, id),
+            Some(1) => return run_with_modes::<true, false, false, false>(execution, id),
+            Some(2) => return run_with_modes::<false, true, false, false>(execution, id),
+            Some(4) => return run_with_modes::<false, false, true, false>(execution, id),
+            Some(5) => return run_with_modes::<true, false, true, false>(execution, id),
+            Some(8) => return run_with_modes::<false, false, false, true>(execution, id),
+            Some(15) => return run_with_modes::<true, true, true, true>(execution, id),
+            Some(_) => return Err(cold::internal("invalid test execution mode")),
+            None => {}
+        }
+    }
+    run_with_modes::<
+        { cfg!(oxide_scalar_tos) },
+        { cfg!(oxide_owned_tos) },
+        { cfg!(oxide_quick_dispatch) },
+        { cfg!(oxide_store_drop_fusion) },
+    >(execution, id)
 }
 
-#[allow(clippy::drop_non_drop)]
+#[cfg(test)]
 fn run_impl<const SCALAR_TOS: bool>(
     execution: &mut RunningExecution,
     id: FrameId,
 ) -> Result<RunExit, Error> {
+    run_with_modes::<SCALAR_TOS, false, false, false>(execution, id)
+}
+
+#[allow(clippy::drop_non_drop)]
+fn run_with_modes<
+    const SCALAR_TOS: bool,
+    const OWNED_TOS: bool,
+    const QUICK: bool,
+    const STORE_DROP: bool,
+>(
+    execution: &mut RunningExecution,
+    id: FrameId,
+) -> Result<RunExit, Error> {
     let frame = execution.frames.current_mut(id)?;
+    #[cfg(any(test, oxide_quick_dispatch))]
+    if QUICK
+        && !frame
+            .cold
+            .executable
+            .quick
+            .as_ref()
+            .is_some_and(|program| program.has_words())
+    {
+        // Entirely generic functions choose canonical once per run entry.
+        return run_with_modes::<SCALAR_TOS, OWNED_TOS, false, STORE_DROP>(execution, id);
+    }
     let body = &mut *frame.cold;
     let executable = &*body.executable;
-    #[cfg(any(test, oxide_scalar_tos))]
-    let mut transaction = if SCALAR_TOS {
+    #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
+    let mut transaction = if SCALAR_TOS || OWNED_TOS {
         execution
             .slots
             .frame_transaction_with_scalar_tos(&mut body.window)?
     } else {
         execution.slots.frame_transaction(&mut body.window)?
     };
-    #[cfg(not(any(test, oxide_scalar_tos)))]
+    #[cfg(not(any(test, oxide_scalar_tos, oxide_owned_tos)))]
     let mut transaction = execution.slots.frame_transaction(&mut body.window)?;
     let mut slots = transaction.slots();
     let cold = &mut body.owners;
@@ -415,29 +474,123 @@ fn run_impl<const SCALAR_TOS: bool>(
             handled
         }};
     }
-    loop {
+    'instructions: loop {
         pc.fault = pc.resume;
-        let instruction = executable
-            .code
-            .get(pc.fault)
-            .ok_or_else(|| cold::internal("owned bytecode ended without return"))?;
-        #[cfg(any(test, oxide_scalar_tos))]
-        {
-            let resident = SCALAR_TOS && tos::resident(instruction, executable, &slots);
-            drop(slots);
-            slots = if resident {
-                transaction.slots()
-            } else {
-                transaction.canonical_slots("tos.spill.opcode")
-            };
-        }
+        #[cfg(feature = "profiling")]
+        cold::event("dispatch");
         #[cfg(feature = "profiling")]
         let observed_depth = slots.depth();
         let mut next_pc = pc
             .fault
             .checked_add(1)
             .ok_or_else(|| cold::internal("owned program counter overflow"))?;
-        let handled = match instruction {
+        let numeric_kind = 'dispatch: {
+            // Certified words use the same canonical PC and epilogue. Only Generic
+            // and a side-effect-free guard decline fetch the canonical instruction.
+            #[cfg(any(test, oxide_quick_dispatch))]
+            if QUICK
+                && let Some(operation) = executable
+                    .quick
+                    .as_ref()
+                    .and_then(|program| program.operation(pc.fault))
+            {
+                #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
+                {
+                    #[cfg(any(test, oxide_owned_tos))]
+                    let owned_resident = OWNED_TOS
+                        && slots.has_owned_numeric_output()
+                        && matches!(
+                            operation,
+                            crate::engine::code::quick::DecodedOp::PutLocal(_)
+                                | crate::engine::code::quick::DecodedOp::PutArg(_)
+                        );
+                    #[cfg(not(any(test, oxide_owned_tos)))]
+                    let owned_resident = false;
+                    drop(slots);
+                    slots = if SCALAR_TOS || owned_resident {
+                        transaction.slots()
+                    } else {
+                        transaction.canonical_slots("tos.spill.quick")
+                    };
+                }
+                match quick::execute(
+                    operation,
+                    runtime,
+                    executable,
+                    &mut slots,
+                    pc.fault,
+                    &mut next_pc,
+                )? {
+                    quick::Outcome::Completed => {
+                        #[cfg(feature = "profiling")]
+                        {
+                            cold::event("quick.dispatch.hot");
+                            cold::instruction(observed_depth);
+                        }
+                        pc.resume = next_pc;
+                        continue 'instructions;
+                    }
+                    quick::Outcome::Numeric(kind) => {
+                        #[cfg(feature = "profiling")]
+                        cold::event("quick.dispatch.numeric");
+                        break 'dispatch Some(kind);
+                    }
+                    quick::Outcome::Canonical => {}
+                }
+                #[cfg(feature = "profiling")]
+                cold::event(
+                    if matches!(
+                        operation,
+                        crate::engine::code::quick::DecodedOp::GenericCanonical
+                    ) {
+                        "quick.dispatch.generic"
+                    } else {
+                        "quick.dispatch.declined"
+                    },
+                );
+            }
+            let instruction = executable
+                .code
+                .get(pc.fault)
+                .ok_or_else(|| cold::internal("owned bytecode ended without return"))?;
+            #[cfg(any(test, oxide_scalar_tos, oxide_owned_tos))]
+            {
+                #[cfg(any(test, oxide_owned_tos))]
+                let owned_resident = OWNED_TOS
+                    && slots.has_owned_numeric_output()
+                    && matches!(
+                        instruction,
+                        Instruction::PutLocal(_) | Instruction::PutArg(_)
+                    );
+                #[cfg(not(any(test, oxide_owned_tos)))]
+                let owned_resident = false;
+                let resident = (SCALAR_TOS && tos::resident(instruction, executable, &slots))
+                    || owned_resident;
+                drop(slots);
+                slots = if resident {
+                    transaction.slots()
+                } else {
+                    transaction.canonical_slots("tos.spill.opcode")
+                };
+            }
+            #[cfg(feature = "profiling")]
+            if QUICK {
+                cold::event("quick.canonical_fetch");
+            }
+            #[cfg(any(test, oxide_store_drop_fusion))]
+            if STORE_DROP && let Some(kind) = executable.fusion.store_drop(pc.fault) {
+                #[cfg(feature = "profiling")]
+                cold::event("fusion.StoreDropCandidate");
+                if fusion::store_drop(runtime, &mut slots, kind, instruction)? {
+                    #[cfg(feature = "profiling")]
+                    fusion::record_span(&executable.code[pc.fault..pc.fault + 2], observed_depth);
+                    pc.resume = pc.fault + 2;
+                    continue 'instructions;
+                }
+                #[cfg(feature = "profiling")]
+                cold::event("fusion.StoreDropDeclined");
+            }
+            let handled = match instruction {
             Instruction::Call(arguments)
             | Instruction::TailCall(arguments)
             | Instruction::CallMethod(arguments)
@@ -1453,7 +1606,7 @@ fn run_impl<const SCALAR_TOS: bool>(
                             observed_depth,
                         );
                         pc.resume = pc.fault + update.instructions;
-                        continue;
+                        continue 'instructions;
                     }
                 }
                 match slots.local(*index)? {
@@ -1479,6 +1632,12 @@ fn run_impl<const SCALAR_TOS: bool>(
                             cold::instruction(observed_depth + 1);
                             slots.push(result)?;
                             next_pc += 1;
+                        } else if immediate(value) {
+                            if !hot::read_scalar(runtime, &mut slots, *index, false)? {
+                                return Err(cold::internal(
+                                    "scalar local changed without an effect",
+                                ));
+                            }
                         } else {
                             let copied = copy_value(runtime, value)?;
                             slots.push(copied)?;
@@ -1688,11 +1847,14 @@ fn run_impl<const SCALAR_TOS: bool>(
                 } else {
                     StoreMode::Consume
                 };
-                if matches!(slots.local(*index)?, FrameBinding::Direct(old) if runtime.slot_value_release_readiness_jsvalue(old).map_err(runtime_error_to_vm_error)? == SlotReleaseReadiness::Ready)
+                if hot::store_scalar(runtime, &mut slots, *index, false, mode)? {
+                    true
+                } else if matches!(slots.local(*index)?, FrameBinding::Direct(old) if runtime.slot_value_release_readiness_jsvalue(old).map_err(runtime_error_to_vm_error)? == SlotReleaseReadiness::Ready)
                 {
                     let old = slots
                         .store_local_from_top(runtime, *index, mode)?
                         .ok_or_else(|| cold::internal("direct local store target changed"))?;
+                    slots.canonicalize("tos.spill.displaced");
                     release_displaced(runtime, old)?;
                     true
                 } else if matches!(slots.local(*index)?, FrameBinding::Direct(old) if primitive_release_owner(old))
@@ -1714,7 +1876,9 @@ fn run_impl<const SCALAR_TOS: bool>(
                 }
             }
             Instruction::GetArg(index) => {
-                if let FrameBinding::Direct(value) = slots.parameter(*index)? {
+                if hot::read_scalar(runtime, &mut slots, *index, true)? {
+                    true
+                } else if let FrameBinding::Direct(value) = slots.parameter(*index)? {
                     let copied = copy_value(runtime, value)?;
                     slots.push(copied)?;
                     true
@@ -1728,11 +1892,14 @@ fn run_impl<const SCALAR_TOS: bool>(
                 } else {
                     StoreMode::Consume
                 };
-                if matches!(slots.parameter(*index)?, FrameBinding::Direct(old) if runtime.slot_value_release_readiness_jsvalue(old).map_err(runtime_error_to_vm_error)? == SlotReleaseReadiness::Ready)
+                if hot::store_scalar(runtime, &mut slots, *index, true, mode)? {
+                    true
+                } else if matches!(slots.parameter(*index)?, FrameBinding::Direct(old) if runtime.slot_value_release_readiness_jsvalue(old).map_err(runtime_error_to_vm_error)? == SlotReleaseReadiness::Ready)
                 {
                     let old = slots
                         .store_parameter_from_top(runtime, *index, mode)?
                         .ok_or_else(|| cold::internal("direct parameter store target changed"))?;
+                    slots.canonicalize("tos.spill.displaced");
                     release_displaced(runtime, old)?;
                     true
                 } else if matches!(slots.parameter(*index)?, FrameBinding::Direct(old) if primitive_release_owner(old))
@@ -1830,26 +1997,42 @@ fn run_impl<const SCALAR_TOS: bool>(
                     true
                 }
             }
-            Instruction::Add => binary(&mut slots, |a, b| value(a.add(b)))?,
-            Instruction::Sub => binary(&mut slots, |a, b| value(a.sub(b)))?,
-            Instruction::Mul => binary(&mut slots, |a, b| value(a.mul(b)))?,
-            Instruction::Div => binary(&mut slots, |a, b| value(a.div(b)))?,
-            Instruction::Mod => binary(&mut slots, |a, b| value(a.rem(b)))?,
-            Instruction::Pow => binary(&mut slots, |a, b| value(a.pow(b)))?,
-            Instruction::Shl => binary(&mut slots, |a, b| {
-                JsValue::Int(a.int32().wrapping_shl(b.int32() as u32 & 31))
-            })?,
-            Instruction::Sar => binary(&mut slots, |a, b| {
-                JsValue::Int(a.int32() >> (b.int32() as u32 & 31))
-            })?,
-            Instruction::Shr => binary(&mut slots, |a, b| {
-                value(Number::compact(f64::from(
-                    (a.int32() as u32) >> (b.int32() as u32 & 31),
-                )))
-            })?,
-            Instruction::BitAnd => binary(&mut slots, |a, b| JsValue::Int(a.int32() & b.int32()))?,
-            Instruction::BitOr => binary(&mut slots, |a, b| JsValue::Int(a.int32() | b.int32()))?,
-            Instruction::BitXor => binary(&mut slots, |a, b| JsValue::Int(a.int32() ^ b.int32()))?,
+            Instruction::Add => {
+                hot::binary(&mut slots, super::numeric::operation::NumericKind::Add)?
+            }
+            Instruction::Sub => {
+                hot::binary(&mut slots, super::numeric::operation::NumericKind::Sub)?
+            }
+            Instruction::Mul => {
+                hot::binary(&mut slots, super::numeric::operation::NumericKind::Mul)?
+            }
+            Instruction::Div => {
+                hot::binary(&mut slots, super::numeric::operation::NumericKind::Div)?
+            }
+            Instruction::Mod => {
+                hot::binary(&mut slots, super::numeric::operation::NumericKind::Mod)?
+            }
+            Instruction::Pow => {
+                hot::binary(&mut slots, super::numeric::operation::NumericKind::Pow)?
+            }
+            Instruction::Shl => {
+                hot::binary(&mut slots, super::numeric::operation::NumericKind::Shl)?
+            }
+            Instruction::Sar => {
+                hot::binary(&mut slots, super::numeric::operation::NumericKind::Sar)?
+            }
+            Instruction::Shr => {
+                hot::binary(&mut slots, super::numeric::operation::NumericKind::Shr)?
+            }
+            Instruction::BitAnd => {
+                hot::binary(&mut slots, super::numeric::operation::NumericKind::BitAnd)?
+            }
+            Instruction::BitOr => {
+                hot::binary(&mut slots, super::numeric::operation::NumericKind::BitOr)?
+            }
+            Instruction::BitXor => {
+                hot::binary(&mut slots, super::numeric::operation::NumericKind::BitXor)?
+            }
             Instruction::Lt
             | Instruction::Lte
             | Instruction::Gt
@@ -1885,12 +2068,16 @@ fn run_impl<const SCALAR_TOS: bool>(
                 } else {
                     target
                 };
-                continue;
+                continue 'instructions;
             }
-            Instruction::Lt => binary(&mut slots, |a, b| JsValue::Bool(a.float() < b.float()))?,
-            Instruction::Lte => binary(&mut slots, |a, b| JsValue::Bool(a.float() <= b.float()))?,
-            Instruction::Gt => binary(&mut slots, |a, b| JsValue::Bool(a.float() > b.float()))?,
-            Instruction::Gte => binary(&mut slots, |a, b| JsValue::Bool(a.float() >= b.float()))?,
+            Instruction::Lt => hot::binary(&mut slots, super::numeric::operation::NumericKind::Lt)?,
+            Instruction::Lte => {
+                hot::binary(&mut slots, super::numeric::operation::NumericKind::Lte)?
+            }
+            Instruction::Gt => hot::binary(&mut slots, super::numeric::operation::NumericKind::Gt)?,
+            Instruction::Gte => {
+                hot::binary(&mut slots, super::numeric::operation::NumericKind::Gte)?
+            }
             Instruction::StrictEq | Instruction::StrictNeq => {
                 let negate = matches!(instruction, Instruction::StrictNeq);
                 if binary(&mut slots, |a, b| {
@@ -1957,8 +2144,10 @@ fn run_impl<const SCALAR_TOS: bool>(
                     true
                 }
             }
-            Instruction::Eq => binary(&mut slots, |a, b| JsValue::Bool(a.float() == b.float()))?,
-            Instruction::Neq => binary(&mut slots, |a, b| JsValue::Bool(a.float() != b.float()))?,
+            Instruction::Eq => hot::binary(&mut slots, super::numeric::operation::NumericKind::Eq)?,
+            Instruction::Neq => {
+                hot::binary(&mut slots, super::numeric::operation::NumericKind::Neq)?
+            }
             Instruction::Not => {
                 // Includes Annex B HTMLDDA objects; metadata lookup cannot run JS.
                 let result = !runtime
@@ -2012,22 +2201,21 @@ fn run_impl<const SCALAR_TOS: bool>(
                 next_pc = *target as usize;
                 true
             }
-            Instruction::IfTrue(target) | Instruction::IfFalse(target)
-                if immediate(slots.peek(0)?) =>
-            {
-                let truthy = slots.pop()?.to_boolean_primitive();
-                if truthy == matches!(instruction, Instruction::IfTrue(_)) {
-                    next_pc = *target as usize;
-                }
-                true
-            }
             Instruction::IfTrue(target) | Instruction::IfFalse(target) => {
-                exit!(RunExit::Pure(
-                    super::pure_operations::PureOperation::Branch {
-                        target: *target,
-                        when: matches!(instruction, Instruction::IfTrue(_)),
-                    },
-                ));
+                let when = matches!(instruction, Instruction::IfTrue(_));
+                match hot::branch(&mut slots, *target, when)? {
+                    Some(usize::MAX) => true,
+                    Some(target) => {
+                        next_pc = target;
+                        true
+                    }
+                    None => exit!(RunExit::Pure(
+                        super::pure_operations::PureOperation::Branch {
+                            target: *target,
+                            when,
+                        }
+                    )),
+                }
             }
             Instruction::Catch(target) => exit!(RunExit::Catch(*target)),
             Instruction::DropCatch => exit!(RunExit::DropCatch),
@@ -2093,62 +2281,72 @@ fn run_impl<const SCALAR_TOS: bool>(
                 exit!(RunExit::Complete);
             }
         };
-        if !handled {
-            if let Some(kind) = super::numeric::operation::NumericKind::for_instruction(instruction)
+            break 'dispatch if handled {
+                None
+            } else if let Some(kind) =
+                super::numeric::operation::NumericKind::for_instruction(instruction)
             {
-                if numeric::supported(&slots, kind) {
-                    // Symbol release and BigInt errors may observe the stack.
-                    // Number/String/bool coercions cannot construct a JS error.
-                    // Straight-line operand checks: a range loop materializes
-                    // the peek Result in memory and keeps its drop glue on the
-                    // success path of every iteration.
-                    // Destructure the Result instead of matching a temporary:
-                    // moving the Err variant out keeps the whole-Result drop
-                    // glue off the Ok path.
-                    #[inline(always)]
-                    fn observes_stack(operand: Result<&JsValue, Error>) -> bool {
-                        match operand {
-                            Ok(value) => matches!(
-                                value,
-                                JsValue::Symbol(_) | JsValue::BigInt(_) | JsValue::ShortBigInt(_)
-                            ),
-                            Err(error) => {
-                                drop(error);
-                                false
-                            }
-                        }
-                    }
-                    if !frame.active_frame.is_materialized()
-                        && (observes_stack(slots.peek(0))
-                            || (!kind.unary() && observes_stack(slots.peek(1))))
-                    {
-                        exit!(RunExit::Materialize);
-                    }
-                    // Preserve active-PC admission before consuming operands,
-                    // then keep this transaction and run frame across parsing.
-                    // The active PC is published lazily by numeric::complete
-                    // only if a JavaScript error is materialized.
-                    slots.canonicalize("tos.spill.numeric");
-                    drop(slots);
-                    pc.publish_fault();
-                    if !numeric::complete(
-                        runtime,
-                        executable.realm,
-                        &mut transaction,
-                        kind,
-                        &mut execution.pending,
-                        frame.active_frame,
-                        pc.fault,
-                    )? {
-                        transaction.canonicalize("tos.spill.exit");
-                        return Ok(RunExit::PrimitiveThrow);
-                    }
-                    slots = transaction.slots();
-                } else {
-                    exit!(RunExit::Numeric(kind));
-                }
+                Some(kind)
             } else {
                 exit!(RunExit::Bridge);
+            };
+        };
+        if let Some(kind) = numeric_kind {
+            if numeric::supported(&slots, kind) {
+                // Symbol release and BigInt errors may observe the stack.
+                // Number/String/bool coercions cannot construct a JS error.
+                // Straight-line operand checks: a range loop materializes
+                // the peek Result in memory and keeps its drop glue on the
+                // success path of every iteration.
+                // Destructure the Result instead of matching a temporary:
+                // moving the Err variant out keeps the whole-Result drop
+                // glue off the Ok path.
+                #[inline(always)]
+                fn observes_stack(operand: Result<&JsValue, Error>) -> bool {
+                    match operand {
+                        Ok(value) => matches!(
+                            value,
+                            JsValue::Symbol(_) | JsValue::BigInt(_) | JsValue::ShortBigInt(_)
+                        ),
+                        Err(error) => {
+                            drop(error);
+                            false
+                        }
+                    }
+                }
+                if !frame.active_frame.is_materialized()
+                    && (observes_stack(slots.peek(0))
+                        || (!kind.unary() && observes_stack(slots.peek(1))))
+                {
+                    exit!(RunExit::Materialize);
+                }
+                // Preserve active-PC admission before consuming operands,
+                // then keep this transaction and run frame across parsing.
+                // The active PC is published lazily by numeric::complete
+                // only if a JavaScript error is materialized.
+                slots.canonicalize("tos.spill.numeric");
+                drop(slots);
+                pc.publish_fault();
+                if !numeric::complete(
+                    runtime,
+                    executable.realm,
+                    &mut transaction,
+                    kind,
+                    &mut execution.pending,
+                    frame.active_frame,
+                    pc.fault,
+                    OWNED_TOS
+                        && matches!(
+                            executable.code.get(next_pc),
+                            Some(Instruction::PutLocal(_) | Instruction::PutArg(_))
+                        ),
+                )? {
+                    transaction.canonicalize("tos.spill.exit");
+                    return Ok(RunExit::PrimitiveThrow);
+                }
+                slots = transaction.slots();
+            } else {
+                exit!(RunExit::Numeric(kind));
             }
         }
         #[cfg(feature = "profiling")]

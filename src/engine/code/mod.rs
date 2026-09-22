@@ -26,5 +26,5 @@ pub(crate) mod fusion;
 
 // Internal M1 builds publish the projection eagerly but still execute the
 // canonical stream. The production M0 build has no sidecar fields or work.
-#[cfg(any(test, oxide_quick_projection))]
+#[cfg(any(test, oxide_quick_projection, oxide_quick_dispatch))]
 pub(crate) mod quick;

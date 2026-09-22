@@ -5,9 +5,15 @@ use super::{ObjectId, RawId};
 // The experimental projection must fit the original arena budget. Its cold
 // parameter descriptor is indirect, so adding QuickOp must not enlarge every
 // node kind's stride. A normal M0 build retains its exact original layout.
-#[cfg(all(target_pointer_width = "64", not(any(test, oxide_quick_projection))))]
+#[cfg(all(
+    target_pointer_width = "64",
+    not(any(test, oxide_quick_projection, oxide_quick_dispatch))
+))]
 const _: () = assert!(std::mem::size_of::<super::ArenaSlot>() == 440);
-#[cfg(all(target_pointer_width = "64", any(test, oxide_quick_projection)))]
+#[cfg(all(
+    target_pointer_width = "64",
+    any(test, oxide_quick_projection, oxide_quick_dispatch)
+))]
 const _: () = assert!(std::mem::size_of::<super::ArenaSlot>() <= 440);
 
 const EMPTY: RawId = RawId::Object(ObjectId {

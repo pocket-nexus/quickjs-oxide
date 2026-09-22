@@ -130,7 +130,7 @@ impl PublishedFunctionSnapshot {
     }
 
     pub(crate) fn authentication(&self, closure_count: usize) -> OrdinaryAuthentication {
-        #[cfg(any(test, oxide_quick_projection))]
+        #[cfg(any(test, oxide_quick_projection, oxide_quick_dispatch))]
         assert!(
             self.quick.is_some(),
             "synthetic canonical-only fixtures are not publication certificates"
@@ -214,7 +214,7 @@ pub(crate) struct PublishedFunctionData {
     /// Published snapshots always contain Some. None is the explicit
     /// canonical-only mode of mutable synthetic test fixtures, which cannot
     /// produce an ordinary-function authentication certificate.
-    #[cfg(any(test, oxide_quick_projection))]
+    #[cfg(any(test, oxide_quick_projection, oxide_quick_dispatch))]
     pub(crate) quick: Option<crate::engine::code::quick::QuickProgram>,
 
     pub(crate) property_read_ic: crate::engine::object::property_ic::PropertyReadCacheTable,
@@ -256,7 +256,7 @@ impl Runtime {
         // The realm is a strong edge of the bytecode node. Validating it here
         // makes a corrupt realm edge fail before entering a VM frame.
         state.heap.context(bytecode.realm)?;
-        #[cfg(any(test, oxide_quick_projection))]
+        #[cfg(any(test, oxide_quick_projection, oxide_quick_dispatch))]
         let quick = bytecode.quick.as_ref().ok_or(RuntimeError::Invariant(
             "published bytecode is missing its QuickOp certificate",
         ))?;
@@ -283,7 +283,7 @@ impl Runtime {
 
                 fusion: bytecode.fusion.clone(),
 
-                #[cfg(any(test, oxide_quick_projection))]
+                #[cfg(any(test, oxide_quick_projection, oxide_quick_dispatch))]
                 quick: Some(quick.clone()),
 
                 property_read_ic: crate::engine::object::property_ic::PropertyReadCacheTable::new(

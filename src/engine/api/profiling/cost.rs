@@ -16,9 +16,9 @@ pub(crate) use buffers::{
 };
 mod phases;
 pub(crate) use phases::{CompilePhase, PhaseTimer};
-#[cfg(any(test, oxide_quick_projection))]
+#[cfg(any(test, oxide_quick_projection, oxide_quick_dispatch))]
 mod quick;
-#[cfg(any(test, oxide_quick_projection))]
+#[cfg(any(test, oxide_quick_projection, oxide_quick_dispatch))]
 pub(crate) use quick::record_quick_projection;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

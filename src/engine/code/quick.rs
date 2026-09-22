@@ -150,7 +150,7 @@ pub(crate) const QUICK_TAG_MEMORY_NAMES: [&str; QUICK_TAG_COUNT] = [
 ];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum DecodedOp {
+pub(crate) enum DecodedOp {
     GenericCanonical,
     Nop,
     PushI32(i32),
@@ -393,6 +393,28 @@ pub(crate) enum ValidationError {
 }
 
 impl QuickProgram {
+    /// Select certified all-cold programs before entering the dispatch loop.
+    #[cfg(any(test, oxide_quick_dispatch))]
+    #[inline]
+    pub(crate) fn has_words(&self) -> bool {
+        matches!(&self.0, ProgramKind::Words(_))
+    }
+
+    /// Read one authenticated word at its unchanged canonical PC. A certified
+    /// all-cold program and an absent PC select the caller's canonical path.
+    /// Corrupt words are invariant failures, never a silent Generic fallback.
+    #[cfg(any(test, oxide_quick_dispatch))]
+    #[inline]
+    pub(crate) fn operation(&self, pc: usize) -> Option<DecodedOp> {
+        match &self.0 {
+            ProgramKind::CanonicalOnly => None,
+            ProgramKind::Words(words) => words.get(pc).map(|word| {
+                word.decode()
+                    .expect("published QuickOp word must remain authenticated")
+            }),
+        }
+    }
+
     /// Call only after canonical code and metadata verification. Two bounded
     /// scans plus projection validation are O(N); auxiliary scratch is O(1).
     pub(crate) fn build_verified(code: &[Instruction]) -> Result<Self, BuildError> {
@@ -613,4 +635,30 @@ fn contracts_match(decoded: DecodedOp, instruction: &Instruction) -> bool {
                 may_call_js: numeric,
                 may_allocate: numeric,
             }
+}
+
+#[cfg(test)]
+mod operation_tests {
+    use super::*;
+
+    #[test]
+    fn quick_operation_reads_canonical_pcs_without_reconstructing_instruction() {
+        let program =
+            QuickProgram::build_verified(&[Instruction::PushI32(7), Instruction::Return]).unwrap();
+        assert!(program.has_words());
+        assert_eq!(program.operation(0), Some(DecodedOp::PushI32(7)));
+        assert_eq!(program.operation(1), Some(DecodedOp::GenericCanonical));
+        assert_eq!(program.operation(2), None);
+        assert_eq!(program.operation(usize::MAX), None);
+        let cold = QuickProgram::build_verified(&[Instruction::ReturnUndefined]).unwrap();
+        assert!(!cold.has_words());
+        assert_eq!(cold.operation(0), None);
+    }
+
+    #[test]
+    #[should_panic(expected = "published QuickOp word must remain authenticated")]
+    fn quick_operation_never_hides_a_corrupt_word_as_canonical_fallback() {
+        let corrupt = QuickProgram(ProgramKind::Words(Rc::new(vec![QuickOp(u64::MAX)])));
+        let _ = corrupt.operation(0);
+    }
 }

@@ -30,6 +30,11 @@ pub(crate) static NEXT_RUNTIME_DOMAIN_ID: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) struct RuntimeInner {
     pub(crate) state: RefCell<RuntimeState>,
+    /// Full-driver differential tests select one mode per Runtime, including
+    /// nested calls and queued jobs. None follows the build's internal cfgs.
+    /// Bits: 0 scalar TOS, 1 owning numeric TOS, 2 Quick, 3 store/drop fusion.
+    #[cfg(test)]
+    pub(crate) execution_mode_override: Cell<Option<u8>>,
     /// Incremental activation count, readable without borrowing heap state.
     pub(crate) active_frame_depth: Rc<Cell<usize>>,
     pub(crate) deferred_references: super::deferred::DeferredOperations,

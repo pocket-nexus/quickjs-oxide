@@ -640,7 +640,9 @@ mod enabled {
         write!(out, ",\"quick_projection\":")?;
         string(
             out,
-            if cfg!(oxide_quick_projection) {
+            if cfg!(oxide_quick_dispatch) {
+                "eager-experiment-quick-execution"
+            } else if cfg!(oxide_quick_projection) {
                 "eager-experiment-canonical-execution"
             } else {
                 "disabled"

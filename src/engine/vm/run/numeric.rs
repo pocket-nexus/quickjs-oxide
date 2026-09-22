@@ -41,6 +41,10 @@ pub(super) fn supported(slots: &RunSlots<'_>, kind: NumericKind) -> bool {
 /// observes the stack, so the eager publication the caller previously performed
 /// was pure bookkeeping.
 #[inline(never)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Keep the cold numeric handoff explicit without widening the hot transaction."
+)]
 pub(super) fn complete(
     runtime: &Runtime,
     realm: ContextId,
@@ -49,6 +53,7 @@ pub(super) fn complete(
     thrown: &mut Option<JsValue>,
     active_frame: super::super::frames::ActiveFrameToken,
     fault_pc: usize,
+    cache_output: bool,
 ) -> Result<bool, Error> {
     let (left, right) = {
         let mut slots = transaction.canonical_slots("tos.spill.numeric");
@@ -71,7 +76,14 @@ pub(super) fn complete(
     };
     let mut value = Some(output.value);
     let mut previous = output.previous;
+    #[cfg(not(any(test, oxide_owned_tos)))]
+    let _ = cache_output;
     let committed = (|| {
+        #[cfg(any(test, oxide_owned_tos))]
+        if cache_output && previous.is_none() && transaction.cache_numeric_output(&mut value)? {
+            debug_assert!(transaction.has_owned_numeric_output());
+            return Ok(());
+        }
         let mut slots = transaction.canonical_slots("tos.spill.numeric");
         if previous.is_some() {
             slots.push_pending(&mut previous)?;
@@ -79,6 +91,7 @@ pub(super) fn complete(
         slots.push_pending(&mut value)
     })();
     if let Err(error) = committed {
+        transaction.canonicalize("tos.spill.numeric_error");
         // A postfix previous value may already be committed. Only the owners
         // still pending belong here; Option<JsValue> has no release-on-drop.
         // End the short slot borrow before releasing either pending edge.

@@ -57,6 +57,8 @@ impl Runtime {
         }
         let active_frame_depth = Rc::new(Cell::new(0));
         Self(Rc::new(RuntimeInner {
+            #[cfg(test)]
+            execution_mode_override: Cell::new(None),
             state: RefCell::new(RuntimeState {
                 atoms,
                 pinned_atoms,

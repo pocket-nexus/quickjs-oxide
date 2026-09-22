@@ -247,7 +247,7 @@ impl Runtime {
                     executable: Default::default(),
 
                     fusion: Default::default(),
-                    #[cfg(any(test, oxide_quick_projection))]
+                    #[cfg(any(test, oxide_quick_projection, oxide_quick_dispatch))]
                     quick: None,
                     code: function.code.into(),
                     constants: linked_constants.into(),
@@ -255,11 +255,11 @@ impl Runtime {
                         .then(|| property_key_atoms.into()),
                     realm,
                     metadata: function.metadata,
-                    #[cfg(not(any(test, oxide_quick_projection)))]
+                    #[cfg(not(any(test, oxide_quick_projection, oxide_quick_dispatch)))]
                     parameter_environment: function.parameter_environment,
                     // This small cold allocation follows std's global OOM
                     // policy, independently of recoverable QuickOp reserve.
-                    #[cfg(any(test, oxide_quick_projection))]
+                    #[cfg(any(test, oxide_quick_projection, oxide_quick_dispatch))]
                     parameter_environment: function.parameter_environment.map(Box::new),
                     func_name: function.func_name,
                     argument_definitions: linked_argument_definitions.into(),

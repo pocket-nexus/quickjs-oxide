@@ -176,8 +176,13 @@ fn quick_projection_diagnostics_identify_the_internal_experiment() {
         .find(|line| line.contains("oxide-compile-vm-cost-v1"))
         .unwrap();
     assert!(costs.contains("\"quick_projection_counts\":{"));
-    if cfg!(oxide_quick_projection) {
-        assert!(costs.contains("\"quick_projection\":\"eager-experiment-canonical-execution\""));
+    if cfg!(any(oxide_quick_projection, oxide_quick_dispatch)) {
+        let mode = if cfg!(oxide_quick_dispatch) {
+            "eager-experiment-quick-execution"
+        } else {
+            "eager-experiment-canonical-execution"
+        };
+        assert!(costs.contains(&format!("\"quick_projection\":\"{mode}\"")));
         assert!(!costs.contains("\"quick_projection\":{\"attempts\":0,"));
         assert!(costs.contains("\"tag.PushI32\":"));
         assert!(report.contains("bytecode_quick_words"));

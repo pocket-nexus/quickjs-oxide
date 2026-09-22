@@ -4,7 +4,7 @@ use crate::engine::api::profiling::{AllocationTrace, MemoryCategory};
 use std::collections::HashSet;
 use std::ops::{Deref, DerefMut};
 
-#[cfg(any(test, oxide_quick_projection))]
+#[cfg(any(test, oxide_quick_projection, oxide_quick_dispatch))]
 mod quick;
 
 // Deliberately exposes a slice, not Vec mutators: every capacity-changing
@@ -132,7 +132,7 @@ impl Heap {
         property_keys.count = Some(0);
         property_keys.basis = "linked-name-count; deduplicated map slice bytes including unused slots; excludes Rc headers and auxiliary atom references";
         let mut seen_property_keys = HashSet::new();
-        #[cfg(any(test, oxide_quick_projection))]
+        #[cfg(any(test, oxide_quick_projection, oxide_quick_dispatch))]
         let mut quick = quick::QuickMemory::new();
         for slot in &self.slots {
             let node = match &slot.state {
@@ -169,9 +169,9 @@ impl Heap {
                     }
                 }
                 NodeData::FunctionBytecode(data) => {
-                    #[cfg(any(test, oxide_quick_projection))]
+                    #[cfg(any(test, oxide_quick_projection, oxide_quick_dispatch))]
                     quick.observe_parameter_environment(data.parameter_environment());
-                    #[cfg(any(test, oxide_quick_projection))]
+                    #[cfg(any(test, oxide_quick_projection, oxide_quick_dispatch))]
                     if let Some(projection) = &data.quick {
                         // The node owns the projection. Closure objects and
                         // execution snapshots merely share it, so do not
@@ -230,7 +230,7 @@ impl Heap {
             property_keys,
             executable_projections,
         ]);
-        #[cfg(any(test, oxide_quick_projection))]
+        #[cfg(any(test, oxide_quick_projection, oxide_quick_dispatch))]
         quick.extend_into(&mut result);
         result
     }

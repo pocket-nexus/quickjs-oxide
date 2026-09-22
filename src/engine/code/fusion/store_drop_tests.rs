@@ -13,7 +13,10 @@ fn local() -> VariableDefinition {
 
 #[test]
 fn store_drop_certifies_only_its_canonical_start_and_keeps_compact_storage() {
-    for (store, target) in [(SetLocal(0), StoreDrop::Local), (SetArg(7), StoreDrop::Argument)] {
+    for (store, target) in [
+        (SetLocal(0), StoreDrop::Local),
+        (SetArg(7), StoreDrop::Argument),
+    ] {
         let code = [PushI32(42), store, Drop, ReturnUndefined];
         let plan = FusionPlan::build(&code, &[local()]);
         assert_eq!(plan.store_drop(1), Some(target));
@@ -21,7 +24,15 @@ fn store_drop_certifies_only_its_canonical_start_and_keeps_compact_storage() {
             assert_eq!(plan.store_drop(pc), None);
         }
         assert_eq!(plan.0.as_ref().unwrap().len(), code.len());
-        assert_eq!(plan.0.as_ref().unwrap().iter().filter(|&&tag| tag != 0).count(), 1);
+        assert_eq!(
+            plan.0
+                .as_ref()
+                .unwrap()
+                .iter()
+                .filter(|&&tag| tag != 0)
+                .count(),
+            1
+        );
         assert!(plan.update(1).is_none());
         assert!(!plan.compare_branch(1));
         assert!(!plan.add_store(1));
@@ -29,7 +40,10 @@ fn store_drop_certifies_only_its_canonical_start_and_keeps_compact_storage() {
         assert!(plan.const_add_span(1).is_none());
         assert!(plan.method_call(1).is_none());
     }
-    assert_eq!(std::mem::size_of::<FusionPlan>(), std::mem::size_of::<Option<Rc<[u8]>>>());
+    assert_eq!(
+        std::mem::size_of::<FusionPlan>(),
+        std::mem::size_of::<Option<Rc<[u8]>>>()
+    );
 }
 
 #[test]
@@ -52,7 +66,10 @@ fn store_drop_rejects_non_normal_const_invalid_and_non_adjacent_locals() {
     ] {
         let mut definition = local();
         definition.kind = kind;
-        assert!(FusionPlan::build(&code, &[definition]).0.is_none(), "{kind:?}");
+        assert!(
+            FusionPlan::build(&code, &[definition]).0.is_none(),
+            "{kind:?}"
+        );
     }
     for code in [
         vec![SetLocal(u16::MAX), Drop],
@@ -78,13 +95,19 @@ fn store_drop_leaves_tdz_capture_and_mapped_arguments_to_runtime_guards() {
     let mut lexical = local();
     lexical.is_lexical = true;
     let code = [SetLocal(0), Drop];
-    assert_eq!(FusionPlan::build(&code, &[lexical]).store_drop(0), Some(StoreDrop::Local));
+    assert_eq!(
+        FusionPlan::build(&code, &[lexical]).store_drop(0),
+        Some(StoreDrop::Local)
+    );
     // VariableDefinition cannot certify the live binding's Direct/Captured/
     // Uninitialized form. The span is only a structural candidate.
     // Likewise FusionPlan has no parameter layout or mapped-arguments state;
     // argument bounds remain the verifier's responsibility before publication.
     for index in [0, 7, u16::MAX] {
-        assert_eq!(FusionPlan::build(&[SetArg(index), Drop], &[]).store_drop(0), Some(StoreDrop::Argument));
+        assert_eq!(
+            FusionPlan::build(&[SetArg(index), Drop], &[]).store_drop(0),
+            Some(StoreDrop::Argument)
+        );
     }
 }
 
@@ -105,11 +128,23 @@ fn store_drop_rejects_every_interior_control_target() {
 
 #[test]
 fn store_drop_accepts_block_start_and_fallthrough_without_crossing_a_terminator() {
-    for control in [Goto(1), IfTrue(1), IfFalse(1), Catch(1), Gosub(1), ReturnUndefined, Ret, Throw] {
+    for control in [
+        Goto(1),
+        IfTrue(1),
+        IfFalse(1),
+        Catch(1),
+        Gosub(1),
+        ReturnUndefined,
+        Ret,
+        Throw,
+    ] {
         assert!(control.control_effect().ends_block());
         // An entry at SetLocal itself is safe: execution starts the whole span.
         let code = [control.clone(), SetLocal(0), Drop, ReturnUndefined];
-        assert_eq!(FusionPlan::build(&code, &[local()]).store_drop(1), Some(StoreDrop::Local));
+        assert_eq!(
+            FusionPlan::build(&code, &[local()]).store_drop(1),
+            Some(StoreDrop::Local)
+        );
         // A control terminator in the middle destroys the adjacent shape;
         // no candidate may jump over it to find a later Drop.
         let code = [SetLocal(0), control, Drop, ReturnUndefined];
@@ -117,7 +152,15 @@ fn store_drop_accepts_block_start_and_fallthrough_without_crossing_a_terminator(
     }
     assert!(!SetLocal(0).control_effect().ends_block());
     assert!(!SetArg(0).control_effect().ends_block());
-    let code = [Nop, SetArg(0), Drop, Nop, SetLocal(0), Drop, ReturnUndefined];
+    let code = [
+        Nop,
+        SetArg(0),
+        Drop,
+        Nop,
+        SetLocal(0),
+        Drop,
+        ReturnUndefined,
+    ];
     let plan = FusionPlan::build(&code, &[local()]);
     assert_eq!(plan.store_drop(1), Some(StoreDrop::Argument));
     assert_eq!(plan.store_drop(4), Some(StoreDrop::Local));
@@ -150,13 +193,24 @@ fn fusion_kind_preserves_existing_published_tags_and_extents() {
         (vec![Add, PutLocal(0)], 64, 2),
         (vec![Add, SetLocal(0), Drop], 65, 3),
         (vec![GetLocal(0), GetLocal(1), Add, PutLocal(0)], 128, 4),
-        (vec![GetLocal(0), GetLocal(1), Add, SetLocal(0), Drop], 129, 5),
+        (
+            vec![GetLocal(0), GetLocal(1), Add, SetLocal(0), Drop],
+            129,
+            5,
+        ),
         (vec![PushConst(0), GetLocal(0), Add, PutLocal(0)], 130, 4),
-        (vec![PushConst(0), GetLocal(0), Add, SetLocal(0), Drop], 131, 5),
+        (
+            vec![PushConst(0), GetLocal(0), Add, SetLocal(0), Drop],
+            131,
+            5,
+        ),
     ] {
         let plan = FusionPlan::build(&code, &[local(), local()]);
         assert_eq!(plan.flag(0), tag, "{code:?}");
-        assert_eq!(FusionKind::decode(plan.flag(0)).unwrap().instructions(), length);
+        assert_eq!(
+            FusionKind::decode(plan.flag(0)).unwrap().instructions(),
+            length
+        );
     }
     for count in 0..=7 {
         let mut code = vec![GetField2(0)];

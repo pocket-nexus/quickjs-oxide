@@ -121,7 +121,7 @@ pub struct FunctionBytecodeData {
     pub(crate) fusion: crate::engine::code::fusion::FusionPlan,
     /// None exists only in a mutable draft. Successful experimental
     /// publication replaces it with a certificate for this exact code.
-    #[cfg(any(test, oxide_quick_projection))]
+    #[cfg(any(test, oxide_quick_projection, oxide_quick_dispatch))]
     pub(crate) quick: Option<crate::engine::code::quick::QuickProgram>,
     pub code: Rc<[Instruction]>,
     pub constants: Rc<[BytecodeConstant]>,
@@ -131,13 +131,13 @@ pub struct FunctionBytecodeData {
     pub property_key_atoms: Option<Rc<[Atom]>>,
     pub realm: ContextId,
     pub metadata: FunctionMetadata,
-    #[cfg(not(any(test, oxide_quick_projection)))]
+    #[cfg(not(any(test, oxide_quick_projection, oxide_quick_dispatch)))]
     pub parameter_environment: Option<ParameterEnvironmentLayout>,
     /// Keep the uncommon parameter-scope descriptor out of the experimental
     /// arena's inline payload. Ordinary parameter lists allocate no box; this
     /// recovers the inline budget needed by the optional QuickOp certificate.
     /// The box is a Rust-only owner and introduces no arena/atom edge.
-    #[cfg(any(test, oxide_quick_projection))]
+    #[cfg(any(test, oxide_quick_projection, oxide_quick_dispatch))]
     pub parameter_environment: Option<Box<ParameterEnvironmentLayout>>,
     /// Intrinsic source-level name. Contextual `SetName` inference remains a
     /// separate opcode and is only emitted for anonymous definitions.
@@ -162,11 +162,11 @@ impl FunctionBytecodeData {
     /// Preserve one metadata view across the ordinary inline representation
     /// and the experimental out-of-line parameter descriptor.
     pub(crate) fn parameter_environment(&self) -> Option<&ParameterEnvironmentLayout> {
-        #[cfg(not(any(test, oxide_quick_projection)))]
+        #[cfg(not(any(test, oxide_quick_projection, oxide_quick_dispatch)))]
         {
             self.parameter_environment.as_ref()
         }
-        #[cfg(any(test, oxide_quick_projection))]
+        #[cfg(any(test, oxide_quick_projection, oxide_quick_dispatch))]
         {
             self.parameter_environment.as_deref()
         }
