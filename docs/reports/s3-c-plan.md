@@ -2,6 +2,8 @@
 
 > 状态：2026-09-22 已推进 C0 工具/输入恢复与 C1 候选；正式 C0/C1 性能验收未关闭。
 > 本轮实现、验证和待办见 [C/B 开头实施记录](s3-c-b-opening.md)。C2–C6 仍为待执行计划。
+> 后续定向测量见 [第二批实施记录](s3-c-b-next.md)；C2 的接线准备见
+> [边界审计](s3-c2-boundary-audit.md)，该审计不表示 C2 已实施。
 > 依据：最新 [performance-architecture.md](performance-architecture.md) §7、§11，
 > [阶段 A §8.12 历史实测](s3-a-plan.md#812-第二轮回退修复并行根因确认与实测关闭2026-09-22)
 > 与 [§8.13 LTO 双协议对照](s3-a-plan.md#813-窄补丁收尾与-lto-双协议对照2026-09-22)。
@@ -231,6 +233,8 @@ Yield、Await、Throw、Return 或观察边界。沿用 `control_effect().target
    的热点汇编/指令数。建立“输入→计算→push→pop→store→release”的 owner 图。
 7. 审计所有 transaction/RunSlots 构造点、直接 backing 操作、所有 run 出口，
    为每项标记 cache-aware 或 canonical-only；此表是 C2 的接线检查表。
+   本轮已形成 [C2 边界审计](s3-c2-boundary-audit.md)，后续实现逐项勾选并验证，
+   不能将静态审计当作缓存边界已接通。
 8. 核对历史 58 fixed、67 compile、9 original replay 输入是否可获得。本轮已
    从本地历史工作区恢复全部输入并逐文件验哈希，实际路径与原始 receipt 身份见
    [实施记录](s3-c-b-opening.md)。其它机器仍须验证这些外部输入；不能恢复时见 §6.3。

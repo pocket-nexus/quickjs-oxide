@@ -2,6 +2,14 @@
 //! Larger payloads spill once without an allocation for the common case.
 use super::{ObjectId, RawId};
 
+// Pin both layouts: the experimental QuickProgram field enlarges the arena's
+// maximum payload, so its cost applies to every slot, not just bytecode nodes.
+// A normal M0 build must retain the original compact layout.
+#[cfg(all(target_pointer_width = "64", not(any(test, oxide_quick_projection))))]
+const _: () = assert!(std::mem::size_of::<super::ArenaSlot>() == 440);
+#[cfg(all(target_pointer_width = "64", any(test, oxide_quick_projection)))]
+const _: () = assert!(std::mem::size_of::<super::ArenaSlot>() == 456);
+
 const EMPTY: RawId = RawId::Object(ObjectId {
     index: 0,
     generation: 0,
@@ -148,6 +156,8 @@ mod tests {
             "ArenaSlot bytes: {}",
             std::mem::size_of::<super::super::ArenaSlot>()
         );
-        assert_eq!(std::mem::size_of::<super::super::ArenaSlot>(), 440);
+        // Unit tests enable the same QuickProgram field as the M1 experiment.
+        // Production M0's 440-byte limit remains independently pinned above.
+        assert_eq!(std::mem::size_of::<super::super::ArenaSlot>(), 456);
     }
 }

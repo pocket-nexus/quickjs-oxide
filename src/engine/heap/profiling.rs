@@ -4,6 +4,9 @@ use crate::engine::api::profiling::{AllocationTrace, MemoryCategory};
 use std::collections::HashSet;
 use std::ops::{Deref, DerefMut};
 
+#[cfg(any(test, oxide_quick_projection))]
+mod quick;
+
 // Deliberately exposes a slice, not Vec mutators: every capacity-changing
 // operation goes through push and every backing release goes through Drop.
 pub(super) struct ArenaStorage {
@@ -129,6 +132,8 @@ impl Heap {
         property_keys.count = Some(0);
         property_keys.basis = "linked-name-count; deduplicated map slice bytes including unused slots; excludes Rc headers and auxiliary atom references";
         let mut seen_property_keys = HashSet::new();
+        #[cfg(any(test, oxide_quick_projection))]
+        let mut quick = quick::QuickMemory::new();
         for slot in &self.slots {
             let node = match &slot.state {
                 SlotState::Live(node) | SlotState::ZeroQueued(node) => node,
@@ -164,6 +169,13 @@ impl Heap {
                     }
                 }
                 NodeData::FunctionBytecode(data) => {
+                    #[cfg(any(test, oxide_quick_projection))]
+                    if let Some(projection) = &data.quick {
+                        // The node owns the projection. Closure objects and
+                        // execution snapshots merely share it, so do not
+                        // visit their aliases as additional allocations.
+                        quick.observe(projection.storage(), data.code.len());
+                    }
                     if data.executable.get().is_some() {
                         add_storage(
                             &mut executable_projections,
@@ -216,6 +228,8 @@ impl Heap {
             property_keys,
             executable_projections,
         ]);
+        #[cfg(any(test, oxide_quick_projection))]
+        quick.extend_into(&mut result);
         result
     }
 }

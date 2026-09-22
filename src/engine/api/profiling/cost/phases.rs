@@ -14,6 +14,8 @@ pub(crate) enum CompilePhase {
     Relocation,
     Verify,
     Publish,
+    #[cfg(any(test, oxide_quick_projection))]
+    QuickProjection,
 }
 
 impl CompilePhase {
@@ -27,6 +29,8 @@ impl CompilePhase {
             Self::Relocation => &mut costs.relocation,
             Self::Verify => &mut costs.verify,
             Self::Publish => &mut costs.publish,
+            #[cfg(any(test, oxide_quick_projection))]
+            Self::QuickProjection => &mut costs.quick_projection,
         }
     }
 }

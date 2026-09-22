@@ -88,6 +88,57 @@ runner verifies matching receipts when present. External engines without a
 receipt are identified by binary hash/version output; attach their compiler
 and build configuration separately when publishing comparisons.
 
+### Internal QuickOp publication experiment
+
+The default build (M0) does not store or allocate QuickOp projections. B1b's M1
+experiment eagerly builds authenticated words at publication and still executes
+canonical instructions. It is selected by the internal Rust cfg
+`oxide_quick_projection`, not a public runtime mode or Cargo feature:
+
+```sh
+RUSTFLAGS='--cfg oxide_quick_projection' python3 scripts/benchmark/build.py \
+  --repo /absolute/source-export --source-manifest /absolute/source-export.json \
+  --mode plain --plain-target /absolute/build/m1 --jobs 2
+```
+
+Unset `CARGO_ENCODED_RUSTFLAGS` before this command: Cargo gives it precedence
+over `RUSTFLAGS`. Build M0 from the exact same export without the cfg in a
+separate directory, with identical release LTO/codegen settings. Preserve both
+receipts; M1 remains an experiment until compile, memory and execution gates pass.
+There is no QuickOp dispatch in B1b.
+
+With `profiling`, `quick_projection` is a nested compilation phase. The additive
+`quick_projection_counts` map counts successful **builds**, canonical PC tag
+distribution and cumulative word capacities; it is not live memory or executed
+opcodes. `maximum_observed_ir_capacity_bytes` is the largest per-function word
+buffer, not a process or compiler peak. Memory snapshots separately deduplicate
+`bytecode_quick_words` by shared buffer identity and report a labelled
+`bytecode_quick_controls` estimate (Vec header plus two Rc counters). Allocator
+overhead remains unknown. Existing arena/executable categories include the
+actual inline field sizes; never add those fields again. CLI metadata labels
+the experiment as `eager-experiment-canonical-execution` or `disabled`.
+
+### Direct-store diagnostic inputs
+
+`direct_store.py` freezes project-authored local/argument consume/keep workloads
+and boundary/fusion protection cases, including exact stdout and source hashes:
+
+```sh
+python3 scripts/benchmark/direct_store.py --iterations 100000 \
+  --output target/direct-store-inputs
+python3 scripts/benchmark/fixed.py \
+  --manifest target/direct-store-inputs/manifest.json \
+  --engine before=/absolute/before/qjs --engine after=/absolute/after/qjs \
+  --repeat 10 --cpu 2 --output target/direct-store-results
+```
+
+First confirm the manifest's minimum profiling event counts with small inputs
+in a separate instrumented run. Consume cases use loop-local `var` initializers:
+ordinary assignment statements currently compile to keep stores followed by
+Drop, so their source spelling does not prove consume coverage. Pilot on the
+baseline, freeze adequate workload sizes, and run A/A before A/B. These targeted
+diagnostics do not replace the historical full matrices or stage prerequisites.
+
 ## Profile-guided optimization
 
 `pgo.py` builds a profile-guided CLI in three phases: an instrumented build, a

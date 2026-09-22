@@ -894,3 +894,79 @@ fn bytecode_publication_rebuilds_fusion_from_the_authenticated_payload() {
     heap.release_shape(shape).unwrap();
     assert_eq!(heap.counts().live, 0);
 }
+
+#[test]
+fn quick_publication_rebuilds_stale_draft_and_reservation_failure_leaves_no_edges() {
+    use crate::engine::code::quick::reservation_failure;
+    let mut heap = Heap::new();
+    let shape = empty_shape(&mut heap);
+    let prototype = leaf(&mut heap, shape);
+    let realm = heap
+        .allocate_context(ContextData::new(
+            prototype, prototype, prototype, prototype, prototype, prototype, prototype, prototype,
+        ))
+        .unwrap();
+    let code: Rc<[Instruction]> = Rc::from([Instruction::PushI32(1), Instruction::Return]);
+    let draft = bytecode(&code, realm, Vec::new(), Vec::new());
+    assert!(draft.quick.is_none());
+    let original = heap.allocate_function_bytecode(draft).unwrap();
+    let stale = heap
+        .function_bytecode(original)
+        .unwrap()
+        .quick
+        .clone()
+        .unwrap();
+    let changed_code: Rc<[Instruction]> = Rc::from([Instruction::PushI32(2), Instruction::Return]);
+    let mut changed = bytecode(&changed_code, realm, Vec::new(), Vec::new());
+    changed.quick = Some(stale.clone());
+    let changed = heap.allocate_function_bytecode(changed).unwrap();
+    let rebuilt = heap
+        .function_bytecode(changed)
+        .unwrap()
+        .quick
+        .as_ref()
+        .unwrap();
+    assert_eq!(rebuilt.validate(&changed_code), Ok(()));
+    assert!(!rebuilt.shares_words_with(&stale));
+    assert!(stale.validate(&changed_code).is_err());
+    let counts = heap.counts();
+    let realm_owners = heap.context_strong_count(realm).unwrap();
+    let invalid_code: Rc<[Instruction]> = Rc::from([Instruction::Nop, Instruction::Return]);
+    let invalid = bytecode(&invalid_code, realm, Vec::new(), Vec::new());
+    let verification_failure = reservation_failure::after(0);
+    assert_eq!(
+        heap.allocate_function_bytecode(invalid),
+        Err(HeapError::Invariant(
+            "function bytecode failed generic verification"
+        ))
+    );
+    assert!(
+        matches!(
+            crate::engine::code::quick::QuickProgram::build_verified(&[Instruction::Nop]),
+            Err(crate::engine::code::quick::BuildError::Allocation(_))
+        ),
+        "canonical validation must precede the QuickOp reservation boundary"
+    );
+    drop(verification_failure);
+    let draft = bytecode(&code, realm, Vec::new(), Vec::new());
+    let failure = reservation_failure::after(0);
+    assert_eq!(
+        heap.allocate_function_bytecode(draft),
+        Err(HeapError::Allocation {
+            operation: "reserving QuickOp words",
+        })
+    );
+    drop(failure);
+    assert_eq!(
+        heap.counts(),
+        counts,
+        "failure must precede arena reservation"
+    );
+    assert_eq!(heap.context_strong_count(realm).unwrap(), realm_owners);
+    heap.release_function_bytecode(changed).unwrap();
+    heap.release_function_bytecode(original).unwrap();
+    heap.release_context(realm).unwrap();
+    heap.release_object(prototype).unwrap();
+    heap.release_shape(shape).unwrap();
+    assert_eq!(heap.counts().live, 0);
+}

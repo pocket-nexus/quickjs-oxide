@@ -4,6 +4,7 @@ use crate::engine::code::verify::verify_unlinked_tree;
 use crate::engine::compiler::compile_unlinked_script;
 
 mod generic_cases;
+mod publication;
 
 fn words_for(code: &[Instruction]) -> Vec<QuickOp> {
     code.iter().map(translate_instruction).collect()
@@ -112,7 +113,7 @@ fn quick_goto_preserves_the_canonical_exception_contract() {
         OperandContract([Some(Operand::Target(0)), None, None])
     );
     assert!(contracts_match(DecodedOp::Goto(0), &instruction));
-    let program = QuickProgram::build(&[instruction]).unwrap();
+    let program = QuickProgram::build_verified(&[instruction]).unwrap();
     assert_eq!(program.validate(&[Instruction::Goto(0)]), Ok(()));
     assert_eq!(
         program.validate(&[Instruction::Goto(1)]),
@@ -265,15 +266,15 @@ fn quick_all_complex_variants_and_wide_operands_stay_generic() {
         assert_eq!(word, QuickOp(0), "{instruction:?}");
         assert_eq!(word.decode(), Ok(DecodedOp::GenericCanonical));
     }
-    let program = QuickProgram::build(&code).unwrap();
-    assert!(matches!(program, QuickProgram::CanonicalOnly));
+    let program = QuickProgram::build_verified(&code).unwrap();
+    assert!(matches!(program, QuickProgram(ProgramKind::CanonicalOnly)));
     assert_eq!(program.validate(&code), Ok(()));
 
     // Introducing one hot PC keeps every complex instruction at its original
     // index; even maximal operands need no extra table or truncated encoding.
     let mut mixed = code;
     mixed.insert(0, Instruction::PushI32(0));
-    let program = QuickProgram::build(&mixed).unwrap();
+    let program = QuickProgram::build_verified(&mixed).unwrap();
     let words = program.words().unwrap();
     assert_eq!(words.len(), mixed.len());
     assert!(words[1..].iter().all(|word| *word == QuickOp(0)));
@@ -287,17 +288,17 @@ fn quick_canonical_only_is_a_checked_mode_not_a_missing_buffer() {
         vec![Instruction::ReturnUndefined],
         vec![Instruction::Add, Instruction::Return],
     ] {
-        let program = QuickProgram::build(&code).unwrap();
-        assert!(matches!(program, QuickProgram::CanonicalOnly));
+        let program = QuickProgram::build_verified(&code).unwrap();
+        assert!(matches!(program, QuickProgram(ProgramKind::CanonicalOnly)));
         assert!(program.words().is_none());
         assert_eq!(program.validate(&code), Ok(()));
     }
     assert_eq!(
-        QuickProgram::CanonicalOnly.validate(&[Instruction::Return, Instruction::Nop]),
+        QuickProgram(ProgramKind::CanonicalOnly).validate(&[Instruction::Return, Instruction::Nop]),
         Err(ValidationError::HotInstructionInCanonicalOnly { pc: 1 })
     );
     assert_eq!(
-        QuickProgram::Words(Rc::new(Vec::new())).validate(&[Instruction::Nop]),
+        QuickProgram(ProgramKind::Words(Rc::new(Vec::new()))).validate(&[Instruction::Nop]),
         Err(ValidationError::Length {
             canonical: 1,
             quick: 0
@@ -316,7 +317,7 @@ fn quick_words_preserve_branch_and_fusion_interior_pcs() {
         Instruction::Goto(1),
         Instruction::Return,
     ];
-    let program = QuickProgram::build(&code).unwrap();
+    let program = QuickProgram::build_verified(&code).unwrap();
     let words = program.words().unwrap();
     assert_eq!(words.len(), 5);
     assert_eq!(words[0].decode(), Ok(DecodedOp::GenericCanonical));
@@ -330,11 +331,13 @@ fn quick_words_preserve_branch_and_fusion_interior_pcs() {
 fn quick_shared_buffer_has_one_linear_allocation_and_no_owner_words() {
     for len in [1, 16, 1_024, 65_536] {
         let code = vec![Instruction::Nop; len];
-        let program = QuickProgram::build(&code).unwrap();
+        let program = QuickProgram::build_verified(&code).unwrap();
         assert_eq!(program.words().unwrap().len(), len);
         assert_eq!(program.validate(&code), Ok(()));
         let copy = program.clone();
-        let (QuickProgram::Words(original), QuickProgram::Words(shared)) = (&program, &copy) else {
+        let (QuickProgram(ProgramKind::Words(original)), QuickProgram(ProgramKind::Words(shared))) =
+            (&program, &copy)
+        else {
             panic!("hot functions need complete word buffers");
         };
         assert!(Rc::ptr_eq(original, shared));
@@ -366,7 +369,7 @@ fn quick_word_buffer_capacity_failure_is_recoverable_without_allocating() {
 
 fn check_compiled_tree(function: &UnlinkedFunction, counts: &mut [usize; 3]) {
     let code = function.code();
-    let program = QuickProgram::build(code).unwrap();
+    let program = QuickProgram::build_verified(code).unwrap();
     assert_eq!(program.validate(code), Ok(()));
     counts[0] += 1;
     counts[1] += code.len();

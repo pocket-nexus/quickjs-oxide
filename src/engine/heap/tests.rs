@@ -164,6 +164,7 @@ fn bytecode(
         executable: Default::default(),
 
         fusion: Default::default(),
+        quick: None,
         code: code.clone(),
         constants: constants.into(),
         property_key_atoms: None,

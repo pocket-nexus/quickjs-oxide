@@ -742,3 +742,38 @@ fn trusted_binary_callable_runs_on_the_owned_context_entry_after_gc() {
     let snapshot = profile.snapshot();
     assert!(snapshot.owned_instructions > 0);
 }
+
+#[test]
+fn quick_both_bc5_publishers_rebuild_authenticated_projection() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    let script = context
+        .read_trusted_scalar_script(QUICKJS_SCALAR_42_BC5)
+        .unwrap();
+    let scalar = runtime.snapshot_function_bytecode(&script).unwrap();
+    assert_eq!(
+        scalar.quick.as_ref().unwrap().validate(&scalar.code),
+        Ok(())
+    );
+    assert_eq!(context.execute(&script).unwrap(), Value::Int(42));
+
+    let callable = context
+        .read_trusted_ordinary_function(QUICKJS_ORDINARY_LEAF_42_BC5, 0)
+        .unwrap();
+    let CallableExecution::Bytecode { bytecode, .. } =
+        runtime.bytecode_for_callable(&callable).unwrap()
+    else {
+        panic!("trusted ordinary leaf must publish bytecode");
+    };
+    let ordinary = runtime.snapshot_function_bytecode(&bytecode).unwrap();
+    assert_eq!(
+        ordinary.quick.as_ref().unwrap().validate(&ordinary.code),
+        Ok(())
+    );
+    assert_eq!(
+        context
+            .call(&callable, Value::Undefined, &[Value::Int(3), Value::Int(3)])
+            .unwrap(),
+        Value::Int(42)
+    );
+}

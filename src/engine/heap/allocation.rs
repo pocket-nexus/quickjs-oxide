@@ -188,6 +188,14 @@ impl Heap {
         &mut self,
         mut bytecode: FunctionBytecodeData,
     ) -> Result<FunctionBytecodeId, HeapError> {
+        // Drafts may carry projections copied from other payloads. Discard
+        // them before any verification; only this publication may certify
+        // the immutable code that will actually enter the arena.
+        bytecode.executable = Default::default();
+        #[cfg(any(test, oxide_quick_projection))]
+        {
+            bytecode.quick = None;
+        }
         if bytecode
             .constants
             .iter()
@@ -1319,11 +1327,6 @@ impl Heap {
             bytecode.metadata.max_stack,
         )
         .map_err(|_| HeapError::Invariant("function bytecode failed generic verification"))?;
-        // A draft may have been assembled from another node's fields. Never
-        // reuse its projection: only this authenticated immutable payload may
-        // initialize the cache after publication.
-        bytecode.executable = Default::default();
-
         {
             // Fusion is another derived projection. Authorize spans only from
             // the exact code and local definitions verified above, never from
@@ -1332,6 +1335,20 @@ impl Heap {
                 &bytecode.code,
                 &bytecode.local_definitions,
             );
+        }
+        #[cfg(any(test, oxide_quick_projection))]
+        {
+            use crate::engine::code::quick::{BuildError, QuickProgram};
+            bytecode.quick = Some(QuickProgram::build_verified(&bytecode.code).map_err(
+                |error| match error {
+                    BuildError::Allocation(_) => HeapError::Allocation {
+                        operation: "reserving QuickOp words",
+                    },
+                    BuildError::InvalidProjection(_) => {
+                        HeapError::Invariant("QuickOp projection failed authentication")
+                    }
+                },
+            )?);
         }
         let (index, generation) = self.reserve(HeapNodeKind::FunctionBytecode)?;
         let id = FunctionBytecodeId { index, generation };

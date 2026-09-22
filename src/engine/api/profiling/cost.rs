@@ -16,6 +16,10 @@ pub(crate) use buffers::{
 };
 mod phases;
 pub(crate) use phases::{CompilePhase, PhaseTimer};
+#[cfg(any(test, oxide_quick_projection))]
+mod quick;
+#[cfg(any(test, oxide_quick_projection))]
+pub(crate) use quick::record_quick_projection;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PhaseCost {
@@ -104,6 +108,12 @@ pub struct CostSnapshot {
     pub relocation: PhaseCost,
     pub verify: PhaseCost,
     pub publish: PhaseCost,
+    /// B1b experiment: eager projection attempts, nested inside publication.
+    /// Zero when the internal projection experiment is disabled.
+    pub quick_projection: PhaseCost,
+    /// Successful projection builds, not live code inventory. Tag counts cover
+    /// canonical PCs, including Generic positions; they are not execution counts.
+    pub quick_projection_counts: std::collections::BTreeMap<&'static str, u64>,
     /// Successfully lowered function drafts, including nested functions.
     /// This is not a count of published functions or a unique-code inventory.
     pub lowered_functions: u64,

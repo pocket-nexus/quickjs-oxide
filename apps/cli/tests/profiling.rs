@@ -158,3 +158,33 @@ fn call_buffer_and_suspension_diagnostics_are_scoped_and_sampled() {
     assert!(costs.contains("\"thaw.decode\":{\"attempts\":"));
     assert!(costs.contains("\"sample_limit\":4096,\"omitted_samples\":0,\"samples_ns\":[["));
 }
+
+#[cfg(feature = "profiling")]
+#[test]
+fn quick_projection_diagnostics_identify_the_internal_experiment() {
+    let output = run(&[
+        "-d",
+        "--profile-json",
+        "-e",
+        "function plus(x){return x+1}print(plus(41))",
+    ]);
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"42\n");
+    let report = String::from_utf8(output.stderr).unwrap();
+    let costs = report
+        .lines()
+        .find(|line| line.contains("oxide-compile-vm-cost-v1"))
+        .unwrap();
+    assert!(costs.contains("\"quick_projection_counts\":{"));
+    if cfg!(oxide_quick_projection) {
+        assert!(costs.contains("\"quick_projection\":\"eager-experiment-canonical-execution\""));
+        assert!(!costs.contains("\"quick_projection\":{\"attempts\":0,"));
+        assert!(costs.contains("\"tag.PushI32\":"));
+        assert!(report.contains("bytecode_quick_words"));
+    } else {
+        assert!(costs.contains("\"quick_projection\":\"disabled\""));
+        assert!(costs.contains("\"quick_projection\":{\"attempts\":0,"));
+        assert!(costs.contains("\"quick_projection_counts\":{}"));
+        assert!(!report.contains("bytecode_quick_words"));
+    }
+}

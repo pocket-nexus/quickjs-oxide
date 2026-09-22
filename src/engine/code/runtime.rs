@@ -247,6 +247,8 @@ impl Runtime {
                     executable: Default::default(),
 
                     fusion: Default::default(),
+                    #[cfg(any(test, oxide_quick_projection))]
+                    quick: None,
                     code: function.code.into(),
                     constants: linked_constants.into(),
                     property_key_atoms: (!property_key_atoms.is_empty())

@@ -290,7 +290,7 @@ mod enabled {
             )?;
             writeln!(
                 out,
-                "parse={:?} resolution={:?} lowering={:?} blocks={:?} fusion={:?} relocation={:?} verify={:?} publish={:?}",
+                "parse={:?} resolution={:?} lowering={:?} blocks={:?} fusion={:?} relocation={:?} verify={:?} publish={:?} quick_projection={:?}",
                 costs.parse,
                 costs.resolution,
                 costs.lowering,
@@ -298,7 +298,13 @@ mod enabled {
                 costs.fusion,
                 costs.relocation,
                 costs.verify,
-                costs.publish
+                costs.publish,
+                costs.quick_projection
+            )?;
+            writeln!(
+                out,
+                "quick_projection_counts={:?} (successful builds; cumulative capacities; not live or executed counts)",
+                costs.quick_projection_counts
             )?;
             writeln!(
                 out,
@@ -550,6 +556,7 @@ mod enabled {
             ("relocation", costs.relocation),
             ("verify", costs.verify),
             ("publish", costs.publish),
+            ("quick_projection", costs.quick_projection),
         ]
         .into_iter()
         .enumerate()
@@ -567,6 +574,14 @@ mod enabled {
                 phase.storage_samples,
                 phase.maximum_observed_ir_capacity_bytes
             )?;
+        }
+        write!(out, "}},\"quick_projection_counts\":{{")?;
+        for (index, (name, count)) in costs.quick_projection_counts.iter().enumerate() {
+            if index != 0 {
+                write!(out, ",")?;
+            }
+            string(out, name)?;
+            write!(out, ":{count}")?;
         }
         writeln!(
             out,
@@ -622,6 +637,15 @@ mod enabled {
         string(out, std::env::consts::OS)?;
         write!(out, ",\"architecture\":")?;
         string(out, std::env::consts::ARCH)?;
+        write!(out, ",\"quick_projection\":")?;
+        string(
+            out,
+            if cfg!(oxide_quick_projection) {
+                "eager-experiment-canonical-execution"
+            } else {
+                "disabled"
+            },
+        )?;
         write!(
             out,
             ",\"pointer_bits\":{},\"debug_assertions\":{},\"profiling_feature\":true}}",

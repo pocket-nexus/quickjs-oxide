@@ -24,7 +24,7 @@ mod executable;
 
 pub(crate) mod fusion;
 
-// B1a authenticates the read-only projection in isolation. Production
-// publication and dispatch are deliberately separate follow-up work packages.
-#[cfg(test)]
-mod quick;
+// Internal M1 builds publish the projection eagerly but still execute the
+// canonical stream. The production M0 build has no sidecar fields or work.
+#[cfg(any(test, oxide_quick_projection))]
+pub(crate) mod quick;

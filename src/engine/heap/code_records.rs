@@ -119,6 +119,10 @@ pub struct FunctionBytecodeData {
         std::cell::OnceCell<Rc<crate::engine::code::runtime::PublishedFunctionData>>,
 
     pub(crate) fusion: crate::engine::code::fusion::FusionPlan,
+    /// None exists only in a mutable draft. Successful experimental
+    /// publication replaces it with a certificate for this exact code.
+    #[cfg(any(test, oxide_quick_projection))]
+    pub(crate) quick: Option<crate::engine::code::quick::QuickProgram>,
     pub code: Rc<[Instruction]>,
     pub constants: Rc<[BytecodeConstant]>,
     /// Constant-indexed static names linked by the runtime publisher. Null

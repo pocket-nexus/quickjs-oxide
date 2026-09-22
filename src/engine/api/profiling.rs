@@ -9,6 +9,8 @@ mod cost;
 pub(crate) use cost::record_call_preparation;
 
 pub(crate) use cost::record_owned_call_storage;
+#[cfg(any(test, oxide_quick_projection))]
+pub(crate) use cost::record_quick_projection;
 pub use cost::{
     CallBufferCost, CallPreparationCost, CostProfile, CostSnapshot, OwnedStorageCost, PhaseCost,
     VmPhaseCost,

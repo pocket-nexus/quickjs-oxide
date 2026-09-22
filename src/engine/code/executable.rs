@@ -130,6 +130,11 @@ impl PublishedFunctionSnapshot {
     }
 
     pub(crate) fn authentication(&self, closure_count: usize) -> OrdinaryAuthentication {
+        #[cfg(any(test, oxide_quick_projection))]
+        assert!(
+            self.quick.is_some(),
+            "synthetic canonical-only fixtures are not publication certificates"
+        );
         OrdinaryAuthentication {
             publish_generation: self.bytecode.unwrap().publish_generation(),
             closure_count,
@@ -163,6 +168,10 @@ impl PublishedFunctionSnapshot {
                 observes_arguments: true,
 
                 fusion: Default::default(),
+
+                // Synthetic VM fixtures explicitly execute canonical code;
+                // their mutable contents never carry a QuickOp certificate.
+                quick: None,
 
                 property_read_ic: crate::engine::object::property_ic::PropertyReadCacheTable::new(
                     &[],
@@ -201,6 +210,12 @@ pub(crate) struct PublishedFunctionData {
     pub(crate) observes_arguments: bool,
 
     pub(crate) fusion: crate::engine::code::fusion::FusionPlan,
+
+    /// Published snapshots always contain Some. None is the explicit
+    /// canonical-only mode of mutable synthetic test fixtures, which cannot
+    /// produce an ordinary-function authentication certificate.
+    #[cfg(any(test, oxide_quick_projection))]
+    pub(crate) quick: Option<crate::engine::code::quick::QuickProgram>,
 
     pub(crate) property_read_ic: crate::engine::object::property_ic::PropertyReadCacheTable,
     pub(crate) code: Rc<[crate::engine::code::bytecode::Instruction]>,
@@ -241,6 +256,10 @@ impl Runtime {
         // The realm is a strong edge of the bytecode node. Validating it here
         // makes a corrupt realm edge fail before entering a VM frame.
         state.heap.context(bytecode.realm)?;
+        #[cfg(any(test, oxide_quick_projection))]
+        let quick = bytecode.quick.as_ref().ok_or(RuntimeError::Invariant(
+            "published bytecode is missing its QuickOp certificate",
+        ))?;
         let data = bytecode.executable.get_or_init(|| {
             let data = Rc::new(PublishedFunctionData {
                 has_captured_locals: !bytecode.local_definitions.is_empty()
@@ -263,6 +282,9 @@ impl Runtime {
                 }),
 
                 fusion: bytecode.fusion.clone(),
+
+                #[cfg(any(test, oxide_quick_projection))]
+                quick: Some(quick.clone()),
 
                 property_read_ic: crate::engine::object::property_ic::PropertyReadCacheTable::new(
                     &bytecode.code,

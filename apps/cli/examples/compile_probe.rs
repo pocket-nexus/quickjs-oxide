@@ -36,6 +36,7 @@ fn main() {
             ("relocation", snapshot.relocation),
             ("verify", snapshot.verify),
             ("publish", snapshot.publish),
+            ("quick_projection", snapshot.quick_projection),
         ] {
             eprintln!(
                 "{{\"phase\":\"{name}\",\"attempts\":{},\"inclusive_ns\":{},\"exclusive_ns\":{}}}",

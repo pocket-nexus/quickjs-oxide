@@ -1,8 +1,8 @@
-//! Read-only B1a execution words, indexed by unchanged canonical PCs.
+//! Read-only execution words, indexed by unchanged canonical PCs.
 //!
-//! This module is test-only until B1b integrates the verified publisher. Its
-//! constructors remain private: neither a wire reader nor a draft can supply
-//! an executable word. Canonical verification is a prerequisite; projection
+//! Built eagerly only under the internal `oxide_quick_projection` experiment
+//! (or in unit tests). Neither a wire reader nor a draft can supply executable
+//! words; the publisher rebuilds them from the exact authenticated payload. Canonical verification is a prerequisite; projection
 //! validation authenticates the translation, not the source bytecode itself.
 //! No VM, heap, runtime owner, feedback state, or executable handler lives here.
 
@@ -16,6 +16,9 @@ use std::rc::Rc;
 
 mod translate;
 use translate::translate_instruction;
+
+#[cfg(test)]
+pub(crate) mod reservation_failure;
 
 #[cfg(test)]
 mod tests;
@@ -55,7 +58,7 @@ enum DecodedOp {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum DecodeError {
+pub(crate) enum DecodeError {
     ReservedBits,
     UnknownTag(u8),
     UnexpectedOperand,
@@ -117,19 +120,46 @@ impl QuickOp {
 /// The private representation exposes only a shared slice, never Rc or Vec
 /// mutation; cloning a projection shares its buffer.
 #[derive(Clone, Debug)]
-enum QuickProgram {
+pub(crate) struct QuickProgram(ProgramKind);
+
+#[derive(Clone, Debug)]
+enum ProgramKind {
     CanonicalOnly,
     Words(Rc<Vec<QuickOp>>),
 }
 
 #[derive(Debug)]
-enum BuildError {
+pub(crate) enum BuildError {
     Allocation(TryReserveError),
     InvalidProjection(ValidationError),
 }
 
+impl std::fmt::Display for BuildError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Allocation(error) => {
+                write!(formatter, "QuickOp word reservation failed: {error}")
+            }
+            Self::InvalidProjection(error) => {
+                write!(formatter, "QuickOp projection failed validation: {error:?}")
+            }
+        }
+    }
+}
+
+/// Storage accounting identifies the shared Vec allocation and reports actual
+/// capacity. Account capacity * 8 plus one Vec header and two Rc counters per
+/// distinct buffer identity; allocator-specific overhead is not known here.
+#[cfg(feature = "profiling")]
+pub(crate) struct QuickStorage {
+    pub(crate) buffer_identity: Option<usize>,
+    pub(crate) word_len: usize,
+    pub(crate) word_capacity: usize,
+    pub(crate) tag_counts: [usize; 7],
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ValidationError {
+pub(crate) enum ValidationError {
     Length { canonical: usize, quick: usize },
     InvalidWord { pc: usize, reason: DecodeError },
     CanonicalMismatch { pc: usize },
@@ -140,35 +170,46 @@ enum ValidationError {
 impl QuickProgram {
     /// Call only after canonical code and metadata verification. Two bounded
     /// scans plus projection validation are O(N); auxiliary scratch is O(1).
-    fn build(code: &[Instruction]) -> Result<Self, BuildError> {
-        if code.iter().all(|instruction| {
+    pub(crate) fn build_verified(code: &[Instruction]) -> Result<Self, BuildError> {
+        #[cfg(feature = "profiling")]
+        let _timer = crate::engine::api::profiling::PhaseTimer::start(
+            crate::engine::api::profiling::CompilePhase::QuickProjection,
+        );
+        let program = if code.iter().all(|instruction| {
             translate_instruction(instruction) == QuickOp::pack(QuickTag::GenericCanonical, 0)
         }) {
-            return Ok(Self::CanonicalOnly);
-        }
-
-        let mut words = reserve_words(code.len())?;
-        // Every push fits the reserved buffer. There is no shrink, boxed-slice
-        // conversion, side table, or second large allocation when sharing it.
-        for instruction in code {
-            words.push(translate_instruction(instruction));
-        }
-        validate_words(code, &words).map_err(BuildError::InvalidProjection)?;
-        // This small Rc allocation follows std's global allocator OOM policy;
-        // only the large Vec reservation above is recoverable via Result.
-        Ok(Self::Words(Rc::new(words)))
+            Self(ProgramKind::CanonicalOnly)
+        } else {
+            let mut words = reserve_words(code.len())?;
+            // Every push fits the reserved buffer. There is no shrink, boxed-slice
+            // conversion, side table, or second large allocation when sharing it.
+            for instruction in code {
+                words.push(translate_instruction(instruction));
+            }
+            // This small Rc allocation follows std's global allocator OOM policy;
+            // only the large Vec reservation above is recoverable via Result.
+            let program = Self(ProgramKind::Words(Rc::new(words)));
+            program
+                .validate(code)
+                .map_err(BuildError::InvalidProjection)?;
+            program
+        };
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_quick_projection(&program, code.len());
+        Ok(program)
     }
 
+    #[cfg(test)]
     fn words(&self) -> Option<&[QuickOp]> {
-        match self {
-            Self::CanonicalOnly => None,
-            Self::Words(words) => Some(words.as_slice()),
+        match &self.0 {
+            ProgramKind::CanonicalOnly => None,
+            ProgramKind::Words(words) => Some(words.as_slice()),
         }
     }
 
-    fn validate(&self, code: &[Instruction]) -> Result<(), ValidationError> {
-        match self {
-            Self::CanonicalOnly => {
+    pub(crate) fn validate(&self, code: &[Instruction]) -> Result<(), ValidationError> {
+        match &self.0 {
+            ProgramKind::CanonicalOnly => {
                 for (pc, instruction) in code.iter().enumerate() {
                     if translate_instruction(instruction)
                         != QuickOp::pack(QuickTag::GenericCanonical, 0)
@@ -178,12 +219,48 @@ impl QuickProgram {
                 }
                 Ok(())
             }
-            Self::Words(words) => validate_words(code, words),
+            ProgramKind::Words(words) => validate_words(code, words),
+        }
+    }
+
+    #[cfg(feature = "profiling")]
+    pub(crate) fn storage(&self) -> QuickStorage {
+        let mut storage = QuickStorage {
+            buffer_identity: None,
+            word_len: 0,
+            word_capacity: 0,
+            tag_counts: [0; 7],
+        };
+        if let ProgramKind::Words(words) = &self.0 {
+            storage.buffer_identity = Some(Rc::as_ptr(words) as usize);
+            storage.word_len = words.len();
+            storage.word_capacity = words.capacity();
+            for word in words.iter() {
+                let tag = usize::try_from(word.0 & 0xff).expect("authenticated tag fits usize");
+                storage.tag_counts[tag] += 1;
+            }
+        }
+        storage
+    }
+
+    #[cfg(test)]
+    pub(crate) fn shares_words_with(&self, other: &Self) -> bool {
+        match (&self.0, &other.0) {
+            (ProgramKind::Words(left), ProgramKind::Words(right)) => Rc::ptr_eq(left, right),
+            (ProgramKind::CanonicalOnly, ProgramKind::CanonicalOnly) => true,
+            _ => false,
         }
     }
 }
 
 fn reserve_words(len: usize) -> Result<Vec<QuickOp>, BuildError> {
+    #[cfg(test)]
+    if reservation_failure::should_fail() {
+        let error = Vec::<QuickOp>::new()
+            .try_reserve_exact(usize::MAX)
+            .unwrap_err();
+        return Err(BuildError::Allocation(error));
+    }
     let mut words = Vec::new();
     words
         .try_reserve_exact(len)
