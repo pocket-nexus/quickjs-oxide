@@ -1,5 +1,5 @@
 //! One authenticated continuous execution borrow. No arena mutation API escapes.
-use super::{Error, FrameBinding, FrameWindow, JsValue, Runtime, SlotStore};
+use super::{Error, FrameBinding, FrameWindow, JsValue, Runtime, SlotStore, StoreMode};
 
 pub(in crate::engine::vm) enum LinkedReadCompletion {
     Completed,
@@ -380,13 +380,26 @@ impl RunSlots<'_> {
         self.store.replace_local_current(self.window, index, value)
     }
 
-    pub(in crate::engine::vm) fn replace_parameter(
+    /// A non-direct target declines without consuming or retaining the top.
+    /// The caller must establish the binding and displaced-release semantics.
+    pub(in crate::engine::vm) fn store_local_from_top(
         &mut self,
+        runtime: &Runtime,
         index: u16,
-        value: FrameBinding,
-    ) -> Result<FrameBinding, Error> {
+        mode: StoreMode,
+    ) -> Result<Option<FrameBinding>, Error> {
         self.store
-            .replace_parameter_current(self.window, index, value)
+            .store_local_from_top_current(self.window, runtime, index, mode)
+    }
+
+    pub(in crate::engine::vm) fn store_parameter_from_top(
+        &mut self,
+        runtime: &Runtime,
+        index: u16,
+        mode: StoreMode,
+    ) -> Result<Option<FrameBinding>, Error> {
+        self.store
+            .store_parameter_from_top_current(self.window, runtime, index, mode)
     }
 
     pub(in crate::engine::vm) fn rotate_operands(

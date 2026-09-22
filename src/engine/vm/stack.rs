@@ -223,7 +223,9 @@ impl Drop for FrameStorageGuard {
 }
 
 mod number;
+mod store;
 mod window;
+pub(in crate::engine::vm) use store::StoreMode;
 pub(in crate::engine::vm) use window::{FrameTransaction, LinkedReadCompletion, RunSlots};
 
 impl SlotStore {
@@ -1559,6 +1561,7 @@ impl SlotStore {
         self.replace_parameter_current(window, index, value)
     }
 
+    #[cfg(test)]
     fn replace_parameter_current(
         &mut self,
         window: &FrameWindow,

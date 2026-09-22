@@ -10,7 +10,7 @@ use crate::engine::vm::bindings::FrameBinding;
 use crate::engine::vm::exception::{heap_error_to_vm_error, runtime_error_to_vm_error};
 use crate::engine::vm::execution::RunningExecution;
 use crate::engine::vm::frame::FrameId;
-use crate::engine::vm::stack::{RunSlots, copy_value};
+use crate::engine::vm::stack::{RunSlots, StoreMode, copy_value};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum BindingSource {
@@ -186,6 +186,8 @@ mod fusion;
 mod numeric;
 mod program_counter;
 mod property;
+#[cfg(test)]
+mod store_tests;
 use program_counter::ProgramCounter;
 
 #[cfg(test)]
@@ -1640,43 +1642,33 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             | Instruction::SetLocal(index)
             | Instruction::PutLocalCheck(index)
             | Instruction::SetLocalCheck(index) => {
+                let mode = if matches!(
+                    instruction,
+                    Instruction::SetLocal(_) | Instruction::SetLocalCheck(_)
+                ) {
+                    StoreMode::Keep
+                } else {
+                    StoreMode::Consume
+                };
                 if matches!(slots.local(*index)?, FrameBinding::Direct(old) if runtime.slot_value_release_readiness_jsvalue(old).map_err(runtime_error_to_vm_error)? == SlotReleaseReadiness::Ready)
                 {
-                    let next = if matches!(
-                        instruction,
-                        Instruction::SetLocal(_) | Instruction::SetLocalCheck(_)
-                    ) {
-                        copy_value(runtime, slots.peek(0)?)?
-                    } else {
-                        slots.pop()?
-                    };
-                    let old = slots.replace_local(*index, FrameBinding::Direct(next))?;
+                    let old = slots
+                        .store_local_from_top(runtime, *index, mode)?
+                        .ok_or_else(|| cold::internal("direct local store target changed"))?;
                     release_displaced(runtime, old)?;
                     true
                 } else if matches!(slots.local(*index)?, FrameBinding::Direct(old) if primitive_release_owner(old))
                 {
-                    let next = if matches!(
-                        instruction,
-                        Instruction::SetLocal(_) | Instruction::SetLocalCheck(_)
-                    ) {
-                        copy_value(runtime, slots.peek(0)?)?
-                    } else {
-                        slots.pop()?
-                    };
-                    let old = slots.replace_local(*index, FrameBinding::Direct(next))?;
+                    let old = slots
+                        .store_local_from_top(runtime, *index, mode)?
+                        .ok_or_else(|| cold::internal("direct local store target changed"))?;
                     drop(old);
                     true
                 } else if matches!(slots.local(*index)?, FrameBinding::Direct(_)) {
                     release_outside_slots!({
-                        let next = if matches!(
-                            instruction,
-                            Instruction::SetLocal(_) | Instruction::SetLocalCheck(_)
-                        ) {
-                            copy_value(runtime, slots.peek(0)?)?
-                        } else {
-                            slots.pop()?
-                        };
-                        slots.replace_local(*index, FrameBinding::Direct(next))?
+                        slots
+                            .store_local_from_top(runtime, *index, mode)?
+                            .ok_or_else(|| cold::internal("direct local store target changed"))?
                     });
                     true
                 } else {
@@ -1693,34 +1685,32 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 }
             }
             Instruction::PutArg(index) | Instruction::SetArg(index) => {
+                let mode = if matches!(instruction, Instruction::SetArg(_)) {
+                    StoreMode::Keep
+                } else {
+                    StoreMode::Consume
+                };
                 if matches!(slots.parameter(*index)?, FrameBinding::Direct(old) if runtime.slot_value_release_readiness_jsvalue(old).map_err(runtime_error_to_vm_error)? == SlotReleaseReadiness::Ready)
                 {
-                    let next = if matches!(instruction, Instruction::SetArg(_)) {
-                        copy_value(runtime, slots.peek(0)?)?
-                    } else {
-                        slots.pop()?
-                    };
-                    let old = slots.replace_parameter(*index, FrameBinding::Direct(next))?;
+                    let old = slots
+                        .store_parameter_from_top(runtime, *index, mode)?
+                        .ok_or_else(|| cold::internal("direct parameter store target changed"))?;
                     release_displaced(runtime, old)?;
                     true
                 } else if matches!(slots.parameter(*index)?, FrameBinding::Direct(old) if primitive_release_owner(old))
                 {
-                    let next = if matches!(instruction, Instruction::SetArg(_)) {
-                        copy_value(runtime, slots.peek(0)?)?
-                    } else {
-                        slots.pop()?
-                    };
-                    let old = slots.replace_parameter(*index, FrameBinding::Direct(next))?;
+                    let old = slots
+                        .store_parameter_from_top(runtime, *index, mode)?
+                        .ok_or_else(|| cold::internal("direct parameter store target changed"))?;
                     drop(old);
                     true
                 } else if matches!(slots.parameter(*index)?, FrameBinding::Direct(_)) {
                     release_outside_slots!({
-                        let next = if matches!(instruction, Instruction::SetArg(_)) {
-                            copy_value(runtime, slots.peek(0)?)?
-                        } else {
-                            slots.pop()?
-                        };
-                        slots.replace_parameter(*index, FrameBinding::Direct(next))?
+                        slots
+                            .store_parameter_from_top(runtime, *index, mode)?
+                            .ok_or_else(|| {
+                                cold::internal("direct parameter store target changed")
+                            })?
                     });
                     true
                 } else {

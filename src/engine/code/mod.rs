@@ -23,3 +23,8 @@ pub(crate) mod dynamic_source;
 mod executable;
 
 pub(crate) mod fusion;
+
+// B1a authenticates the read-only projection in isolation. Production
+// publication and dispatch are deliberately separate follow-up work packages.
+#[cfg(test)]
+mod quick;

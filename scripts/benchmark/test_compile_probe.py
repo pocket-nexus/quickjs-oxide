@@ -42,6 +42,22 @@ class CompileProbeIdentityTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaisesRegex(ValueError, "unsafe"):
                 manifest_files({"files": {name: self.files["lib.rs"]}})
 
+    def test_target_directory_inputs_are_part_of_frozen_source(self):
+        generated = self.root / "target/generated.rs"
+        generated.parent.mkdir()
+        generated.write_text("pub const INPUT: u8 = 1;\n")
+        with self.assertRaisesRegex(ValueError, "inventory"):
+            validate_frozen_source(self.root, self.files)
+        self.files["target/generated.rs"] = digest(generated)
+        validate_frozen_source(self.root, self.files)
+        generated.write_text("pub const INPUT: u8 = 2;\n")
+        with self.assertRaisesRegex(ValueError, "source changed"):
+            validate_frozen_source(self.root, self.files)
+
+    def test_manifest_must_be_an_object(self):
+        with self.assertRaisesRegex(ValueError, "object"):
+            manifest_files([])
+
 
 if __name__ == "__main__":
     unittest.main()

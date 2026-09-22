@@ -56,11 +56,30 @@ cleanup; Windows process management is not implemented by this runner.
 
 ## Prepare binaries with provenance
 
-Commit implementation changes first. Build on the measurement host:
+Build a clean checkout on the measurement host:
 
 ```sh
 python3 scripts/benchmark/build.py --jobs 2
 ```
+
+For uncommitted work, export the complete source (including new files), record
+each file's SHA-256 in a `files` or `source_files` map, and build that frozen
+export instead. Keep the manifest and build outputs outside the export:
+
+```sh
+python3 scripts/benchmark/build.py --repo /absolute/source-export \
+  --source-manifest /absolute/source-export.json --jobs 2 \
+  --plain-target /absolute/build/plain --profile-target /absolute/build/profiling
+```
+
+Both builders validate the complete inventory and file contents before and
+after compilation. An export cannot inherit its parent checkout's Git identity.
+The CLI builder embeds `frozen:<manifest-sha256>` and copies the exact source
+manifest to `qjs.source.json`. Its receipt also records Cargo profile/target
+environment overrides. `--mode plain` or `--mode profiling` builds only that mode;
+the default is both. Cargo's reported executable determines the actual binary
+path, including a configured target triple. All selected builds must finish
+with unchanged source identity before any new receipts are published.
 
 This builds ordinary and profiling release CLIs in separate target directories,
 embeds the source commit in profiling reports, and writes `qjs.build.json`
