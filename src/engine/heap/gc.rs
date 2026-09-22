@@ -402,6 +402,20 @@ impl Heap {
         &mut self,
         previous: RawValue,
     ) -> Result<HeapCleanup, HeapError> {
+        // Value-replacement hot path: a replaced scalar owns nothing, and a
+        // shared single-edge value only needs the nonfinal decrement. Both
+        // produce empty cleanup without touching the zero queue. Possible
+        // finalization, symbol atoms, and older queued work take the full
+        // path below unchanged.
+        if raw_value_atom(&previous).is_none() {
+            match raw_value_edge(&previous) {
+                None if self.zero_queue.is_empty() => return Ok(HeapCleanup::default()),
+                Some(edge) if self.try_release_nonfinal(edge) => {
+                    return Ok(HeapCleanup::default());
+                }
+                _ => {}
+            }
+        }
         let mut cleanup = HeapCleanup::default();
         cleanup.atoms.extend(raw_value_atom(&previous));
         for edge in raw_value_edges(&previous) {
@@ -1267,6 +1281,44 @@ impl Heap {
         Ok(None)
     }
 
+    /// Shared-count fast release: decrement in place when another owner
+    /// remains and no zero-queue work is pending.
+    ///
+    /// This is the runtime release hot path. A nonfinal decrement of a live,
+    /// identity-validated node cannot finalize, queue, or drain anything, so
+    /// the wide [`HeapCleanup`] plumbing of [`Heap::release_reference`] is
+    /// skipped entirely. Every other case — a possible finalization, an older
+    /// queued node, a stale or wrong-kind handle (which must surface its
+    /// error), or an explicitly traced node in debug builds — declines so the
+    /// full path keeps its exact behavior and diagnostics.
+    #[inline]
+    pub(in crate::engine::heap) fn try_release_nonfinal(&self, id: RawId) -> bool {
+        if !self.zero_queue.is_empty() {
+            return false;
+        }
+        #[cfg(debug_assertions)]
+        match id {
+            RawId::Object(object) if super::ownership::trace_object_matches(object) => {
+                return false;
+            }
+            RawId::String(string) if super::ownership::trace_string_matches(string) => {
+                return false;
+            }
+            _ => {}
+        }
+        let Ok(index) = self.validate_slot_identity(id) else {
+            return false;
+        };
+        if let SlotState::Live(node) = &self.slots[index].state {
+            let strong = node.strong.get();
+            if strong > 1 {
+                node.strong.set(strong - 1);
+                return true;
+            }
+        }
+        false
+    }
+
     /// Release one reference, returning cleanup when a node is finalized.
     /// Inspect the whole queue: an earlier no-drain release may have queued a
     /// different node even when this reference remains nonzero.
@@ -1369,7 +1421,18 @@ impl Heap {
         Ok(())
     }
 
+    /// The queue is empty on almost every call from single-value release and
+    /// replacement paths; keep that check inlinable at the call sites and
+    /// leave the traversal out of line.
+    #[inline]
     pub(super) fn drain_zero_queue(&mut self) -> Result<HeapCleanup, HeapError> {
+        if self.zero_queue.is_empty() {
+            return Ok(HeapCleanup::default());
+        }
+        self.drain_zero_queue_slow()
+    }
+
+    fn drain_zero_queue_slow(&mut self) -> Result<HeapCleanup, HeapError> {
         let mut cleanup = HeapCleanup::default();
         while let Some(id) = self.zero_queue.pop_front() {
             let index = self.validate_slot_identity(id)?;

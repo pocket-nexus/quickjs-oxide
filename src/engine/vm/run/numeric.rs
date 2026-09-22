@@ -13,10 +13,23 @@ use crate::engine::{
 
 #[inline]
 pub(super) fn supported(slots: &RunSlots<'_>, kind: NumericKind) -> bool {
+    // Check each operand with straight-line code. Iterating a range keeps the
+    // peek Result in memory across the loop and drags its drop glue onto the
+    // hot success path. Destructuring (instead of matching a temporary) moves
+    // the Err variant out, so the Ok branch folds to a plain tag test.
+    #[inline(always)]
+    fn primitive_operand(slots: &RunSlots<'_>, offset: usize) -> bool {
+        match slots.peek(offset) {
+            Ok(value) => !matches!(value, JsValue::Object(_)),
+            Err(error) => {
+                drop(error);
+                false
+            }
+        }
+    }
     kind.primitive_arithmetic()
-        && (0..if kind.unary() { 1 } else { 2 }).all(
-            |offset| matches!(slots.peek(offset), Ok(value) if !matches!(value, JsValue::Object(_))),
-        )
+        && primitive_operand(slots, 0)
+        && (kind.unary() || primitive_operand(slots, 1))
 }
 
 /// The caller published the exact arithmetic PC before entering this helper.

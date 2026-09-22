@@ -72,15 +72,14 @@ fn with_bigint_operands(
     let state = runtime.0.state.borrow();
     let left_short;
     let right_short;
+    // The caller's operands are owning edges, so both nodes are live for the
+    // whole shared borrow; use the trusted read instead of re-validating.
     let left = match left {
         JsValue::ShortBigInt(value) => {
             left_short = JsBigInt::from(*value);
             &left_short
         }
-        JsValue::BigInt(id) => state
-            .heap
-            .bigint(*id)
-            .map_err(|error| Error::internal(error.to_string()))?,
+        JsValue::BigInt(id) => state.heap.bigint_fast(*id),
         _ => return Err(Error::internal("BigInt kernel received another type")),
     };
     let right = match right {
@@ -88,10 +87,7 @@ fn with_bigint_operands(
             right_short = JsBigInt::from(*value);
             &right_short
         }
-        JsValue::BigInt(id) => state
-            .heap
-            .bigint(*id)
-            .map_err(|error| Error::internal(error.to_string()))?,
+        JsValue::BigInt(id) => state.heap.bigint_fast(*id),
         _ => return Err(Error::internal("BigInt kernel received another type")),
     };
     kernel(left, right)
@@ -122,6 +118,11 @@ fn finish_bigint_operands(
             let mut state = runtime.0.state.borrow_mut();
             for (is_left, value) in [(true, &left), (false, &right)] {
                 if let JsValue::BigInt(id) = value {
+                    // Aliased operands share one node; its first uniqueness
+                    // check already rejected reuse for both edges.
+                    if !is_left && matches!(&left, JsValue::BigInt(left) if left == id) {
+                        continue;
+                    }
                     if let Some(slot) = state
                         .heap
                         .unique_bigint_mut(*id)
@@ -397,8 +398,41 @@ pub(in crate::engine::vm) fn add_primitives(
         });
         return finish_bigint_operands(runtime, left, right, result);
     }
+    let mut reused_left = false;
     let result = if matches!(left, JsValue::String(_)) || matches!(right, JsValue::String(_)) {
         (|| {
+            if let JsValue::String(id) = &left {
+                let suffix = match &right {
+                    JsValue::String(id) => string_payload(runtime, *id)?,
+                    value => to_js_string_jsvalue(runtime, value)?,
+                };
+                // The consumed arena edge can be the result owner. Do not clone
+                // its payload before checking uniqueness: that extra Rc alone
+                // disables the pre-existing concat_owned in-place algorithm.
+                let appended = if runtime.0.deferred_references.has_pending() {
+                    false
+                } else {
+                    let mut state = runtime.0.state.borrow_mut();
+                    match state
+                        .heap
+                        .unique_string_mut(*id)
+                        .map_err(|error| Error::internal(error.to_string()))?
+                    {
+                        // Preserve concat_owned's empty-string representation
+                        // rules, including empty UTF-16 plus Latin1.
+                        Some(string) if !string.is_empty() && !suffix.is_empty() => {
+                            string.try_concat_in_place(&suffix)?
+                        }
+                        _ => false,
+                    }
+                };
+                if appended {
+                    reused_left = true;
+                    return Ok(JsValue::String(*id));
+                }
+                let prefix = string_payload(runtime, *id)?;
+                return allocate_string_jsvalue(runtime, prefix.concat_owned(&suffix)?);
+            }
             let left = match &left {
                 JsValue::String(id) => string_payload(runtime, *id)?,
                 value => to_js_string_jsvalue(runtime, value)?,
@@ -412,7 +446,9 @@ pub(in crate::engine::vm) fn add_primitives(
     } else {
         add_primitives_ref(runtime, &left, &right)
     };
-    release_primitive_operand(runtime, left)?;
+    if !reused_left {
+        release_primitive_operand(runtime, left)?;
+    }
     release_primitive_operand(runtime, right)?;
     result
 }
@@ -431,15 +467,38 @@ pub(in crate::engine::vm) fn add_primitives_ref(
     right: &JsValue,
 ) -> Result<JsValue, Error> {
     if matches!(left, JsValue::String(_)) || matches!(right, JsValue::String(_)) {
-        let left = match left {
-            JsValue::String(id) => string_payload(runtime, *id)?,
-            value => to_js_string_jsvalue(runtime, value)?,
+        // Perform primitive formatting in the original left-to-right order
+        // before borrowing state. Existing String payloads remain borrowed,
+        // as in the pre-handle Cow::Borrowed path; they need no temporary Rc.
+        let formatted_left = if matches!(left, JsValue::String(_)) {
+            None
+        } else {
+            Some(to_js_string_jsvalue(runtime, left)?)
         };
-        let right = match right {
-            JsValue::String(id) => string_payload(runtime, *id)?,
-            value => to_js_string_jsvalue(runtime, value)?,
+        let formatted_right = if matches!(right, JsValue::String(_)) {
+            None
+        } else {
+            Some(to_js_string_jsvalue(runtime, right)?)
         };
-        return allocate_string_jsvalue(runtime, left.try_concat(&right).map_err(Error::from)?);
+        let result = {
+            let state = runtime.0.state.borrow();
+            let left = match left {
+                JsValue::String(id) => state
+                    .heap
+                    .string(*id)
+                    .map_err(|error| Error::internal(error.to_string()))?,
+                _ => formatted_left.as_ref().expect("formatted left primitive"),
+            };
+            let right = match right {
+                JsValue::String(id) => state
+                    .heap
+                    .string(*id)
+                    .map_err(|error| Error::internal(error.to_string()))?,
+                _ => formatted_right.as_ref().expect("formatted right primitive"),
+            };
+            left.try_concat(right).map_err(Error::from)?
+        };
+        return allocate_string_jsvalue(runtime, result);
     }
     match (left, right) {
         (left, right) if left.is_bigint() && right.is_bigint() => {
@@ -463,3 +522,7 @@ pub(in crate::engine::vm) fn add_primitives_ref(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "numeric/string_tests.rs"]
+mod string_tests;

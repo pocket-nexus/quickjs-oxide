@@ -314,6 +314,22 @@ impl OwnedCompletePropertyDescriptor {
     pub(crate) fn record(&self) -> &super::property::CompletePropertyDescriptor<RawValue> {
         &self.record
     }
+    /// Consume a data descriptor and transfer its owned value edge out.
+    ///
+    /// The descriptor already owns one duplicated edge for the value; moving
+    /// it to the caller instead of duplicating again avoids a retain plus a
+    /// queued release on ordinary data reads. The vacated slot is left as an
+    /// immediate so this descriptor's `Drop` releases nothing for it.
+    /// Accessor records return `None` and stay untouched.
+    pub(crate) fn into_data_value(mut self) -> Option<JsValue> {
+        use super::property::CompletePropertyDescriptor;
+        match &mut self.record {
+            CompletePropertyDescriptor::Data { value, .. } => {
+                JsValue::from_raw(std::mem::replace(value, RawValue::Undefined))
+            }
+            CompletePropertyDescriptor::Accessor { .. } => None,
+        }
+    }
     pub(crate) fn configurable(&self) -> bool {
         self.record.configurable()
     }

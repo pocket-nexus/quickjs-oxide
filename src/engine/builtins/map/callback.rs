@@ -168,9 +168,7 @@ fn callable(
     value: &JsValue,
 ) -> Result<NativeConversion<CallableRef>, RuntimeError> {
     let result = match value {
-        JsValue::Object(id) => {
-            runtime.as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)?
-        }
+        JsValue::Object(id) => runtime.as_callable_object(*id)?,
         _ => None,
     };
     Ok(match result {

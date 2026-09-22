@@ -797,6 +797,20 @@ impl SlotStore {
         window.depth
     }
 
+    // The message strings stay out of every inlined caller so hot operand
+    // checks compile to a bare branch plus one cold call.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn operand_stack_underflow() -> Error {
+        Error::internal("owned operand stack underflow")
+    }
+
+    #[cold]
+    #[inline(never)]
+    pub(super) fn operand_slot_not_a_value() -> Error {
+        Error::internal("owned operand slot is not a value")
+    }
+
     pub(in crate::engine::vm) fn peek(
         &self,
         window: &FrameWindow,
@@ -811,10 +825,10 @@ impl SlotStore {
         let offset = from_top
             .checked_add(1)
             .and_then(|offset| window.depth.checked_sub(offset))
-            .ok_or_else(|| Error::internal("owned operand stack underflow"))?;
+            .ok_or_else(Self::operand_stack_underflow)?;
         match &self.slots[window.operands().start + offset] {
             Some(FrameBinding::Direct(value)) => Ok(value),
-            _ => Err(Error::internal("owned operand slot is not a value")),
+            _ => Err(Self::operand_slot_not_a_value()),
         }
     }
 
@@ -855,7 +869,7 @@ impl SlotStore {
                 window,
                 count
                     .checked_add(1)
-                    .ok_or_else(|| Error::internal("owned operand stack underflow"))?,
+                    .ok_or_else(Self::operand_stack_underflow)?,
             )?;
         }
         for offset in (0..count).rev() {
@@ -891,14 +905,14 @@ impl SlotStore {
         let offset = window
             .depth
             .checked_sub(2)
-            .ok_or_else(|| Error::internal("owned operand stack underflow"))?;
+            .ok_or_else(Self::operand_stack_underflow)?;
         let index = window.operands().start + offset;
         let [
             Some(FrameBinding::Direct(left)),
             Some(FrameBinding::Direct(right)),
         ] = &self.slots[index..index + 2]
         else {
-            return Err(Error::internal("owned operand slot is not a value"));
+            return Err(Self::operand_slot_not_a_value());
         };
         let (Some(left), Some(right)) = (left.as_number_repr(), right.as_number_repr()) else {
             return Ok(false);
@@ -925,7 +939,7 @@ impl SlotStore {
         let offset = window
             .depth
             .checked_sub(3)
-            .ok_or_else(|| Error::internal("owned operand stack underflow"))?;
+            .ok_or_else(Self::operand_stack_underflow)?;
         let index = window.operands().start + offset;
         let [
             Some(FrameBinding::Direct(base)),
@@ -933,7 +947,7 @@ impl SlotStore {
             Some(FrameBinding::Direct(value)),
         ] = &self.slots[index..index + 3]
         else {
-            return Err(Error::internal("owned operand slot is not a value"));
+            return Err(Self::operand_slot_not_a_value());
         };
         let JsValue::Int(key) = key else {
             return Ok(false);
@@ -959,13 +973,18 @@ impl SlotStore {
         }
         // The successful leaf proved base's sole release cannot drain. Only
         // numeric input moves occur before its release; no proof can change.
-        let value = self.slots[index + 2].take();
-        let key = self.slots[index + 1].take();
-        let base = self.slots[index].take();
+        // The typed leaf accepts Number only; the dense fallback accepts
+        // immediate scalars only. The key was proved Int above. These two
+        // slots therefore carry no edge and need no general binding release.
+        self.slots[index + 2] = None;
+        self.slots[index + 1] = None;
+        let Some(FrameBinding::Direct(base)) = self.slots[index].take() else {
+            unreachable!("typed/dense leaf authenticated its base slot")
+        };
         window.depth = offset;
-        for binding in [value, key, base].into_iter().flatten() {
-            release_binding(runtime, binding)?;
-        }
+        runtime
+            .release_jsvalue(base)
+            .map_err(super::exception::runtime_error_to_vm_error)?;
         #[cfg(feature = "profiling")]
         {
             self.live_slots -= 3;
@@ -987,36 +1006,27 @@ impl SlotStore {
         let offset = window
             .depth
             .checked_sub(2)
-            .ok_or_else(|| Error::internal("owned operand stack underflow"))?;
+            .ok_or_else(Self::operand_stack_underflow)?;
         let index = window.operands().start + offset;
         let [
             Some(FrameBinding::Direct(base)),
             Some(FrameBinding::Direct(key)),
         ] = &self.slots[index..index + 2]
         else {
-            return Err(Error::internal("owned operand slot is not a value"));
+            return Err(Self::operand_slot_not_a_value());
         };
         let index_key = match key {
             JsValue::Int(key) if *key >= 0 => *key as u32,
             JsValue::String(id) => {
-                // Mirror the historical guard: only a key whose node survives
-                // its own release takes this leaf. Shared payload storage means
-                // dropping the arena edge cannot destroy the spelling; otherwise
-                // fall back to the arena slot readiness proof. The spelling is
-                // cloned out before the slot owners are consumed below.
-                let content_survives = runtime
-                    .0
-                    .state
-                    .borrow()
-                    .heap
-                    .string_fast(*id)
-                    .release_keeps_storage_alive();
-                if !content_survives
-                    && !matches!(
-                        runtime.slot_value_release_readiness_jsvalue(key),
-                        Ok(crate::engine::heap::SlotReleaseReadiness::Ready)
-                    )
-                {
+                // Shared payload storage only proves the spelling survives its
+                // own release; it does not prove the arena slot can retire
+                // without allocating. The slot readiness proof is the sole
+                // gate for consuming the key owner below. The spelling is
+                // cloned out before the slot owners are consumed.
+                if !matches!(
+                    runtime.slot_value_release_readiness_jsvalue(key),
+                    Ok(crate::engine::heap::SlotReleaseReadiness::Ready)
+                ) {
                     return Ok(false);
                 }
                 let text = runtime.0.state.borrow().heap.string_fast(*id).clone();
@@ -1033,12 +1043,23 @@ impl SlotStore {
         };
         // The scalar result owns no heap edge. Preflight proved that releasing
         // the base cannot drain; no ownership decrease intervened since then.
-        let key = self.slots[index + 1].take();
-        let base = self.slots[index].replace(FrameBinding::Direct(value));
+        // Both inputs were authenticated Direct bindings. Numeric keys are
+        // edge-free; string keys still surrender their genuine arena owner.
+        let Some(FrameBinding::Direct(key)) = self.slots[index + 1].take() else {
+            unreachable!("array leaf authenticated its key slot")
+        };
+        let Some(FrameBinding::Direct(base)) =
+            self.slots[index].replace(FrameBinding::Direct(value))
+        else {
+            unreachable!("array leaf authenticated its base slot")
+        };
         window.depth -= 1;
-        for binding in [key, base].into_iter().flatten() {
-            release_binding(runtime, binding)?;
-        }
+        runtime
+            .release_jsvalue(key)
+            .map_err(super::exception::runtime_error_to_vm_error)?;
+        runtime
+            .release_jsvalue(base)
+            .map_err(super::exception::runtime_error_to_vm_error)?;
         #[cfg(feature = "profiling")]
         {
             self.live_slots -= 1;
@@ -1090,14 +1111,14 @@ impl SlotStore {
         let offset = window
             .depth
             .checked_sub(2)
-            .ok_or_else(|| Error::internal("owned operand stack underflow"))?;
+            .ok_or_else(Self::operand_stack_underflow)?;
         let index = window.operands().start + offset;
         let [
             Some(FrameBinding::Direct(base)),
             Some(FrameBinding::Direct(value)),
         ] = &self.slots[index..index + 2]
         else {
-            return Err(Error::internal("owned operand slot is not a value"));
+            return Err(Self::operand_slot_not_a_value());
         };
         if !runtime
             .try_property_ic_write_scalar(base, executable, pc, key, value)
@@ -1729,9 +1750,25 @@ pub(in crate::engine::vm) fn copy_value(
 // This is not cold: String/BigInt copies also share this boundary.
 #[inline(never)]
 fn copy_reference(runtime: &Runtime, value: &JsValue) -> Result<JsValue, Error> {
-    let copied = runtime
-        .dup_jsvalue(value)
-        .map_err(|error| Error::internal(error.to_string()))?;
+    // Leaf copies need the same checked retain as dup_jsvalue, but do not need
+    // its general RuntimeError result or a second dispatch over value kinds.
+    let copied = match value {
+        JsValue::String(id) => {
+            runtime
+                .retain_string_handle(*id)
+                .map_err(|error| Error::internal(error.to_string()))?;
+            JsValue::String(*id)
+        }
+        JsValue::BigInt(id) => {
+            runtime
+                .retain_bigint_handle(*id)
+                .map_err(|error| Error::internal(error.to_string()))?;
+            JsValue::BigInt(*id)
+        }
+        _ => runtime
+            .dup_jsvalue(value)
+            .map_err(|error| Error::internal(error.to_string()))?,
+    };
     #[cfg(feature = "profiling")]
     record_copy(value);
     Ok(copied)
@@ -2315,7 +2352,7 @@ mod tests {
     fn recovery_string_index_leaf_preserves_spelling_and_final_key_owner() {
         for (text, retained, expected) in [
             ("0", true, true),
-            ("0", false, false),
+            ("0", false, true),
             ("01", true, false),
             ("-0", true, false),
             ("4294967295", true, false),
@@ -2339,6 +2376,10 @@ mod tests {
             store
                 .push(&mut window, into_internal(&runtime, Value::String(key)))
                 .unwrap();
+            // Reclaim then reuse a real slot, leaving one free-list capacity
+            // position available for allocation-free last-key retirement.
+            drop(runtime.new_object(None).unwrap());
+            let keep_capacity = runtime.new_object(None).unwrap();
             assert_eq!(
                 store
                     .run_window(&mut window)
@@ -2364,6 +2405,7 @@ mod tests {
             store.clear_frame(&runtime, window).unwrap();
             drop(keep_key);
             drop(keep_base);
+            drop(keep_capacity);
         }
     }
 

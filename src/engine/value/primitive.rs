@@ -184,6 +184,49 @@ struct Utf16Units {
     remaining: usize,
 }
 
+/// Borrowed code-unit iterator for [`JsString::utf16_units`]. Flat strings
+/// iterate their storage slice in place; ropes keep the owning traversal.
+enum BorrowedUtf16Units<'a> {
+    Latin1(std::slice::Iter<'a, u8>),
+    Utf16(std::slice::Iter<'a, u16>),
+    // Boxed: the traversal stack dwarfs the flat variants, and only ropes
+    // pay the allocation.
+    Rope(Box<Utf16Units>),
+}
+
+impl Iterator for BorrowedUtf16Units<'_> {
+    type Item = u16;
+
+    #[inline]
+    fn next(&mut self) -> Option<u16> {
+        match self {
+            Self::Latin1(units) => units.next().copied().map(u16::from),
+            Self::Utf16(units) => units.next().copied(),
+            Self::Rope(units) => units.next(),
+        }
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        match self {
+            Self::Latin1(units) => units.size_hint(),
+            Self::Utf16(units) => units.size_hint(),
+            Self::Rope(units) => units.size_hint(),
+        }
+    }
+
+    #[inline]
+    fn nth(&mut self, n: usize) -> Option<u16> {
+        match self {
+            Self::Latin1(units) => units.nth(n).copied().map(u16::from),
+            Self::Utf16(units) => units.nth(n).copied(),
+            Self::Rope(units) => units.nth(n),
+        }
+    }
+}
+
+impl ExactSizeIterator for BorrowedUtf16Units<'_> {}
+
 struct QuickJsUtf8Bytes {
     units: std::iter::Peekable<Utf16Units>,
     cesu8: bool,
@@ -678,7 +721,9 @@ impl JsStringBuilder {
 impl Utf16Units {
     fn new(string: &JsString) -> Self {
         let mut iterator = Self {
-            stack: std::array::from_fn(|_| None),
+            // Inline-const init compiles to a plain zeroing store; the closure
+            // form lowered to one non-inlined call per slot on this hot path.
+            stack: [const { None }; 61],
             stack_len: 0,
             current_flat: None,
             remaining: string.len(),
@@ -1085,8 +1130,15 @@ impl JsString {
     }
 
     #[must_use]
+    #[inline]
     pub fn utf16_units(&self) -> impl ExactSizeIterator<Item = u16> + '_ {
-        Utf16Units::new(self)
+        // Flat strings walk their storage slice directly; only a live rope
+        // pays for the owning traversal iterator and its bounded stack.
+        match self.0.data() {
+            StringData::Latin1(units) => BorrowedUtf16Units::Latin1(units.iter()),
+            StringData::Utf16(units) => BorrowedUtf16Units::Utf16(units.iter()),
+            StringData::Rope(_) => BorrowedUtf16Units::Rope(Box::new(Utf16Units::new(self))),
+        }
     }
 
     /// Feed exact code units to a caller-owned hasher. Every representation
@@ -1236,7 +1288,7 @@ impl JsString {
     /// A previously linearized rope exposes its replacement flat value as one
     /// leaf, matching QuickJS's in-place `flat + empty` transition.
     pub fn for_each_flat_leaf(&self, mut visitor: impl FnMut(&Self)) {
-        let mut stack: [Option<Self>; 61] = std::array::from_fn(|_| None);
+        let mut stack: [Option<Self>; 61] = [const { None }; 61];
         stack[0] = Some(self.clone());
         let mut stack_len = 1;
         while stack_len != 0 {
@@ -1346,10 +1398,10 @@ impl JsString {
 
     fn rebalance(&self) -> Result<Self, JsStringError> {
         let mut buckets: [Option<Self>; Self::ROPE_BUCKET_LENGTHS.len()] =
-            std::array::from_fn(|_| None);
+            [const { None }; Self::ROPE_BUCKET_LENGTHS.len()];
         // Rebalancing is entered for the one temporary depth-61 rope. A
         // depth-first traversal therefore needs at most 62 pending nodes.
-        let mut pending: [Option<Self>; 62] = std::array::from_fn(|_| None);
+        let mut pending: [Option<Self>; 62] = [const { None }; 62];
         pending[0] = Some(self.clone());
         let mut pending_len = 1;
         while pending_len != 0 {

@@ -70,9 +70,7 @@ impl EachStep {
             "Set.prototype.forEach callback argv was not padded",
         ))?;
         let callback = match value {
-            JsValue::Object(id) => {
-                runtime.as_callable(&ObjectRef::from_borrowed_handle(runtime.clone(), *id)?)?
-            }
+            JsValue::Object(id) => runtime.as_callable_object(*id)?,
             _ => None,
         };
         let Some(callback) = callback else {
