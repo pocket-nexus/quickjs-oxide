@@ -219,7 +219,7 @@ impl Heap {
             &bytecode.metadata,
             &bytecode.code,
             &parameter_initializer_locals,
-            bytecode.parameter_environment.as_ref(),
+            bytecode.parameter_environment(),
         )
         .map_err(HeapError::Invariant)?;
         let initial_yields = bytecode
@@ -397,8 +397,7 @@ impl Heap {
             ));
         }
         let arg_eval_variable_object_local = bytecode
-            .parameter_environment
-            .as_ref()
+            .parameter_environment()
             .and_then(|layout| layout.arg_eval_variable_object_local);
         if arg_eval_variable_object_local
             .is_some_and(|index| index >= bytecode.metadata.local_count)
@@ -486,7 +485,7 @@ impl Heap {
             &unnamed_arguments,
             &lexical_locals,
             &parameter_initializer_locals,
-            bytecode.parameter_environment.as_ref(),
+            bytecode.parameter_environment(),
         )
         .map_err(HeapError::Invariant)?;
         let parameter_initializer_capture_locals = parameter_initializer_visible_locals(
@@ -494,7 +493,7 @@ impl Heap {
             &bytecode.code,
             parameter_body_pc,
             &parameter_initializer_locals,
-            bytecode.parameter_environment.as_ref(),
+            bytecode.parameter_environment(),
         )
         .map_err(HeapError::Invariant)?;
         validate_eval_environment_phase_layout(
@@ -508,7 +507,7 @@ impl Heap {
                 parameter_initializer_locals: &parameter_initializer_locals,
                 parameter_initializer_visible_locals: parameter_initializer_capture_locals
                     .as_deref(),
-                parameter_environment: bytecode.parameter_environment.as_ref(),
+                parameter_environment: bytecode.parameter_environment(),
             },
         )
         .map_err(HeapError::Invariant)?;
@@ -523,7 +522,7 @@ impl Heap {
                 ));
             }
         }
-        if let Some(layout) = bytecode.parameter_environment.as_ref() {
+        if let Some(layout) = bytecode.parameter_environment() {
             let parameter_definitions = bytecode
                 .local_definitions
                 .iter()

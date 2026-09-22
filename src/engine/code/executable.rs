@@ -297,8 +297,7 @@ impl Runtime {
                 closure_variables: bytecode.closure_variables.clone(),
                 eval_environments: bytecode.eval_environments.clone(),
                 arg_eval_variable_object_local: bytecode
-                    .parameter_environment
-                    .as_ref()
+                    .parameter_environment()
                     .and_then(|layout| layout.arg_eval_variable_object_local),
                 metadata: bytecode.metadata,
                 realm: bytecode.realm,

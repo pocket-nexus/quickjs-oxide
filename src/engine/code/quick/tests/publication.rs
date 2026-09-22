@@ -96,7 +96,7 @@ fn quick_publication_failure_cleans_atoms_constants_and_already_published_childr
     // The leaf and the root each contain a hot integer instruction. Failing
     // the second reservation exercises cleanup after child publication and
     // after root atoms/constants have been materialized by the real publisher.
-    let source = "function quickFailureChild(value) { return 'quickFailureChildLiteral' + value + 77; } 'quickFailureRootLiteral'; 42;";
+    let source = "function quickFailureChild(value = 3) { return 'quickFailureChildLiteral' + value + 77; } 'quickFailureRootLiteral'; 42;";
     for successful_reservations in [0, 1] {
         let draft = compile_unlinked_script(source).unwrap();
         let failure = reservation_failure::after(successful_reservations);
@@ -188,4 +188,61 @@ fn quick_synthetic_fixture_cannot_create_a_publication_certificate() {
     let fixture =
         crate::engine::code::runtime::PublishedFunctionSnapshot::empty_for_test(context.realm);
     fixture.authentication(0);
+}
+
+#[test]
+fn quick_cold_parameter_storage_preserves_metadata_and_bytecode_lifetime() {
+    let runtime = Runtime::new();
+    let context = runtime.new_context();
+    for (source, has_parameter_environment) in [
+        ("(function ordinary(value) { return value + 7; });", false),
+        (
+            "(function parameters(value = 1) { return value + 7; });",
+            true,
+        ),
+    ] {
+        let baseline = runtime.heap_counts().function_bytecode_nodes;
+        let baseline_atoms = runtime.test_atom_count();
+        let draft = compile_unlinked_script(source).unwrap();
+        let (child_index, child) = draft
+            .constants()
+            .iter()
+            .enumerate()
+            .find_map(|(index, constant)| constant.as_child().map(|child| (index, child)))
+            .unwrap();
+        let expected_metadata = *child.metadata();
+        let expected_parameters = child.parameter_environment().cloned();
+        assert_eq!(expected_parameters.is_some(), has_parameter_environment);
+        let function = runtime
+            .publish_unlinked_function(context.realm, draft)
+            .unwrap();
+        let child = runtime
+            .test_child_function_bytecode(&function, child_index)
+            .unwrap();
+        let id = child.bytecode_id();
+        {
+            let state = runtime.0.state.borrow();
+            let data = state.heap.function_bytecode(id).unwrap();
+            assert_eq!(data.metadata, expected_metadata);
+            assert_eq!(data.parameter_environment(), expected_parameters.as_ref());
+            assert_eq!(
+                data.parameter_environment.is_some(),
+                has_parameter_environment
+            );
+            assert_eq!(data.quick.as_ref().unwrap().validate(&data.code), Ok(()));
+            if let Some(layout) = data.parameter_environment.as_deref() {
+                assert!(std::ptr::eq(layout, data.parameter_environment().unwrap()));
+            }
+        }
+        let snapshot = runtime.snapshot_function_bytecode(&child).unwrap();
+        assert_eq!(snapshot.metadata, expected_metadata);
+        drop(function);
+        drop(child);
+        assert!(runtime.0.state.borrow().heap.function_bytecode(id).is_ok());
+        drop(snapshot);
+        runtime.run_gc().unwrap();
+        assert!(runtime.0.state.borrow().heap.function_bytecode(id).is_err());
+        assert_eq!(runtime.heap_counts().function_bytecode_nodes, baseline);
+        assert_eq!(runtime.test_atom_count(), baseline_atoms);
+    }
 }

@@ -3,6 +3,7 @@ use crate::engine::code::function::UnlinkedFunction;
 use crate::engine::code::verify::verify_unlinked_tree;
 use crate::engine::compiler::compile_unlinked_script;
 
+mod expanded;
 mod generic_cases;
 mod publication;
 
@@ -140,7 +141,7 @@ fn quick_decoder_rejects_every_reserved_bit_and_unknown_tag() {
             );
         }
     }
-    for unknown in 7_u8..=u8::MAX {
+    for unknown in u8::try_from(QUICK_TAG_COUNT).unwrap()..=u8::MAX {
         assert_eq!(
             QuickOp(u64::from(unknown)).decode(),
             Err(DecodeError::UnknownTag(unknown))
@@ -258,8 +259,8 @@ fn quick_all_complex_variants_and_wide_operands_stay_generic() {
     let code = generic_cases::instructions();
     assert_eq!(
         code.len(),
-        191,
-        "review the initial hot/Generic partition when the enum changes"
+        165,
+        "review the guarded hot/Generic partition when the enum changes"
     );
     for instruction in &code {
         let word = translate_instruction(instruction);
@@ -286,7 +287,7 @@ fn quick_canonical_only_is_a_checked_mode_not_a_missing_buffer() {
     for code in [
         vec![],
         vec![Instruction::ReturnUndefined],
-        vec![Instruction::Add, Instruction::Return],
+        vec![Instruction::Neg, Instruction::Return],
     ] {
         let program = QuickProgram::build_verified(&code).unwrap();
         assert!(matches!(program, QuickProgram(ProgramKind::CanonicalOnly)));
@@ -378,8 +379,16 @@ fn check_compiled_tree(function: &UnlinkedFunction, counts: &mut [usize; 3]) {
         for (instruction, word) in code.iter().zip(words) {
             let decoded = word.decode().unwrap();
             assert!(contracts_match(decoded, instruction));
-            if let DecodedOp::Goto(target) = decoded {
-                assert_eq!(instruction.control_effect(), ControlEffect::Jump(target));
+            if let DecodedOp::Goto(target)
+            | DecodedOp::IfTrue(target)
+            | DecodedOp::IfFalse(target) = decoded
+            {
+                let effect = if matches!(decoded, DecodedOp::Goto(_)) {
+                    ControlEffect::Jump(target)
+                } else {
+                    ControlEffect::Branch(target)
+                };
+                assert_eq!(instruction.control_effect(), effect);
                 assert!(usize::try_from(target).unwrap() < code.len());
                 counts[2] += 1;
             }
@@ -400,6 +409,7 @@ fn quick_verified_compiler_results_validate_without_runtime_or_heap() {
         "42; -2147483648; 2147483647; null; true; false; void 0;",
         "function choose(x) { if (x) return 1; return 2; } choose(false);",
         "function step(x) { for (var i = 0; i < 3; i++) x += i; return x; } step(0);",
+        "function numeric(a,b) { return [a+b,a-b,a*b,a/b,a%b,a**b,a<<b,a>>b,a>>>b,a&b,a|b,a^b,a==b,a!=b,a<b,a<=b,a>b,a>=b]; } numeric(7,2);",
         "function use(o) { return o.m(1, true, null); } use({ m(a,b,c) { return a; } });",
         "function attempt(x) { try { if (x) throw 7; return 3; } catch(e) { return e; } finally { x = 0; } } attempt(false);",
         "function* items() { yield 1; yield* [2, 3]; } items();",

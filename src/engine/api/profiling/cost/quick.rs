@@ -1,6 +1,6 @@
 //! Publication diagnostics, separate from executed-opcode or live-heap counts.
 use super::{CompilePhase, current};
-use crate::engine::code::quick::QuickProgram;
+use crate::engine::code::quick::{QUICK_TAG_PROFILE_NAMES, QuickProgram};
 
 pub(crate) fn record_quick_projection(program: &QuickProgram, canonical_len: usize) {
     let Some(collector) = current() else {
@@ -34,18 +34,7 @@ pub(crate) fn record_quick_projection(program: &QuickProgram, canonical_len: usi
         let count = counts.entry(name).or_default();
         *count = count.saturating_add(value);
     }
-    for (index, name) in [
-        "tag.GenericCanonical",
-        "tag.Nop",
-        "tag.PushI32",
-        "tag.Undefined",
-        "tag.Null",
-        "tag.Bool",
-        "tag.Goto",
-    ]
-    .into_iter()
-    .enumerate()
-    {
+    for (index, name) in QUICK_TAG_PROFILE_NAMES.into_iter().enumerate() {
         let value = if !words && index == 0 {
             canonical_len
         } else {
@@ -86,5 +75,38 @@ mod tests {
             (hot.storage().word_capacity * size_of::<u64>()) as u64
         );
         assert_eq!(cold.storage().buffer_identity, None);
+    }
+
+    #[test]
+    fn quick_profile_records_guarded_numeric_branch_and_slot_tags() {
+        let profile = CostProfile::start();
+        let code = [
+            Instruction::Add,
+            Instruction::Eq,
+            Instruction::IfFalse(0),
+            Instruction::GetLocal(0),
+            Instruction::PutArg(0),
+            Instruction::Return,
+        ];
+        let _program = QuickProgram::build_verified(&code).unwrap();
+        let snapshot = profile.snapshot();
+        let counts = snapshot.quick_projection_counts;
+        for name in [
+            "tag.Add",
+            "tag.Eq",
+            "tag.IfFalse",
+            "tag.GetLocal",
+            "tag.PutArg",
+            "tag.GenericCanonical",
+        ] {
+            assert_eq!(counts[name], 1, "{name}");
+        }
+        assert_eq!(
+            QUICK_TAG_PROFILE_NAMES
+                .iter()
+                .map(|name| counts[name])
+                .sum::<u64>(),
+            code.len() as u64
+        );
     }
 }

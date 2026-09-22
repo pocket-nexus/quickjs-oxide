@@ -12,9 +12,35 @@ pub(super) fn translate_instruction(instruction: &Instruction) -> QuickOp {
         Instruction::PushFalse => QuickOp::pack(QuickTag::Bool, 0),
         Instruction::PushTrue => QuickOp::pack(QuickTag::Bool, 1),
         Instruction::Goto(target) => QuickOp::pack(QuickTag::Goto, *target),
+        Instruction::Add => QuickOp::pack(QuickTag::Add, 0),
+        Instruction::Sub => QuickOp::pack(QuickTag::Sub, 0),
+        Instruction::Mul => QuickOp::pack(QuickTag::Mul, 0),
+        Instruction::Div => QuickOp::pack(QuickTag::Div, 0),
+        Instruction::Mod => QuickOp::pack(QuickTag::Mod, 0),
+        Instruction::Pow => QuickOp::pack(QuickTag::Pow, 0),
+        Instruction::Shl => QuickOp::pack(QuickTag::Shl, 0),
+        Instruction::Sar => QuickOp::pack(QuickTag::Sar, 0),
+        Instruction::Shr => QuickOp::pack(QuickTag::Shr, 0),
+        Instruction::BitAnd => QuickOp::pack(QuickTag::BitAnd, 0),
+        Instruction::BitOr => QuickOp::pack(QuickTag::BitOr, 0),
+        Instruction::BitXor => QuickOp::pack(QuickTag::BitXor, 0),
+        Instruction::Eq => QuickOp::pack(QuickTag::Eq, 0),
+        Instruction::Neq => QuickOp::pack(QuickTag::Neq, 0),
+        Instruction::Lt => QuickOp::pack(QuickTag::Lt, 0),
+        Instruction::Lte => QuickOp::pack(QuickTag::Lte, 0),
+        Instruction::Gt => QuickOp::pack(QuickTag::Gt, 0),
+        Instruction::Gte => QuickOp::pack(QuickTag::Gte, 0),
+        Instruction::IfTrue(target) => QuickOp::pack(QuickTag::IfTrue, *target),
+        Instruction::IfFalse(target) => QuickOp::pack(QuickTag::IfFalse, *target),
+        Instruction::GetLocal(index) => QuickOp::pack(QuickTag::GetLocal, u32::from(*index)),
+        Instruction::PutLocal(index) => QuickOp::pack(QuickTag::PutLocal, u32::from(*index)),
+        Instruction::SetLocal(index) => QuickOp::pack(QuickTag::SetLocal, u32::from(*index)),
+        Instruction::GetArg(index) => QuickOp::pack(QuickTag::GetArg, u32::from(*index)),
+        Instruction::PutArg(index) => QuickOp::pack(QuickTag::PutArg, u32::from(*index)),
+        Instruction::SetArg(index) => QuickOp::pack(QuickTag::SetArg, u32::from(*index)),
         // No wildcard: future opcodes must explicitly choose a reviewed hot
-        // encoding or the unchanged canonical handler. Fusion entries and all
-        // observable/owner-bearing operations stay canonical in this batch.
+        // encoding or the unchanged canonical handler. Guarded hot operations
+        // retain canonical fallback and never erase fusion interior PCs.
         Instruction::PushAtomValueIndex(..)
         | Instruction::PushConst(..)
         | Instruction::FClosure(..)
@@ -45,18 +71,12 @@ pub(super) fn translate_instruction(instruction: &Instruction) -> QuickOp {
         | Instruction::GetRefValue(..)
         | Instruction::GetRefValueUndef(..)
         | Instruction::PutRefValue(..)
-        | Instruction::GetLocal(..)
-        | Instruction::PutLocal(..)
-        | Instruction::SetLocal(..)
         | Instruction::SetLocalUninitialized(..)
         | Instruction::GetLocalCheck(..)
         | Instruction::InitializeLocal(..)
         | Instruction::InitializeDerivedLocal(..)
         | Instruction::PutLocalCheck(..)
         | Instruction::SetLocalCheck(..)
-        | Instruction::GetArg(..)
-        | Instruction::PutArg(..)
-        | Instruction::SetArg(..)
         | Instruction::GetVarRef(..)
         | Instruction::PutVarRef(..)
         | Instruction::SetVarRef(..)
@@ -136,30 +156,10 @@ pub(super) fn translate_instruction(instruction: &Instruction) -> QuickOp {
         | Instruction::IsNull
         | Instruction::TypeOfIsUndefined
         | Instruction::TypeOfIsFunction
-        | Instruction::Add
-        | Instruction::Sub
-        | Instruction::Mul
-        | Instruction::Div
-        | Instruction::Mod
-        | Instruction::Pow
-        | Instruction::Shl
-        | Instruction::Sar
-        | Instruction::Shr
-        | Instruction::BitAnd
-        | Instruction::BitXor
-        | Instruction::BitOr
-        | Instruction::Eq
         | Instruction::StrictEq
-        | Instruction::Neq
         | Instruction::StrictNeq
-        | Instruction::Lt
-        | Instruction::Lte
-        | Instruction::Gt
-        | Instruction::Gte
         | Instruction::InstanceOf
         | Instruction::In
-        | Instruction::IfFalse(..)
-        | Instruction::IfTrue(..)
         | Instruction::Catch(..)
         | Instruction::DropCatch
         | Instruction::NipCatch

@@ -70,7 +70,12 @@ fn quick_memory_accounts_reserved_capacity_and_marks_control_bytes_as_estimates(
             buffer_identity: Some(1),
             word_len: 3,
             word_capacity: 8,
-            tag_counts: [1, 0, 2, 0, 0, 0, 0],
+            tag_counts: {
+                let mut tags = [0; QUICK_TAG_COUNT];
+                tags[0] = 1;
+                tags[2] = 2;
+                tags
+            },
         },
         3,
     );
@@ -108,6 +113,79 @@ fn quick_memory_canonical_only_counts_functions_and_generic_pcs_without_storage(
         category(&categories, "bytecode_quick_controls").capacity_bytes,
         Some(0)
     );
+}
+
+#[test]
+fn quick_memory_cold_parameter_boxes_are_deduplicated_and_accounted_separately() {
+    let first = Box::new(ParameterEnvironmentLayout {
+        initialization_end: 0,
+        argument_cells: Box::new([]),
+        pattern_copies: Box::new([]),
+        default_sources: Box::new([]),
+        synthetic_arguments_local: None,
+        arg_eval_variable_object_local: None,
+    });
+    let second = Box::new((*first).clone());
+    let mut memory = QuickMemory::new();
+    memory.observe_parameter_environment(None);
+    memory.observe_parameter_environment(Some(&first));
+    memory.observe_parameter_environment(Some(&first));
+    memory.observe_parameter_environment(Some(&second));
+    let categories = finish(memory);
+    let headers = category(&categories, "bytecode_parameter_environment_headers");
+    assert_eq!(headers.count, Some(2));
+    assert_eq!(
+        headers.used_bytes,
+        Some(2 * size_of::<ParameterEnvironmentLayout>())
+    );
+    assert_eq!(headers.capacity_bytes, headers.used_bytes);
+    assert!(
+        headers
+            .basis
+            .contains("inline Box pointer counted in arena")
+    );
+    assert!(headers.basis.contains("excludes nested array backing"));
+    assert_eq!(
+        category(&categories, "bytecode_quick_controls").count,
+        Some(0)
+    );
+}
+
+#[test]
+fn quick_memory_parameter_box_is_present_only_for_independent_parameter_scope() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    let name = "bytecode_parameter_environment_headers";
+    let before = runtime.memory_snapshot();
+    let baseline = category(&before.categories, name).clone();
+    for (source, extra_boxes) in [
+        ("(function ordinary(value) { return value + 7; });", 0),
+        ("(function parameters(value = 1) { return value + 7; });", 1),
+    ] {
+        let function = context.compile(source).unwrap();
+        let during = runtime.memory_snapshot();
+        let headers = category(&during.categories, name);
+        assert_eq!(
+            headers.count,
+            baseline.count.map(|count| count + extra_boxes)
+        );
+        assert_eq!(
+            headers.used_bytes,
+            baseline
+                .used_bytes
+                .map(|bytes| bytes + extra_boxes * size_of::<ParameterEnvironmentLayout>())
+        );
+        let snapshots = (0..8)
+            .map(|_| runtime.snapshot_function_bytecode(&function).unwrap())
+            .collect::<Vec<_>>();
+        let shared = runtime.memory_snapshot();
+        assert_eq!(category(&shared.categories, name), headers);
+        drop(function);
+        drop(snapshots);
+        runtime.run_gc().unwrap();
+        let after = runtime.memory_snapshot();
+        assert_eq!(category(&after.categories, name), &baseline);
+    }
 }
 
 #[test]

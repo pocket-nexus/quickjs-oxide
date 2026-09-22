@@ -170,6 +170,8 @@ impl Heap {
                 }
                 NodeData::FunctionBytecode(data) => {
                     #[cfg(any(test, oxide_quick_projection))]
+                    quick.observe_parameter_environment(data.parameter_environment());
+                    #[cfg(any(test, oxide_quick_projection))]
                     if let Some(projection) = &data.quick {
                         // The node owns the projection. Closure objects and
                         // execution snapshots merely share it, so do not

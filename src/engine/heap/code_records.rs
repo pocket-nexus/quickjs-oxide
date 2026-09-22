@@ -131,7 +131,14 @@ pub struct FunctionBytecodeData {
     pub property_key_atoms: Option<Rc<[Atom]>>,
     pub realm: ContextId,
     pub metadata: FunctionMetadata,
+    #[cfg(not(any(test, oxide_quick_projection)))]
     pub parameter_environment: Option<ParameterEnvironmentLayout>,
+    /// Keep the uncommon parameter-scope descriptor out of the experimental
+    /// arena's inline payload. Ordinary parameter lists allocate no box; this
+    /// recovers the inline budget needed by the optional QuickOp certificate.
+    /// The box is a Rust-only owner and introduces no arena/atom edge.
+    #[cfg(any(test, oxide_quick_projection))]
+    pub parameter_environment: Option<Box<ParameterEnvironmentLayout>>,
     /// Intrinsic source-level name. Contextual `SetName` inference remains a
     /// separate opcode and is only emitted for anonymous definitions.
     pub func_name: Option<JsString>,
@@ -149,6 +156,21 @@ pub struct FunctionBytecodeData {
     /// Symbol constants are excluded: every `RawValue::Symbol` occurrence owns
     /// and releases its own separate atom reference.
     pub auxiliary_atoms: Box<[Atom]>,
+}
+
+impl FunctionBytecodeData {
+    /// Preserve one metadata view across the ordinary inline representation
+    /// and the experimental out-of-line parameter descriptor.
+    pub(crate) fn parameter_environment(&self) -> Option<&ParameterEnvironmentLayout> {
+        #[cfg(not(any(test, oxide_quick_projection)))]
+        {
+            self.parameter_environment.as_ref()
+        }
+        #[cfg(any(test, oxide_quick_projection))]
+        {
+            self.parameter_environment.as_deref()
+        }
+    }
 }
 
 /// Runtime-owned debug metadata for one bytecode function.

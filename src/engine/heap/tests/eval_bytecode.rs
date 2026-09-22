@@ -83,7 +83,7 @@ fn bytecode_allocation_rejects_eval_environments_across_parameter_phases() {
         strict: true,
         ..FunctionMetadata::default()
     };
-    body_eval.parameter_environment = Some(parameter_layout(15));
+    body_eval.parameter_environment = Some(Box::new(parameter_layout(15)));
     body_eval.argument_definitions = argument_definitions.clone();
     body_eval.local_definitions = Rc::from([
         VariableDefinition {
@@ -158,7 +158,7 @@ fn bytecode_allocation_rejects_eval_environments_across_parameter_phases() {
         strict: true,
         ..FunctionMetadata::default()
     };
-    initializer_eval.parameter_environment = Some(parameter_layout(13));
+    initializer_eval.parameter_environment = Some(Box::new(parameter_layout(13)));
     initializer_eval.argument_definitions = argument_definitions;
     initializer_eval.local_definitions = Rc::from([
         VariableDefinition {

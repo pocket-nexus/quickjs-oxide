@@ -755,6 +755,12 @@ fn quick_both_bc5_publishers_rebuild_authenticated_projection() {
         scalar.quick.as_ref().unwrap().validate(&scalar.code),
         Ok(())
     );
+    {
+        let state = runtime.0.state.borrow();
+        let data = state.heap.function_bytecode(script.bytecode_id()).unwrap();
+        assert_eq!(data.metadata, scalar.metadata);
+        assert!(data.parameter_environment().is_none());
+    }
     assert_eq!(context.execute(&script).unwrap(), Value::Int(42));
 
     let callable = context
@@ -770,6 +776,15 @@ fn quick_both_bc5_publishers_rebuild_authenticated_projection() {
         ordinary.quick.as_ref().unwrap().validate(&ordinary.code),
         Ok(())
     );
+    {
+        let state = runtime.0.state.borrow();
+        let data = state
+            .heap
+            .function_bytecode(bytecode.bytecode_id())
+            .unwrap();
+        assert_eq!(data.metadata, ordinary.metadata);
+        assert!(data.parameter_environment().is_none());
+    }
     assert_eq!(
         context
             .call(&callable, Value::Undefined, &[Value::Int(3), Value::Int(3)])

@@ -44,7 +44,110 @@ enum QuickTag {
     Null = 4,
     Bool = 5,
     Goto = 6,
+    Add = 7,
+    Sub = 8,
+    Mul = 9,
+    Div = 10,
+    Mod = 11,
+    Pow = 12,
+    Shl = 13,
+    Sar = 14,
+    Shr = 15,
+    BitAnd = 16,
+    BitOr = 17,
+    BitXor = 18,
+    Eq = 19,
+    Neq = 20,
+    Lt = 21,
+    Lte = 22,
+    Gt = 23,
+    Gte = 24,
+    IfTrue = 25,
+    IfFalse = 26,
+    GetLocal = 27,
+    PutLocal = 28,
+    SetLocal = 29,
+    GetArg = 30,
+    PutArg = 31,
+    SetArg = 32,
 }
+
+pub(crate) const QUICK_TAG_COUNT: usize = 33;
+const _: () = assert!(QuickTag::SetArg as usize + 1 == QUICK_TAG_COUNT);
+
+#[cfg(feature = "profiling")]
+pub(crate) const QUICK_TAG_PROFILE_NAMES: [&str; QUICK_TAG_COUNT] = [
+    "tag.GenericCanonical",
+    "tag.Nop",
+    "tag.PushI32",
+    "tag.Undefined",
+    "tag.Null",
+    "tag.Bool",
+    "tag.Goto",
+    "tag.Add",
+    "tag.Sub",
+    "tag.Mul",
+    "tag.Div",
+    "tag.Mod",
+    "tag.Pow",
+    "tag.Shl",
+    "tag.Sar",
+    "tag.Shr",
+    "tag.BitAnd",
+    "tag.BitOr",
+    "tag.BitXor",
+    "tag.Eq",
+    "tag.Neq",
+    "tag.Lt",
+    "tag.Lte",
+    "tag.Gt",
+    "tag.Gte",
+    "tag.IfTrue",
+    "tag.IfFalse",
+    "tag.GetLocal",
+    "tag.PutLocal",
+    "tag.SetLocal",
+    "tag.GetArg",
+    "tag.PutArg",
+    "tag.SetArg",
+];
+
+#[cfg(feature = "profiling")]
+pub(crate) const QUICK_TAG_MEMORY_NAMES: [&str; QUICK_TAG_COUNT] = [
+    "bytecode_quick_tag_generic",
+    "bytecode_quick_tag_nop",
+    "bytecode_quick_tag_push_i32",
+    "bytecode_quick_tag_undefined",
+    "bytecode_quick_tag_null",
+    "bytecode_quick_tag_bool",
+    "bytecode_quick_tag_goto",
+    "bytecode_quick_tag_add",
+    "bytecode_quick_tag_sub",
+    "bytecode_quick_tag_mul",
+    "bytecode_quick_tag_div",
+    "bytecode_quick_tag_mod",
+    "bytecode_quick_tag_pow",
+    "bytecode_quick_tag_shl",
+    "bytecode_quick_tag_sar",
+    "bytecode_quick_tag_shr",
+    "bytecode_quick_tag_bit_and",
+    "bytecode_quick_tag_bit_or",
+    "bytecode_quick_tag_bit_xor",
+    "bytecode_quick_tag_eq",
+    "bytecode_quick_tag_neq",
+    "bytecode_quick_tag_lt",
+    "bytecode_quick_tag_lte",
+    "bytecode_quick_tag_gt",
+    "bytecode_quick_tag_gte",
+    "bytecode_quick_tag_if_true",
+    "bytecode_quick_tag_if_false",
+    "bytecode_quick_tag_get_local",
+    "bytecode_quick_tag_put_local",
+    "bytecode_quick_tag_set_local",
+    "bytecode_quick_tag_get_arg",
+    "bytecode_quick_tag_put_arg",
+    "bytecode_quick_tag_set_arg",
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DecodedOp {
@@ -55,6 +158,32 @@ enum DecodedOp {
     Null,
     Bool(bool),
     Goto(u32),
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Pow,
+    Shl,
+    Sar,
+    Shr,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Eq,
+    Neq,
+    Lt,
+    Lte,
+    Gt,
+    Gte,
+    IfTrue(u32),
+    IfFalse(u32),
+    GetLocal(u16),
+    PutLocal(u16),
+    SetLocal(u16),
+    GetArg(u16),
+    PutArg(u16),
+    SetArg(u16),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,6 +192,7 @@ pub(crate) enum DecodeError {
     UnknownTag(u8),
     UnexpectedOperand,
     InvalidBoolean(u32),
+    InvalidSlot(u32),
 }
 
 impl QuickOp {
@@ -86,6 +216,32 @@ impl QuickOp {
             4 => QuickTag::Null,
             5 => QuickTag::Bool,
             6 => QuickTag::Goto,
+            7 => QuickTag::Add,
+            8 => QuickTag::Sub,
+            9 => QuickTag::Mul,
+            10 => QuickTag::Div,
+            11 => QuickTag::Mod,
+            12 => QuickTag::Pow,
+            13 => QuickTag::Shl,
+            14 => QuickTag::Sar,
+            15 => QuickTag::Shr,
+            16 => QuickTag::BitAnd,
+            17 => QuickTag::BitOr,
+            18 => QuickTag::BitXor,
+            19 => QuickTag::Eq,
+            20 => QuickTag::Neq,
+            21 => QuickTag::Lt,
+            22 => QuickTag::Lte,
+            23 => QuickTag::Gt,
+            24 => QuickTag::Gte,
+            25 => QuickTag::IfTrue,
+            26 => QuickTag::IfFalse,
+            27 => QuickTag::GetLocal,
+            28 => QuickTag::PutLocal,
+            29 => QuickTag::SetLocal,
+            30 => QuickTag::GetArg,
+            31 => QuickTag::PutArg,
+            32 => QuickTag::SetArg,
             unknown => return Err(DecodeError::UnknownTag(unknown)),
         };
         match tag {
@@ -98,7 +254,48 @@ impl QuickOp {
                 invalid => Err(DecodeError::InvalidBoolean(invalid)),
             },
             QuickTag::Goto => Ok(DecodedOp::Goto(operand)),
-            QuickTag::GenericCanonical | QuickTag::Nop | QuickTag::Undefined | QuickTag::Null => {
+            QuickTag::IfTrue => Ok(DecodedOp::IfTrue(operand)),
+            QuickTag::IfFalse => Ok(DecodedOp::IfFalse(operand)),
+            QuickTag::GetLocal => u16::try_from(operand)
+                .map(DecodedOp::GetLocal)
+                .map_err(|_| DecodeError::InvalidSlot(operand)),
+            QuickTag::PutLocal => u16::try_from(operand)
+                .map(DecodedOp::PutLocal)
+                .map_err(|_| DecodeError::InvalidSlot(operand)),
+            QuickTag::SetLocal => u16::try_from(operand)
+                .map(DecodedOp::SetLocal)
+                .map_err(|_| DecodeError::InvalidSlot(operand)),
+            QuickTag::GetArg => u16::try_from(operand)
+                .map(DecodedOp::GetArg)
+                .map_err(|_| DecodeError::InvalidSlot(operand)),
+            QuickTag::PutArg => u16::try_from(operand)
+                .map(DecodedOp::PutArg)
+                .map_err(|_| DecodeError::InvalidSlot(operand)),
+            QuickTag::SetArg => u16::try_from(operand)
+                .map(DecodedOp::SetArg)
+                .map_err(|_| DecodeError::InvalidSlot(operand)),
+            QuickTag::GenericCanonical
+            | QuickTag::Nop
+            | QuickTag::Undefined
+            | QuickTag::Null
+            | QuickTag::Add
+            | QuickTag::Sub
+            | QuickTag::Mul
+            | QuickTag::Div
+            | QuickTag::Mod
+            | QuickTag::Pow
+            | QuickTag::Shl
+            | QuickTag::Sar
+            | QuickTag::Shr
+            | QuickTag::BitAnd
+            | QuickTag::BitOr
+            | QuickTag::BitXor
+            | QuickTag::Eq
+            | QuickTag::Neq
+            | QuickTag::Lt
+            | QuickTag::Lte
+            | QuickTag::Gt
+            | QuickTag::Gte => {
                 if operand != 0 {
                     return Err(DecodeError::UnexpectedOperand);
                 }
@@ -107,7 +304,35 @@ impl QuickOp {
                     QuickTag::Nop => DecodedOp::Nop,
                     QuickTag::Undefined => DecodedOp::Undefined,
                     QuickTag::Null => DecodedOp::Null,
-                    QuickTag::PushI32 | QuickTag::Bool | QuickTag::Goto => unreachable!(),
+                    QuickTag::Add => DecodedOp::Add,
+                    QuickTag::Sub => DecodedOp::Sub,
+                    QuickTag::Mul => DecodedOp::Mul,
+                    QuickTag::Div => DecodedOp::Div,
+                    QuickTag::Mod => DecodedOp::Mod,
+                    QuickTag::Pow => DecodedOp::Pow,
+                    QuickTag::Shl => DecodedOp::Shl,
+                    QuickTag::Sar => DecodedOp::Sar,
+                    QuickTag::Shr => DecodedOp::Shr,
+                    QuickTag::BitAnd => DecodedOp::BitAnd,
+                    QuickTag::BitOr => DecodedOp::BitOr,
+                    QuickTag::BitXor => DecodedOp::BitXor,
+                    QuickTag::Eq => DecodedOp::Eq,
+                    QuickTag::Neq => DecodedOp::Neq,
+                    QuickTag::Lt => DecodedOp::Lt,
+                    QuickTag::Lte => DecodedOp::Lte,
+                    QuickTag::Gt => DecodedOp::Gt,
+                    QuickTag::Gte => DecodedOp::Gte,
+                    QuickTag::PushI32
+                    | QuickTag::Bool
+                    | QuickTag::Goto
+                    | QuickTag::IfTrue
+                    | QuickTag::IfFalse
+                    | QuickTag::GetLocal
+                    | QuickTag::PutLocal
+                    | QuickTag::SetLocal
+                    | QuickTag::GetArg
+                    | QuickTag::PutArg
+                    | QuickTag::SetArg => unreachable!(),
                 })
             }
         }
@@ -155,7 +380,7 @@ pub(crate) struct QuickStorage {
     pub(crate) buffer_identity: Option<usize>,
     pub(crate) word_len: usize,
     pub(crate) word_capacity: usize,
-    pub(crate) tag_counts: [usize; 7],
+    pub(crate) tag_counts: [usize; QUICK_TAG_COUNT],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -229,7 +454,7 @@ impl QuickProgram {
             buffer_identity: None,
             word_len: 0,
             word_capacity: 0,
-            tag_counts: [0; 7],
+            tag_counts: [0; QUICK_TAG_COUNT],
         };
         if let ProgramKind::Words(words) = &self.0 {
             storage.buffer_identity = Some(Rc::as_ptr(words) as usize);
@@ -295,30 +520,88 @@ fn validate_words(code: &[Instruction], words: &[QuickOp]) -> Result<(), Validat
 /// authoritative canonical contracts; do not recreate an Instruction or use
 /// profiling-only Instruction::info(). Generic executes its canonical source.
 fn contracts_match(decoded: DecodedOp, instruction: &Instruction) -> bool {
-    let (pushed, control, operand) = match decoded {
+    let (popped, pushed, control, operand) = match decoded {
         DecodedOp::GenericCanonical => return true,
-        DecodedOp::Nop => (0, ControlEffect::Next, None),
-        DecodedOp::PushI32(value) => (1, ControlEffect::Next, Some(Operand::Integer(value))),
+        DecodedOp::Nop => (0, 0, ControlEffect::Next, None),
+        DecodedOp::PushI32(value) => (0, 1, ControlEffect::Next, Some(Operand::Integer(value))),
         DecodedOp::Undefined | DecodedOp::Null | DecodedOp::Bool(_) => {
-            (1, ControlEffect::Next, None)
+            (0, 1, ControlEffect::Next, None)
         }
         DecodedOp::Goto(target) => (
+            0,
             0,
             ControlEffect::Jump(target),
             Some(Operand::Target(target)),
         ),
+        DecodedOp::IfTrue(target) | DecodedOp::IfFalse(target) => (
+            1,
+            0,
+            ControlEffect::Branch(target),
+            Some(Operand::Target(target)),
+        ),
+        DecodedOp::GetLocal(index) => (0, 1, ControlEffect::Next, Some(Operand::Local(index))),
+        DecodedOp::PutLocal(index) => (1, 0, ControlEffect::Next, Some(Operand::Local(index))),
+        DecodedOp::SetLocal(index) => (1, 1, ControlEffect::Next, Some(Operand::Local(index))),
+        DecodedOp::GetArg(index) => (0, 1, ControlEffect::Next, Some(Operand::Argument(index))),
+        DecodedOp::PutArg(index) => (1, 0, ControlEffect::Next, Some(Operand::Argument(index))),
+        DecodedOp::SetArg(index) => (1, 1, ControlEffect::Next, Some(Operand::Argument(index))),
+        DecodedOp::Add
+        | DecodedOp::Sub
+        | DecodedOp::Mul
+        | DecodedOp::Div
+        | DecodedOp::Mod
+        | DecodedOp::Pow
+        | DecodedOp::Shl
+        | DecodedOp::Sar
+        | DecodedOp::Shr
+        | DecodedOp::BitAnd
+        | DecodedOp::BitOr
+        | DecodedOp::BitXor
+        | DecodedOp::Eq
+        | DecodedOp::Neq
+        | DecodedOp::Lt
+        | DecodedOp::Lte
+        | DecodedOp::Gt
+        | DecodedOp::Gte => (2, 1, ControlEffect::Next, None),
     };
+    // The word names the full canonical operation, including its guarded
+    // numeric fallback. A Number success path does not narrow these effects.
+    let numeric = matches!(
+        decoded,
+        DecodedOp::Add
+            | DecodedOp::Sub
+            | DecodedOp::Mul
+            | DecodedOp::Div
+            | DecodedOp::Mod
+            | DecodedOp::Pow
+            | DecodedOp::Shl
+            | DecodedOp::Sar
+            | DecodedOp::Shr
+            | DecodedOp::BitAnd
+            | DecodedOp::BitOr
+            | DecodedOp::BitXor
+            | DecodedOp::Eq
+            | DecodedOp::Neq
+            | DecodedOp::Lt
+            | DecodedOp::Lte
+            | DecodedOp::Gt
+            | DecodedOp::Gte
+    );
     // The canonical control-flow contract conservatively permits JavaScript
     // completion for Goto. Preserve that classification even though its
     // present successful run body only updates the next PC.
-    let javascript_exception = if matches!(decoded, DecodedOp::Goto(_)) {
+    let javascript_exception = if numeric
+        || matches!(
+            decoded,
+            DecodedOp::Goto(_) | DecodedOp::IfTrue(_) | DecodedOp::IfFalse(_)
+        ) {
         JsExceptionEffect::MayThrow
     } else {
         JsExceptionEffect::None
     };
     instruction.stack_contract()
         == StackEffect {
-            popped: 0,
+            popped,
             pushed,
             state: StackStateEffect::Ordinary,
         }
@@ -327,7 +610,7 @@ fn contracts_match(decoded: DecodedOp, instruction: &Instruction) -> bool {
         && instruction.potential_effects()
             == PotentialEffects {
                 javascript_exception,
-                may_call_js: false,
-                may_allocate: false,
+                may_call_js: numeric,
+                may_allocate: numeric,
             }
 }
