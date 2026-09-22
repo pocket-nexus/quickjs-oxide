@@ -3,6 +3,10 @@
 本文件记录面向 QuickJS 的常数因子改造：计划、决策、实现与度量。各阶段独立
 可验证、可回退，结果随实现更新。
 
+本文 S0–S2 的历史计时保留当时构建协议，不视为新协议下的重测结果。今后阶段
+比较统一按 [benchmark README](../../scripts/benchmark/README.md)：双方 fat LTO +
+CGU=1、无 PGO、无 profiling；历史无 LTO 结果不得与新系列混算。
+
 - **S0**：属性读路径成本测量（证据见本文件 §2「热点路径与证据」；负载由 `scripts/benchmark/property_read_probe.py` 复现）
 - **S1**：可信快路（trusted fast path）——已实现
 - **S2**：可信路径收尾 + 快速释放——部分实现（S2.2；S2.1/S2.3 因契约冲突撤销）

@@ -94,8 +94,10 @@ Protocol for comparisons during staged performance work (revised 2026-09-22):
 
 - Comparisons use the release profile as shipped: **fat LTO with
   `codegen-units = 1`** (the `[profile.release]` defaults), identical flags on
-  both sides, no PGO. Baselines must be rebuilt with these flags before
-  comparing.
+  both sides, no PGO and no `profiling` feature. Baselines must be rebuilt with
+  these flags before comparing. Record the source revision, toolchain, target,
+  effective flags, and binary/workload hashes for both sides; a historical
+  LTO-off binary is not a valid denominator for a current stage comparison.
 - Rationale for the revision: the earlier LTO-off/CGU=16 protocol was meant to
   keep regressions visible, but measured practice showed CGU partitioning
   itself injects ±5–10% layout noise (cross-module inlining flips on unrelated
@@ -103,10 +105,18 @@ Protocol for comparisons during staged performance work (revised 2026-09-22):
   §8.12 used the old protocol; those series stay valid against their own
   LTO-off baselines and must not be mixed with LTO-on numbers.
 - Each stage is compared twice: against the previous stage and against the
-  saved baseline. Per-stage PGO retraining is **not** required; at the close of
-  each major stage a full LTO+PGO check (both sides retrained) is recommended.
+  saved baseline. Identify both baseline source revisions explicitly. If the
+  post-E saved baseline includes stage A, also retain a separate comparison to
+  pre-A `85afd564`, rebuilt with the same fat LTO/CGU1/no-PGO flags, to track
+  unresolved stage A regressions. Improvements over post-E do not by themselves
+  close those regressions.
+- Per-stage PGO retraining is **not** required; at the close of each major stage
+  a full LTO+PGO check (both sides independently retrained with the same training
+  workloads) is recommended. Report it separately; PGO gains cannot offset
+  regressions in the ordinary no-PGO release gate.
 - Cross-protocol comparisons are accepted for cumulative, user-facing deltas;
-  label the build protocol of both sides.
+  label the build protocol of both sides. They must not be used for stage
+  acceptance or to attribute performance changes to a code change.
 
 ## External V8 v7 suite
 
