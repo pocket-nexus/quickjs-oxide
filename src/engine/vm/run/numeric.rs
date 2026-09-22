@@ -71,12 +71,24 @@ pub(super) fn complete(
     };
     let mut value = Some(output.value);
     let mut previous = output.previous;
-    {
+    let committed = (|| {
         let mut slots = transaction.slots();
         if previous.is_some() {
             slots.push_pending(&mut previous)?;
         }
-        slots.push_pending(&mut value)?;
+        slots.push_pending(&mut value)
+    })();
+    if let Err(error) = committed {
+        // A postfix previous value may already be committed. Only the owners
+        // still pending belong here; Option<JsValue> has no release-on-drop.
+        // End the short slot borrow before releasing either pending edge.
+        if let Some(value) = value {
+            let _ = runtime.release_jsvalue(value);
+        }
+        if let Some(previous) = previous {
+            let _ = runtime.release_jsvalue(previous);
+        }
+        return Err(error);
     }
     #[cfg(feature = "profiling")]
     {

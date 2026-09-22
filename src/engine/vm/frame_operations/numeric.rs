@@ -404,6 +404,91 @@ mod tests {
     }
 
     #[test]
+    fn resident_numeric_postfix_capacity_failure_releases_only_uncommitted_bigint() {
+        for kind in [NumericKind::PostInc, NumericKind::PostDec] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let (mut execution, id) = fixture(&runtime, &mut context);
+            let baseline = runtime.0.state.borrow().heap.counts().bigint_nodes;
+            let payload = crate::engine::value::bigint::JsBigInt::parse_js_string(
+                "170141183460469231731687303715884105729",
+            )
+            .unwrap();
+            let original = runtime
+                .into_jsvalue(Value::BigInt(payload.clone()))
+                .unwrap();
+            let JsValue::BigInt(original_id) = original else {
+                panic!("heap BigInt required for owner cleanup regression");
+            };
+            loop {
+                let frame = execution.frames.current_mut(id).unwrap();
+                if execution
+                    .slots
+                    .push(&mut frame.window, JsValue::Int(0))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            let frame = execution.frames.current_mut(id).unwrap();
+            drop(execution.slots.pop(&mut frame.window).unwrap());
+            execution.slots.push(&mut frame.window, original).unwrap();
+            let depth = execution.slots.depth(&frame.window);
+            let before = (frame.fault_pc, frame.resume_pc);
+            let realm = frame.executable.realm;
+            let active_frame = frame.active_frame;
+            let fault_pc = frame.fault_pc;
+            runtime
+                .update_active_bytecode_pc(
+                    active_frame,
+                    crate::engine::vm::BytecodePc::new(fault_pc),
+                )
+                .unwrap();
+            {
+                let mut transaction = execution
+                    .slots
+                    .frame_transaction(&mut frame.window)
+                    .unwrap();
+                assert!(
+                    crate::engine::vm::run::test_complete_numeric(
+                        &runtime,
+                        realm,
+                        &mut transaction,
+                        kind,
+                        &mut execution.pending,
+                        active_frame,
+                        fault_pc,
+                    )
+                    .is_err()
+                );
+                let slots = transaction.slots();
+                assert!(
+                    matches!(slots.peek(0).unwrap(), JsValue::BigInt(id) if *id == original_id)
+                );
+                assert_eq!(
+                    runtime.0.state.borrow().heap.bigint(original_id).unwrap(),
+                    &payload
+                );
+                assert_eq!(
+                    runtime.0.state.borrow().heap.counts().bigint_nodes,
+                    baseline + 1,
+                    "the failed second output must not retain a second heap BigInt",
+                );
+            }
+            assert_eq!(execution.slots.depth(&frame.window), depth);
+            assert_eq!((frame.fault_pc, frame.resume_pc), before);
+            assert!(execution.pending.is_none());
+            let previous = execution.slots.pop(&mut frame.window).unwrap();
+            runtime.release_jsvalue(previous).unwrap();
+            assert_eq!(
+                runtime.0.state.borrow().heap.counts().bigint_nodes,
+                baseline
+            );
+            assert!(runtime.0.state.borrow().heap.bigint(original_id).is_err());
+        }
+    }
+
+    #[test]
     fn primitive_transaction_identity_domain_and_wait_order() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
