@@ -25,7 +25,7 @@ B1c 共享热 handler → B1d QuickOp 基础派发 → B1e 默认切换裁决。
 - B0/B1a 可立即与 C 独立并行。
 - B1b 可在独立改动中开发；与 C4 同改发布/fusion 文件时排队集成。
 - B1c/B1d 必须等待 C 已接受或已回退的栈接口冻结，顺序修改 `run/stack`。
-- B1e 以 C1–C4 接受的 match 快照为隔离分母，以 E 后 saved 为累计分母；
+- B1e 以 C1–C4 接受的 match 快照为隔离分母，以 E 后 saved 为后续路线累计分母；
   C5 若采用再加真实 C-final 保护比较，详见 §6。沿用 C 的无 PGO 发布配置。
   C 设计准备与 B0/B1a 不因测量前置缺证据而停下。
 
@@ -243,7 +243,9 @@ Undefined/Null/Bool、`Goto` 等。`ReturnUndefined` 等出口只有复用完整
 
 ### B0：契约和输入冻结
 
-1. 接收 C0 的 E/残余/A4 决策及 input manifests，不自行改值表示或测量协议。
+1. 接收 C0 的 E/残余/A4 决策及 input manifests，并接收 C 交付的
+   `pre_a_release` 源码/构建/输入 receipts 与未关闭回退台账及归属；不自行改
+   值表示或测量协议。
 2. 固定首批热集合、Generic 覆盖清单、word 位格式、构造可见性、错误类型。
 3. 冻结 C facade 与规范 PC 协议；列出 `run.rs` 里首次接入会碰到的 fusion
    入口、fallback 和 exit。碰共享文件的工作由同一集成者排队。
@@ -364,7 +366,7 @@ BC5 source pin、默认/profiling/host 配置、外部输入缺失、source stal
 
 | 档位 | 构建与执行 | 与哪一档比较 | 说明 |
 | --- | --- | --- | --- |
-| M0 | canonical；不生成 quick | E 后 saved 另作累计分母 | B 首批真正起点 |
+| M0 | canonical；不生成 quick | E 后 saved 另作后续路线累计分母 | B 首批真正起点 |
 | M1 | eager 生成/共享只读 quick，执行仍 canonical | M1/M0 | 纯建表、布局与内存成本 |
 | M2 | 同一 eager quick，启用热 QuickOp dispatch | M2/M1 与 M2/M0 | 派发变化及首批净结果 |
 
@@ -375,6 +377,10 @@ manifest、二进制 hash、flags/模式 receipt；最后再测移除实验选�
 四组合；若某 C 缓存方案已撤销，就记录该组合不适用，不为凑矩阵恢复失败实现。
 性能主分母是上述 accepted C match 快照；另有 C5 时同时报告真实 C-final。
 没有相应快照之前只能作方向性实验。
+
+另保留 C 交付的 `pre_a_release` 对照：双方 fat LTO、CGU=1、无 PGO、无
+profiling，用于追踪 A 的历史回退。它不替代 M0/M1/M2 和实际 C-final 的既定
+门禁；E 后 saved 只表示后续路线累计收益，不能单独证明 A 的回退已追回。
 
 ### 6.2 数据集合
 
@@ -427,7 +433,8 @@ compile probe 只证明其公共 compile API 时间区间；首次执行不能�
    时序排队。C 尚未稳定时 run 保持 canonical。
 3. C1–C4 的接受/回退与 facade 冻结后，先 B1c，再 B1d；以该 match 快照重建 M0，
    另保存实际采用 C5 时的 C-final。
-4. B1e 按三档与 saved 分母完成验证；记录“默认启用”或“未启用、原因”。
+4. B1e 按三档与 saved 分母完成验证，并保留 `pre_a_release` 累计台账；
+   记录“默认启用”或“未启用、原因”。
 5. 两份计划互相更新实际接口/阶段状态，不改历史实测数字。C5 派发实验若采用，
    先恢复统一 match 分母独立测 B，组合收益另做一轮，不混入首批归因。
 
@@ -436,6 +443,7 @@ compile probe 只证明其公共 compile API 时间区间；首次执行不能�
 - 编码规范与 validator、只读发布/共享实现、hot/Generic 处理清单。
 - canonical PC/owner/fusion 的差分测试与完整一致性 receipt。
 - M0/M1/M2 源码与二进制身份、执行/compile/首次执行/内存结果、失败样本。
+- `pre_a_release` 同协议 receipts、历史回退累计结果与未关闭项的后续归属。
 - 启用/回退决定、剩余成本和下一批入口，不宣称已经拥有 adaptive quickening。
 
 后续 B2 的入口要求是在首批稳定基线上设计运行时允许重写集合、反馈所有者、

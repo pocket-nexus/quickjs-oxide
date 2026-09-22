@@ -2,11 +2,12 @@
 
 > 状态：设计与待执行计划，2026-09-22。本文不声明阶段 C 已实现或已有性能收益。
 > 依据：最新 [performance-architecture.md](performance-architecture.md) §7、§11，
-> [阶段 A 实测](s3-a-plan.md#812-第二轮回退修复并行根因确认与实测关闭2026-09-22)
-> 与当前代码。初读为 `60d1a9ee` 及已有 gc/numeric 工作区修改；写作期间外部
-> 工作推进到 `d4f78697`，上述修改已纳入该 HEAD。收尾核对以此为准，
-> 不把这些已有改动计为 C 的产出，也不据此宣称前置性能门禁已通过。
-> 本次只新增计划文档，不修改实现、不执行提交或推送。
+> [阶段 A §8.12 历史实测](s3-a-plan.md#812-第二轮回退修复并行根因确认与实测关闭2026-09-22)
+> 与 [§8.13 LTO 双协议对照](s3-a-plan.md#813-窄补丁收尾与-lto-双协议对照2026-09-22)。
+> 实现核对快照仍为 `d4f78697`；其后的 C/B 计划及统一协议更新仅涉及文档。
+> 现行回退裁决使用 §8.13 的 LTO 列与后续同协议重测，旧无 LTO 热点只作线索。
+> 本次同步证据引用与验收入口，不修改 C 的优化顺序、实现范围或接受门槛；
+> 不把已有 gc/numeric 改动计为 C 的产出，也不据此宣称前置性能门禁已通过。
 
 ## 0. 先定结论与范围
 
@@ -29,7 +30,7 @@ C3 带堆边的结果缓存 → C4 有界静态融合 → C6 完整验收。**
 | A4 是否必须采用 8B | 不必须。记录“采用 8B”或“保留 16B”的数据裁决后，C 使用已接受的表示。C 不自行改编码。当前 `JsValue` 有 16B 静态断言。 |
 | §7 仍写“QuickOp 层融合” | C 在 B 前，当前先用已存在的 `FusionPlan` 与规范 PC 实施；B 以后消费相同认证结果，迁移到 QuickOp。QuickOp 不是 C 的前置依赖。 |
 | 是否要重做 dispatch | 单点 `match` 是默认。旧 profile 已排除它是 V8 残余主因，C0 若没有新证据就跳过 C5。 |
-| 正式比较用什么构建 | 以 §11 最新验证门禁和 [benchmark README](../../scripts/benchmark/README.md) 为准：双方 fat LTO、CGU=1、无 PGO、无 profiling。文档前部“PGO 后分母”是旧口径，不用于本阶段准入。 |
+| 正式比较用什么构建 | 以 §11 最新验证门禁和 [benchmark README](../../scripts/benchmark/README.md) 为准：双方 fat LTO、CGU=1、无 PGO、无 profiling；所有基线按相同 flags 重建，PGO 双边复核单列。 |
 | 能否与 B 并行 | 按 [B 首批计划](s3-b-initial-plan.md) 并行完成只读 QuickOp 译码、验证和独立测试；`run`、`stack` 的接线在 C 接口稳定后顺序进行，发布接线单独集成。 |
 
 ### 0.2 成功标准与非目标
@@ -196,7 +197,7 @@ Yield、Await、Throw、Return 或观察边界。沿用 `control_effect().target
 | C3 | C2 通过或明确重新打开 spike | 2–4 天 | primitive owning output→store 的缓存路径 | 独立准备 GC/挂起/host 边界测试 |
 | C4 | C1；叠加缓存前先确定 C2/C3 取舍 | 2–3 天 | profile 选中的 1–2 种静态融合，或有证据地不新增 | B 只读译码准备 |
 | C5 | C4 后新 profile 点名派发 | 1–2 天上限 | 可选函数指针实验结论 | 无需等待它开展 C6 材料整理 |
-| C6 | 已接受子阶段全部冻结 | 1–2 天加完整测量 | 最终 receipts、前后两组比较、关闭台账 | 无；重型门禁与计时串行 |
+| C6 | 已接受子阶段全部冻结 | 1–2 天加完整测量 | 最终 receipts、阶段比较、pre-A 累计对照与关闭台账 | 无；重型门禁与计时串行 |
 
 ### C0：冻结可比输入，先证明要削的流量
 
@@ -209,10 +210,19 @@ Yield、Await、Throw、Return 或观察边界。沿用 `control_effect().target
    缺证据时标为“C0 前置未满足”，可以继续设计/测试准备，不能声称 C 开始验收。
    旧 A 文档“全部残余关闭后前进”的顺序由新 §11 的有界分配取代；残余逐项归属
    C/B/D，不要求 C 在开始前替其它阶段消灭全部回退。
-3. 固定两个比较分母：`saved` 为 E 后同协议保存基线；`previous` 为 C0 或上一
-   已接受 C 子阶段。A4 表示若变化，明确二者各用何种表示。每阶段都做两组比较。
+3. 固定两个阶段比较分母：`saved` 为 E 后同协议保存基线；`previous` 为 C0 或
+   上一已接受 C 子阶段。记录各自源码身份；A4 表示若变化，明确各自值表示。
+   另保留 `pre_a_release`：从 pre-A `85afd564` 按双方相同 toolchain、target、
+   fat LTO/CGU1、无 PGO/无 profiling 重建，记录源码、二进制及输入 receipts。
+   每阶段保留相对 previous/saved 的收益与相对 pre-A 的累计回退台账；若 saved
+   与 pre-A 为同一源码和构建，可复用产物，但两种比较含义仍须明确区分。
 4. 重放 §6 矩阵，重新采样栈流量；旧 LTO-off bigint256 的约 21% 只作线索，
    不直接作为当前收益预算。把分配、释放、native 编组、容器哈希分别归因。
+   按 A §8.13 的 LTO 列复查 bigint256（cycles +32.1% / insn +38.8%）、
+   typed-index（cycles +9.1%）、prop-delete（cycles +9.7%）及 navier-stokes
+   （Score −19.2%）。这些是 C 前的回退证据，不是 C 的收益或已冻结基线。
+   只有新证据确认属于栈流量的部分交 C；布局/缓存、arena 及其它成本登记根因
+   与残余批/A4/B/D 归属，不把所有 LTO 剩余差距预判为 C 能解决。
 5. 在 `profiling` 构建中增加独立诊断：逻辑指令数、实际 dispatch 次数、
    push/pop/replace 次数、候选 span 频率、guard hit/decline、owner retain/release。
    使用已有 profiling 框架；普通构建无计数器写入。
@@ -361,13 +371,17 @@ bigint256 固定工作量的 stack traffic/insn 下降且整体门禁通过。�
 1. 冻结最终源码/二进制/输入；移除实验公共开关、无收益分支和临时计数，保留
    有用的 `profiling` 诊断与测试。最终默认构建再完整验证。
 2. 按 §5/§6 串行跑全部正确性和测量；至少比较 final/C0、final/saved，子阶段
-   表保留 each/previous。Optional PGO 双方重训结果单列，不能冲抵非 PGO 回退。
+   表保留 each/previous，并用相同输入和构建协议单列 final/pre_a_release 的
+   累计回退台账。C 相对起点有收益不等于阶段 A 回退已追回；该台账不替代 §7
+   的既定阶段门禁。Optional PGO 双方重训结果单列，不能冲抵非 PGO 回退。
 3. 台账逐项写 accepted、reverted、not-started 或 blocked-by-evidence；bigint256、
-   map-string、set-churn、V8 regexp 等均有当前数字与后续归属，不强行归零。
+   typed-index、prop-delete、navier-stokes、map-string、set-churn、V8 regexp 等
+   均有当前数字、比较分母与后续归属，不强行归零或沿用旧无 LTO 的关闭状态。
 4. 更新本计划实施结果以及 architecture 的 C 小节：实际范围、负结果、门禁、
    源码/二进制身份、证据路径、收益区间、内存/编译成本与剩余限制。
 5. 交付 B：TOS API 与边界清单、span 认证列表、规范 PC 映射要求、差分用例、
-   最终无 PGO saved/previous 二进制。B 不重做 C 的所有权协议。
+   最终无 PGO saved/previous 二进制，以及 pre_a_release 的同协议产物、
+   输入 receipts 和未关闭回退台账。B 不重做 C 的所有权协议。
 
 ## 4. 实施工作包与回退边界
 
@@ -569,8 +583,9 @@ PY
 构建的源码，包含未跟踪的新实现文件，`git diff` 本身不覆盖它们。
 
 `build.py` 当前要求干净 worktree。以下只在已认证的干净阶段快照里执行，
-saved/previous/candidate 分别运行，使用各自独立输出目录；不能为通过脚本
-擅自提交现有工作区。尚未冻结的实现可做定向诊断，不能声称正式测量已完成。
+saved/previous/candidate 及 pre_a_release 分别构建认证，使用各自独立输出目录；
+不能为通过脚本擅自提交现有工作区。尚未冻结的实现可做定向诊断，不能声称
+正式测量已完成。
 
 ```bash
 python3 scripts/benchmark/build.py --jobs 2 \
@@ -667,13 +682,16 @@ C0 的路径表要为每次比较用 `export` 设置以下环境变量，禁止�
 | --- | --- |
 | `C_BEFORE`、`C_AFTER` | 已认证 before/after plain qjs 的绝对路径 |
 | `C_BEFORE_COMPILE`、`C_AFTER_COMPILE` | 相同 flags 的 compile probe |
-| `C_OUT` | 本次比较唯一目录，例如 `$C_STAGE/vs-previous`；下一次改为 `vs-saved` |
+| `C_OUT` | 本次比较唯一目录，例如 `$C_STAGE/vs-previous`；其它比较分别用 `vs-saved`、`vs-pre-a` |
 | `C_CPU` | 测量主机允许的固定 CPU 编号，双方相同 |
 | `C_FIXED_MANIFEST`、`C_FIXED_WORKLOADS` | 已恢复认证的58项 manifest/目录 |
 | `C_REPLAY_RECEIPT`、`C_REPLAY_WORKLOADS` | 已恢复认证的67源文件 receipt/目录 |
 | `C_MICROBENCH` | pinned QuickJS `tests/microbench.js` 的实际路径 |
 | `C_V8_SOURCE` | 已冻结 revision 的外部 js-engine-benchmark checkout |
 | `C_FIXED_BIGINT256` | C0 冻结的固定工作量 JS，非自适应校准脚本 |
+
+pre-A 累计对照时，`C_BEFORE` 指向已认证的 `pre_a_release`，`C_AFTER` 仍为
+当前候选，沿用相同输入、工作量与结果契约。不得用历史 LTO-off 产物代填。
 
 设置后先检查；其它输入在对应命令前同样用 `test -f/-d` 核对。计时命令
 可整体在 `taskset -c "$C_CPU" bash` 中顺序执行，以固定没有 `--cpu` 选项的 runner。
@@ -800,10 +818,11 @@ dispatch/handler 热区，使用实际 target 的指令格式，不能用全二�
 | --- | --- |
 | 阶段 / 日期 / 实施者 | C0–C6、实际执行日期、责任人 |
 | 起点与候选身份 | HEAD/完整源码清单及 patch hash、未跟踪文件 hash、binary SHA-256 |
-| 协议 | rustc/target/CPU、fat LTO/CGU1/无PGO、所有覆盖参数 |
+| 协议 | rustc/target/CPU、fat LTO/CGU1/无PGO/无profiling、所有覆盖参数 |
 | 变化与归因 | 实际改动、栈读写/owner/dispatch/insn 变化，不写未经测量的收益 |
 | 正确性 | 定向、workspace、profiling、MSRV、Test262 current-source receipt 链接 |
 | 性能 | each/previous、final/C0、final/saved；分矩阵 geomean、单项、原样本、噪声 |
+| pre-A 累计回退 | pre_a_release 源码/构建/输入 receipts、候选/pre_a_release 同协议结果、未关闭项与后续归属 |
 | 内存/编译/代码体积 | RSS、释放后 ledger、side-table bytes、compile 与 `.text` |
 | 决策 | accepted / reverted / not-started / inconclusive / blocked-by-evidence，以及原因 |
 | 剩余项 | 对应 C/B/D 或其它独立设计，不重复计算或隐去回退 |
