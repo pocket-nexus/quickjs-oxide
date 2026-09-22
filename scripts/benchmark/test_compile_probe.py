@@ -1,10 +1,11 @@
 """Frozen source identity must not silently inherit an ancestor checkout."""
+import json
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from build_compile_probe import exact_git_root, manifest_files, validate_frozen_source
+from build_compile_probe import build_provenance, exact_git_root, manifest_files, validate_frozen_source
 from run import digest
 
 
@@ -57,6 +58,24 @@ class CompileProbeIdentityTests(unittest.TestCase):
     def test_manifest_must_be_an_object(self):
         with self.assertRaisesRegex(ValueError, "object"):
             manifest_files([])
+
+    def test_build_provenance_captures_compiler_overrides_without_unrelated_env(self):
+        manifest = self.root / "Cargo.toml"
+        manifest.write_text('[package]\nname="probe"\nversion="0.0.0"\n')
+        cargo_home = self.root / "cargo-home"
+        cargo_home.mkdir()
+        (cargo_home / "config.toml").write_text('[build]\ntarget="x86_64-unknown-linux-gnu"\n[profile.release]\nlto="thin"\n')
+        env = dict(CARGO_HOME=str(cargo_home), RUSTFLAGS="--cfg oxide_quick_projection",
+                   CARGO_PROFILE_RELEASE_LTO="fat", CARGO_PROFILE_RELEASE_CODEGEN_UNITS="1",
+                   CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-Ctarget-cpu=native",
+                   RUSTC_WRAPPER="/frozen/wrapper", UNRELATED_SECRET="must-not-appear")
+        data = build_provenance(self.root, manifest, env)
+        self.assertEqual(data["environment"]["CARGO_PROFILE_RELEASE_LTO"], "fat")
+        self.assertEqual(data["environment"]["RUSTC_WRAPPER"], "/frozen/wrapper")
+        self.assertNotIn("UNRELATED_SECRET", json.dumps(data))
+        config = next(item for item in data["cargo_configurations"] if item["path"] == str(cargo_home / "config.toml"))
+        self.assertEqual(config["relevant"]["release"]["lto"], "thin")
+        self.assertEqual(config["sha256"], digest(cargo_home / "config.toml"))
 
 
 if __name__ == "__main__":

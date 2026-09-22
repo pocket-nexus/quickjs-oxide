@@ -369,3 +369,65 @@ receipt alongside the binary metadata, and refuses to use an ancestor Git
 checkout's revision or working diff as the export's identity. Keep build output
 outside the frozen export. `--profiling` requires a source version containing
 the new phase fields; plain probes remain compatible with older baselines.
+
+## First execution after one compile
+
+`first_execution_probe.rs` creates a fresh Runtime and Context, installs qjs
+helpers, compiles the frozen Script once, then measures the first
+`Context::execute` directly with `Instant`. Its measured interval includes
+first-use execution projections, nested eval compilation, host calls/output
+and execution-time GC. Source reading, Runtime/Context/helper setup, outer
+compile/publication, pending jobs, JSON output and teardown are outside that
+interval. This is not a cold-machine measurement: compilation has already
+touched code/data. Pending jobs are drained separately and any sample with a
+job is rejected, so use synchronous Script workloads without module loading or
+script arguments.
+
+Build every mode serially from its frozen tree using the same compiler and
+release flags (fat LTO/CGU1, no PGO for the ordinary cohort). The shared builder
+accepts `--probe first-execution`; all existing source-manifest, dependency
+checksum and binary receipt checks apply. For example:
+
+```sh
+CARGO_PROFILE_RELEASE_LTO=fat CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
+RUSTFLAGS='--cfg oxide_quick_projection' \
+python3 scripts/benchmark/build_compile_probe.py --probe first-execution \
+  --repo /absolute/m1-frozen-source \
+  --source-manifest /absolute/m1-source-manifest.json \
+  --output /absolute/m1-first-probe
+
+python3 scripts/benchmark/first_execution.py prepare \
+  --manifest /absolute/quick-resource-inputs/manifest.json \
+  --engine M0=/absolute/m0-first-probe/target/release/oxide-first-execution-probe \
+  --engine M1=/absolute/m1-first-probe/target/release/oxide-first-execution-probe \
+  --output target/first-execution-m0-m1
+python3 scripts/benchmark/first_execution.py run \
+  --output target/first-execution-m0-m1
+```
+
+The runner also accepts the existing `fixed.py` manifest shape, optional
+`--workload-dir`/`--case`, and `--engine M2=...`. It requires adjacent build
+receipts, an identical probe source hash, explicit `CARGO_PROFILE_RELEASE_LTO=fat`
+and `CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1`, a release command and no instrumented
+features or PGO flags. Compiler, target, wrappers and release flag provenance
+must match across modes; only `oxide_quick_projection` and
+`oxide_quick_dispatch` cfg differences are allowed. The builder records the
+compilation environment whitelist, visible Cargo configuration identities and
+relevant profile/target settings, and compiler/wrapper file hashes. The runner
+rejects unresolved Cargo `[env]` compiler overrides and `--config` recipes.
+Mode labels describe supplied binaries; inspect their source and
+flags receipts to establish which dispatch implementation they contain.
+Preparation freezes the protocol before launching any candidate: CPU 2,
+10 fresh-process samples per mode/case, rotating mode order, workload/oracle,
+runner/helper, source and binary hashes. A/A can supply the same binary as two
+mode labels in a separate output directory.
+
+Each raw sample preserves stdout, stderr, exit status, process wall time and a
+separate JSON timing file. Exact stdout, empty stderr, successful exit, one
+compile/execute, no pending jobs and nonzero integer durations are mandatory.
+Failed samples are retained and make the corresponding comparison ineligible;
+they never become zero. Only `first_execute_ns` enters the timing comparison.
+The same process's `compile_ns` is diagnostic, and `process_wall_ns` stays
+separate. Continue to run dedicated compile, whole-process cold and independent
+RSS cohorts; do not infer first execution by subtracting compile from cold or
+use this probe to skip the other cost gates.
