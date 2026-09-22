@@ -86,15 +86,16 @@
 
 ## 2. 方案总览
 
-按依赖与收益排序（E 先行，A 是地基，B 是差异化武器，D/C 与 A 复利）：
+按推进顺序排列（顺序依据与关闭条件见 §11 路线；A 的 16B 句柄化已实施，
+8B NaN-box 部分降为数据裁决的决策点）：
 
 | 方案 | 内容 | unsafe | 预期量级 | 依据 |
 | --- | --- | --- | --- | --- |
-| **E** | 构建基线：LTO + CGU=1 + PGO（BOLT 可选） | 无 | 8–20% | 附录 A.7 |
-| **A** | 8B 值表示：索引 NaN-box，Rc 逐出内部值 | 无 | ~1.5–2×（值流量密集路径） | §1.1–1.3 |
+| **E** | 构建基线：fat LTO + CGU=1 + PGO（BOLT 可选） | 无 | 8–20% | 附录 A.7 |
+| **A4** | 8B 值表示决策点：索引 NaN-box spike + 验收矩阵，不达标停在 16B | 无 | 视裁决（值流量密集路径上限 ~1.5–2×） | §1.1–1.3、§4.3 |
+| **C** | 派发与栈流量：TOS/accumulator 缓存、扩展静态超指令、可选 fn-pointer threading | 无 | +5–15% | 附录 A.4–A.6 |
 | **B** | quickening + 可变执行 IR（QuickJS 没有） | 无 | +10–25% | 附录 A.1–A.3 |
 | **D** | 数据导向堆：typed arena、内联槽、validity cell、atom/string 便宜化 | 无 | +10–30%（对象/数组密集） | §1.6 |
-| **C** | 派发与栈流量：TOS/accumulator 缓存、扩展静态超指令、可选 fn-pointer threading | 无 | +5–15% | 附录 A.4–A.6 |
 | **F** | 受审计 unsafe 保留席位：仅在测量点名后逐点引入 | 受审计 | 视点名位置 | §8 |
 
 不采纳：寄存器式 VM 全面重写、nightly `become`、copy-and-patch /
@@ -430,11 +431,48 @@ codec 自测门禁（`status.md:319-320`）、修订 `status.md:3` 的 "unsafe-f
 
 ## 11. 路线、预期与验证门禁
 
-### 路线
+### 路线（2026-09-22 定稿；顺序依据阶段 A 两轮回退修复的实测规律）
 
-E（重定基线）→ A（地基）→ B（差异化）→ D/C 按测量交替推进。每阶段
-独立可回退，严禁跨阶段混合提交。S4（RC → tracing GC）不在此路线内，按
+**E → 残余批 → A4 决策点 → C → B → D（B/D 按测量交替）**。每阶段独立
+可回退，严禁跨阶段混合提交。S4（RC → tracing GC）不在此路线内，按
 §10.6 双门禁另行决策。
+
+支撑本顺序的三条实测规律（证据见 `s3-a-plan.md` §8.12）：
+
+1. **布局噪声是第一税**：LTO off + CGU16 下任意源改动引起无关 case
+   ±5–10% 摆动（跨 CGU 内联翻转、`matches!` Result drop 折叠翻转均有
+   反汇编证据）——所以 E 必须先于一切残余追修。
+2. **owner 往返比值宽度更贵**：阶段 A 修复轮最大单项收益是
+   borrowed-base 融合读（消灭「读→临时 owner→立即释放」往返，Richards
+   反超 pre-A），而非任何缩窄表示的改动——所以 A4 只削宽度税，降为
+   数据裁决的决策点。
+3. **剩余热点在栈流量与堆布局，不在分派**：`push_current`/
+   `replace_local_current` 占 bigint256 约 21% cycles，也是 map/set 编组
+   共因；`run::run` 分派已被排除为 V8 残余主因——所以 C 提前到 B 前。
+
+各步内容与关闭条件：
+
+1. **E 构建基线**：fat LTO + CGU=1（比较协议已同步改为双方同开，见
+   `scripts/benchmark/README.md`）+ PGO 管线；以 E 后基线重测完整台账，
+   并补齐阶段 A 缺失的 RSS/内存证据。此后所有数字以 E 后基线为分母。
+2. **残余批（E 基线下，有界）**：只修 E 后仍显著的项——map-string 的
+   arena 键哈希/比较与批末 teardown、V8 regexp 归因、native 编组重叠
+   拷贝。纪律：配对 A/B、指令数为主信号、串行采样。
+3. **A4 决策点**：在 E 基线上做 8B NaN-box spike 与验收矩阵
+   （bigint256/arguments/typed-index/RSS），用数据裁决「做」或按 §4.3
+   停在 16B。表示迁移的真实成本 = 迁移 + 一整轮回退修复（阶段 A 为
+   实证），不再无条件执行。
+4. **C：TOS/accumulator 缓存**：被 profile 直接点名的栈流量成本，
+   「收割不重写」，风险低；可与 B 首批并行。
+5. **B：quickening**：把已验证的 borrowed fast path 模式经特化 opcode
+   系统化；差异化主菜，在稳定基线 + C 收割后推进。
+6. **D：数据导向堆**：BigInt/String 叶子紧凑 arena（收 440B 槽跨步的
+   分配局部性）、atom/string 便宜化（收 map-string）；与 B 按测量交替。
+
+bigint256 残余（LTO off 下约 +18% cycles / +32% insn）不设专项：其构成
+已逐块归属 E（外联/布局）、A4 决策（宽度税）、C（栈往返）、B（分派与
+边管理指令数）、D（分配局部性），作为各阶段验收矩阵中的固定一行随阶段
+过境关闭。
 
 ### 预期（诚实口径）
 
@@ -455,12 +493,12 @@ E（重定基线）→ A（地基）→ B（差异化）→ D/C 按测量交替�
    环境变量）；只产出 current-source receipt，**不改 `current.conf`**；
 5. `python3 scripts/checks/check-source-layout.py` + rust-only 门禁；
 6. 基准：`property_read_probe.py` + `scaling.py` + `run.py`（v8-v7 /
-   microbench），串行、独立输出目录、receipts 齐全。**比较协议**：开工前
-   保存一份无 PGO、无 LTO 的固定基线；每阶段只与上一阶段和该基线比较
-   （两侧同 flags、无 PGO/LTO）；大阶段收尾建议（非强制）一次 LTO+PGO
+   microbench），串行、独立输出目录、receipts 齐全。**比较协议
+   （2026-09-22 修订）**：双方同用发布配置 fat LTO + CGU=1、无 PGO；
+   基线须以相同 flags 重建。此前的无 LTO/CGU16 序列与其自身基线继续
+   成立，不得与 LTO 序列混算。大阶段收尾建议（非强制）一次 LTO+PGO
    双方复核；跨协议对比须标注双方构建协议（细则见
-   `scripts/benchmark/README.md`「Profile-guided optimization」与
-   `s3-a-plan.md` §2）；
+   `scripts/benchmark/README.md`）；
 7. profiling 构建核对计数器无异常漂移；
 8. 每阶段结束更新本文档对应章节的实测结果。
 

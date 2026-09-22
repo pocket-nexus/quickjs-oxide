@@ -90,19 +90,21 @@ rebuilds from existing raw profiles. Ordinary release builds also take
 `lto = "fat"` and `codegen-units = 1` from `[profile.release]`; comparisons
 must use the same flags on both sides.
 
-Protocol for comparisons during staged performance work:
+Protocol for comparisons during staged performance work (revised 2026-09-22):
 
-- A fixed baseline is saved before the work starts: a release build with PGO
-  off and LTO off (`CARGO_PROFILE_RELEASE_LTO=off
-  CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16`); its full benchmark numbers are
-  recorded in the stage reports and serve as one of the fixed denominators.
+- Comparisons use the release profile as shipped: **fat LTO with
+  `codegen-units = 1`** (the `[profile.release]` defaults), identical flags on
+  both sides, no PGO. Baselines must be rebuilt with these flags before
+  comparing.
+- Rationale for the revision: the earlier LTO-off/CGU=16 protocol was meant to
+  keep regressions visible, but measured practice showed CGU partitioning
+  itself injects ±5–10% layout noise (cross-module inlining flips on unrelated
+  edits), and it diverges from the shipped configuration. Stage A records up to
+  §8.12 used the old protocol; those series stay valid against their own
+  LTO-off baselines and must not be mixed with LTO-on numbers.
 - Each stage is compared twice: against the previous stage and against the
-  saved baseline, always with identical flags on both sides (no PGO, no LTO).
-  Per-stage PGO retraining is **not** required.
-- Exception: stage E measures the build configuration itself and keeps its own
-  protocol. At the close of each major stage (A/B/D) a full-protocol check
-  (LTO+PGO, both sides retrained) is recommended but not mandatory: LTO
-  changes inlining and code layout, and can occasionally flip a no-LTO result.
+  saved baseline. Per-stage PGO retraining is **not** required; at the close of
+  each major stage a full LTO+PGO check (both sides retrained) is recommended.
 - Cross-protocol comparisons are accepted for cumulative, user-facing deltas;
   label the build protocol of both sides.
 
