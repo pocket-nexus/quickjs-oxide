@@ -225,5 +225,6 @@ mod modules;
 mod native;
 mod objects;
 mod private_bytecode;
+mod representation_spike;
 mod storage;
 mod weak_collections;

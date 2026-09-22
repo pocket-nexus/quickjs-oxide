@@ -14,6 +14,9 @@ use crate::engine::object::{CallableRef, PrivateNameRef};
 use crate::engine::value::JsValue;
 use crate::engine::vm::exception::runtime_error_to_vm_error;
 
+#[cfg(test)]
+mod representation_spike_tests;
+
 pub(in crate::engine::vm) enum FrameBinding {
     Direct(JsValue),
     Private(PrivateNameRef),
