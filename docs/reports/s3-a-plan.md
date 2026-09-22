@@ -1,6 +1,6 @@
 # S3-A 计划：8B 值表示——融合实施
 
-> 状态：阶段 A 阻塞于性能回退；先完成 §8 全部回退修复，再推进 W6 验收及后续优化。W1–W5 已有 16B 实现快照，但不代表收益达标。最新实现/性能/完整正确性证据见 §8.11（d0deb0fe）；短 BigInt 已基本恢复，长 BigInt 与其他回退仍阻塞门禁。历史证据见 本地记录（不纳入 Git）。起点为 pre-A 代码基线。本文档是
+> 状态：阶段 A 阻塞于性能回退；先完成 §8 全部回退修复，再推进 W6 验收及后续优化。W1–W5 已有 16B 实现快照，但不代表收益达标。最新实现/性能/完整正确性证据见 §8.12（提交 3a3042ca，基于 ea7aeb54）：scaling 几何均值已转为优于 pre-A，多数台账关闭或反超，但 map-string、长 BigInt、部分 V8 项仍有残余，门禁未全部通过。历史证据见 本地记录（不纳入 Git）。起点为 pre-A 代码基线。本文档是
 > `performance-architecture.md` §4（方案 A）的实施计划与验收规则；若两处
 > 表述冲突，**以本文档为准**。约束与证据附录继承
 > `performance-architecture.md` §0/§11/附录。
@@ -1112,3 +1112,81 @@ V8 仍仅 Richards/DeltaBlue 两项（三次/引擎），没有伪造完整 V8 s
 4. **TypedArray、compile/module 等小组**：本轮仍有正回退或跨轮变动，保持待查。需要增加单次有效工作量、用同一最终二进制做配对计数/编译阶段 profile；不能把已有 JsString::eq 热点或一次中位数差直接当新增算法回退。TypedArray 桥消除的局部机制不等于全部 typed workload 收益已经拿到。
 
 本节列出的已确认成本对应修复均已合入本轮；剩余假设需要下一轮独立因果实验。**本节不等于“所有回退已修复”，阶段 A 门禁仍未通过。**
+
+### 8.12 第二轮回退修复：并行根因确认与实测关闭（2026-09-22）
+
+**结论：scaling 86 组几何均值由 +2.13% 转为 −2.52%（优于 pre-A），正回退组 66→35；prop-delete、typed-index、regexp-groups、构造、Richards、DeltaBlue、raytrace、navier-stokes、arguments、array-index、iterate-churn 等已关闭或反超；map-string、长 BigInt、set-churn、crypto、V8 regexp、earley-boyer 仍有残余，阶段 A 门禁未全部通过。** 本轮起点为 ea7aeb54（源码与 §8.11 的 d0deb0fe 一致）；上一会话的实验大提交（对象 6b6f92eb）经三方实测无净收益已整体丢弃，本轮只把其中经独立 A/B 证实的点修复重新独立实现。所有改动已提交（3a3042ca）；最终二进制 sha256 `a942272259485fc1b0d8b183f85a70ed3296b4925bcd4a881fe49214d5c4220b`（rustc 1.94.1、LTO off、CGU16、无 PGO），对照 pre-A `85afd564` 与未修改 ea7aeb54（`target/s3-a-owned-plain`）。证据目录：`target/final-run/`（不纳入 Git；scaling/property/microbench/v8/fixedwork/stages）。
+
+#### 已确认根因与对应修复（每项均有独立 A/B 或反汇编证据）
+
+1. **叶复制走通用 dup_jsvalue**（vm/stack.rs `copy_reference`）：String/BigInt 复制经历二次 kind 分派与宽 RuntimeError 搬运。修复为直接 `retain_string_handle`/`retain_bigint_handle`。单项 bigint256 +42%→+30.6%。
+2. **字符串拼接前的临时 Rc clone 破坏原地追加**（vm/numeric.rs `add_primitives`/`add_primitives_ref`）：拼接前克隆左 payload 使 buffer 非唯一。修复为唯一边下原地追加并转移左节点所有权；新增 `vm/numeric/string_tests.rs`。
+3. **BigInt 热路径重复身份校验**（heap/value_storage.rs、vm/numeric.rs）：调用方持活边期间 `heap.bigint()` 仍走全套 generation/kind 校验；`a*a` 同节点做两次唯一检查。修复：`bigint_fast`（debug 保留断言）与同 id 跳过第二次检查。
+4. **codegen 不稳定（§本轮核心确认）**：三处 `matches!(slots.peek(i), Ok(...))` 的含 Drop `Result` 临时值，只有 LLVM 恰好完全内联 peek 并 SROA 时清理才被折叠，导致同源码在不同构建间「展开 vs 循环 + 成功路径无用 Result 清理」翻转（退化构建 `run` 内 4 处 `drop_in_place<Result<(),Error>>`、29 处就地错误串物化；ea7aeb54 二进制即处于退化态）。修复：三处改为直线双检查+显式解构（run.rs、run/numeric.rs）；`fusion::compare_branch`、`consume_number_pair_current` 加 `#[inline]`（数字比较从两层调用恢复完全内联，ucomisd 8→12）；peek 族错误串物化外提为 `#[cold]` 辅助（stack.rs、stack/number.rs）。反汇编逐项确认。
+5. **动态键与字符串生命周期**（prop-delete +10%→−6%）：VM `ToPropertyKey` String 分支多一次 payload clone（property_keys.rs，改用既有 `intern_property_key_string_id`）；`Utf16Units` 的 61 槽 `from_fn(|_| None)` 初始化 lower 成 61 次未内联闭包调用（primitive.rs，改 `[const { None }; 61]`）；新增平坦串借用迭代器 `BorrowedUtf16Units`（rope 变体装箱满足 MSRV clippy），`utf16_units` 加 `#[inline]`。
+6. **字符串索引释放条件缺陷（上一轮四点修复之一，正确性向）**：stack.rs 字符串索引叶用「底层字符共享」绕过释放就绪证明——字符共享只能证明拼写存活，不能证明槽位退休免分配。修复：slot_ownership.rs 新增叶专用 `slot_leaf_release_readiness`（strong>1 或 free-list 有容量即 Ready，与 `try_release_leaf_reference` 准入一致），删除 stack.rs 的绕过；两处旧断言按新语义改为确定性夹具（预留 free-list 容量、先存结果后断言），生产语义未弱化。
+7. **公开 callable 检查缺失 runtime 域校验（正确性缺陷，上一轮四点之二）**：object/allocation.rs `as_callable` 直接转 `as_callable_object` 丢失 `belongs_to` 域校验，异域同值句柄会被当本域 callable。修复恢复 operation+域校验，容器 callsite 改用句柄入口消除 `from_borrowed_handle` 往返；保留新增测试 `public_callable_promotion_rejects_foreign_matching_handles`。
+8. **对象转换多余 retain/release（上一轮四点之三）**：object/mod.rs `into_handle`/`into_atom` 在无 pending 清理时直接转移边并解除 Drop；有 pending 时保留原清理边界；新增两测试锁定语义。
+9. **属性读 descriptor kernel 绕行**（Map 构造与集合方法读）：函数/集合/迭代器 payload 的自身属性全在 shape/slot，原先仍走 owned-descriptor kernel（每次构造 11 次 retain_raw）。修复：`reads_are_slot_faithful` 扩展借用 probe；`owned_descriptor::into_data_value` 转移已拥有值边。
+10. **Map/Set 调用与存储所有权**：set/add 返回接收者与记录值改受信 retain（`retain_live_object_handle`，debug 全量断言、trace/借用冲突回退）；get 直接按 payload 臂构造 Completion；set/operations.rs probe/intersection 借用 `object_id` 消除每记录 3 次 ObjectRef clone。
+11. **release 内核每边成本**（heap/gc.rs、ownership.rs）：非终释放也走全套槽位校验+宽 `Result<Option<HeapCleanup>>` 往返。修复：`try_release_nonfinal`（strong>1 且 zero-queue 空时原位递减，其余全回退）；`release_replaced_raw_value` 标量快返回；`drain_zero_queue` 拆冷热。
+12. **构造路径固定成本**（vm/call/prototype.rs、builtins/iterator/collection.rs）：每次 `new Map()` 两个 Box 分配 + new_target 双 dup。修复：`constructor_prototype_source_now` 借用构造帧拥有的 new_target 同步读（getter/Proxy 回退可恢复协议）；CollectionStep 空 iterable 同步 Complete。构造 −18.3%（反超）。
+13. **「读→临时 owner→立即释放」纯往返（V8 主因）**：Richards 每轮 1164 万次 `copy_reference` 对象 retain 随即被 GetField 消费释放；DeltaBlue 另有 134 万次全局 cell 读。修复：borrowed-base GetField 融合（PushThis/GetVar/GetVarRef/GetLocal 后紧跟 GetField 时借用绑定自身的边完成链接读，一次消费两指令；`roots.rs::borrow_cell_object_fast` 沿用全部 decline 纪律）。ObjectRetain 1164 万→708 万。
+14. **数组/typed 叶释放去通用分派**（stack.rs，取自 6b6f92eb）：已认证 Direct 槽直接 `release_jsvalue`，免逐槽 binding 分派。
+15. **typed 数值读桥**、**AtomString 双发布**等 §8.11 已收录项保持不变。
+
+#### 证伪与否决记录（避免重复尝试）
+
+- BigInt lease（value_storage 事务租借）与唯一节点原地覆盖：三方实测无收益（6b6f92eb 全批 bigint256 +41.7% vs 修复前 +41.9%），不再作为方向。
+- 三个 Map 诊断补丁组合使新键插入 −6%→+8.7%，否决。
+- stack.rs 热槽操作的冷错误外提初版与热槽全链 `#[inline(always)]`：bigint 明显回退，均已撤销；最终采用的 peek 族冷外提是在 codegen 稳定化之后单独 A/B 通过的版本。
+- 61 条默认工具链 clippy 报告为 1.94 新增 lint（collapsible_if/is_multiple_of），非门禁；MSRV 1.88 clippy 才是门禁且已全绿。
+
+#### 最终测量（同一提交快照 3a3042ca、同一二进制；均含 baseline/head/final 三方、3 次轮换取中位）
+
+固定工作量 perf stat（cycles:u vs pre-A；括号为指令数变化）：
+
+| workload | ea7aeb54 | 最终 |
+| --- | ---: | ---: |
+| bigint32 | −2.7% | **−6.8%**（−4.4%） |
+| bigint64 | +14.6% | **+5.2%**（+5.9%） |
+| bigint256 | +40.8% | **+19.2%**（+34.2%） |
+| map-int | +7.3% | +4.5%（−2.0%） |
+| map-string | +14.9% | +11.3%（+4.8%） |
+| prop-delete | +9.9% | **−6.1%**（−10.4%） |
+| typed-index | +0.7% | **−5.1%** |
+| Map 构造 | +12.7% | **−18.3%** |
+| Map 覆盖更新 | +11.1% | +5.3%（−0.9%） |
+| Map 新键插入 | −6.8% | **−9.0%** |
+
+scaling 全 86 组（wall 中位，`target/final-run/scaling*`）：几何均值 head +2.13% → final **−2.52%**；仍为正的 35 组集中在 map-string（+6.7~+11.7%）、map-int 大规模（+3.9~+7.9%）、set-churn（+8~+9%）、map-churn 512/2048（+8.8/+8.9%）、set（+1~+5.6%）、long-key（−1.6~+4.1%）等；prop-write、prop-delete、array-index、typed-index、arguments、iterate-churn、regexp-groups（−15%）、scope/constants/module 多数规模为负或关闭。
+
+V8 全套八项（score，越高越好；head 的 earley-boyer 三次超时如实记录）：
+
+| case | pre-A | ea7aeb54 | 最终 | 最终 vs pre-A |
+| --- | ---: | ---: | ---: | ---: |
+| richards | 41.2 | 37.7 | 43.3 | **+5.1%** |
+| deltablue | 52.6 | 48.2 | 52.5 | −0.2% |
+| crypto | 54.5 | 51.4 | 52.8 | −3.1% |
+| raytrace | 78.5 | 71.6 | 78.4 | −0.1% |
+| earley-boyer | 101 | 超时×3 | 96.4 | −4.6% |
+| regexp | 74.7 | 62.2 | 67.2 | −10.0% |
+| splay | 271 | 257 | 266 | −1.8% |
+| navier-stokes | 203 | 180 | 219 | **+7.9%** |
+
+property probe（20M 次、3 repeats）：prop_read_int 227.69→159.44 ns（−30.0%）、prop_read_obj 288.96→201.13（−30.4%）、prop_read_string 396.18→224.12（−43.4%）——原有读取收益保留并扩大。
+
+#### 正确性验证（最终快照）
+
+- `cargo test --lib` plain 2304/2304；`--features profiling` 全绿；oracle 全绿；workspace 全绿（`target/final-run/stages.json` 与各 log）。
+- 完整 Test262：102037 total / 80032 eligible / **79982 pass**，与冻结向量逐项一致（`r3fj complete Test262 vector matches`）。
+- `cargo fmt --check` 干净；**MSRV 1.88** workspace/all-targets/all-features clippy `-D warnings` 全绿。
+- 两处旧测试按第 6 项新语义更新为确定性夹具（非弱化）；`JsValue=16B` 编译期断言、oracle 期望、teardown 断言全部保留。
+
+#### 未关闭残余与归因（下一轮入口）
+
+1. **map-string +11%**：键生成/回收侧已优于 pre-A（诊断 workload −33.6%）；残余在容器持 arena 键的哈希/比较、leaf retain/release 与批末 teardown（collection_index、heap/gc）。
+2. **bigint256 +19%（指令 +34%）**：每结果 arena 节点生命周期的结构性成本 + 槽操作边界 16B/32B 值搬运的 store-forward 失速（`replace_local_current`/`push_current` 合计 ~21% cycles）+ `run/numeric::complete` 宽结果搬运；lease/唯一复用已证伪，需要新的窄方案。bigint64 +5.2% 同源（仅 ~49% 迭代产生 Heap 结果）。
+3. **Map 覆盖更新 +5.3%、set-churn +8~9%**：native 调用编组（`take_native_call_operands`、`prepare_native_arguments` 的重叠 8B 拷贝失速）与剩余 ownership 往返。
+4. **V8 crypto −3.1%、earley-boyer −4.6%、regexp −10%、splay −1.8%**：本轮首次补齐全套覆盖；regexp 与 scaling 的 regexp-groups（−15%）方向相反，说明残余在正则执行/子串路径而非 groups 组装，未逐项归因。
+5. **布局敏感性**：LTO off + CGU16 下任意源改动可使无关 case 摆动 ±5–10%（本轮多次复现，指令数为稳定副指标）；insert 曾因 std BTree drop 失去内联出现 +13% teardown，重建后自然消失。评估小幅残余时必须配对同构建采样。
