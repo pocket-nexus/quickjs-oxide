@@ -11,55 +11,55 @@ mod tests;
 #[inline]
 pub(super) fn resident(instruction: &Instruction) -> bool {
     use Instruction as I;
-    match instruction {
+    matches!(
+        instruction,
         I::Nop
-        | I::Drop
-        | I::PushI32(_)
-        | I::Undefined
-        | I::Null
-        | I::PushTrue
-        | I::PushFalse
-        | I::Goto(_)
-        | I::Gosub(_)
-        | I::Ret
-        | I::DropGosub
-        | I::Add
-        | I::Sub
-        | I::Mul
-        | I::Div
-        | I::Mod
-        | I::Pow
-        | I::Shl
-        | I::Sar
-        | I::Shr
-        | I::BitAnd
-        | I::BitOr
-        | I::BitXor
-        | I::Lt
-        | I::Lte
-        | I::Gt
-        | I::Gte
-        | I::Eq
-        | I::Neq
-        | I::Neg
-        | I::Plus
-        | I::BitNot
-        | I::Inc
-        | I::Dec
-        | I::PostInc
-        | I::PostDec
-        | I::IfTrue(_)
-        | I::IfFalse(_)
-        | I::PushConst(_)
-        | I::GetLocal(_)
-        | I::GetLocalCheck(_)
-        | I::GetArg(_)
-        | I::PutLocal(_)
-        | I::SetLocal(_)
-        | I::PutLocalCheck(_)
-        | I::SetLocalCheck(_)
-        | I::PutArg(_)
-        | I::SetArg(_) => true,
-        _ => false,
-    }
+            | I::Drop
+            | I::PushI32(_)
+            | I::Undefined
+            | I::Null
+            | I::PushTrue
+            | I::PushFalse
+            | I::Goto(_)
+            | I::Gosub(_)
+            | I::Ret
+            | I::DropGosub
+            | I::Add
+            | I::Sub
+            | I::Mul
+            | I::Div
+            | I::Mod
+            | I::Pow
+            | I::Shl
+            | I::Sar
+            | I::Shr
+            | I::BitAnd
+            | I::BitOr
+            | I::BitXor
+            | I::Lt
+            | I::Lte
+            | I::Gt
+            | I::Gte
+            | I::Eq
+            | I::Neq
+            | I::Neg
+            | I::Plus
+            | I::BitNot
+            | I::Inc
+            | I::Dec
+            | I::PostInc
+            | I::PostDec
+            | I::IfTrue(_)
+            | I::IfFalse(_)
+            | I::PushConst(_)
+            | I::GetLocal(_)
+            | I::GetLocalCheck(_)
+            | I::GetArg(_)
+            | I::PutLocal(_)
+            | I::SetLocal(_)
+            | I::PutLocalCheck(_)
+            | I::SetLocalCheck(_)
+            | I::PutArg(_)
+            | I::SetArg(_)
+    )
 }

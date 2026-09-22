@@ -419,7 +419,7 @@ pub(super) fn run_with_identity(
 
 // Single-entry unit fixtures do not own a driver's conversion identity. Every
 // production entry receives the driver's persistent counter above.
-#[cfg(test)]
+#[cfg(all(test, feature = "profiling"))]
 pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunExit, Error> {
     run_with_identity(execution, id, &mut 0)
 }
@@ -446,12 +446,12 @@ fn run_with_modes<
     let frame = execution.frames.current_mut(id)?;
     #[cfg(any(test, oxide_quick_dispatch))]
     if QUICK
-        && !frame
+        && frame
             .cold
             .executable
             .quick
             .as_ref()
-            .is_some_and(|program| program.execution_words().is_some())
+            .is_none_or(|program| program.execution_words().is_none())
     {
         // Entirely generic functions choose canonical once per run entry.
         return run_with_modes::<SCALAR_TOS, OWNED_TOS, false, STORE_DROP>(
@@ -704,7 +704,8 @@ fn run_with_modes<
             {
                 #[cfg(feature = "profiling")]
                 cold::event("fusion.StoreDropCandidate");
-                if fusion::store_drop(runtime, &mut slots, kind, instruction)? {
+                let stored = fusion::store_drop(runtime, &mut slots, kind, instruction)?;
+                if stored {
                     #[cfg(feature = "profiling")]
                     fusion::record_span(&executable.code[pc.fault..pc.fault + 2], observed_depth);
                     pc.resume = pc.fault + 2;
