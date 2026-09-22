@@ -1,5 +1,8 @@
 # S3-C / B 第二批：C1 定向测量与 B1b 发布实验
 
+> 历史快照说明：本文的“未启动/未实现”描述仅对应当时快照。
+> 当前 C2–C4 与 B1c/B1d 接线已完成，最新状态见 [B/C 集成实施记录](s3-bc-implementation.md)。
+
 日期：2026-09-22。起点：`3392e4e95a8c65c700e862e743123558ee290149`。
 承接 [开头实施记录](s3-c-b-opening.md)、[C 计划](s3-c-plan.md) 与
 [B 首批计划](s3-b-initial-plan.md)。本轮证据目录为 `target/s3-c-b-next/`。

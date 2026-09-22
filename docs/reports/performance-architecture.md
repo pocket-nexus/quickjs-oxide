@@ -336,6 +336,14 @@ String/BigInt 堆化两个阶段，原子瘦身提前至 A0-a），保留仅供�
   DestinationPropagation 曾合并条件分支站点致同类解释器 −30~50%——
   **每次升 rustc 必须数二进制里的间接跳转**。此项是选项不是地基，最后做。
 
+> 2026-09-22 实施状态：C1 直接存储、C2 单槽标量缓存、C3 数值 String/heap BigInt
+> 结果直存与 C4 认证 StoreDrop 已接线；B 首批的 33-tag QuickOp 复用同一 facade
+> 和数值 handler。C2–C4/QuickOp 为内部实验，默认仍为规范栈与规范取指，
+> C5 无启动证据而跳过。具体实现、正确性 receipt 与未关闭性能验收见
+> [B/C 集成实施记录](s3-bc-implementation.md)，不将代码落地等同于预计收益兑现。
+> 实现后本机定向 profile 显示缓存准入、缓存操作和 Quick 二次分类增加工作量；
+> 八项 B+C 均未获得净加速，实验继续关闭，完整验收仍未完成。
+
 ## 8. F：受审计 unsafe 保留席位
 
 A–E 全部不需要 unsafe。仅当落地后 profile 点名具体位置（trusted 访问器的
