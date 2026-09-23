@@ -155,6 +155,199 @@ fn dynamic_import_can_load_a_host_selected_json5_module() {
 }
 
 #[test]
+fn json_module_import_shapes_keep_the_documented_fixed_logical_budget() {
+    // Pinned QuickJS shifts its native-stack cutoff across direct static,
+    // nested static, and dynamic imports. Oxide intentionally applies one
+    // heap-backed logical module budget; exercise each documented shape.
+    for (shape, cases) in [
+        ("direct-static", &[(10_911, true), (10_912, false)][..]),
+        (
+            "nested-static",
+            &[
+                (10_905, true),
+                (10_906, true),
+                (10_911, true),
+                (10_912, false),
+            ][..],
+        ),
+        (
+            "dynamic",
+            &[
+                (10_911, true),
+                (10_912, false),
+                (10_913, false),
+                (10_914, false),
+            ][..],
+        ),
+    ] {
+        for &(depth, accepted) in cases {
+            let runtime = Runtime::new();
+            let json = "[".repeat(depth) + "0" + &"]".repeat(depth);
+            let modules = match shape {
+                "direct-static" | "dynamic" => {
+                    vec![("pkg/value.json", ModuleLoadResult::JsonText(json))]
+                }
+                "nested-static" => vec![
+                    (
+                        "pkg/mid.js",
+                        ModuleLoadResult::SourceText(
+                            "import value from './value.json' with { type: 'json' }; \
+                             export default value;"
+                                .to_owned(),
+                        ),
+                    ),
+                    ("pkg/value.json", ModuleLoadResult::JsonText(json)),
+                ],
+                _ => unreachable!(),
+            };
+            let (loader, _, _) = JsonModuleLoader::new(modules);
+            let _registration = runtime.set_module_loader(loader);
+            let mut context = runtime.new_context();
+
+            let result = match shape {
+                "direct-static" => context
+                    .compile_module_with_filename(
+                        "import value from './value.json' with { type: 'json' };",
+                        "pkg/entry.js",
+                    )
+                    .map(|_| ()),
+                "nested-static" => context
+                    .compile_module_with_filename("import value from './mid.js';", "pkg/entry.js")
+                    .map(|_| ()),
+                "dynamic" => {
+                    let promise = eval_dynamic_import(
+                        &mut context,
+                        "import('./value.json', { with: { type: 'json' } })",
+                        "pkg/entry.js",
+                    );
+                    assert!(runtime.execute_pending_job().unwrap().executed());
+                    let snapshot = promise_snapshot(&runtime, &promise);
+                    if snapshot.state == PromiseState::Rejected {
+                        let Value::Object(error) =
+                            runtime.root_raw_value(&snapshot.result).unwrap()
+                        else {
+                            panic!("dynamic JSON rejection was not an Error object");
+                        };
+                        let message = runtime.intern_property_key("message").unwrap();
+                        let message = context.get_property(&error, &message).unwrap();
+                        assert_eq!(
+                            message,
+                            Value::String(JsString::from_static("stack overflow")),
+                            "dynamic rejection message differed at depth {depth}",
+                        );
+                        Err(RuntimeError::Exception)
+                    } else {
+                        assert_eq!(snapshot.state, PromiseState::Pending);
+                        Ok(())
+                    }
+                }
+                _ => unreachable!(),
+            };
+
+            assert_eq!(
+                result.is_ok(),
+                accepted,
+                "{shape} acceptance differed at depth {depth}",
+            );
+            if !accepted && shape != "dynamic" {
+                assert_eq!(
+                    take_error_message(&runtime, &mut context),
+                    JsString::from_static("stack overflow"),
+                    "{shape} diagnostic differed at depth {depth}",
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn json_module_import_shapes_preserve_malformed_diagnostics_at_the_oxide_boundary() {
+    // Exercise the loader integration point as well as the parser-level test.
+    // All Oxide loader shapes share the fixed logical module budget and must
+    // retain the malformed leaf diagnostic at that boundary. Pinned QuickJS's
+    // context-dependent nested/dynamic cutoffs are recorded as deviations.
+    for shape in ["direct-static", "nested-static", "dynamic"] {
+        for (label, suffix, expected) in [
+            ("identifier", "x", "unexpected token: 'x'"),
+            ("EOF", "", "Unexpected end of JSON input"),
+        ] {
+            let runtime = Runtime::new();
+            let json = "[".repeat(10_912) + suffix;
+            let modules = match shape {
+                "direct-static" | "dynamic" => {
+                    vec![("pkg/value.json", ModuleLoadResult::JsonText(json))]
+                }
+                "nested-static" => vec![
+                    (
+                        "pkg/mid.js",
+                        ModuleLoadResult::SourceText(
+                            "import value from './value.json' with { type: 'json' }; \
+                             export default value;"
+                                .to_owned(),
+                        ),
+                    ),
+                    ("pkg/value.json", ModuleLoadResult::JsonText(json)),
+                ],
+                _ => unreachable!(),
+            };
+            let (loader, _, _) = JsonModuleLoader::new(modules);
+            let _registration = runtime.set_module_loader(loader);
+            let mut context = runtime.new_context();
+
+            let actual = match shape {
+                "direct-static" => {
+                    assert!(matches!(
+                        context.compile_module_with_filename(
+                            "import value from './value.json' with { type: 'json' };",
+                            "pkg/entry.js",
+                        ),
+                        Err(RuntimeError::Exception)
+                    ));
+                    take_error_message(&runtime, &mut context)
+                }
+                "nested-static" => {
+                    assert!(matches!(
+                        context.compile_module_with_filename(
+                            "import value from './mid.js';",
+                            "pkg/entry.js",
+                        ),
+                        Err(RuntimeError::Exception)
+                    ));
+                    take_error_message(&runtime, &mut context)
+                }
+                "dynamic" => {
+                    let promise = eval_dynamic_import(
+                        &mut context,
+                        "import('./value.json', { with: { type: 'json' } })",
+                        "pkg/entry.js",
+                    );
+                    assert!(runtime.execute_pending_job().unwrap().executed());
+                    let snapshot = promise_snapshot(&runtime, &promise);
+                    assert_eq!(snapshot.state, PromiseState::Rejected);
+                    let Value::Object(error) = runtime.root_raw_value(&snapshot.result).unwrap()
+                    else {
+                        panic!("dynamic malformed JSON rejection was not an Error object");
+                    };
+                    let message = runtime.intern_property_key("message").unwrap();
+                    let Value::String(message) = context.get_property(&error, &message).unwrap()
+                    else {
+                        panic!("dynamic malformed JSON rejection had no string message");
+                    };
+                    message
+                }
+                _ => unreachable!(),
+            };
+
+            assert_eq!(
+                actual,
+                JsString::try_from_utf8(expected).unwrap(),
+                "{shape} {label} diagnostic differed",
+            );
+        }
+    }
+}
+
+#[test]
 fn invalid_json5_module_reports_quickjs_location_and_retries() {
     let runtime = Runtime::new();
     let (loader, modules, loads) = JsonModuleLoader::new([(

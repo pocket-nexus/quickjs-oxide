@@ -18,7 +18,72 @@ use crate::engine::value::conversion::NativeConversion;
 use crate::engine::value::{JsString, JsStringError, Value};
 use crate::engine::vm::frames::ExplicitBacktraceLocation;
 
-const MAX_JSON_PARSE_DEPTH: usize = 256;
+/// Maximum nesting depth for `JSON.parse` and `JSON.rawJSON`: the value-entry
+/// check passes at this depth and fails at the next one.
+///
+/// Pinned QuickJS has no explicit nesting constant. `json_next_token` polls
+/// the platform stack pointer against the one-MiB `JS_DEFAULT_STACK_SIZE`
+/// budget while advancing every token (`quickjs.c` `json_next_token`), and
+/// the recursive `json_parse_value` consumes one C frame per open container.
+/// On the pinned 2026-06-04 x86-64 artifact, a try-wrapped top-level call
+/// bottoms out with 10,894 live value frames; the value entered at nesting
+/// depth 10,894 is the first one whose token advance raises the catchable
+/// `SyntaxError("stack overflow")`. A leaf nested in `n` arrays therefore
+/// fails at `n = 10_894`, while a chain of `n` *empty* arrays reaches only
+/// depth `n - 1` and survives to `n = 10_895`. Arrays and objects share one
+/// frame shape, so both obey the same count in that calibration shape. Pinned
+/// QuickJS's exact cutoff shifts with the active native call stack; the fixed
+/// logical-budget differences are recorded in `docs/deviations.md`.
+///
+/// The descent in `parse_document` is iterative: each open container lives in
+/// a heap-allocated [`JsonContainerFrame`], so this number is a logical parity
+/// budget reproducing the pinned cutoff independently of the Rust thread
+/// stack or build profile. A pathological payload can never consume the host
+/// call stack and abort the process.
+const MAX_JSON_PARSE_DEPTH: usize = 10_893;
+
+/// A direct static JSON import from the entry module reaches `JS_ParseJSON`
+/// through a shallower pinned C call path and therefore retains eighteen more
+/// nested values than the try-wrapped `JSON.parse` calibration within the same
+/// one-MiB stack budget. Nested and dynamic imports have different pinned
+/// cutoffs; the fixed logical-budget differences are recorded in
+/// `docs/deviations.md`. Strict JSON and host-selected extended JSON use the
+/// same Oxide parser entry path.
+const MAX_JSON_MODULE_PARSE_DEPTH: usize = 10_911;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum JsonContainerKind {
+    Array,
+    Object,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum JsonObjectPhase {
+    /// The opener or a comma has been consumed; the next token is a member
+    /// name (or the closing brace, already handled before the frame push).
+    MemberName,
+    /// A member name and its ':' have been consumed; the next token is the
+    /// member value.
+    MemberValue,
+}
+
+/// Iterative counterpart of one live recursive `json_parse_value` C frame for
+/// an open `{` or `[` container.
+struct JsonContainerFrame {
+    kind: JsonContainerKind,
+    object: ObjectRef,
+    /// Parse records of array elements (only populated while retaining).
+    elements: Vec<Rc<JsonParseRecord>>,
+    /// Parse records of object members (only populated while retaining).
+    entries: Vec<JsonObjectParseRecordEntry>,
+    /// Object member name awaiting its value; the phase is always
+    /// [`JsonObjectPhase::MemberValue`] while this is present.
+    pending_key: Option<PropertyKey>,
+    phase: JsonObjectPhase,
+    /// Monotonic array element count, retained purely as the pinned
+    /// `uint32_t` overflow guard. The heap appends elements positionally.
+    array_index: u32,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum JsonParseMode {
@@ -122,6 +187,7 @@ struct JsonParser<'a> {
     cursor: usize,
     retain_record: bool,
     mode: JsonParseMode,
+    max_depth: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -147,6 +213,7 @@ impl Runtime {
             cursor: 0,
             retain_record,
             mode: JsonParseMode::Strict,
+            max_depth: MAX_JSON_PARSE_DEPTH,
         };
         match parser.parse_document() {
             Ok(value) => Ok(NativeConversion::Value(value)),
@@ -261,10 +328,15 @@ impl Runtime {
                 cursor: 0,
                 retain_record: false,
                 mode,
+                max_depth: MAX_JSON_MODULE_PARSE_DEPTH,
             },
-            JsonModuleSource::Bytes(source) => {
-                JsonParser::try_from_raw_bytes(self, realm, source, mode)?
-            }
+            JsonModuleSource::Bytes(source) => JsonParser::try_from_raw_bytes(
+                self,
+                realm,
+                source,
+                mode,
+                MAX_JSON_MODULE_PARSE_DEPTH,
+            )?,
         };
         match parser.parse_document() {
             Ok((value, None)) => Ok(NativeConversion::Value(value)),
@@ -299,6 +371,7 @@ impl<'a> JsonParser<'a> {
         realm: ContextId,
         source: &'a [u8],
         mode: JsonParseMode,
+        max_depth: usize,
     ) -> Result<Self, RuntimeError> {
         let mut units = Vec::new();
         units
@@ -347,12 +420,136 @@ impl<'a> JsonParser<'a> {
             cursor: 0,
             retain_record: false,
             mode,
+            max_depth,
         })
     }
 
     fn parse_document(&mut self) -> JsonParseResult<(Value, Option<JsonParseRecord>)> {
-        self.skip_whitespace()?;
-        let result = self.parse_value(0)?;
+        // Explicit heap stack of open `{` and `[` containers. Pinned QuickJS
+        // keeps one recursive `json_parse_value` C frame per open container
+        // and polls its one-MiB platform stack pointer while advancing every
+        // token. This descent is iterative: each open container lives in a
+        // [`JsonContainerFrame`], so the depth cutoff reproduced below is
+        // independent of the host thread stack or build profile and a
+        // pathological payload can never abort the process.
+        let mut frames: Vec<JsonContainerFrame> = Vec::new();
+        // A value that just finished (leaf or freshly closed container) and
+        // is waiting to be attached to its parent container.
+        let mut pending: Option<(Value, Option<JsonParseRecord>)> = None;
+
+        let root = loop {
+            // Attach a finished child to the container on top of the stack.
+            if let Some((value, record)) = pending.take() {
+                let Some(parent_index) = frames.len().checked_sub(1) else {
+                    // No open container: the root value is complete.
+                    break (value, record);
+                };
+                let closed =
+                    match frames[parent_index].kind {
+                        JsonContainerKind::Array => {
+                            let array = frames[parent_index].object.clone();
+                            self.runtime.append_fresh_array_value(&array, value)?;
+                            if let Some(child) = record {
+                                frames[parent_index].elements.push(Rc::new(child));
+                            }
+                            let next = frames[parent_index].array_index.checked_add(1).ok_or_else(
+                                || {
+                                    JsonParseFailure::Runtime(RuntimeError::Engine(Error::new(
+                                        ErrorKind::Range,
+                                        "invalid array length",
+                                    )))
+                                },
+                            )?;
+                            frames[parent_index].array_index = next;
+                            self.finish_container_element(&frames[parent_index])?
+                        }
+                        JsonContainerKind::Object => {
+                            let key = frames[parent_index]
+                                .pending_key
+                                .take()
+                                .expect("object member value has no pending key");
+                            let object = frames[parent_index].object.clone();
+                            self.define_json_property(&object, &key, value)?;
+                            if let Some(child) = record {
+                                frames[parent_index]
+                                    .entries
+                                    .push(JsonObjectParseRecordEntry {
+                                        key,
+                                        record: Rc::new(child),
+                                    });
+                            }
+                            let closed = self.finish_container_element(&frames[parent_index])?;
+                            if !closed {
+                                frames[parent_index].phase = JsonObjectPhase::MemberName;
+                            }
+                            closed
+                        }
+                    };
+                if closed {
+                    let frame = frames.pop().expect("closed container has no frame");
+                    pending = Some(self.complete_container_frame(frame));
+                }
+                continue;
+            }
+
+            // An open object whose opener or comma was consumed is waiting
+            // for its member name and ':' before the value descent.
+            if frames.last().is_some_and(|frame| {
+                frame.kind == JsonContainerKind::Object
+                    && frame.phase == JsonObjectPhase::MemberName
+            }) {
+                self.parse_object_member_name(&mut frames)?;
+                continue;
+            }
+
+            // Parse one value nested beneath every open container. Pinned
+            // QuickJS has already lexed this token before recursively entering
+            // `json_parse_value`. A container opener immediately advances to
+            // its first child, so an over-budget opener reports stack overflow.
+            // A leaf is different: its lexer error (including EOF or an
+            // unexpected token) has already won before the recursive call.
+            // Only a successfully lexed leaf advances again and observes the
+            // exhausted stack. Preserve that diagnostic ordering while keeping
+            // the descent itself iterative.
+            let depth = frames.len();
+            self.skip_whitespace()?;
+            if self.current_unit_is_invalid() {
+                return self.syntax("unexpected character");
+            }
+            let Some(unit) = self.peek() else {
+                return self.syntax("Unexpected end of JSON input");
+            };
+            let over_depth_budget = depth > self.max_depth;
+            match unit {
+                unit if unit == u16::from(b'{') => {
+                    if over_depth_budget {
+                        return self.syntax("stack overflow");
+                    }
+                    if self.open_object_frame(&mut frames)? {
+                        let frame = frames.pop().expect("closed container has no frame");
+                        pending = Some(self.complete_container_frame(frame));
+                    }
+                }
+                unit if unit == u16::from(b'[') => {
+                    if over_depth_budget {
+                        return self.syntax("stack overflow");
+                    }
+                    if self.open_array_frame(&mut frames)? {
+                        let frame = frames.pop().expect("closed container has no frame");
+                        pending = Some(self.complete_container_frame(frame));
+                    }
+                }
+                _ => {
+                    let token_start = self.cursor;
+                    let leaf = self.parse_leaf_value(unit)?;
+                    if over_depth_budget {
+                        return self.syntax_at(token_start, "stack overflow");
+                    }
+                    pending = Some(leaf);
+                }
+            }
+        };
+
         self.skip_whitespace()?;
         if self.cursor != self.units.len() {
             // QuickJS lexes the next token before reporting trailing data, so
@@ -361,23 +558,11 @@ impl<'a> JsonParser<'a> {
             self.validate_current_token_lexically()?;
             return self.syntax_at(trailing_start, "unexpected data at the end");
         }
-        Ok(result)
+        Ok(root)
     }
 
-    fn parse_value(&mut self, depth: usize) -> JsonParseResult<(Value, Option<JsonParseRecord>)> {
-        if depth > MAX_JSON_PARSE_DEPTH {
-            return self.syntax("stack overflow");
-        }
-        self.skip_whitespace()?;
-        if self.current_unit_is_invalid() {
-            return self.syntax("unexpected character");
-        }
-        let Some(unit) = self.peek() else {
-            return self.syntax("Unexpected end of JSON input");
-        };
+    fn parse_leaf_value(&mut self, unit: u16) -> JsonParseResult<(Value, Option<JsonParseRecord>)> {
         match unit {
-            unit if unit == u16::from(b'{') => self.parse_object(depth),
-            unit if unit == u16::from(b'[') => self.parse_array(depth),
             unit if unit == u16::from(b'"')
                 || (self.mode.is_extended() && unit == u16::from(b'\'')) =>
             {
@@ -404,137 +589,134 @@ impl<'a> JsonParser<'a> {
         }
     }
 
-    fn parse_object(&mut self, depth: usize) -> JsonParseResult<(Value, Option<JsonParseRecord>)> {
-        self.cursor += 1;
-        let object = self.runtime.new_ordinary_object_in_realm(self.realm)?;
-        let mut entries = Vec::new();
+    fn parse_object_member_name(
+        &mut self,
+        frames: &mut [JsonContainerFrame],
+    ) -> JsonParseResult<()> {
+        let frame = frames
+            .last_mut()
+            .expect("member name requested without an object frame");
         self.skip_whitespace()?;
-        if self.consume_ascii(b'}') {
-            let value = Value::Object(object);
-            let record = self.retain_record.then(|| JsonParseRecord {
-                original: value.clone(),
-                kind: JsonParseRecordKind::Object(JsonObjectParseRecord {
-                    entries,
-                    hashed: false,
-                }),
-            });
-            return Ok((value, record));
+        if self.current_unit_is_invalid() {
+            return self.syntax("unexpected character");
         }
-
-        loop {
-            self.skip_whitespace()?;
-            if self.current_unit_is_invalid() {
-                return self.syntax("unexpected character");
+        let name = match self.peek() {
+            Some(unit)
+                if unit == u16::from(b'"')
+                    || (self.mode.is_extended() && unit == u16::from(b'\'')) =>
+            {
+                self.parse_string(unit)?
             }
-            let name = match self.peek() {
-                Some(unit)
-                    if unit == u16::from(b'"')
-                        || (self.mode.is_extended() && unit == u16::from(b'\'')) =>
-                {
-                    self.parse_string(unit)?
-                }
-                Some(unit) if self.mode.is_extended() && is_ascii_identifier_start(unit) => {
-                    self.parse_identifier_name()
-                }
-                Some(unit) if unit >= 0x80 => return self.syntax("unexpected character"),
-                _ => {
-                    self.validate_current_token_lexically()?;
-                    return self.syntax("expecting property name");
-                }
-            };
-            let key = self
-                .runtime
-                .intern_property_key_js_string(&name)
-                .map_err(RuntimeError::from)?;
-            self.skip_whitespace()?;
-            self.validate_current_token_lexically()?;
-            if !self.consume_ascii(b':') {
-                return self.syntax("expecting ':'");
+            Some(unit) if self.mode.is_extended() && is_ascii_identifier_start(unit) => {
+                self.parse_identifier_name()
             }
-            let (property_value, child_record) = self.parse_value(depth + 1)?;
-            self.define_json_property(&object, &key, property_value)?;
-            if let Some(record) = child_record {
-                entries.push(JsonObjectParseRecordEntry {
-                    key,
-                    record: Rc::new(record),
-                });
+            Some(unit) if unit >= 0x80 => return self.syntax("unexpected character"),
+            _ => {
+                self.validate_current_token_lexically()?;
+                return self.syntax("expecting property name");
             }
-
-            self.skip_whitespace()?;
-            self.validate_current_token_lexically()?;
-            if self.consume_ascii(b',') {
-                self.skip_whitespace()?;
-                if self.mode.is_extended() && self.consume_ascii(b'}') {
-                    break;
-                }
-                continue;
-            }
-            if !self.consume_ascii(b'}') {
-                return self.syntax("expecting '}'");
-            }
-            break;
+        };
+        let key = self
+            .runtime
+            .intern_property_key_js_string(&name)
+            .map_err(RuntimeError::from)?;
+        self.skip_whitespace()?;
+        self.validate_current_token_lexically()?;
+        if !self.consume_ascii(b':') {
+            return self.syntax("expecting ':'");
         }
-
-        let value = Value::Object(object);
-        let record = self.retain_record.then(|| {
-            let hashed = entries.len() >= 9;
-            JsonParseRecord {
-                original: value.clone(),
-                kind: JsonParseRecordKind::Object(JsonObjectParseRecord { entries, hashed }),
-            }
-        });
-        Ok((value, record))
+        frame.pending_key = Some(key);
+        frame.phase = JsonObjectPhase::MemberValue;
+        Ok(())
     }
 
-    fn parse_array(&mut self, depth: usize) -> JsonParseResult<(Value, Option<JsonParseRecord>)> {
+    /// Consume the punctuation following a container element or member.
+    /// Returns `true` when it closed the container, `false` when a comma
+    /// introduces another value (object) or element (array).
+    fn finish_container_element(&mut self, frame: &JsonContainerFrame) -> JsonParseResult<bool> {
+        let close = match frame.kind {
+            JsonContainerKind::Array => b']',
+            JsonContainerKind::Object => b'}',
+        };
+        self.skip_whitespace()?;
+        self.validate_current_token_lexically()?;
+        if self.consume_ascii(b',') {
+            self.skip_whitespace()?;
+            // QuickJS extended JSON permits a trailing comma before close.
+            if self.mode.is_extended() && self.consume_ascii(close) {
+                return Ok(true);
+            }
+            return Ok(false);
+        }
+        if !self.consume_ascii(close) {
+            let message = match frame.kind {
+                JsonContainerKind::Array => "expecting ']'",
+                JsonContainerKind::Object => "expecting '}'",
+            };
+            return self.syntax(message);
+        }
+        Ok(true)
+    }
+
+    /// Open an object container after consuming its `{`. Returns `true` when
+    /// the object was immediately closed (`{}`) and is therefore complete.
+    fn open_object_frame(&mut self, frames: &mut Vec<JsonContainerFrame>) -> JsonParseResult<bool> {
+        self.cursor += 1;
+        let object = self.runtime.new_ordinary_object_in_realm(self.realm)?;
+        self.skip_whitespace()?;
+        let immediate_close = self.consume_ascii(b'}');
+        frames.push(JsonContainerFrame {
+            kind: JsonContainerKind::Object,
+            object,
+            elements: Vec::new(),
+            entries: Vec::new(),
+            pending_key: None,
+            phase: JsonObjectPhase::MemberName,
+            array_index: 0,
+        });
+        Ok(immediate_close)
+    }
+
+    /// Open an array container after consuming its `[`. Returns `true` when
+    /// the array was immediately closed (`[]`) and is therefore complete.
+    fn open_array_frame(&mut self, frames: &mut Vec<JsonContainerFrame>) -> JsonParseResult<bool> {
         self.cursor += 1;
         let array = self.runtime.new_array(self.realm)?;
-        let mut elements = Vec::new();
         self.skip_whitespace()?;
-        if self.consume_ascii(b']') {
-            let value = Value::Object(array);
-            let record = self.retain_record.then(|| JsonParseRecord {
-                original: value.clone(),
-                kind: JsonParseRecordKind::Array(elements),
-            });
-            return Ok((value, record));
-        }
-
-        let mut index = 0_u32;
-        loop {
-            let (element, child_record) = self.parse_value(depth + 1)?;
-            self.runtime.append_fresh_array_value(&array, element)?;
-            if let Some(record) = child_record {
-                elements.push(Rc::new(record));
-            }
-            index = index.checked_add(1).ok_or_else(|| {
-                JsonParseFailure::Runtime(RuntimeError::Engine(Error::new(
-                    ErrorKind::Range,
-                    "invalid array length",
-                )))
-            })?;
-
-            self.skip_whitespace()?;
-            self.validate_current_token_lexically()?;
-            if self.consume_ascii(b',') {
-                self.skip_whitespace()?;
-                if self.mode.is_extended() && self.consume_ascii(b']') {
-                    break;
-                }
-                continue;
-            }
-            if !self.consume_ascii(b']') {
-                return self.syntax("expecting ']'");
-            }
-            break;
-        }
-
-        let value = Value::Object(array);
-        let record = self.retain_record.then(|| JsonParseRecord {
-            original: value.clone(),
-            kind: JsonParseRecordKind::Array(elements),
+        let immediate_close = self.consume_ascii(b']');
+        frames.push(JsonContainerFrame {
+            kind: JsonContainerKind::Array,
+            object: array,
+            elements: Vec::new(),
+            entries: Vec::new(),
+            pending_key: None,
+            phase: JsonObjectPhase::MemberValue,
+            array_index: 0,
         });
-        Ok((value, record))
+        Ok(immediate_close)
+    }
+
+    fn complete_container_frame(
+        &self,
+        frame: JsonContainerFrame,
+    ) -> (Value, Option<JsonParseRecord>) {
+        let value = Value::Object(frame.object);
+        let record = self.retain_record.then(|| {
+            let kind = match frame.kind {
+                JsonContainerKind::Array => JsonParseRecordKind::Array(frame.elements),
+                JsonContainerKind::Object => JsonParseRecordKind::Object(JsonObjectParseRecord {
+                    // Pinned QuickJS starts its record hash table while
+                    // adding member nine.
+                    hashed: frame.entries.len() >= 9,
+                    entries: frame.entries,
+                }),
+            };
+            JsonParseRecord {
+                original: value.clone(),
+                kind,
+            }
+        });
+        (value, record)
     }
 
     fn parse_string(&mut self, separator: u16) -> JsonParseResult<JsString> {

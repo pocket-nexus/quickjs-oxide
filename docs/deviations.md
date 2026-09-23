@@ -141,6 +141,110 @@ initial snapshot. Both paths are pinned in
 
 ## Open implementation frontiers
 
+### JSON-STACK-BUDGET-001
+
+- Status: open implementation frontier; no target deviation is approved.
+- Surface: deeply nested `JSON.parse` values, reviver post-order traversal, and
+  strict or extended JSON modules. The fixed Rust budgets reproduce three
+  specific default-stack calibration shapes: a try-wrapped top-level
+  `JSON.parse` accepts depth 10,893 and rejects 10,894; a plain bytecode-function
+  reviver accepts 4,085 and rejects 4,086; and a direct static JSON import from
+  the entry module accepts 10,911 and rejects 10,912. These are calibrations,
+  not context-independent JSON limits.
+- Upstream anchors: pinned `quickjs.c` checks `js_check_stack_overflow` from
+  `json_next_token` (around line 23366) and `internalize_json_property` (around
+  line 49493). `JS_CallInternal` checks and then allocates each bytecode frame
+  on that same native stack (around lines 17860-17872). `JS_UpdateStackTop` and
+  `JS_SetMaxStackSize` establish a runtime-relative limit (around lines
+  2850-2859); `quickjs.h` defines the default as one MiB. Parsing, reviver
+  traversal, callers, module loading, and reviver calls therefore share one
+  variable native-stack budget.
+- Rust behavior: JSON parsing and reviver traversal keep container/node state
+  on heap vectors. Fixed logical budgets independently cap `JSON.parse` at
+  10,893, JSON-module parsing at 10,911, and every callable reviver at 4,085,
+  without risking a Rust host-stack abort. Unlike pinned QuickJS, they neither
+  shrink when callers consume stack nor grow when an entry path consumes less.
+- Rationale: raising the former recursive Rust limits to the pinned clean-call
+  values caused a process-aborting native stack overflow. The iterative
+  representation is required by the robustness gate; dynamically emulating
+  QuickJS's remaining native-stack bytes is unresolved.
+- Compatibility impact under the default one-MiB pinned stack, measured on the
+  x86-64 oracle artifact:
+
+  | Shape | Pinned last accepted / first rejected | Rust last accepted / first rejected | Difference |
+  | --- | --- | --- | --- |
+  | bare top-level `JSON.parse` | 10,894 / 10,895 | 10,893 / 10,894 | Rust rejects one level earlier |
+  | try-wrapped top-level `JSON.parse` | 10,893 / 10,894 | 10,893 / 10,894 | calibration match |
+  | one enclosing JavaScript function | 10,886 / 10,887 | 10,893 / 10,894 | Rust accepts depths 10,887-10,893 |
+  | `JSON.parse.call(JSON, text)` | 10,884 / 10,885 | 10,893 / 10,894 | Rust accepts depths 10,885-10,893 |
+  | plain bytecode-function reviver | 4,085 / 4,086 | 4,085 / 4,086 | calibration match |
+  | native `Boolean` reviver | 4,082 / 4,083 | 4,085 / 4,086 | Rust accepts depths 4,083-4,085 |
+  | bound bytecode-function reviver | 4,081 / 4,082 | 4,085 / 4,086 | Rust accepts depths 4,082-4,085 |
+  | direct static JSON import from entry | 10,911 / 10,912 | 10,911 / 10,912 | calibration match |
+  | one intermediate module before JSON | 10,905 / 10,906 | 10,911 / 10,912 | Rust accepts depths 10,906-10,911 |
+  | dynamic JSON import from module or script | 10,913 / 10,914 | 10,911 / 10,912 | Rust rejects depths 10,912-10,913 |
+
+  Lowering pinned `qjs` to `--stack-size 512k` makes depth 5,432 the last
+  accepted try-wrapped parse and depth 5,433 the first failure (column 5,434);
+  raising it to `2M` accepts at least depth 15,002. Oxide currently has no
+  `--stack-size` option or `JS_SetMaxStackSize` facade, so its fixed counts do
+  not track either change. Oxide does preserve QuickJS's local token ordering
+  at the calibrated parse and module boundaries: an EOF, malformed, or
+  unexpected leaf is diagnosed before the stack error that follows a
+  successfully lexed leaf. The review's 12 try-wrapped `JSON.parse` probes at
+  depth 10,894 and two direct-static module probes at depth 10,912 are therefore
+  byte-identical.
+  This does not make malformed diagnostics context-independent. Once the
+  engines reach different stack cutoffs, one may fail before reaching the bad
+  leaf: identifier/EOF probes first differ at depth 10,895 for bare parse,
+  10,888 for a one-function caller, 10,886 for `JSON.parse.call`, 10,907 for a
+  nested-static module, and 10,913 for dynamic imports. The matching
+  direct-static calibration keeps identifier/EOF results byte-identical across
+  the probed depths 10,909-10,914. The other diagnostic-priority differences,
+  along with every threshold difference in the table, are part of this open
+  deviation and continue to block an unqualified parity claim.
+
+Minimal deep-call probe:
+
+```js
+var text = "[".repeat(10000) + "0" + "]".repeat(10000);
+function rec(depth) {
+  if (depth) return rec(depth - 1);
+  try { JSON.parse(text); return "OK"; }
+  catch (error) { return error.name + ":" + error.message; }
+}
+print(rec(200));
+```
+
+Pinned QuickJS prints `SyntaxError:stack overflow`; Rust prints `OK`.
+
+Minimal nested-reviver probes use a 4,000-deep outer array. In the first
+(deepest) callback, parsing a separate 5,000-deep array produces
+`SyntaxError:stack overflow` in pinned QuickJS and `OK` in Rust. In a separate
+run, recursing 200 ordinary JavaScript calls from that callback produces
+`InternalError:stack overflow` in pinned QuickJS and `OK` in Rust:
+
+```js
+function recurse(depth) { return depth ? recurse(depth - 1) : 0; }
+function probe(kind) {
+  var outer = "[".repeat(4000) + "0" + "]".repeat(4000);
+  var inner = "[".repeat(5000) + "0" + "]".repeat(5000);
+  var first = true;
+  JSON.parse(outer, function (key, value) {
+    if (first) {
+      first = false;
+      try { kind === "parse" ? JSON.parse(inner) : recurse(200); print("OK"); }
+      catch (error) { print(error.name + ":" + error.message); }
+    }
+    return value;
+  });
+}
+probe("parse");
+probe("recurse");
+```
+
+## Other open implementation frontiers
+
 - Dynamic import retries failed acyclic source graphs as pinned QuickJS does.
   Parse-in-progress definitions and request prefixes are published in the same
   callback order as pinned QuickJS, including its one-shot resolution latch.

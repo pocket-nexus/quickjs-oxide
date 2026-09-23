@@ -361,6 +361,486 @@ fn assert_json_module_syntax_location(
     );
 }
 
+#[test]
+fn json_parse_nesting_cutoff_matches_the_pinned_stack_budget() {
+    // Pinned QuickJS derives its JSON nesting ceiling from its one-MiB C
+    // stack: this try-wrapped top-level calibration call accepts 10,893 nested
+    // containers around a leaf and rejects the next value with a catchable
+    // SyntaxError. Empty containers reach one less value-entry depth, so they
+    // survive one level
+    // further. These exact clean-top-level counts are pinned here; the
+    // remaining call-depth difference is recorded in docs/deviations.md.
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+
+    let mut outcome = |depth: usize, shape: &str| -> String {
+        let script = match shape {
+            "array-leaf" => format!(
+                r#"
+                    try {{
+                        JSON.parse("[".repeat({depth}) + "1" + "]".repeat({depth}));
+                        "ok";
+                    }} catch (error) {{
+                        error.name + ":" + error.message;
+                    }}
+                "#
+            ),
+            "array-empty" => format!(
+                r#"
+                    try {{
+                        JSON.parse("[".repeat({depth}) + "]".repeat({depth}));
+                        "ok";
+                    }} catch (error) {{
+                        error.name + ":" + error.message;
+                    }}
+                "#
+            ),
+            "object-leaf" => format!(
+                r#"
+                    try {{
+                        JSON.parse('{{"a":'.repeat({depth}) + "1" + "}}".repeat({depth}));
+                        "ok";
+                    }} catch (error) {{
+                        error.name + ":" + error.message;
+                    }}
+                "#
+            ),
+            other => panic!("unknown shape {other}"),
+        };
+        match context.eval(&script).unwrap() {
+            Value::String(text) => text.to_utf8_lossy(),
+            other => panic!("expected string outcome, got {other:?}"),
+        }
+    };
+
+    assert_eq!(outcome(10_893, "array-leaf"), "ok");
+    assert_eq!(outcome(10_894, "array-leaf"), "SyntaxError:stack overflow");
+    assert_eq!(outcome(10_894, "array-empty"), "ok");
+    assert_eq!(outcome(10_895, "array-empty"), "SyntaxError:stack overflow");
+
+    // Objects share the array frame shape and therefore the same cutoff.
+    assert_eq!(outcome(10_893, "object-leaf"), "ok");
+    assert_eq!(outcome(10_894, "object-leaf"), "SyntaxError:stack overflow");
+
+    // The descent is iterative: far beyond the ceiling it still throws a
+    // catchable SyntaxError rather than overflowing the host thread stack
+    // and aborting the process (the S3 robustness contract).
+    for depth in [100_000_usize, 1_000_000] {
+        assert_eq!(outcome(depth, "array-leaf"), "SyntaxError:stack overflow");
+        assert_eq!(outcome(depth, "object-leaf"), "SyntaxError:stack overflow");
+    }
+}
+
+#[test]
+fn json_parse_caller_shapes_keep_the_documented_fixed_logical_budget() {
+    // Pinned QuickJS's native stack budget shifts with these caller frames;
+    // Oxide's fixed logical budget deliberately does not. Keep the Oxide side
+    // of the open JSON-STACK-BUDGET-001 frontier stable and explicit.
+    for (depth, accepted) in [(10_893, true), (10_894, false)] {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let script = format!(
+            r#"
+                var text = "[".repeat({depth}) + "1" + "]".repeat({depth});
+                JSON.parse(text);
+            "#
+        );
+        let result = context.eval(&script);
+        assert_eq!(
+            result.is_ok(),
+            accepted,
+            "bare top-level call differed at depth {depth}",
+        );
+        if !accepted {
+            assert!(matches!(result, Err(RuntimeError::Exception)));
+            let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
+                panic!("bare top-level failure was not an Error object");
+            };
+            assert_json_error_fields(
+                &runtime,
+                &mut context,
+                &error,
+                "stack overflow",
+                1,
+                10_895,
+                "bare top-level call",
+            );
+        }
+    }
+
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    for (label, call) in [
+        (
+            "one JS frame",
+            "(function () { return JSON.parse(text); })()",
+        ),
+        ("Function.prototype.call", "JSON.parse.call(JSON, text)"),
+    ] {
+        for (depth, expected) in [
+            (10_886, "ok"),
+            (10_887, "ok"),
+            (10_893, "ok"),
+            (10_894, "SyntaxError:stack overflow"),
+        ] {
+            let script = format!(
+                r#"
+                    var text = "[".repeat({depth}) + "1" + "]".repeat({depth});
+                    try {{
+                        {call};
+                        "ok";
+                    }} catch (error) {{
+                        error.name + ":" + error.message;
+                    }}
+                "#
+            );
+            assert_eq!(
+                context.eval(&script).unwrap(),
+                Value::String(JsString::try_from_utf8(expected).unwrap()),
+                "{label} differed at depth {depth}",
+            );
+        }
+    }
+}
+
+#[test]
+fn json_parse_reviver_nesting_cutoff_matches_pinned_and_stays_catchable() {
+    // The pinned reviver walks post-order and checks its stack budget on
+    // entering `internalize_json_property`, so the ceiling is shallower
+    // (4,085 returns, 4,086 throws InternalError) and the exception kind is
+    // InternalError rather than SyntaxError.
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+
+    let mut outcome = |depth: usize| -> String {
+        let script = format!(
+            r#"
+                try {{
+                    JSON.parse(
+                        "[".repeat({depth}) + "1" + "]".repeat({depth}),
+                        function (key, value) {{ return value; }},
+                    );
+                    "ok";
+                }} catch (error) {{
+                    error.name + ":" + error.message;
+                }}
+            "#
+        );
+        match context.eval(&script).unwrap() {
+            Value::String(text) => text.to_utf8_lossy(),
+            other => panic!("expected string outcome, got {other:?}"),
+        }
+    };
+
+    assert_eq!(outcome(4_085), "ok");
+    assert_eq!(outcome(4_086), "InternalError:stack overflow");
+    // Beyond the parse ceiling the parser trips first, still catchably and
+    // without aborting on the host stack.
+    for depth in [100_000_usize, 1_000_000] {
+        assert_eq!(outcome(depth), "SyntaxError:stack overflow");
+    }
+
+    // A deep, in-budget walk stays post-order and hands the deepest leaf its
+    // pinned `context.source` slice, proving the iterative frame's owned
+    // parse records line up by array position.
+    let source_check = context
+        .eval(
+            r#"
+                (function () {
+                    var deepest = "none";
+                    JSON.parse(
+                        "[".repeat(4000) + "1" + "]".repeat(4000),
+                        function (key, value, context) {
+                            if (Object.prototype.hasOwnProperty.call(context, "source")) {
+                                deepest = context.source;
+                            }
+                            return value;
+                        },
+                    );
+                    return deepest;
+                })()
+            "#,
+        )
+        .unwrap();
+    assert_eq!(source_check, Value::String(JsString::from_static("1")));
+}
+
+#[test]
+fn json_parse_reviver_kinds_keep_the_documented_fixed_logical_budget() {
+    // QuickJS's remaining native stack differs by callable kind. Oxide's
+    // resumable walk uses one documented logical ceiling for bytecode, native,
+    // and bound revivers; lock down all three sides of that open frontier.
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    for (label, reviver, cases) in [
+        (
+            "bytecode",
+            "function (key, value) { return value; }",
+            &[(4_085, "ok"), (4_086, "InternalError:stack overflow")][..],
+        ),
+        (
+            "native",
+            "Boolean",
+            &[
+                (4_082, "ok"),
+                (4_083, "ok"),
+                (4_085, "ok"),
+                (4_086, "InternalError:stack overflow"),
+            ][..],
+        ),
+        (
+            "bound",
+            "(function (key, value) { return value; }).bind(null)",
+            &[
+                (4_081, "ok"),
+                (4_082, "ok"),
+                (4_085, "ok"),
+                (4_086, "InternalError:stack overflow"),
+            ][..],
+        ),
+    ] {
+        for &(depth, expected) in cases {
+            let script = format!(
+                r#"
+                    try {{
+                        JSON.parse(
+                            "[".repeat({depth}) + "1" + "]".repeat({depth}),
+                            {reviver},
+                        );
+                        "ok";
+                    }} catch (error) {{
+                        error.name + ":" + error.message;
+                    }}
+                "#
+            );
+            assert_eq!(
+                context.eval(&script).unwrap(),
+                Value::String(JsString::try_from_utf8(expected).unwrap()),
+                "{label} reviver differed at depth {depth}",
+            );
+        }
+    }
+}
+
+#[test]
+fn json_parse_stack_overflow_reports_the_pinned_token_column() {
+    // The pinned check runs while advancing the nested value's token, so the
+    // diagnostic column points at the leaf token (n + 1 on a one-line array
+    // chain) rather than the end of input.
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    let result = context.eval(
+        r#"
+            try {
+                JSON.parse("[".repeat(10894) + "1" + "]".repeat(10894));
+                "missing";
+            } catch (error) {
+                error.name + ":" + error.columnNumber;
+            }
+        "#,
+    );
+    assert_eq!(
+        result.unwrap(),
+        Value::String(JsString::from_static("SyntaxError:10895")),
+    );
+}
+
+#[test]
+fn json_parse_boundary_preserves_pinned_malformed_token_diagnostics() {
+    // `json_next_token` lexes the nested token in the enclosing recursive
+    // frame. At the first over-budget value depth, malformed input therefore
+    // wins over the stack check that a successfully lexed leaf would hit.
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    let cases = [
+        (
+            "array EOF",
+            "[".repeat(10_894) + "\n",
+            "Unexpected end of JSON input",
+            2,
+            1,
+        ),
+        (
+            "identifier",
+            "[".repeat(10_894) + "x",
+            "unexpected token: 'x'",
+            1,
+            10_895,
+        ),
+        (
+            "bad string",
+            "[".repeat(10_894) + "\"ab\n",
+            "Bad control character in string literal",
+            1,
+            10_898,
+        ),
+        (
+            "closing brace",
+            "[".repeat(10_894) + "}",
+            "unexpected token: '}'",
+            1,
+            10_895,
+        ),
+        (
+            "truncated true",
+            "[".repeat(10_894) + "tru]",
+            "unexpected token: 'tru'",
+            1,
+            10_895,
+        ),
+        (
+            "truncated null",
+            "[".repeat(10_894) + "nul",
+            "unexpected token: 'nul'",
+            1,
+            10_895,
+        ),
+        (
+            "minus",
+            "[".repeat(10_894) + "-\n",
+            "Unexpected token '\n'",
+            1,
+            10_896,
+        ),
+        (
+            "fraction",
+            "[".repeat(10_894) + "1.",
+            "Unterminated fractional number",
+            1,
+            10_897,
+        ),
+        (
+            "comma",
+            "[".repeat(10_894) + ",",
+            "unexpected token: ','",
+            1,
+            10_895,
+        ),
+        (
+            "non-ASCII",
+            "[".repeat(10_894) + "é",
+            "unexpected character",
+            1,
+            10_895,
+        ),
+        (
+            "object identifier",
+            "{\"a\":".repeat(10_894) + "x",
+            "unexpected token: 'x'",
+            1,
+            54_471,
+        ),
+        (
+            "object EOF",
+            "{\"a\":".repeat(10_894),
+            "Unexpected end of JSON input",
+            1,
+            54_471,
+        ),
+    ];
+
+    for (label, source, message, line, column) in cases {
+        let source = JsString::try_from_utf8(&source).unwrap();
+        let NativeConversion::Throw(Value::Object(error)) = runtime
+            .parse_json_text(context.realm, &source, false)
+            .unwrap()
+        else {
+            panic!("{label} did not throw a SyntaxError");
+        };
+        assert_json_error_fields(&runtime, &mut context, &error, message, line, column, label);
+    }
+}
+
+#[test]
+fn json_module_nesting_cutoff_matches_the_pinned_module_budget() {
+    fn parse_module(
+        runtime: &Runtime,
+        realm: ContextId,
+        depth: usize,
+        bytes: bool,
+        extended: bool,
+    ) -> NativeConversion<Value> {
+        let source = "[".repeat(depth) + "0" + &"]".repeat(depth);
+        let filename = JsString::from_static("fixtures/deep.json");
+        if bytes {
+            if extended {
+                runtime.parse_json5_module_bytes(realm, source.as_bytes(), &filename)
+            } else {
+                runtime.parse_json_module_bytes(realm, source.as_bytes(), &filename)
+            }
+        } else {
+            let source = JsString::try_from_utf8(&source).unwrap();
+            if extended {
+                runtime.parse_json5_module_text(realm, &source, &filename)
+            } else {
+                runtime.parse_json_module_text(realm, &source, &filename)
+            }
+        }
+        .unwrap()
+    }
+
+    // JSON modules reach `JS_ParseJSON` through a shallower pinned C call
+    // path than JSON.parse. Pinned QuickJS therefore accepts 10,911 nested
+    // containers and rejects 10,912, eighteen levels beyond JSON.parse.
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    for bytes in [false, true] {
+        for extended in [false, true] {
+            for depth in [10_894, 10_911] {
+                assert!(
+                    matches!(
+                        parse_module(&runtime, context.realm, depth, bytes, extended),
+                        NativeConversion::Value(_)
+                    ),
+                    "module rejected depth {depth} (bytes={bytes}, extended={extended})",
+                );
+            }
+
+            let NativeConversion::Throw(Value::Object(error)) =
+                parse_module(&runtime, context.realm, 10_912, bytes, extended)
+            else {
+                panic!("module accepted depth 10,912 (bytes={bytes}, extended={extended})");
+            };
+            for (name, expected) in [
+                ("name", Value::String(JsString::from_static("SyntaxError"))),
+                (
+                    "message",
+                    Value::String(JsString::from_static("stack overflow")),
+                ),
+                ("columnNumber", Value::Int(10_913)),
+            ] {
+                let key = runtime.intern_property_key(name).unwrap();
+                assert_eq!(
+                    context.get_property(&error, &key).unwrap(),
+                    expected,
+                    "{name} differed (bytes={bytes}, extended={extended})",
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn json_module_boundary_preserves_pinned_malformed_token_diagnostics() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    let filename = JsString::from_static("fixtures/deep.json");
+    for (label, suffix, message) in [
+        ("module identifier", "x", "unexpected token: 'x'"),
+        ("module EOF", "", "Unexpected end of JSON input"),
+    ] {
+        let source = "[".repeat(10_912) + suffix;
+        let source = JsString::try_from_utf8(&source).unwrap();
+        let NativeConversion::Throw(Value::Object(error)) = runtime
+            .parse_json_module_text(context.realm, &source, &filename)
+            .unwrap()
+        else {
+            panic!("{label} did not throw a SyntaxError");
+        };
+        assert_json_error_fields(&runtime, &mut context, &error, message, 1, 10_913, label);
+    }
+}
+
 fn assert_json5_module_syntax_location(
     source: &str,
     expected_message: &str,
@@ -419,6 +899,33 @@ fn assert_json_module_syntax_location_with_mode(
             context.get_property(&error, &key).unwrap(),
             expected,
             "{name} differed for {source:?}",
+        );
+    }
+}
+
+fn assert_json_error_fields(
+    runtime: &Runtime,
+    context: &mut crate::engine::api::Context,
+    error: &ObjectRef,
+    expected_message: &str,
+    expected_line: i32,
+    expected_column: i32,
+    label: &str,
+) {
+    for (name, expected) in [
+        ("name", Value::String(JsString::from_static("SyntaxError"))),
+        (
+            "message",
+            Value::String(JsString::try_from_utf8(expected_message).unwrap()),
+        ),
+        ("lineNumber", Value::Int(expected_line)),
+        ("columnNumber", Value::Int(expected_column)),
+    ] {
+        let key = runtime.intern_property_key(name).unwrap();
+        assert_eq!(
+            context.get_property(error, &key).unwrap(),
+            expected,
+            "{name} differed for {label}",
         );
     }
 }
