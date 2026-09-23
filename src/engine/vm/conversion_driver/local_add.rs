@@ -252,7 +252,8 @@ fn constant_string(
         Some(BytecodeConstant::Value(RawValue::String(value))) => {
             // The published bytecode node owns the constant-pool edge; duplicate
             // the handle so the operand carries its own independent owner.
-            runtime.dup_jsvalue(&JsValue::String(*value)).ok()
+            runtime.retain_live_string_handle(*value).ok()?;
+            Some(JsValue::String(*value))
         }
         _ => None,
     }
