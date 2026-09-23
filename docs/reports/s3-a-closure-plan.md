@@ -468,14 +468,52 @@ cycles 正值不能由 miss 解释（miss 绝对量下降、miss 率仅 60.5→6
 用例 cycles/wall 持平或改善。唯一混合信号：`bigint32`/`bigint64` cycles
 **+3.6%/+3.5%**（7 次轮换稳定，IPC 3.05→2.69 / 2.95→2.62；指令与分支
 均下降、branch-misses 不变），wall +2.9%/+1.7% 在噪声边界；判为小幅
-回退风险而非结论，留 A4 决策矩阵用 nolto 对照/perf annotate 复核。
-`bigint256` cycles 持平。限制：shipped LTO 协议下不排除部分差值来自
+回退风险而非结论。§4.9 的 ≥2s wall A/B 未复现回退（bigint32 −1.1%、
+bigint64 −4.3%），该风险按 wall 用户可见口径关闭，cycles 差异的
+annotate 归因留 A4 可选复核。`bigint256` cycles 持平。限制：shipped LTO 协议下不排除部分差值来自
 内联/布局移动（T1.6 先例）；未做 annotate 级因果证明；RSS 在该规模
 不可分辨。
 
 **证据**：`target/t2-ab/`（`measure_t2.py`、`recheck.py`、`raw-t2/`、
 `raw-t2-recheck/`、`workloads/`、`probe/`）；pre 侧 worktree 与构建缓存
 `/home/eric/.cache/opencode/t2-pre-wt`、`t2-pre-target`、`t2-post-target`。
+
+### 4.9 T2 wall 时间 A/B（2026-09-23）
+
+**动机**：§4.8 的 wall 样本过短（10ms~0.6s，进程启动与频率噪声盖过信号），
+且 bigint32/64 出现 cycles +3.5% 的混合信号，需要用足够长的 wall 样本复核。
+
+**协议**：同 §4.8 两侧二进制（sha256 不变，无需重建）。样本放大到
+**≥2s**：短用例用放大脚本单次运行（`frames_long` 5 万×递归、`call0_long`
+600 万次调用、`call4_long` 400 万次调用），其余按 5–16 次进程重复；
+每引擎 10 个样本，ABBA 交替，普通进程计时（不套 perf），stdout 精确
+断言；报告按 ABBA 块的配对比值中位数与极差。powersave governor，
+采样频率在 1.10–4.69GHz 间波动（解释了个别离群样本），配对+中位数
+抑制其影响。
+
+| 用例 | 样本构成 | wall 配对中位 Δ | 块极差 | 判定 |
+| --- | --- | ---: | ---: | --- |
+| locals | 7×进程 | **−13.91%** | 1.3pp | 显著收益 |
+| assign | 5×进程 | **−11.89%** | 3.3pp | 显著收益 |
+| call4 | 400 万调用 | **−9.94%** | 2.6pp | 显著收益 |
+| call0 | 600 万调用 | −8.54% | 20.2pp※ | 方向一致（4/5 块 −7.4~−12.5%） |
+| string_build1 | 16×进程 | **−8.30%** | 1.1pp | 显著收益 |
+| bigint256 | 5×进程 | **−7.11%** | 1.4pp | 显著收益 |
+| bigint64 | 7×进程 | **−4.28%** | 3.1pp | 显著收益 |
+| bigint32 | 8×进程 | −1.11% | 2.8pp | 不可分辨（无回退） |
+| frames | 5 万×递归 | −1.05% | 7.8pp | 不可分辨 |
+| arguments_read | 12×进程 | −0.93% | 1.1pp | 不可分辨 |
+
+※ 一个 post 样本落在 1.10GHz 未升频的离群块；中位数不受影响。
+
+**判定**：wall 层面**无任何回退**——`bigint32` −1.1%（中性）、
+`bigint64` −4.3%（改善），§4.8 的 cycles +3.5% 混合信号**未在 wall 上
+复现**，按 wall 用户可见口径关闭该风险（cycles 差异归因留 A4 annotate
+可选复核）；帧/局部/cell 密集用例取得 −7%~−14% 的显著 wall 收益，
+与指令数、cache 引用下降方向一致。
+
+**证据**：`target/t2-ab/measure_wall.py`、`raw-t2-wall/`（results.json 含
+每样本 wall 与频率）、`wall-workloads/`。
 
 ## 5. 排程
 
