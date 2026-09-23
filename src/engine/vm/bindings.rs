@@ -809,6 +809,9 @@ pub(super) fn validate_module_import_collision(descriptor: ClosureVariable) -> R
 }
 
 #[cfg(test)]
+mod representation_spike_tests;
+
+#[cfg(test)]
 mod immediate_cell_tests {
     use super::*;
     use crate::engine::value::Value;
