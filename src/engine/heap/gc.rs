@@ -147,6 +147,18 @@ impl Heap {
         self.retain_raw_fast(RawId::Object(id));
     }
 
+    /// Trusted hot-path retain for a live string node handle.
+    #[inline]
+    pub(crate) fn retain_string_fast(&self, id: StringId) {
+        self.retain_raw_fast(RawId::String(id));
+    }
+
+    /// Trusted hot-path retain for a live BigInt node handle.
+    #[inline]
+    pub(crate) fn retain_bigint_fast(&self, id: BigIntId) {
+        self.retain_raw_fast(RawId::BigInt(id));
+    }
+
     /// Duplicate one externally owned shape reference.
     pub fn retain_shape(&mut self, id: ShapeId) -> Result<(), HeapError> {
         self.retain_raw(RawId::Shape(id), 1)

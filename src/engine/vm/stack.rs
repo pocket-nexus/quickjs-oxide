@@ -1752,16 +1752,19 @@ pub(in crate::engine::vm) fn copy_value(
 fn copy_reference(runtime: &Runtime, value: &JsValue) -> Result<JsValue, Error> {
     // Leaf copies need the same checked retain as dup_jsvalue, but do not need
     // its general RuntimeError result or a second dispatch over value kinds.
+    // Every caller copies from a live slot/parameter/constant-pool owner, so
+    // the leaf handle is proven live and takes the trusted fast retain; debug
+    // builds still assert identity and trace diagnostics fall back.
     let copied = match value {
         JsValue::String(id) => {
             runtime
-                .retain_string_handle(*id)
+                .retain_live_string_handle(*id)
                 .map_err(|error| Error::internal(error.to_string()))?;
             JsValue::String(*id)
         }
         JsValue::BigInt(id) => {
             runtime
-                .retain_bigint_handle(*id)
+                .retain_live_bigint_handle(*id)
                 .map_err(|error| Error::internal(error.to_string()))?;
             JsValue::BigInt(*id)
         }

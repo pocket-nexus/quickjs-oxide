@@ -266,6 +266,43 @@ impl Runtime {
         self.retain_object_handle(id)
     }
 
+    /// Trusted duplicate of a string node handle the caller proves live by
+    /// holding another owned edge across the whole operation (the copy source
+    /// stays owned by its slot or constant pool).
+    ///
+    /// Mirrors [`Runtime::retain_live_object_handle`], including the trace
+    /// diagnostic fallback and the borrowed-state boundary error. The count
+    /// saturates at `u32::MAX`; release paths treat that count as immortal.
+    #[inline]
+    #[track_caller]
+    pub(crate) fn retain_live_string_handle(&self, id: StringId) -> Result<(), HeapError> {
+        #[cfg(debug_assertions)]
+        if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
+            return self.retain_string_handle(id);
+        }
+        if let Ok(state) = self.0.state.try_borrow() {
+            state.heap.retain_string_fast(id);
+            return Ok(());
+        }
+        self.retain_string_handle(id)
+    }
+
+    /// Trusted duplicate of a BigInt node handle the caller proves live by
+    /// holding another owned edge across the whole operation.
+    #[inline]
+    #[track_caller]
+    pub(crate) fn retain_live_bigint_handle(&self, id: BigIntId) -> Result<(), HeapError> {
+        #[cfg(debug_assertions)]
+        if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
+            return self.retain_bigint_handle(id);
+        }
+        if let Ok(state) = self.0.state.try_borrow() {
+            state.heap.retain_bigint_fast(id);
+            return Ok(());
+        }
+        self.retain_bigint_handle(id)
+    }
+
     #[track_caller]
     pub(crate) fn release_object_handle(&self, id: ObjectId) {
         #[cfg(debug_assertions)]
