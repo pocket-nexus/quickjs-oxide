@@ -159,6 +159,16 @@ ownership 成本与 32B 帧槽算进宽度账。
 - 先 profile 当前树（`perf record` + 指令计数），确认是否同一 ownership
   事务税；若是，评估纳入 T1.1/T1.3 覆盖面或另立窄修；若否，记录归因
   交 D/A4，不强行修。
+- 归因（已完成）：`complete_local_add` 的 `constant_string`
+  （`conversion_driver/local_add.rs:245`）对常量池 String 每次走 checked
+  `dup_jsvalue`（string_build1 基准 1.6M 次），perf annotate 显示其周期
+  占比 14.6%，热点在 Result 返回槽编组与校验事务——同一 ownership 事务税。
+- 窄修（提交 `28a47f32`）：常量池节点在整帧执行期间持有该边，改 trusted
+  `retain_live_string_handle`。隔离实测 LTO 指令：build1 −4.6%、
+  build3 −3.3%、large1/large2 −3.0%，int_to_string/map_delete 中性；
+  LTO 墙钟 −32%/−10%/−14%/−7%。累计对 A：string_build* 由回退转为领先
+  （LTO 墙钟 0.76–0.93），`int_to_string`/`map_delete` 仍 +11~15%，
+  交 D/A4 归因。
 
 ### T1.6 热路径内联钉住（实施中新增）
 
