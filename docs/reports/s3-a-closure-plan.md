@@ -210,6 +210,8 @@ ownership 成本与 32B 帧槽算进宽度账。
   decode 已有 kind/liveness 校验。
 - 当前树无 `FrameBinding` 尺寸断言（A4 spike 测试是 B/C 代码，已随回退
   删除）。
+- 行号基线漂移：T1.5/T1.6 已改动 `conversion_driver/local_add.rs`
+  （`b3f3ad7c`）与 `vm/run.rs`（`56d5a51e`），T2 开工前按当前树重扫点位。
 
 ### 4.2 方案
 
@@ -225,7 +227,10 @@ ownership 成本与 32B 帧槽算进宽度账。
 4. 尺寸门禁重建（编译期）：
    `assert!(size_of::<FrameBinding>() == 24)`、
    `assert!(size_of::<Option<FrameBinding>>() == 24)`；重建 A4 反事实
-   spike：8B `Direct` 下 16B binding。
+   spike：8B `Direct` 下 16B binding；并加 T2d 反事实（绑定 kind 复用
+   A4 tag 空间、整体打包 u64 → 8B）为 A4 联合设计喂数据。反事实断言
+   全部用测试内镜像类型，不触碰产品类型；post-A4 的真实尺寸断言只能在
+   A4 落地后写。
 5. owned-storage 计数与 RSS 自动反映槽步长 −25%。
 
 ### 4.3 不变量与风险
@@ -237,6 +242,107 @@ ownership 成本与 32B 帧槽算进宽度账。
 - `AtomIdx` 为 per-runtime 表索引，单线程下帧不可能持有外来句柄；
   挂起 decode 的 kind 检查兜底。
 - 风险面：显式释放纪律扩大 invariant-panic 面——按 §2 原则与账本兜底。
+
+### 4.4 决策记录（2026-09-23）
+
+- **方案选定：句柄化**（§4.2 原案）。box 路线已评估否决：只 box `Private`
+  的 A4 前同为 24B，但 A4 后仍 24B（`PrivateCallable`/`Captured` 载荷
+  16B），需二次改造；box 全部三个 root 变体可在 A4 后达 16B 且保留 RAII，
+  但每绑定一次分配。句柄化零分配、A4 后自动 16B，且挂起层已按 id 形态
+  就绪（`GeneratorFrameBinding`，仅 `Private` 的 branded `Atom` 顺带瘦为
+  `AtomIdx`），选它。
+- **24B 是 A4 前下限**：A4 前最大载荷是 `Direct(JsValue)`=16B，tag + 对齐
+  → 24B；A4 后 `Direct`=8B、句柄 ≤8B，最大载荷 8B → 16B。8B 绑定只能由
+  T2d（整体打包 u64）得到，列为 A4 后联合设计决策项。
+- **信任模型变更**：跨域防护从「值品牌」移到 decode 的 kind/liveness 校验
+  （§4.2 第 3 点），须在 T2 结果文档记录。
+- **全方案零 `unsafe`**：句柄化、显式 retain/release、尺寸断言均为安全
+  Rust，`unsafe_code = "forbid"` 不变。
+
+### 4.5 实施清单（2026-09-23 按当前树重扫，可直接实施）
+
+**表示与所有权规则**
+
+- `FrameBinding` 改为 `Private(AtomIdx)`/`PrivateCallable(ObjectId)`/`Captured(VarRefId)`；
+  每个非 `Direct` 变体**恰好持有一条边**（atom / object / var-ref）。
+- 非 `Direct` 变体不再有 `Drop`：任何移动、覆盖、丢弃都必须显式 release
+  （`release_atom_index` / `release_object_handle` / `release_var_ref_handle`），
+  `release_frame_binding` 是统一出口。
+- 编译期门禁（`vm/bindings.rs` 模块级）：`size_of::<FrameBinding>() == 24` 且
+  `size_of::<Option<FrameBinding>>() == 24`。
+
+**构造与边转移（净 +1 条边归帧）**
+
+- `private_bindings.rs:56`（`initialize_name`）：`retain_atom_handle(name.atom())`
+  后存 `Private(AtomIdx::from_raw(name.atom().raw()))`；`name` 作用域释放，净 1 条边。
+- `private_bindings.rs:118`（`initialize_callable`）：`retain_object_handle(id)` 后存
+  `PrivateCallable(id)`；`callable` 释放，净 1 条边。
+- `bindings.rs:279-288`（`close_frame_binding`）：新增 private-elements 按 id 变体
+  （`private_name_index_from_raw_var_ref` / `private_callable_index_from_raw_var_ref`，
+  校验 + retain + 返回 id）；先释放旧 `Captured` 边再写新变体。
+- `bindings.rs:205/220/235/246`（`capture_frame_binding`）：`Direct`/`Uninitialized`
+  臂只改存 id；`Private`/`PrivateCallable` 臂先建 cell（新边），再释放帧旧边；
+  返回的 root 与绑定各持一条边（与现状一致）。
+- `suspend.rs:137-157`（decode）：`Private` 先 `brand` 校验 kind 再 `retain_atom_handle`；
+  `PrivateCallable` 先 `ObjectRef::from_borrowed_handle` + `as_callable` 复核再
+  `retain_object_handle`；`Captured` 直接 `retain_var_ref_handle`；均净 1 条边归解码帧。
+
+**释放与覆盖审计（显式 release）**
+
+- `bindings.rs:38-51` `release_frame_binding`：三个变体分别走
+  `release_atom_index`/`release_object_handle`/`release_var_ref_handle`。
+- 覆盖点：`capture_frame_binding`（旧 `Private`/`PrivateCallable`）、
+  `close_frame_binding`（旧 `Captured`）；`stack.rs` 的 take/replace/clear 路径
+  已统一走 `release_binding`，无需改。
+- `call/prepare.rs` 测试专用帧向量的错误出口补 release（非热路径）。
+
+**读路径（零新分配）**
+
+- 新增 `VarRefView::from_frame(runtime, VarRefId)`（`heap/roots.rs`，`pub(crate)`；
+  文档化信任论证：边由帧绑定持有，视图与调用作用域同生命周期）。
+- 视图替换点：`bindings.rs:173/249/271/351/433/700`、
+  `run.rs:1276/1322/1344/1444`、`frame_operations.rs:261/434`、
+  `environment_bindings.rs:57/150`、`private_bindings.rs:65/121/293/353`。
+- 需物化 root 返回调用方的读路径：`private_bindings.rs:292`
+  （`PrivateNameRef::from_borrowed_atom` + `brand`）、`:352`
+  （`ObjectRef::from_borrowed_handle` + `as_callable`）；`driver.rs:1624`（测试）同样物化。
+- `suspend.rs:109-119` 的 `Captured` 校验可直接用 id 访问 `heap.var_ref(*id)`，不建视图。
+
+**挂起层简化（信任模型变更）**
+
+- `suspension_records.rs:17-23`：`GeneratorFrameBinding::Private(Atom)` →
+  `Private(AtomIdx)`；`is_null` 检查（`suspension_records.rs:212/457`、
+  `object_storage.rs:1908`）改 `AtomIdx::is_null`。
+- `suspend.rs:41-69` encode：直存 id，删除 3 处 `belongs_to` 校验；
+  `:177-209` `atoms()` 对 `Private(idx)` 改 `table.brand(idx)?` 后入列。
+- `gc.rs:2468-2473`：`Private(idx) => Some(*idx)`；`:2032-2043` 边集合不变
+  （休眠记录不持边）。
+- decode 的 kind/liveness 校验保留，`PrivateCallable` 继续 `as_callable` 复核（§4.3）。
+
+**门禁与测试**
+
+- 尺寸断言 + 重建 spike：`vm/bindings/representation_spike_tests.rs`
+  （旧版 `git show 3e116f75:...`），镜像类型覆盖 现状 32B / 句柄化 24B /
+  A4 反事实 16B / T2d 反事实 8B。
+- 挂起 round-trip：capture→encode→thaw→release，比对 atom/object/var-ref
+  strong 计数（仿 `suspend.rs` 的 `failed_thaw_releases_partial_roots...`）。
+- 跨域/信任：decode 非 private atom、非 callable object、元数据不符均拒绝
+  （沿用现有 invariant 测试并补 id 路径）。
+- 帧密集微负载 + owned-storage 计数/RSS（§6 门禁）；`execution.rs:30` 与
+  `call/prepare.rs:88-90` 的容量核算自动反映新步长。
+
+### 4.6 提交切片（每片独立可回退）
+
+1. `perf(vm): handle-ize frame bindings`：新表示 + 全部读写/构造/释放点 +
+   覆盖审计 + 24B 断言；encode 暂以 `brand(idx)` 适配旧 `GeneratorFrameBinding`。
+2. `perf(vm): store unbranded atom indices in dormant frames`：
+   `GeneratorFrameBinding::Private(AtomIdx)` + encode/decode/`atoms()`/gc/校验简化 +
+   删除 `belongs_to`（结果文档记录信任模型变更）。
+3. `test(vm): rebuild frame-binding representation spike`：镜像类型 + 反事实断言。
+4. `docs(perf): record T2 results`：owned-storage/RSS/微负载实测 + 信任模型变更 +
+   门禁记录。
+
+测量在 T1 收尾后串行；每片单独提交、单独回退（§6）。
 
 ## 5. 排程
 
