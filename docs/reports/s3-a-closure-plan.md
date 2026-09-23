@@ -455,6 +455,14 @@ post `c4f1c433…`。这是 T2 增量快速判定，§6 双协议 scaling/V8/fix
 −11.4%，随局部数单调——与帧槽步长 32B→16B 及 `Captured` 借用视图
 （`VarRefView::from_frame` 取代 root clone）的机制一致。
 
+**cache 事件补充**（3–5 reps，同协议，`cache-references:u`/`cache-misses:u`）：
+引用数全线下降——bigint32 −21.8%、locals −17.2%、bigint64 −6.4%、
+string_build1 −6.1%、bigint256 −2.6%（assign +101.6% 但每千引用 miss
+8.4→4.1‰）；miss 数多数下降——bigint256 −11.4%、bigint32 −11.1%、
+string_build1 −10.2%、locals −3.0%、bigint64 −1.4%。bigint32/64 的
+cycles 正值不能由 miss 解释（miss 绝对量下降、miss 率仅 60.5→68.8‰ /
+57.9→61.0‰），维持"小幅回退风险，A4 复核"。
+
 **判定**：预期收益确认且超出——16 个用例指令数**全部下降**（−0.9%~
 −11.4%），帧密集用例最大；存储侧槽字节减半见 §4.7。无指令回退；多数
 用例 cycles/wall 持平或改善。唯一混合信号：`bigint32`/`bigint64` cycles
