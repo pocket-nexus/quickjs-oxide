@@ -95,8 +95,8 @@
 | --- | --- | --- | --- | --- |
 | **E** | 构建基线：fat LTO + CGU=1、无 PGO；PGO 双边复核及 BOLT 可选 | 无 | 历史估计 8–20%，当前需重测 | 附录 A.7 |
 | **A4** | 8B 值表示决策点：索引 NaN-box spike + 验收矩阵，不达标停在 16B | 无 | 视裁决（值流量密集路径上限 ~1.5–2×） | §1.1–1.3、§4.3 |
-| **C** | 派发与栈流量：TOS/accumulator 缓存、扩展静态超指令、可选 fn-pointer threading | 无 | +5–15% | 附录 A.4–A.6 |
-| **B** | quickening + 可变执行 IR（QuickJS 没有） | 无 | +10–25% | 附录 A.1–A.3 |
+| **C** | 派发与栈流量：TOS/accumulator 缓存、扩展静态超指令、可选 fn-pointer threading（2026-09-23 负结果关闭并回退） | 无 | 实测无净收益 | [负结果](s3-c-negative-result.md) |
+| **B** | quickening + 可变执行 IR（QuickJS 没有）；首批实现已随 C 回退，须重新设计独立立项 | 无 | +10–25%（历史估计） | 附录 A.1–A.3 |
 | **D** | 数据导向堆：typed arena、内联槽、validity cell、atom/string 便宜化 | 无 | +10–30%（对象/数组密集） | §1.6 |
 | **F** | 受审计 unsafe 保留席位：仅在测量点名后逐点引入 | 受审计 | 视点名位置 | §8 |
 
@@ -222,12 +222,19 @@ pub struct JsValue(u64);  // 内部执行值；不实现 Copy/Drop
 
 ### 4.4 级联收益
 
-- `RawValue`（`identity.rs:200-224`）24B→8B；`PropertySlot::Data` 同减，
-  属性内存减半；
-- `FrameBinding`（`vm/bindings.rs:17-23`）40B→~12B，操作数栈槽同减；
-- `copy_value`（`vm/stack.rs:1402`，S0 实测 ~8%）标量臂从 73B outlined
-  变为一条 `mov`；值搬运总量降 4×；
-- 每条 64B 缓存行放 8 个值（现状 2 个）。
+> 2026-09-23 修正：A 只落地 16B 句柄 enum，下列 8B/减半收益是 A4 预期
+> 而非已得事实；`FrameBinding` 的 A 后实测与 24B 上限见
+> [阶段 A 收口计划](s3-a-closure-plan.md)。
+
+- `RawValue`（`identity.rs:254-280`）现为 16B（编译期断言 ≤16B），A4 目标
+  8B；`PropertySlot::Data` 同减，属性内存减半；
+- `FrameBinding`（`vm/bindings.rs:17-23`）**实测 32B**：A 落地后
+  `Direct`=16B 已不是步长决定者，24B 的 `Private(PrivateNameRef)` 才是；
+  `SlotStore.slots` 同一向量还承载 operands，槽步长同受 32B 约束。
+  私有/捕获变体句柄化后可达 24B（A4 8B 值下 16B），见收口计划 T2；
+- `copy_value`（`vm/stack.rs:1731`，S0 实测 ~8%）标量臂从 73B outlined
+  变为一条 `mov`；值搬运总量降 4×（A4 预期）；
+- 每条 64B 缓存行放 4 个值（A 后 16B；A4 8B 后 8 个；pre-A 32B 时 2 个）。
 
 ### 4.5 分步提交
 
@@ -452,26 +459,28 @@ codec 自测门禁（`status.md:319-320`）、修订 `status.md:3` 的 "unsafe-f
 
 ## 11. 路线、预期与验证门禁
 
-### 路线（2026-09-22 定稿；顺序依据阶段 A 两轮回退修复的实测规律）
+### 路线（2026-09-23 修订；C 关闭、B 回退后重排）
 
-**E → 残余批 → A4 决策点 → C → B → D（B/D 按测量交替）**。每阶段独立
-可回退，严禁跨阶段混合提交。S4（RC → tracing GC）不在此路线内，按
-§10.6 双门禁另行决策。
+**E（已完成）→ 残余批（T1 所有权事务 + T2 帧槽 24B + 字符串簇归因）→
+A4 决策点 → D**。B 须按负结果重新设计并独立立项，C 已关闭回退，二者都
+不在活动路线内。每阶段独立可回退，严禁跨阶段混合提交。S4（RC →
+tracing GC）不在此路线内，按 §10.6 双门禁另行决策。
 
-支撑本顺序的三条历史实测规律（证据见 `s3-a-plan.md` §8.12，使用旧
-LTO-off 协议）：以下热点与反超结论只作后续归因线索；当前回退按 §8.13
-LTO 列及后续同协议重测结果裁决，不直接继承旧协议的关闭结论。
+支撑顺序的实测规律（E 已完成并冻结同协议基线，见
+[全量重测结果](s3-full-rerun-results.md)）：
 
-1. **布局噪声是第一税**：LTO off + CGU16 下任意源改动引起无关 case
-   ±5–10% 摆动（跨 CGU 内联翻转、`matches!` Result drop 折叠翻转均有
-   反汇编证据）——所以 E 必须先于一切残余追修。
-2. **owner 往返比值宽度更贵**：阶段 A 修复轮最大单项收益是
-   borrowed-base 融合读（消灭「读→临时 owner→立即释放」往返，Richards
-   反超 pre-A），而非任何缩窄表示的改动——所以 A4 只削宽度税，降为
-   数据裁决的决策点。
-3. **剩余热点在栈流量与堆布局，不在分派**：`push_current`/
-   `replace_local_current` 占 bigint256 约 21% cycles，也是 map/set 编组
-   共因；`run::run` 分派已被排除为 V8 残余主因——所以 C 提前到 B 前。
+1. **布局噪声是第一税**（保留）：LTO off + CGU16 下任意源改动引起无关
+   case ±5–10% 摆动（跨 CGU 内联翻转、`matches!` Result drop 折叠翻转均
+   有反汇编证据）——所以 E 必须先于一切残余追修，现已完成。
+2. **owner 往返比值宽度更贵**（保留）：阶段 A 修复轮最大单项收益是
+   borrowed-base 融合读（消灭「读→临时 owner→立即释放」往返），而非
+   任何缩窄表示的改动——所以 A4 只削宽度税，降为数据裁决的决策点。
+3. **修正：剩余热点是 ownership 事务与堆布局，不是栈流量**。bigint256
+   的 `push_current`/`replace_local_current` 约 21% cycles 曾被读作
+   store-forward 失速，但 A 终版反汇编显示 pre-A 同样是 32B `movups`
+   对、IPC 反升（指令数驱动），且 `a=a` 微负载约 15% 指令为 pre-A 不存在
+   的所有权事务（借用 + 世代/kind 校验 + readiness 预检 + 延迟释放管道）。
+   C 的「收割栈流量」前提未兑现，已按负结果关闭。
 
 各步内容与关闭条件：
 
@@ -480,9 +489,12 @@ LTO 列及后续同协议重测结果裁决，不直接继承旧协议的关闭�
    receipts，重测完整台账并补齐阶段 A 缺失的 RSS/内存证据。后续同时
    保留上一阶段、E 后冻结源码和 pre-A `85afd564` 累计对照。沿用已有
    PGO 管线作可选双边复核，结果另列。
-2. **残余批（E 基线下，有界）**：只修 E 后仍显著的项——map-string 的
-   arena 键哈希/比较与批末 teardown、V8 regexp 归因、native 编组重叠
-   拷贝。纪律：配对 A/B、指令数为主信号、串行采样。
+2. **残余批（E 基线下，有界）**：具体为
+   [阶段 A 收口计划](s3-a-closure-plan.md) 的 T1（叶 trusted retain、
+   `release_displaced` trusted commit、唯一性预过滤）与 T2（FrameBinding
+   32B→24B 句柄化）；另修 map-string 的 arena 键哈希/比较与批末 teardown、
+   V8 regexp 归因、native 编组重叠拷贝，以及 E 新增的 fixed 字符串簇与
+   map_delete 归因。纪律：配对 A/B、指令数为主信号、串行采样。
 3. **A4 决策点**：在 E 基线上做 8B NaN-box spike 与验收矩阵
    （bigint256/arguments/typed-index/RSS），用数据裁决「做」或按 §4.3
    停在 16B。表示迁移的真实成本 = 迁移 + 一整轮回退修复（阶段 A 为
@@ -492,20 +504,23 @@ LTO 列及后续同协议重测结果裁决，不直接继承旧协议的关闭�
    （2026-09-23 关闭：实现已按负结果撤销，见
    [阶段 C 负结果与撤回落](s3-c-negative-result.md)。）
 5. **B：quickening**：把已验证的 borrowed fast path 模式经特化 opcode
-   系统化；差异化主菜，在稳定基线 + C 收割后推进。
+   系统化；首批实现已随 C 回退（[负结果](s3-c-negative-result.md) §4），
+   不在活动路线内，后续须重新设计并独立立项。
 6. **D：数据导向堆**：BigInt/String 叶子紧凑 arena（收 440B 槽跨步的
    分配局部性）、atom/string 便宜化（收 map-string）；与 B 按测量交替。
 
-bigint256 当前回退按 `s3-a-plan.md` §8.13 的 LTO 列判断（相对同 flags
-重建的 pre-A，+32.1% cycles / +38.8% insn）；旧 LTO-off 下约 +18%
-cycles / +32% insn 仅保留为历史记录，不与新序列混算。不另设专项，待查
-成本分别归属 E（外联/布局）、A4 决策（宽度税）、C（栈往返）、B（分派与
-边管理指令数）、D（分配局部性）；作为各阶段验收矩阵中的固定一行，
-关闭与否以同协议实测为准。
+bigint256 当前回退以 E 同协议重测为准（m0/pre-A 墙钟 1.21×、用户态指令
+1.43×，见 [全量重测结果](s3-full-rerun-results.md) §4.6）；§8.13 的
++32.1% cycles / +38.8% insn 为同日 LTO 对照，作为同源历史记录保留。
+归因已按 A 终版反汇编与微负载分解修正为**句柄化后每次拷贝/释放的
+ownership 事务**（借用 + 世代/kind 校验 + readiness 预检 + 延迟释放管道）
+主导，而非 store-forward/16B-32B 搬运；成本归属改为 T1（所有权事务）、
+A4 决策（宽度税）、D（分配局部性，含 440B 槽跨步），C 已关闭、B 不在
+活动路线。作为各阶段验收矩阵中的固定一行，关闭与否以同协议实测为准。
 
-typed-index、prop-delete、navier-stokes 等在新 LTO 协议下翻转的项目，须在
-E/C0 重新采样并登记根因及后续归属，不能继承旧协议的关闭状态。只有经证据
-确认属于栈流量的部分交 C；布局、arena 或其它成本继续按残余批/A4/B/D 分工。
+typed-index、prop-delete、navier-stokes 等在新 LTO 协议下翻转的项目，E
+已完成同协议重测（见结果文档）；后续归因按 T1/A4/D 分工，不能继承旧协议
+的关闭状态。布局、arena 或其它成本继续按残余批/A4/D 分工。
 
 ### 预期（诚实口径）
 

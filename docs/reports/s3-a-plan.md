@@ -1200,10 +1200,16 @@ property probe（20M 次、3 repeats）：prop_read_int 227.69→159.44 ns（−
 #### 未关闭残余与归因（下一轮入口）
 
 1. **map-string +11%**：键生成/回收侧已优于 pre-A（诊断 workload −33.6%）；残余在容器持 arena 键的哈希/比较、leaf retain/release 与批末 teardown（collection_index、heap/gc）。
-2. **bigint256 +19%（指令 +34%）**：每结果 arena 节点生命周期的结构性成本 + 槽操作边界 16B/32B 值搬运的 store-forward 失速（`replace_local_current`/`push_current` 合计 ~21% cycles）+ `run/numeric::complete` 宽结果搬运；lease/唯一复用已证伪，需要新的窄方案。bigint64 +5.2% 同源（仅 ~49% 迭代产生 Heap 结果）。
+2. **bigint256 +19%（指令 +34%）**（2026-09-23 修正归因）：主因是句柄化后每次拷贝/释放的 **ownership 事务**（借用 + 世代/kind 校验 + readiness 预检 + 延迟释放管道），不是原先记录的槽边界 16B/32B store-forward 失速与 `run/numeric::complete` 宽结果搬运。反证：同工具链同 flags（LTO off、CGU16）下 pre-A `85afd564` → A 终版 `d4f78697`，bigint256 instructions +31.9%、cycles +16.8%，与本节 nolto 列逐位吻合；IPC 反升（指令数驱动而非 stall）；pre-A `push_current` 同样是 32B `movups` 对，宽度搬运不是 delta；`replace_local_current` 不在热路径；`numeric::complete` 反而变便宜（final 1.32% vs pre-A 9.11%）。微负载每操作指令差（pre-A→final）：`a=a` +477、`a=a+1n` +886、`s=s+a` +271、`b=a*a` +1084；`a=a` final 约 15% 指令为 pre-A 不存在的所有权事务，官方 bigint256 每内层迭代 +2310 ≈ mul+add(reuse)+add 三项之和。窄修方案见 [阶段 A 收口计划](s3-a-closure-plan.md) T1；lease/唯一复用仍属已证伪方向。bigint64 +5.2% 同源（仅 ~49% 迭代产生 Heap 结果）。
 3. **Map 覆盖更新 +5.3%、set-churn +8~9%**：native 调用编组（`take_native_call_operands`、`prepare_native_arguments` 的重叠 8B 拷贝失速）与剩余 ownership 往返。
 4. **V8 crypto −3.1%、earley-boyer −4.6%、regexp −10%、splay −1.8%**：本轮首次补齐全套覆盖；regexp 与 scaling 的 regexp-groups（−15%）方向相反，说明残余在正则执行/子串路径而非 groups 组装，未逐项归因。
 5. **布局敏感性**：LTO off + CGU16 下任意源改动可使无关 case 摆动 ±5–10%（本轮多次复现，指令数为稳定副指标）；insert 曾因 std BTree drop 失去内联出现 +13% teardown，重建后自然消失。评估小幅残余时必须配对同构建采样。
+
+> 2026-09-23：下一轮入口已具体化为 [阶段 A 收口计划](s3-a-closure-plan.md)
+> （T1 所有权事务窄修 / T2 帧槽 24B），并纳入 E 同协议重测新增的 fixed
+> 字符串簇（`string_build1/3/large1`、`int_to_string`）与 `map_delete`
+> 归因；bigint256 以 [全量重测结果](s3-full-rerun-results.md) §4.6 为准
+> （m0/pre-A 墙钟 1.21×、指令 1.43×）。
 
 ### 8.13 窄补丁收尾与 LTO 双协议对照（2026-09-22）
 
@@ -1250,7 +1256,7 @@ property probe（20M 次、3 repeats）：prop_read_int 227.69→159.44 ns（−
 
 #### 结论（诚实口径）
 
-1. **fat LTO 给 pre-A 的提升显著大于给当前实现**（pre-A 各 workload −22~−31%，当前实现 −15~−22%）。机制：pre-A 的 Rc/Result 管道是大量本地小操作，LTO 几乎能全部内联消解；而句柄化的结构性成本（集中校验、440B 槽跨步、16B/32B 编组）不是内联能消掉的；同时本轮手工 `#[inline]` 已提前收割了我们这侧的部分 LTO 红利。
-2. **发布配置（LTO）下阶段 A 仍是净回退**：V8 八项全负（−3~−19%），scaling 约持平；LTO off 下的净收益картина有相当成分来自「pre-A 没机会做跨模块内联」。navier-stokes/typed-index 的翻转（insn 持平、cycles 大幅变差）是典型样本。
+1. **fat LTO 给 pre-A 的提升显著大于给当前实现**（pre-A 各 workload −22~−31%，当前实现 −15~−22%）。机制：pre-A 的 Rc/Result 管道是大量本地小操作，LTO 几乎能全部内联消解；而句柄化的结构性成本（集中校验/所有权事务、440B 槽跨步）不是内联能消掉的；同时本轮手工 `#[inline]` 已提前收割了我们这侧的部分 LTO 红利。
+2. **发布配置（LTO）下阶段 A 仍是净回退**：V8 八项全负（−3~−19%），scaling 约持平；LTO off 下的净收益画面有相当成分来自「pre-A 没机会做跨模块内联」。navier-stokes/typed-index 的翻转（insn 持平、cycles 大幅变差）是典型样本。
 3. 属性读、Map 构造、insert、prop-delete（insn 口径）在两个协议下都是真实结构性收益。
-4. **门禁含义**：按 §5 的发布协议（双方 fat LTO + CGU=1、无 PGO、无 profiling），回退台账须以 lto 列为准重新裁决。E 使用现有构建与 PGO 管线重测并冻结同协议基线、补 RSS；PGO 双边复核另列，不是普通阶段比较的前提。保留同协议 pre-A 对照，不能因冻结 E 后基线而抹去阶段 A 的回退。这组数据用于 A4/C 的候选排序，但 LTO 后仍有差距并不证明全部来自值宽度或栈流量；应在发布配置下重新归因，再分配给残余批或 C/B/D。
+4. **门禁含义**：按 §5 的发布协议（双方 fat LTO + CGU=1、无 PGO、无 profiling），回退台账须以 lto 列为准重新裁决。E 已完成同协议重测并冻结基线（[全量重测结果](s3-full-rerun-results.md)，2026-09-23）；PGO 双边复核另列，不是普通阶段比较的前提。保留同协议 pre-A 对照，不能因冻结 E 后基线而抹去阶段 A 的回退。这组数据用于 T1/A4 的候选排序，但 LTO 后仍有差距并不证明全部来自值宽度或栈流量；应在发布配置下重新归因，再分配给 T1/A4/D（C 已关闭、B 不在活动路线）。
