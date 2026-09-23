@@ -417,6 +417,58 @@ focused → 更新 `current.conf`/`docs/status.md`）留作独立事项。
 Rust 文件）。证据：`target/s3-a-t2-test262-197162f5/`（full.log、TSV/JSONL、
 status.json）。
 
+### 4.8 T2 发布协议快速 A/B（2026-09-23）
+
+**协议**：pre-T2 `c662790e` vs post-T2 `7cf2395e`，两侧同命令重建
+（`cargo build --locked --release -p quickjs-oxide-cli --no-default-features`，
+即 fat LTO + CGU=1、无 PGO/profiling；rustc 1.94.1）；`taskset -c 2` +
+`perf stat -e cycles:u,instructions:u`，顺序轮换，stdout 断言，wall 为
+普通进程运行；governor=powersave。二进制 sha256：pre `b496ecf1…`、
+post `c4f1c433…`。这是 T2 增量快速判定，§6 双协议 scaling/V8/fixed-58
+全量仍留 A4 决策点。
+
+| 用例 | reps | insn pre→post (M) | insn Δ | cyc Δ | wall Δ |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| locals（16 locals×20 万调用） | 5 | 4674→4141 | **−11.39%** | −13.84% | −13.44% |
+| bigint32 | 7 | 4574→4175 | −8.71% | **+3.66%** | +2.89% |
+| bigint64 | 7 | 5090→4691 | −7.84% | **+3.55%** | +1.67% |
+| int_to_string | 3 | 4549→4307 | −5.32% | −7.25% | −7.03% |
+| string_build1 | 3 | 2583→2448 | −5.22% | −7.14% | −6.48% |
+| bigint256 | 7 | 7977→7575 | −5.05% | −0.44% | −2.14% |
+| assign | 3 | 6655→6369 | −4.30% | −12.69% | −15.65% |
+| add_one | 3 | 4833→4636 | −4.08% | −0.04% | −5.44% |
+| concat | 3 | 1487→1430 | −3.87% | −3.67% | −0.98% |
+| mul | 3 | 2846→2745 | −3.55% | −4.48% | −6.88% |
+| frames（sum 递归 200×100） | 7 | 102→98 | −3.55% | +0.08% | +5.63%※ |
+| string_build3 | 7 | 3838→3707 | −3.43% | −0.67% | −2.24% |
+| string_build_large1 | 7 | 4238→4115 | −2.91% | −1.95% | −1.26% |
+| map_delete | 3 | 537→530 | −1.28% | −1.06% | −1.01% |
+| arguments_strict_read | 7 | 2736→2707 | −1.08% | −0.37% | +0.51% |
+| arguments_read | 7 | 2833→2809 | −0.86% | +0.28% | −0.12% |
+
+※ 10ms 量级用例，wall 噪声主导，仅指令数有效。
+
+**机制探针**（同协议，3 reps）：`bigint_loop`（1M 次 BigInt 乘法，无帧/
+局部访问）insn **0.00%**——BigInt 算术路径未变；`cell_loop`（顶层 `let`
+1M 次自增）−12.1%；`func_locals`（函数内局部 1M 次自增）−12.3%；
+`call0`/`call4`/`locals`（1/4/16 个局部 ×20 万次调用）insn −5.1%/−8.1%/
+−11.4%，随局部数单调——与帧槽步长 32B→16B 及 `Captured` 借用视图
+（`VarRefView::from_frame` 取代 root clone）的机制一致。
+
+**判定**：预期收益确认且超出——16 个用例指令数**全部下降**（−0.9%~
+−11.4%），帧密集用例最大；存储侧槽字节减半见 §4.7。无指令回退；多数
+用例 cycles/wall 持平或改善。唯一混合信号：`bigint32`/`bigint64` cycles
+**+3.6%/+3.5%**（7 次轮换稳定，IPC 3.05→2.69 / 2.95→2.62；指令与分支
+均下降、branch-misses 不变），wall +2.9%/+1.7% 在噪声边界；判为小幅
+回退风险而非结论，留 A4 决策矩阵用 nolto 对照/perf annotate 复核。
+`bigint256` cycles 持平。限制：shipped LTO 协议下不排除部分差值来自
+内联/布局移动（T1.6 先例）；未做 annotate 级因果证明；RSS 在该规模
+不可分辨。
+
+**证据**：`target/t2-ab/`（`measure_t2.py`、`recheck.py`、`raw-t2/`、
+`raw-t2-recheck/`、`workloads/`、`probe/`）；pre 侧 worktree 与构建缓存
+`/home/eric/.cache/opencode/t2-pre-wt`、`t2-pre-target`、`t2-post-target`。
+
 ## 5. 排程
 
 1. T1.0（饱和语义）→ T1.1 → T1.2 → T1.3，各自独立提交 + 独立 A/B；
