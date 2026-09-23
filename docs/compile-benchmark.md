@@ -163,7 +163,7 @@ flat profile（self time 百分比）：
 
 1. **libc 分配/拷贝占约 27%**。整个 flat profile 里最大的单一符号依次是
    `code::bytecode::verify_parts_with_visits`（6.4%）、
-   `code::bytecode::enqueue_fallthrough`（3.1%，publish 的 VecDeque）、
+   `code::bytecode::enqueue_fallthrough`（3.1%，verify 的可达性 worklist）、
    `lexer::Lexer::next_token_with_goal`（3.0%）、
    `scope_validation::validate_scope_graph`（2.9%）。
 2. **libc 调用方归因**（callchain 近似）：`scan_punctuator`→`starts_with`→slice
@@ -183,7 +183,7 @@ flat profile（self time 百分比）：
 2. **lexer 快路径**：`peek_char`/`peek_nth_char` 的逐字符 UTF-8 解码
    （`lexer.rs:678`）；`skip_trivia`/`scan_punctuator` 的多次 `starts_with`
    slice 比较（可改首字节分支）。
-3. **verify/publish**：verify 单符号 6.4% + publish VecDeque 3.1%；两阶段合计
+3. **verify/publish**：verify 单符号 6.4% + 可达性 worklist 3.1%；两阶段合计
    占编译时间 20–30%，可评估增量验证与更紧凑的指令容器。
 4. **resolution/scope_validation**：合计 7–8%，大声明文件更明显。
 5. **parser 前瞻/回溯**：`for_iteration_kind_ahead` 克隆 lexer 重扫
