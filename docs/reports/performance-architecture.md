@@ -193,7 +193,7 @@ Test262 `--check` 如预期报 baseline 源码过期（`Cargo.toml` 在
 pub struct JsValue(u64);  // 内部执行值；不实现 Copy/Drop
 ```
 
-- `Float(f64)`：按位原样存储（与 QuickJS 同等待遇，浮点不装箱）；
+- `Float(f64)`：浮点不装箱；NaN payload 与 tag 空间的关系（NaN 归一策略）是 A4 编码决策点（QuickJS NaN-box 在构造时归一 NaN）；
 - `Int(i32)` / `Bool` / `Null` / `Undefined`：tag 空间内联；
 - Object / String / Symbol / BigInt：NaN payload 52-bit 内装 `kind | u32 index`，
   解引用 = typed arena 的安全下标访问（保留 bounds check；generation 校验维持
@@ -644,7 +644,8 @@ typed-index、prop-delete、navier-stokes 等在新 LTO 协议下翻转的项目
 
 - Nova（安全 Rust ECMAScript 引擎）：值 = 内联标量或 u32 句柄的 enum，
   堆 = per-type arena，GC 时 compact 提局部性。<https://github.com/trynova/nova>
-- Kiesel（Zig）：16B→8B NaN-boxing。
+- Kiesel（Zig）：16B tagged union→8B NaN-boxing（PR #37，2024-08 合入；默认在
+  x86_64/aarch64 开启，要求 ≤48 位可寻址内存，其余平台保留 tagged union 回退）。
   <https://codeberg.org/kiesel-js/kiesel/pulls/37>
 - **未发现任何生产引擎 NaN-box arena 索引**（均为 box 指针）：本方案的
   8B 编码是合理但无生产先例的设计，收益/成本（每次 deref 多 base load +

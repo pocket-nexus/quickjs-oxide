@@ -630,22 +630,22 @@ S2.2 是安全的增量（对象属性读 S1→S2 −7%）；S2.1/S2.3 的正确
 
 | 引擎 | 值表示 | 属性键 | GC / 回收 | 分配器 | 派发 | IC / 自适应特化 | JIT |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| **QuickJS** | **8B NaN-box** `JSValue` | `JSAtom` = 裸 `u32` | 侵入式 RC + 循环回收 | 自研 `js_malloc` | 栈式 + switch/threading | 少量静态快路径，**无 quickening** | 无 |
+| **QuickJS** | **16B struct** `JSValue`（64 位；32 位自动 NaN-box → 8B） | `JSAtom` = 裸 `u32` | 侵入式 RC + 循环回收 | 自研 `js_malloc` | 栈式 + switch/threading | 少量静态快路径，**无 quickening** | 无 |
 | **Lua 5.4** | 16B `TValue`（union+tag） | interned `TString*` 指针 | 增量/分代标记清除 | size-class | **寄存器式** | 无 | 无（LuaJIT 另立） |
 | **LuaJIT** | 8B NaN-box | interned 指针 | tracing GC + RC | — | 解释器 + 汇编桩 | — | **tracing JIT** |
 | **V8** | 8B / 32-bit 压缩 `Tagged` | `Name` 指针 | 分代 tracing（并发/增量） | bump nursery + size-class | **寄存器式（Ignition）** | feedback vector + 多态 IC | Sparkplug / Maglev / TurboFan |
 | **JSC** | 指针 tagging | `Identifier`/`Name` | 分代 tracing | — | 手写汇编 LLInt + Baseline | 多态 IC | LLInt / Baseline / DFG / FTL |
 | **SpiderMonkey** | 指针 tagging | `Name` | 分代 tracing | — | Baseline 解释器 | CacheIR | Warp |
 | **CPython** | `PyObject*` 8B 指针 | 任意对象（interned `str`） | RC + 分代循环 GC | pymalloc / size-class | 栈式 | **PEP 659 特化 + IC** | 无（3.13 实验副本补丁，默认关） |
-| **Boa** | Rust enum `JsValue`（~16B） | interner | `Gc<T>` 标记清除 | — | 栈式 | 无 | 无 |
-| **quickjs-oxide（现状）** | **32B enum**（实测） | `Atom` = raw+generation+table_id（16B） | arena RC + 循环回收 | arena `Vec<ArenaSlot>` | 栈式 | mono/poly-2 IC + fusion，**无 quickening** | 无 |
+| **Boa** | **8B NaN-box**（`jsvalue-enum` 回退 16B） | interner | `Gc<T>` 标记清除 | — | 栈式 | 无 | 无 |
+| **quickjs-oxide（现状）** | **16B enum**（内部 `JsValue`；公共 `Value` 32B） | `Atom` = raw+generation+table_id（16B） | arena RC + 循环回收 | arena `Vec<ArenaSlot>` | 栈式 | mono/poly-2 IC + fusion，**无 quickening** | 无 |
 
 ## 2. 逐维度要点与启示
 
 ### 值表示
-- 主流是 **8B**：QuickJS/LuaJIT 用 NaN-box；V8 用指针 tagging + 指针压缩；CPython 是 8B `PyObject*` 指针。**没有任何主流引擎用 32B 带标签枚举**（那是 Boa 与 quickjs-oxide 这类安全 Rust 实现的产物）。
+- 主流是 **8B**：LuaJIT 与 32 位 QuickJS 用 NaN-box；V8 用指针 tagging + 指针压缩；CPython 是 8B `PyObject*` 指针。64 位 pinned QuickJS 是 **16B struct**（NaN-box 只在 32 位自动启用），16B 不是落后档；**没有任何主流引擎用 32B 带标签枚举**。
 - 8B 的意义：一条 64B 缓存行放 8 个值（而非 2 个）、复制是一条 `mov`、可进 CPU 寄存器。
-- **quickjs-oxide 的 32B** 是最大差距；要追平 QuickJS，值表示必须降到 8B（NaN-box 或 thin 指针）。这需要 `unsafe`，与当前 `forbid(unsafe_code)` 冲突（`parity.md` 已允许受审计 `unsafe`）。
+- **quickjs-oxide 的内部 `JsValue` 已是 16B**（A 已落地；公共 `Value` 为 32B），与 64 位 pinned QuickJS 的 16B `JSValue` 同尺寸。进一步降到 8B（对齐 32 位 QuickJS 与主流引擎的表示密度）是 A4 决策点，用「索引 NaN-box」实现，**不需要 `unsafe`**（`performance-architecture.md` 方案 A/F）。
 
 ### 属性键 / atom
 - QuickJS：裸 `u32`；Lua：interned 指针；V8/CPython：指针。**都无 per-handle 品牌**；有效性靠构造（per-runtime 表、不跨域）或 tracing（活对象不复用）。
@@ -655,7 +655,7 @@ S2.2 是安全的增量（对象属性读 S1→S2 −7%）；S2.1/S2.3 的正确
 ### GC / 分配
 - 回收：侵入式 RC + 循环回收（QuickJS）vs 分代 tracing（V8/JSC/SpiderMonkey）vs RC + 分代循环（CPython）。
 - 分配：bump nursery（V8）或 size-class（CPython）vs 你们的分代 arena。
-- **quickjs-oxide**：arena + `Cell` strong + 全局 `RefCell` + generation 校验，是 Rust 安全的产物，也是常数因子的主要来源。方向是 bump + 侵入式（需 `unsafe`），或至少去掉全局借用/校验。
+- **quickjs-oxide**：arena + `Cell` strong + 全局 `RefCell` + generation 校验，是 Rust 安全的产物，也是常数因子的主要来源。方向是索引式 bump + 节点内 `Cell` 计数，两者都可保持零 `unsafe`（仅裸指针内存布局才需要 `unsafe`，属方案 F 保留席位），或至少去掉全局借用/校验。
 
 ### 派发
 - 栈式：QuickJS、CPython、Boa、**quickjs-oxide**。
@@ -678,7 +678,7 @@ S2.2 是安全的增量（对象属性读 S1→S2 −7%）；S2.1/S2.3 的正确
 
 按杠杆排序：
 
-1. **值表示 8B + 侵入式 RC**（需受审计 `unsafe`）—— 追平 QuickJS 的入场券。
+1. **值表示 8B（索引 NaN-box，零 `unsafe`）+ 侵入式 RC**——对齐 32 位 QuickJS 与主流引擎的表示密度；64 位 pinned QuickJS 为 16B，当前 16B 内部值已是同尺寸基线。
 2. **quickening + 更深 IC**（纯安全 Rust，QuickJS 没有）—— 确定的优势点。
 3. **派发改造**：stack caching 先行，评估后再决定是否寄存器式 VM；配 superinstruction。
 4. **分配器**：bump + 内联属性 + 去 arena/`RefCell`/`Result` 间接。
@@ -686,7 +686,7 @@ S2.2 是安全的增量（对象属性读 S1→S2 −7%）；S2.1/S2.3 的正确
 
 这份比较取代原 S3 计划。S3 已据此定稿为 **`docs/reports/performance-architecture.md`**：
 「8B 值表示 + quickening + 数据导向堆」的组合，而不是单纯的 16B 瘦身。
-相对上面第 1 条有一处关键修正：8B 值表示**不需要 unsafe**——本项目句柄
-本就是 arena 索引（`ObjectId{index,generation}`），把 u32 索引装进 NaN
-payload 是纯位运算，「索引 NaN-box」在安全 Rust 内成立；受审计 unsafe
-降级为保留席位（performance-architecture.md 方案 F）。
+其中 8B 值表示**不需要 unsafe**：本项目句柄本就是 arena 索引
+（`ObjectId{index,generation}`），把索引装进 NaN payload 是纯位运算，
+「索引 NaN-box」在安全 Rust 内成立；`unsafe` 降级为保留席位
+（performance-architecture.md 方案 F）。
