@@ -290,16 +290,12 @@ fn release_displaced(
             "non-direct binding passed a direct release preflight",
         ));
     };
-    // Between the initial proof and this commit, only moves and possibly one
-    // retain occurred. Neither can invalidate the no-drain proof.
-    if !runtime
-        .try_release_slot_value_jsvalue(&mut old)
-        .map_err(runtime_error_to_vm_error)?
-    {
-        return Err(cold::internal(
-            "slot release proof changed without a callback",
-        ));
-    }
+    // The caller proved `Ready` in the same instruction handling. Between
+    // that proof and this commit only moves and possibly one retain occurred;
+    // neither can drain or invalidate the no-drain proof.
+    runtime
+        .release_slot_value_jsvalue_ready(&mut old)
+        .map_err(runtime_error_to_vm_error)?;
     Ok(())
 }
 
