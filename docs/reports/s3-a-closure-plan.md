@@ -1,6 +1,7 @@
 # 阶段 A 收口计划：所有权事务窄修与帧槽瘦身（T1/T2）
 
-> 状态：计划中（2026-09-23），尚未实施。对应路线：
+> 状态：T1 已实施并实测（2026-09-23，结果见
+> [s3-a-plan.md §8.14](s3-a-plan.md)）；T2 待实施。对应路线：
 > [架构 §11](performance-architecture.md) 修订后的
 > **E（已完成）→ 残余批（T1 + T2 + 字符串簇归因）→ A4 决策点 → D**；
 > B 重新立项、C 已关闭，均不在本计划内。
@@ -14,11 +15,13 @@
 - 阶段 C 按负结果关闭、B/C 实现整体回退：[阶段 C 负结果与撤回落](s3-c-negative-result.md)。
   当前代码树 = `bcfb4fe5`，代码内容与 A 终版 `d4f78697` 逐字节一致
   （`git diff d4f78697 38fbb5fc` 仅 docs 与 benchmark README）。
-- E 的固定行（m0/pre-A）：bigint32 墙钟 0.79–0.84 / 指令 0.98（已快于
-  pre-A）；bigint64 ~0.90 / 1.12；bigint256 **1.21 / 1.43**。
+- E 的固定行（m0/pre-A）：bigint32 墙钟 0.79–0.84 / 指令 0.96（已快于
+  pre-A）；bigint64 ~0.90 / 1.05；bigint256 **1.21 / 1.32**（指令列
+  2026-09-23 按 final 构建直测更正，原 0.98/1.12/1.43 与 head 构建同源；
+  见 [s3-full-rerun-results.md](s3-full-rerun-results.md) §4.6）。
   fixed 字符串簇回退：`string_build1` 1.170、`string_build3` 1.178、
   `string_build_large1` 1.170、`int_to_string` 1.204、`map_delete` 1.128
-  （尚未归因，见 T1.5）。
+  （T1.5 已归因并窄修，见 §8.14）。
 
 ### 1.2 归因修正（已提交 `c1805e9d`）
 
@@ -147,6 +150,10 @@ ownership 成本与 32B 帧槽算进宽度账。
 
 ### T1.4（可选）自赋值消解
 
+- 状态（2026-09-23）：已评估、未实施。`assign_local.js` 局部残余确认
+  （指令/操作 +13.8% nolto / +20.9% lto vs pre-A），但适用面仅字面自
+  赋值，对 bigint256 等实际 workload 无效；暂缓，保留为可选项（见
+  [s3-a-plan.md §8.14](s3-a-plan.md)）。
 - 触发条件：T1.1–T1.3 实测后 `a=a` 仍有显著残余。
 - 方案：PutLocal/SetLocal 快路径比较 old/next 句柄相同 → 跳过
   replace + release（SetLocal 同时丢弃 TOS 副本，净效果为零）；不做
@@ -164,11 +171,12 @@ ownership 成本与 32B 帧槽算进宽度账。
   `dup_jsvalue`（string_build1 基准 1.6M 次），perf annotate 显示其周期
   占比 14.6%，热点在 Result 返回槽编组与校验事务——同一 ownership 事务税。
 - 窄修（提交 `28a47f32`）：常量池节点在整帧执行期间持有该边，改 trusted
-  `retain_live_string_handle`。隔离实测 LTO 指令：build1 −4.6%、
-  build3 −3.3%、large1/large2 −3.0%，int_to_string/map_delete 中性；
-  LTO 墙钟 −32%/−10%/−14%/−7%。累计对 A：string_build* 由回退转为领先
-  （LTO 墙钟 0.76–0.93），`int_to_string`/`map_delete` 仍 +11~15%，
-  交 D/A4 归因。
+  `retain_live_string_handle`。隔离实测 LTO 指令：build1 −6.5%、
+  build3 −3.1%、large1/large2 −4.0%/−2.8%，int_to_string/map_delete
+  −3.6%/−0.3%；LTO 墙钟 −21%/−11%/−8%/−10%。相对 A 终版全面领先
+  （LTO 墙钟 0.79–0.92），对 pre-A 差距收窄（`int_to_string`/`map_delete`
+  仍 +12~15%），交 D/A4 归因。最终数据见
+  [s3-a-plan.md §8.14](s3-a-plan.md)。
 
 ### T1.6 热路径内联钉住（实施中新增）
 

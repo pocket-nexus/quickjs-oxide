@@ -1209,7 +1209,7 @@ property probe（20M 次、3 repeats）：prop_read_int 227.69→159.44 ns（−
 > （T1 所有权事务窄修 / T2 帧槽 24B），并纳入 E 同协议重测新增的 fixed
 > 字符串簇（`string_build1/3/large1`、`int_to_string`）与 `map_delete`
 > 归因；bigint256 以 [全量重测结果](s3-full-rerun-results.md) §4.6 为准
-> （m0/pre-A 墙钟 1.21×、指令 1.43×）。
+> （m0/pre-A 墙钟 1.21×、指令 1.32×）。
 
 ### 8.13 窄补丁收尾与 LTO 双协议对照（2026-09-22）
 
@@ -1260,3 +1260,88 @@ property probe（20M 次、3 repeats）：prop_read_int 227.69→159.44 ns（−
 2. **发布配置（LTO）下阶段 A 仍是净回退**：V8 八项全负（−3~−19%），scaling 约持平；LTO off 下的净收益画面有相当成分来自「pre-A 没机会做跨模块内联」。navier-stokes/typed-index 的翻转（insn 持平、cycles 大幅变差）是典型样本。
 3. 属性读、Map 构造、insert、prop-delete（insn 口径）在两个协议下都是真实结构性收益。
 4. **门禁含义**：按 §5 的发布协议（双方 fat LTO + CGU=1、无 PGO、无 profiling），回退台账须以 lto 列为准重新裁决。E 已完成同协议重测并冻结基线（[全量重测结果](s3-full-rerun-results.md)，2026-09-23）；PGO 双边复核另列，不是普通阶段比较的前提。保留同协议 pre-A 对照，不能因冻结 E 后基线而抹去阶段 A 的回退。这组数据用于 T1/A4 的候选排序，但 LTO 后仍有差距并不证明全部来自值宽度或栈流量；应在发布配置下重新归因，再分配给 T1/A4/D（C 已关闭、B 不在活动路线）。
+
+### 8.14 T1 所有权事务窄修：实施与实测（2026-09-23）
+
+对应 [收口计划](s3-a-closure-plan.md) §3。全部改动已提交并推送；T1.4 经评估未实施。
+
+#### 提交台账
+
+| 项 | 提交 | 内容 |
+| --- | --- | --- |
+| T1.0 | `bac6581d` | `u32::MAX` 饱和计数按 immortal 释放：`try_release_leaf_reference`/`release_raw_no_drain`/对象路径不递减不退休；新增 `immortal_release_tests` |
+| T1.1 | `a7c496b3` | `retain_live_string_handle`/`retain_live_bigint_handle`；`copy_reference` 叶分支 trusted retain |
+| T1.2 | `8c81e9cc` | `release_displaced` trusted commit（`release_slot_value_jsvalue_ready`） |
+| T1.3 | `a00f1c92` | `unique_string_mut`/`unique_bigint_mut` 唯一性预过滤 |
+| T1.5 | `28a47f32` | `constant_string` 常量池边 trusted retain |
+| T1.6 | `ca14ae98` | `PropertyReadCache::read_location` `#[inline(always)]` 钉住 |
+| 归因/文档 | `c1805e9d`/`50734153`/`e7fdec2f`/`671845da` | §1.2 归因修正、T1.5/T1.6 记录 |
+
+#### 守卫矩阵（T1 全量 vs A 终版；同协议配对轮换 3 次中位）
+
+| workload | nolto insn | nolto cyc | lto insn | lto cyc |
+| --- | ---: | ---: | ---: | ---: |
+| assign | −2.8% | −1.0% | −3.1% | −1.1% |
+| add_one | −2.3% | −0.6% | −2.8% | −2.7% |
+| mul | −1.7% | −3.6% | −2.4% | −1.5% |
+| concat | −1.7% | +2.7% | −2.1% | −1.2% |
+| bigint32 | −3.3% | +5.5% | −2.3% | −0.4% |
+| bigint64 | −4.8% | +1.4% | −3.9% | −2.8% |
+| bigint256 | −7.3% | −1.6% | −7.0% | −0.7% |
+
+证据 `target/t1-ab/raw-{nolto,lto}-t15exp`；instructions 全负且为主要信号，cycles 个别正值在噪声带内。
+
+#### bigint256：同协议 pre-A / A / T1（5 次轮换中位）
+
+nolto（pre-A = E 认证 `17694ed4` 二进制；A = `target/final-plain-cargo`；T1 = `nolto-t15exp`）：
+
+| engine | wall ms | wall/pre-A | cyc/pre-A | insn/pre-A |
+| --- | ---: | ---: | ---: | ---: |
+| pre-A | 557 | 1.000 | 1.000 | 1.000（7.26G） |
+| A | 670 | 1.205 | 1.220 | 1.319（9.57G） |
+| T1 | 654 | **1.176** | **1.190** | **1.222（8.87G）** |
+
+lto（pre-A = `85afd564` 同 flags 重建；A = `target/final-lto`；T1 = `lto-t15exp`）：
+
+| engine | wall ms | wall/pre-A | cyc/pre-A | insn/pre-A |
+| --- | ---: | ---: | ---: | ---: |
+| pre-A | 426 | 1.000 | 1.000 | 1.000（6.18G） |
+| A | 603 | 1.417 | 1.421 | 1.388（8.58G） |
+| T1 | 577 | **1.356** | **1.354** | **1.290（7.98G）** |
+
+- T1 vs A：nolto 墙钟 −2.4%、指令 −7.4%（cycles 持平）；lto 墙钟 −4.3%、指令 −7.1%。
+- nolto 下指令 −7.4% 而 cycles 不动 → 剩余瓶颈为 stall，而非指令吞吐。
+- 对 pre-A 仍 +17.6%（nolto 墙钟）/+35.6%（lto 墙钟）；发布协议（lto）下 bigint256 结构税远未闭合，交 T2/A4。
+- 口径更正：E 文档 §4.6 的 instructions 列 0.98/1.12/1.43 与 final 构建直测 0.96/1.05/1.32 不符、更接近 head 构建（0.99/1.10/1.41）；已按 final 直测更正（`s3-full-rerun-results.md` §4.6）。
+
+#### 字符串簇固定行（T1 vs A，3 次轮换中位，wall / cyc / insn）
+
+| case | nolto | lto |
+| --- | --- | --- |
+| string_build1 | 0.878 / 0.860 / 0.952 | 0.789 / 0.772 / 0.935 |
+| string_build3 | 0.902 / 0.895 / 0.974 | 0.890 / 0.878 / 0.969 |
+| string_build_large1 | 0.921 / 0.921 / 0.971 | 0.924 / 0.916 / 0.960 |
+| string_build_large2 | 0.904 / 0.899 / 0.975 | 0.898 / 0.893 / 0.972 |
+| int_to_string | 0.958 / 0.960 / 0.959 | 0.991 / 0.995 / 0.964 |
+| map_delete | 0.994 / 1.000 / 1.006 | 1.000 / 1.001 / 1.003 |
+
+- 相对 A 终版全面领先；按 nolto 口径与 E 回退比值（§1.1）复合，对 pre-A 墙钟差从 +13~20% 收窄到约 +3~8%（`string_build1` 基本持平），`int_to_string`/`map_delete` 仍 +12~15%，交 D/A4。
+- 机制：`constant_string`（`conversion_driver/local_add.rs:245`）原每次 fused local-add 对常量池 String 走 checked `dup_jsvalue`（string_build1 基准 1.6M 次、周期占比 14.6%）；改为 trusted `retain_live_string_handle`。
+
+#### 属性读探针（T1 vs A，wall ns/op，20M 迭代 × 5 次中位）
+
+| protocol | prop_read_int | prop_read_obj | prop_read_string |
+| --- | ---: | ---: | ---: |
+| nolto | +2.4% | −5.2% | +7.2% |
+| lto | +2.9% | +7.2% | +9.3% |
+
+指令中性。T1.6 已证：`lto-t10`（仅加两个永不跳转比较、指令与基线逐位相同）已使 obj/string 墙钟 +5~6%，t11→t13 单调放大；故此残余判为布局噪声带内，不再逐项追打（`read_location` 钉住已收回 int 与 bigint 固定行）。
+
+#### T1.4：已评估未实施
+
+`assign_local.js`（2M 次字面自赋值）指令/操作：pre-A 1564.2 → A 1955.1 → T1 1780.2（nolto）；1388.7 → 1802.8 → 1678.8（lto）。消解路径（句柄相同 → 不换槽、新边非终直减）约省 14% 事务周期，但适用面仅字面自赋值：全局绑定 `assign.js` 不走此路且已比 pre-A 快 9.4%，官方 bigint256 无自赋值、不受益。经讨论暂缓，保留为可选项。
+
+#### 验收状态
+
+- 已过：`cargo fmt --check`、MSRV 1.88 clippy `-D warnings`、workspace 测试 2306 全绿。
+- 待跑（阶段收尾）：Test262 冻结向量零回归（pass=79982/eligible=80032/total=102037）、source-layout 门禁、双协议 scaling/V8 复测；完成后补记本节。
