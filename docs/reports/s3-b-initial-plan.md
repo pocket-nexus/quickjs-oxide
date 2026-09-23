@@ -1,11 +1,23 @@
 # S3-B 首批实施计划：只读 QuickOp 与基础派发
 
-> 状态：设计与待执行计划，2026-09-22；尚未实现或测得收益。
+> **2026-09-23 撤回落：** B 首批与 C 在实现上耦合（B1c/B1d 复用 C 的 TOS
+> facade 与数值 handler），已随 C 一并回退到 `bcfb4fe5`；B 自身也未通过
+> 默认启用门禁。依据见 [阶段 C 负结果与撤回落](s3-c-negative-result.md)。
+> 本文保留为首批设计与历史状态。
+
+> 状态：2026-09-22 B1a–B1d 已实现并与 C2–C4 集成，已通过本轮集中正确性验收。
+> 33-tag 只读 codec、发布认证、共享热 handler 和 QuickOp 执行入口均已接入。
+> B1e 当前保持默认 canonical；新布局和派发尚未完成成本验收，不能宣称默认启用。
+> 实现后定向 profile 的 B+C 八项均慢于当前 canonical，存在显著二次分类成本；
+> 数字与 CPU 热点见实施记录 §7，不将 Quick 命中率当作加速结论。
+> 当前交付与验收见 [B/C 集成实施记录](s3-bc-implementation.md)。
+> [第二批记录](s3-c-b-next.md) 的嵌套 cold RSS 超限属于旧布局，不能推定新布局已解决。
 > 与 [S3-C 计划](s3-c-plan.md) 配套，依据
 > [performance-architecture.md](performance-architecture.md) §5、§7、§11。
 > 本文把 §5.4 第一步“发布译码＋切换派发”拆成可与 C 并行的工作包。
 > 初读源码为 `60d1a9ee`，收尾复核为外部工作推进后的 `d4f78697`。
-> 本次只新增文档，不修改实现、不执行提交或推送。
+> 默认构建不生成 QuickOp；`oxide_quick_projection` 只建表，
+> `oxide_quick_dispatch` 同时建表并执行热 word；均非公共 API/CLI 开关。
 
 ## 0. 首批范围与交付边界
 

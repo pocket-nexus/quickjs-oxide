@@ -1,12 +1,24 @@
 # S3-C 实施计划：栈顶缓存、直接存储事务与静态融合
 
-> 状态：设计与待执行计划，2026-09-22。本文不声明阶段 C 已实现或已有性能收益。
+> **2026-09-23 关闭（负结果）：** C1–C4 已按 benchmark/profile 结论撤销，
+> 代码树回到本计划起点 `bcfb4fe5`；不再作为当前路线推进。撤销依据与归因见
+> [阶段 C 负结果与撤回落](s3-c-negative-result.md)。本文保留为实施计划与
+> 历史状态。
+
+> 状态：2026-09-22 C1–C4 实现与 B 首批已完成集成，已通过本轮集中正确性验收。
+> C2 标量 TOS、C3 String/heap BigInt 数值结果缓存、C4 StoreDrop 均为内部实验配置；
+> 尚未完成本批性能接受，不能把实现状态当作 C6 已关闭。C5 按可选条件不启动。
+> 实现后定向 profile 已观察到 C 组合的缓存/准入成本超过收益，保持默认关闭；
+> 具体时间、机器指令与 CPU 热点见实施记录 §7，不扩大为全矩阵结论。
+> 当前交付与验收见 [B/C 集成实施记录](s3-bc-implementation.md)；
+> [开头记录](s3-c-b-opening.md)、[第二批记录](s3-c-b-next.md) 与
+> [C2 边界审计](s3-c2-boundary-audit.md) 保留为对应旧快照的历史证据。
 > 依据：最新 [performance-architecture.md](performance-architecture.md) §7、§11，
 > [阶段 A §8.12 历史实测](s3-a-plan.md#812-第二轮回退修复并行根因确认与实测关闭2026-09-22)
 > 与 [§8.13 LTO 双协议对照](s3-a-plan.md#813-窄补丁收尾与-lto-双协议对照2026-09-22)。
-> 实现核对快照仍为 `d4f78697`；其后的 C/B 计划及统一协议更新仅涉及文档。
+> 设计基于 `d4f78697`；本轮从计划与统一协议更新后的 `bcfb4fe5` 开始实施。
 > 现行回退裁决使用 §8.13 的 LTO 列与后续同协议重测，旧无 LTO 热点只作线索。
-> 本次同步证据引用与验收入口，不修改 C 的优化顺序、实现范围或接受门槛；
+> 本轮实施不修改 C 的优化顺序、实现范围或接受门槛；
 > 不把已有 gc/numeric 改动计为 C 的产出，也不据此宣称前置性能门禁已通过。
 
 ## 0. 先定结论与范围
@@ -230,13 +242,15 @@ Yield、Await、Throw、Return 或观察边界。沿用 `control_effect().target
    的热点汇编/指令数。建立“输入→计算→push→pop→store→release”的 owner 图。
 7. 审计所有 transaction/RunSlots 构造点、直接 backing 操作、所有 run 出口，
    为每项标记 cache-aware 或 canonical-only；此表是 C2 的接线检查表。
-8. 核对历史 58 fixed、67 compile、9 original replay 输入是否可获得。当前
-   checkout 缺 README 示例中的 fixed manifest 与 S07 replay receipt，不能
-   直接照抄路径。恢复原始文件并验哈希；不能恢复时见 §6.3。
+   本轮已形成 [C2 边界审计](s3-c2-boundary-audit.md)，后续实现逐项勾选并验证，
+   不能将静态审计当作缓存边界已接通。
+8. 核对历史 58 fixed、67 compile、9 original replay 输入是否可获得。本轮已
+   从本地历史工作区恢复全部输入并逐文件验哈希，实际路径与原始 receipt 身份见
+   [实施记录](s3-c-b-opening.md)。其它机器仍须验证这些外部输入；不能恢复时见 §6.3。
 9. 若实施阶段需要对未提交源码做正式测量，先为 `build.py` 增加与 compile
    builder 同类的冻结源码导出/完整 manifest 验证：输出在导出目录外，构建前后
    核验全部文件，不使用祖先 Git 身份，receipt 记录导出/补丁/环境/二进制哈希。
-   这是待实现的工具小项，当前 `build.py` 尚无该参数；完成 runner 测试后才准入。
+   本轮已实现 `--repo` / `--source-manifest`，并通过构建准入回归测试。
    已有可认证干净快照时无需该扩展，也无需为了本文执行提交。
 
 **关闭条件**：基线可认证，正确性起点无新增失败，热点与接受标准已在计时前
@@ -510,9 +524,10 @@ BigInt 不在该 runner 的 case 集合中。
 
 ### 6.3 缺失历史输入的处理
 
-当前仓库没有 `docs/reports/data-structure-fixed-final.json`，也没有 README
-所指 S07 replay receipt/源文件目录。`target/final-run` 的 A 阶段记录虽存在，
-不能冒充这些历史输入，也不能将 LTO-off 二进制直接作 C 的正式分母。
+历史 manifest 与 replay 源码不随仓库跟踪。本轮已恢复到
+`target/s3-c-opening/inputs/`，逐文件认证见 [实施记录](s3-c-b-opening.md)。
+README 示例路径在其它工作区仍可能不存在；`target/final-run` 的 A 阶段记录
+不能冒充历史输入，也不能将 LTO-off 二进制直接作 C 的正式分母。
 
 C0 按原 evidence 索引找回 manifest/receipt/源文件，逐文件核验 SHA-256；
 只重建文档有明确配方且可验原哈希的内容。恢复不成则登记缺口，另行冻结新
@@ -582,7 +597,8 @@ PY
 不对称参数；上面的 unset 不是完整环境认证。阶段 receipt 必须哈希所有参与
 构建的源码，包含未跟踪的新实现文件，`git diff` 本身不覆盖它们。
 
-`build.py` 当前要求干净 worktree。以下只在已认证的干净阶段快照里执行，
+`build.py` 接受干净 worktree，或带完整 `--source-manifest` 的冻结导出。
+以下默认在已认证的干净阶段快照里执行；导出模式另传 `--repo` 和 manifest，
 saved/previous/candidate 及 pre_a_release 分别构建认证，使用各自独立输出目录；
 不能为通过脚本擅自提交现有工作区。尚未冻结的实现可做定向诊断，不能声称
 正式测量已完成。
@@ -595,12 +611,12 @@ python3 scripts/benchmark/build_compile_probe.py \
   --repo "$PWD" --output "$C_STAGE/compile-probe"
 ```
 
-plain 为 `$C_STAGE/plain/release/qjs`；compile 为
+无 target triple 覆盖时，plain 为 `$C_STAGE/plain/release/qjs`；compile 为
 `$C_STAGE/compile-probe/target/release/oxide-compile-probe`。
-`build.py` 的 receipt 不完整记录 Cargo profile 环境覆盖，compile builder
-也不自动继承主仓库 profile；因此 `build-environment.json` 与实际 build log
-必须随二进制一起归档，双方均应用本节环境。冻结源码导出另按 compile builder
-的 `--source-manifest` 协议认证，不假冒成某个父目录的 Git 源码身份。
+CLI receipt 现已记录 Cargo profile/target 环境覆盖，并从 Cargo JSON 认证实际
+产物路径。compile builder 不自动继承主仓库 profile；因此仍将
+`build-environment.json` 与实际 build log 随二进制归档，双方均应用本节环境。
+两类 builder 的冻结导出共享完整源码认证，不使用父目录的 Git 源码身份。
 
 ### 8.2 正确性命令
 

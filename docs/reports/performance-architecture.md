@@ -336,6 +336,19 @@ String/BigInt 堆化两个阶段，原子瘦身提前至 A0-a），保留仅供�
   DestinationPropagation 曾合并条件分支站点致同类解释器 −30~50%——
   **每次升 rustc 必须数二进制里的间接跳转**。此项是选项不是地基，最后做。
 
+> 2026-09-22 实施状态：C1 直接存储、C2 单槽标量缓存、C3 数值 String/heap BigInt
+> 结果直存与 C4 认证 StoreDrop 已接线；B 首批的 33-tag QuickOp 复用同一 facade
+> 和数值 handler。C2–C4/QuickOp 为内部实验，默认仍为规范栈与规范取指，
+> C5 无启动证据而跳过。具体实现、正确性 receipt 与未关闭性能验收见
+> [B/C 集成实施记录](s3-bc-implementation.md)，不将代码落地等同于预计收益兑现。
+> 实现后本机定向 profile 显示缓存准入、缓存操作和 Quick 二次分类增加工作量；
+> 八项 B+C 均未获得净加速，实验继续关闭，完整验收仍未完成。
+>
+> 2026-09-23 撤销：C1–C4 与 B 首批实现已整体回退到 `bcfb4fe5`。同协议全量
+> 重测与 profile 未支持净收益（时间不优于默认 m0，机器指令上升 14%–54%）；
+> 归因见 [阶段 C 负结果与撤回落](s3-c-negative-result.md)。§7“收割不重写”
+> 的假设在本轮实现中未兑现，后续若重启须重新设计并独立验收。
+
 ## 8. F：受审计 unsafe 保留席位
 
 A–E 全部不需要 unsafe。仅当落地后 profile 点名具体位置（trusted 访问器的
@@ -476,6 +489,8 @@ LTO 列及后续同协议重测结果裁决，不直接继承旧协议的关闭�
    实证），不再无条件执行。
 4. **C：TOS/accumulator 缓存**：被 profile 直接点名的栈流量成本，
    「收割不重写」，风险低；可与 B 首批并行。
+   （2026-09-23 关闭：实现已按负结果撤销，见
+   [阶段 C 负结果与撤回落](s3-c-negative-result.md)。）
 5. **B：quickening**：把已验证的 borrowed fast path 模式经特化 opcode
    系统化；差异化主菜，在稳定基线 + C 收割后推进。
 6. **D：数据导向堆**：BigInt/String 叶子紧凑 arena（收 440B 槽跨步的
