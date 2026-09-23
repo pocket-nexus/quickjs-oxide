@@ -160,6 +160,21 @@ ownership 成本与 32B 帧槽算进宽度账。
   事务税；若是，评估纳入 T1.1/T1.3 覆盖面或另立窄修；若否，记录归因
   交 D/A4，不强行修。
 
+### T1.6 热路径内联钉住（实施中新增）
+
+- 现象：T1.0–T1.3 落地后 LTO 协议下属性读探针回退：`prop_read_int`
+  墙钟 +13%、指令数不变、前端停顿约 3 倍（`read_location` 由内联翻为
+  outlined，perf 符号占比 0.43% → 6.25%）。
+- 二分结论：非语义回退。移除 T1.0 MAX 检查（`lto-z-nomax`）或回退
+  T1.1（`lto-no-t11`）均不恢复；仅加两个永不跳转比较的 T1.0 单独构建
+  （`lto-t10`，指令数与基线逐位相同）已使 obj/string 墙钟 +5~6%。
+- 处理：`PropertyReadCache::read_location` 加 `#[inline(always)]`
+  （提交 `ca14ae98`），int 墙钟恢复基线 1.01×、指令 0.0% 变化、
+  bigint 固定行无影响。
+- 残余：obj/string LTO 墙钟 +5~9%（指令中性），nolto 中性/正向
+  （obj −7.3%）；判为布局噪声带内，最终以官方 property 套件复测。
+- 不做：其余内联钉住（无因果证据且增指令），避免 whack-a-mole。
+
 ## 4. T2：FrameBinding 32B → 24B
 
 ### 4.1 现状
@@ -220,7 +235,8 @@ ownership 成本与 32B 帧槽算进宽度账。
 - 基准：双协议（LTO off + CGU16 与 fat LTO + CGU=1）配对轮换，
   **instructions 为主信号**；固定行 = bigint32/64/256、scaling、
   V8、fixed 字符串簇、`a=a` 等微负载。
-- 不回退：属性读/property、map 构造、insert 等 A 既有收益。
+- 不回退：属性读/property、map 构造、insert 等 A 既有收益；LTO 墙钟
+  残余差异须与同构建 A/A 噪声及 T1.6 布局证据对照后再判。
 - T2 另加：尺寸断言、owned-storage 计数/RSS、帧密集微负载。
 - 每项独立提交，可单独回退；不得跨项混合提交。
 
