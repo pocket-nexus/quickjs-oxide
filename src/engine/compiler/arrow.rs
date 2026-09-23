@@ -283,24 +283,48 @@ impl<'source> Parser<'source> {
         self.finish_identifier_parameter_environment()?;
         self.functions[child].context.in_function_body = true;
 
-        let range_end = if block_body {
-            self.parse_function_body()?;
-            let closing_brace = self.current().span;
-            self.relex_current_with_context(parent_context)?;
-            self.expect_punctuator(Punctuator::RightBrace)?;
-            closing_brace.end.byte_offset
+        // Every arrow is one parser edge; a braced body adds its own frame
+        // cost, matching the pinned first-throw depths for concise (`x=>`)
+        // and block-bodied (`x=>{`) arrow chains.
+        let arrow_weight = self
+            .stack_guard
+            .enter(super::stack_guard::ParserStackFrame::Arrow)
+            .map_err(|_| self.syntax_here("stack overflow"))?;
+        let body_result = if block_body {
+            let block_weight = self
+                .stack_guard
+                .enter(super::stack_guard::ParserStackFrame::ArrowBlockBody)
+                .map_err(|_| self.syntax_here("stack overflow"))?;
+            let result = self.parse_function_body();
+            if result.is_ok() {
+                self.stack_guard.leave(block_weight);
+            }
+            result
         } else {
-            self.parse_assignment()?;
-            self.emit_instruction(Instruction::Return)?;
-            let range_end = self
-                .tokens
-                .get(self.cursor.saturating_sub(1))
-                .map_or(self.current().span.start.byte_offset, |token| {
-                    token.span.end.byte_offset
-                });
-            self.relex_current_with_context(parent_context)?;
-            range_end
+            self.parse_assignment()
         };
+        let range_end = match body_result {
+            Ok(()) => {
+                if block_body {
+                    let closing_brace = self.current().span;
+                    self.relex_current_with_context(parent_context)?;
+                    self.expect_punctuator(Punctuator::RightBrace)?;
+                    closing_brace.end.byte_offset
+                } else {
+                    self.emit_instruction(Instruction::Return)?;
+                    let range_end = self
+                        .tokens
+                        .get(self.cursor.saturating_sub(1))
+                        .map_or(self.current().span.start.byte_offset, |token| {
+                            token.span.end.byte_offset
+                        });
+                    self.relex_current_with_context(parent_context)?;
+                    range_end
+                }
+            }
+            Err(error) => return Err(error),
+        };
+        self.stack_guard.leave(arrow_weight);
         self.functions[child].source.range = Some(
             source_offset(function_span)?
                 ..SourceOffset::try_from_usize(range_end)

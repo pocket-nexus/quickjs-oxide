@@ -119,6 +119,11 @@ impl<'source> Parser<'source> {
         );
         validate_source_length(source.len())?;
         let is_module = matches!(&context, RootCompileContext::Module);
+        let stack_context = if matches!(&context, RootCompileContext::Eval(_)) {
+            crate::engine::compiler::stack_guard::ParserStackContext::Eval
+        } else {
+            crate::engine::compiler::stack_guard::ParserStackContext::Direct
+        };
         let (
             root_kind,
             inherited_strict,
@@ -212,6 +217,9 @@ impl<'source> Parser<'source> {
             in_mode: InMode::Allow,
             anonymous_function_definition: None,
             pending_unsupported: None,
+            stack_guard: crate::engine::compiler::stack_guard::ParserStackGuard::new(stack_context),
+            with_head_object_pending: false,
+            spread_array_operand_pending: false,
             module: is_module.then(module::IrModule::default),
             module_declaration_export: ModuleDeclarationExport::None,
             module_declaration_export_target: None,

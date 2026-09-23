@@ -33,6 +33,13 @@ impl<'source> Parser<'source> {
     pub(in crate::engine::compiler) fn parse_call_arguments(
         &mut self,
     ) -> Result<CallArguments, Error> {
+        self.parse_recursion(
+            crate::engine::compiler::stack_guard::ParserStackFrame::CallArguments,
+            Self::parse_call_arguments_inner,
+        )
+    }
+
+    fn parse_call_arguments_inner(&mut self) -> Result<CallArguments, Error> {
         let mut argument_count = 0_usize;
         while !self.is_punctuator(Punctuator::RightParen) {
             // QuickJS accepts 65,535 encoded fixed arguments and only rejects
@@ -134,6 +141,19 @@ impl<'source> Parser<'source> {
         // QuickJS parses the constructor head with calls disabled but member
         // suffixes enabled. The following `(` therefore belongs to this `new`,
         // while calls after the completed construction remain postfix calls.
+        // Charge after the `new` keyword (and the `new.target` branch above)
+        // so the overflow is reported at the constructor token like pinned.
+        let weight = self.enter_recursion_weight_at_current(
+            crate::engine::compiler::stack_guard::ParserStackFrame::NewWithoutArguments,
+        )?;
+        let result = self.parse_new_constructor_tail();
+        if result.is_ok() {
+            self.leave_recursion_weight(weight);
+        }
+        result
+    }
+
+    fn parse_new_constructor_tail(&mut self) -> Result<(), Error> {
         self.parse_primary(false)?;
         loop {
             if self.is_punctuator(Punctuator::OptionalChain) {
@@ -152,7 +172,13 @@ impl<'source> Parser<'source> {
         let (arguments, construct_span) = if self.is_punctuator(Punctuator::LeftParen) {
             let call_span = self.current().span;
             self.advance()?;
-            (self.parse_call_arguments()?, call_span)
+            (
+                self.parse_recursion(
+                    crate::engine::compiler::stack_guard::ParserStackFrame::ConstructArguments,
+                    Self::parse_call_arguments_inner,
+                )?,
+                call_span,
+            )
         } else {
             (CallArguments::Fixed(0), no_arguments_span)
         };
@@ -337,6 +363,20 @@ impl<'source> Parser<'source> {
             return Err(self.syntax_here("invalid use of 'import()'"));
         }
 
+        // Charge after `import(` so the overflow is reported at the operand
+        // token like pinned's next_token, then release across the argument
+        // list and closing paren.
+        let weight = self.enter_recursion_weight_at_current(
+            crate::engine::compiler::stack_guard::ParserStackFrame::DynamicImport,
+        )?;
+        let result = self.parse_import_arguments(import_span);
+        if result.is_ok() {
+            self.leave_recursion_weight(weight);
+        }
+        result
+    }
+
+    fn parse_import_arguments(&mut self, import_span: Span) -> Result<(), Error> {
         // ImportCall accepts one required AssignmentExpression and at most one
         // options AssignmentExpression. Spread is not part of this grammar;
         // ordinary expression parsing therefore supplies QuickJS's exact

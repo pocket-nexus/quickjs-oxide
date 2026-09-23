@@ -53,7 +53,14 @@ for package in packages.values():
         if dependency.get("path") is not None and dependency["name"] not in expected_packages:
             fail("unreviewed path dependency is outside engine fingerprint coverage")
 for name, expected in {
-    "quickjs-oxide": {"checked_string_construction", "rust_only", "unsupported_diagnostics"},
+    "quickjs-oxide": {
+        "checked_string_construction",
+        "main_thread_stack_probe",
+        "parser_stack_depth",
+        "rust_only",
+        "spread_operand",
+        "unsupported_diagnostics",
+    },
     "quickjs-oxide-cli": {"cli", "oracle", "profiling"},
 }.items():
     targets = [t for t in packages[name]["targets"] if t.get("kind") == ["test"]]

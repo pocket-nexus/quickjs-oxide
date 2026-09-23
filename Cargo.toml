@@ -21,6 +21,12 @@ profiling = []
 [dev-dependencies]
 quickjs-oxide-host = { workspace = true, features = ["engine-test-support"] }
 
+# Real-main-thread stack-guard matrix; its fn main is the test body so Cargo
+# always builds the probe it spawns (no pre-built example artifact required).
+[[test]]
+name = "main_thread_stack_probe"
+harness = false
+
 [workspace]
 members = ["adapters/native", "adapters/web", ".", "apps/cli", "apps/web", "conformance/test262"]
 default-members = [".", "apps/cli"]

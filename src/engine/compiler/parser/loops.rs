@@ -50,7 +50,12 @@ impl<'source> Parser<'source> {
         let false_jump = self.emit_instruction(Instruction::IfFalse(u32::MAX))?;
         self.require_stack_depth(entry_depth, "while condition")?;
 
+        // The head is consumed; charge at the first controlled-body token.
+        let weight = self.enter_recursion_weight_at_current(
+            crate::engine::compiler::stack_guard::ParserStackFrame::StatementHead,
+        )?;
         self.parse_statement_or_decl(completion, StatementPosition::Single)?;
+        self.leave_recursion_weight(weight);
         self.require_stack_depth(entry_depth, "while body")?;
         self.emit_instruction(Instruction::Goto(
             u32::try_from(condition_target)
@@ -79,6 +84,11 @@ impl<'source> Parser<'source> {
         self.push_loop_control(entry_depth, label_name);
         self.advance()?;
 
+        // `do` has no head condition: the first controlled-body token follows
+        // the keyword immediately, so charge there for the pinned column.
+        let weight = self.enter_recursion_weight_at_current(
+            crate::engine::compiler::stack_guard::ParserStackFrame::StatementHead,
+        )?;
         // QuickJS targets the reset itself, so every entered iteration starts
         // with an undefined eval completion. A continue instead targets the
         // condition below and does not repeat this reset prematurely.
@@ -117,6 +127,7 @@ impl<'source> Parser<'source> {
         for jump in control.break_jumps {
             self.patch_jump(jump, break_target)?;
         }
+        self.leave_recursion_weight(weight);
         self.finish_control_statement();
         Ok(())
     }
@@ -234,7 +245,12 @@ impl<'source> Parser<'source> {
         if let Some(body_skip) = body_skip {
             self.patch_jump(body_skip, body_target)?;
         }
+        // The full head is consumed; charge at the first controlled-body token.
+        let weight = self.enter_recursion_weight_at_current(
+            crate::engine::compiler::stack_guard::ParserStackFrame::StatementHead,
+        )?;
         self.parse_statement_or_decl(completion, StatementPosition::Single)?;
+        self.leave_recursion_weight(weight);
         self.require_stack_depth(entry_depth, "for body")?;
         // Normal fallthrough closes the current head-binding cell before the
         // update creates the next iteration's cell. A `continue` targets the
@@ -412,7 +428,12 @@ impl<'source> Parser<'source> {
                 self.push_for_of_control(entry_depth, label_name, outer_scope)?;
             }
         }
+        // The full for-in/of head is consumed; charge at the body token.
+        let weight = self.enter_recursion_weight_at_current(
+            crate::engine::compiler::stack_guard::ParserStackFrame::StatementHead,
+        )?;
         self.parse_statement_or_decl(completion, StatementPosition::Single)?;
+        self.leave_recursion_weight(weight);
         self.require_stack_depth(record_depth, "for-in/of body")?;
         self.emit_scope_closures(scope, outer_scope)?;
 

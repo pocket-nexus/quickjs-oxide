@@ -94,7 +94,10 @@ impl<'source> Parser<'source> {
     /// complete nested scope tree is known.
     pub(in crate::engine::compiler) fn parse_assignment(&mut self) -> Result<(), Error> {
         if matches!(self.current().kind, TokenKind::Keyword(Keyword::Yield)) {
-            return self.parse_yield_expression();
+            return self.parse_recursion(
+                crate::engine::compiler::stack_guard::ParserStackFrame::Yield,
+                Self::parse_yield_expression,
+            );
         }
         if let Some(head) = self.async_arrow_ahead() {
             return self.parse_async_arrow_function(head);
@@ -105,6 +108,9 @@ impl<'source> Parser<'source> {
             return Err(self.syntax_here("invalid arrow function parameter"));
         }
         if let Some(head) = self.arrow_head_ahead() {
+            // An arrow head such as `[x]=>` owns the leading bracket; the
+            // spread-array charge was meant for an array-literal primary only.
+            self.spread_array_operand_pending = false;
             return self.parse_arrow_function(head);
         }
         // Destructuring assignment is recognized only after every arrow-head
@@ -115,6 +121,9 @@ impl<'source> Parser<'source> {
             return self.parse_object_assignment_expression();
         }
         if self.array_assignment_pattern_ahead() {
+            // `[...[x]=v]` parses the head bracket as an assignment pattern,
+            // not an array-literal primary, so no spread-array charge applies.
+            self.spread_array_operand_pending = false;
             return self.parse_array_assignment_expression();
         }
         // QuickJS's `name0` is captured only when the AssignmentExpression
@@ -194,7 +203,7 @@ impl<'source> Parser<'source> {
             {
                 self.advance()?;
                 self.validate_identifier_assignment_target(&target)?;
-                self.parse_assignment()?;
+                self.parse_assignment_rhs()?;
                 self.emit_instruction_at(operation, source_offset(assignment_span)?)?;
                 self.anonymous_function_definition = None;
                 if target.object_environment {
@@ -222,7 +231,7 @@ impl<'source> Parser<'source> {
                 return Err(self.syntax_here("invalid assignment left-hand side"));
             };
             self.advance()?;
-            self.parse_assignment()?;
+            self.parse_assignment_rhs()?;
             self.emit_instruction_at(operation, source_offset(assignment_span)?)?;
             self.anonymous_function_definition = None;
             self.emit_member_put(target)?;
@@ -233,7 +242,7 @@ impl<'source> Parser<'source> {
             self.advance()?;
             self.validate_identifier_assignment_target(&target)?;
             let rhs_start = self.current_ir().ops.len();
-            self.parse_assignment()?;
+            self.parse_assignment_rhs()?;
             self.inherit_source_marker_at(rhs_start, source_offset(target.span)?)?;
             let anonymous_rhs = self.take_anonymous_function_definition();
             if direct_identifier_name.as_deref() == Some(target.name.as_str())
@@ -274,7 +283,7 @@ impl<'source> Parser<'source> {
         };
         self.advance()?;
         let rhs_start = self.current_ir().ops.len();
-        self.parse_assignment()?;
+        self.parse_assignment_rhs()?;
         let site = match &target {
             MemberReference::Field { site, .. }
             | MemberReference::Computed { site }
@@ -312,7 +321,7 @@ impl<'source> Parser<'source> {
         let short_circuit_depth = self.current_ir().context.stack_depth;
 
         self.emit_instruction(Instruction::Drop)?;
-        self.parse_assignment()?;
+        self.parse_assignment_rhs()?;
         let anonymous_rhs = self.take_anonymous_function_definition();
         if infer_name && let Some(definition) = anonymous_rhs {
             let name_constant = self.add_constant(IrConstant::Primitive(Value::String(
@@ -400,7 +409,7 @@ impl<'source> Parser<'source> {
         let short_circuit_depth = self.current_ir().context.stack_depth;
 
         self.emit_instruction(Instruction::Drop)?;
-        self.parse_assignment()?;
+        self.parse_assignment_rhs()?;
         // Member assignment never applies NamedEvaluation to an anonymous RHS.
         self.anonymous_function_definition = None;
         self.emit_member_put(target)?;
@@ -436,14 +445,20 @@ impl<'source> Parser<'source> {
         let branch_stack = self.current_ir().context.stack_depth;
         // QuickJS parses the consequent with ordinary AssignmentExpression
         // even when the surrounding classic-for initializer is NoIn.
-        self.parse_assignment_allow_in()?;
+        self.parse_recursion(
+            crate::engine::compiler::stack_guard::ParserStackFrame::Conditional,
+            Self::parse_assignment_allow_in,
+        )?;
         self.expect_punctuator(Punctuator::Colon)?;
         let end_jump = self.emit_instruction(Instruction::Goto(u32::MAX))?;
         let joined_stack = self.current_ir().context.stack_depth;
 
         self.patch_jump(false_jump, self.current_ir().ops.len())?;
         self.current_ir_mut().context.stack_depth = branch_stack;
-        self.parse_assignment()?;
+        self.parse_recursion(
+            crate::engine::compiler::stack_guard::ParserStackFrame::Conditional,
+            Self::parse_assignment,
+        )?;
         self.anonymous_function_definition = None;
         if self.current_ir().context.stack_depth != joined_stack {
             return Err(Error::internal(
@@ -455,6 +470,13 @@ impl<'source> Parser<'source> {
         self.current_ir_mut().context.last_identifier_reference = None;
         self.current_ir_mut().context.last_optional_chain = None;
         Ok(())
+    }
+
+    fn parse_assignment_rhs(&mut self) -> Result<(), Error> {
+        self.parse_recursion(
+            crate::engine::compiler::stack_guard::ParserStackFrame::Assignment,
+            Self::parse_assignment,
+        )
     }
 
     /// QuickJS lowers a nullish-coalescing chain to one shared short-circuit
@@ -669,6 +691,13 @@ impl<'source> Parser<'source> {
         self.parse_unary_with_power(PowerMode::Allowed)
     }
 
+    fn parse_unary_operand(&mut self) -> Result<(), Error> {
+        self.parse_recursion(
+            crate::engine::compiler::stack_guard::ParserStackFrame::Unary,
+            |parser| parser.parse_unary_with_power(PowerMode::Forbidden),
+        )
+    }
+
     pub(in crate::engine::compiler) fn parse_unary_with_power(
         &mut self,
         power_mode: PowerMode,
@@ -698,7 +727,7 @@ impl<'source> Parser<'source> {
                 return Err(self.syntax_here("await in default expression"));
             }
             self.advance()?;
-            self.parse_unary_with_power(PowerMode::Forbidden)?;
+            self.parse_unary_operand()?;
             self.emit_instruction(Instruction::Await)?;
             self.anonymous_function_definition = None;
             self.current_ir_mut().context.last_member_reference = None;
@@ -709,7 +738,7 @@ impl<'source> Parser<'source> {
         if matches!(self.current().kind, TokenKind::Keyword(Keyword::Typeof)) {
             self.advance()?;
             let operand_start = self.current_ir().ops.len();
-            self.parse_unary_with_power(PowerMode::Forbidden)?;
+            self.parse_unary_operand()?;
 
             // Parentheses do not change an IdentifierReference into a value
             // expression, so both `typeof missing` and `typeof (missing)` use
@@ -732,7 +761,7 @@ impl<'source> Parser<'source> {
         if matches!(self.current().kind, TokenKind::Keyword(Keyword::Delete)) {
             self.advance()?;
             let operand_start = self.current_ir().ops.len();
-            self.parse_unary_with_power(PowerMode::Forbidden)?;
+            self.parse_unary_operand()?;
             // Chain close deliberately clears a terminal private Reference,
             // so optional private delete falls through to the ordinary
             // value-delete path: it performs the branded read when live and
@@ -814,7 +843,7 @@ impl<'source> Parser<'source> {
             TokenKind::Punctuator(Punctuator::Not) => Some(Instruction::Not),
             TokenKind::Keyword(Keyword::Void) => {
                 self.advance()?;
-                self.parse_unary_with_power(PowerMode::Forbidden)?;
+                self.parse_unary_operand()?;
                 self.emit_instruction(Instruction::Drop)?;
                 self.emit_instruction(Instruction::Undefined)?;
                 self.anonymous_function_definition = None;
@@ -824,7 +853,7 @@ impl<'source> Parser<'source> {
         };
         if let Some(operation) = operation {
             self.advance()?;
-            self.parse_unary_with_power(PowerMode::Forbidden)?;
+            self.parse_unary_operand()?;
             if matches!(
                 operation,
                 Instruction::Plus | Instruction::Neg | Instruction::BitNot
@@ -860,7 +889,10 @@ impl<'source> Parser<'source> {
 
         let operation_span = self.current().span;
         self.advance()?;
-        self.parse_unary_with_power(PowerMode::Allowed)?;
+        self.parse_recursion(
+            crate::engine::compiler::stack_guard::ParserStackFrame::Exponentiation,
+            |parser| parser.parse_unary_with_power(PowerMode::Allowed),
+        )?;
         self.emit_instruction_at(Instruction::Pow, source_offset(operation_span)?)?;
         self.anonymous_function_definition = None;
         Ok(())
@@ -1108,7 +1140,10 @@ impl<'source> Parser<'source> {
         if self.is_punctuator(Punctuator::LeftBracket) {
             let member_span = self.current().span;
             self.advance()?;
-            self.parse_expression()?;
+            self.parse_recursion(
+                crate::engine::compiler::stack_guard::ParserStackFrame::MemberAccess,
+                Self::parse_expression,
+            )?;
             self.expect_punctuator(Punctuator::RightBracket)?;
             let operation =
                 self.emit_instruction_at(Instruction::GetArrayEl, source_offset(member_span)?)?;

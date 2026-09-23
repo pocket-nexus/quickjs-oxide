@@ -221,10 +221,30 @@ impl<'source> Parser<'source> {
 
         self.advance()?;
         self.expect_punctuator(Punctuator::Colon)?;
+        // Pinned trips while fetching the first token of the labelled body
+        // (right after the colon), so charge there for the pinned column. The
+        // weight stays live across the body, including an attached loop's own
+        // statement-head charge, and is released once parsing returns.
+        let label_weight = self.enter_recursion_weight_at_current(
+            crate::engine::compiler::stack_guard::ParserStackFrame::Label,
+        )?;
+        let result = self.parse_labeled_statement_body(completion, position, label_name);
+        if result.is_ok() {
+            self.leave_recursion_weight(label_weight);
+        }
+        result
+    }
+
+    fn parse_labeled_statement_body(
+        &mut self,
+        completion: StatementCompletion,
+        position: StatementPosition,
+        label_name: String,
+    ) -> Result<(), Error> {
         match self.current().kind {
             // QuickJS passes a directly attached label into an iteration
             // statement's BlockEnv. A second label first becomes a regular
-            // labeled statement, preserving the pinned release's current
+            // labelled statement, preserving the pinned release's current
             // multiple-label continue behavior.
             TokenKind::Keyword(Keyword::While) => {
                 self.parse_while_statement(completion, Some(label_name))
@@ -235,47 +255,69 @@ impl<'source> Parser<'source> {
             TokenKind::Keyword(Keyword::For) => {
                 self.parse_for_statement(completion, Some(label_name))
             }
-            _ => {
-                let entry_depth = self.current_ir().context.stack_depth;
-                self.push_break_control(
-                    BreakControlKind::RegularStatement,
-                    Some(label_name),
-                    entry_depth,
-                    0,
-                );
-                let body_position =
-                    if !self.current_ir().strict && position.allows_labelled_annex_b() {
-                        StatementPosition::AnnexBLabelBody
-                    } else {
-                        StatementPosition::Single
-                    };
-                self.parse_statement_or_decl(completion, body_position)?;
-                self.require_stack_depth(entry_depth, "labeled statement")?;
-
-                let break_target = self.current_ir().ops.len();
-                let control = self.pop_break_control()?;
-                if !control.continue_jumps.is_empty() {
-                    return Err(Error::internal(
-                        "regular labeled statement received a continue jump",
-                    ));
-                }
-                for jump in control.break_jumps {
-                    self.patch_jump(jump, break_target)?;
-                }
-                self.finish_control_statement();
-                Ok(())
-            }
+            _ => self.parse_labeled_regular_body(completion, position, label_name),
         }
+    }
+
+    fn parse_labeled_regular_body(
+        &mut self,
+        completion: StatementCompletion,
+        position: StatementPosition,
+        label_name: String,
+    ) -> Result<(), Error> {
+        let entry_depth = self.current_ir().context.stack_depth;
+        self.push_break_control(
+            BreakControlKind::RegularStatement,
+            Some(label_name),
+            entry_depth,
+            0,
+        );
+        let body_position = if !self.current_ir().strict && position.allows_labelled_annex_b() {
+            StatementPosition::AnnexBLabelBody
+        } else {
+            StatementPosition::Single
+        };
+        self.parse_statement_or_decl(completion, body_position)?;
+        self.require_stack_depth(entry_depth, "labeled statement")?;
+
+        let break_target = self.current_ir().ops.len();
+        let control = self.pop_break_control()?;
+        if !control.continue_jumps.is_empty() {
+            return Err(Error::internal(
+                "regular labeled statement received a continue jump",
+            ));
+        }
+        for jump in control.break_jumps {
+            self.patch_jump(jump, break_target)?;
+        }
+        self.finish_control_statement();
+        Ok(())
     }
 
     pub(in crate::engine::compiler) fn parse_block_statement(
         &mut self,
         completion: StatementCompletion,
     ) -> Result<(), Error> {
+        // Pinned QuickJS checks its stack inside next_token while consuming
+        // the first body token after `{`. Charge the frame only after the
+        // opening brace has been consumed, so an exhausted budget is reported
+        // at the body token (column n+1) rather than at the brace (column n).
         self.advance()?;
         if self.is_punctuator(Punctuator::RightBrace) {
             return self.advance();
         }
+        let weight = self
+            .stack_guard
+            .enter(crate::engine::compiler::stack_guard::ParserStackFrame::Block)
+            .map_err(|_| self.syntax_here("stack overflow"))?;
+        let result = self.parse_block_statement_body(completion);
+        if result.is_ok() {
+            self.stack_guard.leave(weight);
+        }
+        result
+    }
+
+    fn parse_block_statement_body(&mut self, completion: StatementCompletion) -> Result<(), Error> {
         let scope = self.push_scope(ScopeKind::Block);
         while !self.is_punctuator(Punctuator::RightBrace) {
             self.parse_statement_or_decl(completion, StatementPosition::NestedList)?;
@@ -301,7 +343,14 @@ impl<'source> Parser<'source> {
         }
         self.advance()?;
         self.expect_punctuator(Punctuator::LeftParen)?;
-        self.parse_expression()?;
+        // An immediately-following `{` is the object-literal discriminant of
+        // `with(({...}))`, whose pinned C frame is smaller than an ordinary
+        // object literal. The primary-expression LeftBrace branch consumes
+        // the marker exactly once, so nested braces parse normally.
+        self.with_head_object_pending = self.is_punctuator(Punctuator::LeftBrace);
+        let head = self.parse_expression();
+        self.with_head_object_pending = false;
+        head?;
         self.expect_punctuator(Punctuator::RightParen)?;
 
         let scope = self.push_scope(ScopeKind::With);
@@ -331,7 +380,15 @@ impl<'source> Parser<'source> {
         if matches!(completion, StatementCompletion::Eval) {
             self.set_eval_ret_undefined()?;
         }
-        self.parse_statement_or_decl(completion, StatementPosition::Single)?;
+        // The `with (head)` prefix is consumed; charge at the body token.
+        let weight = self.enter_recursion_weight_at_current(
+            crate::engine::compiler::stack_guard::ParserStackFrame::StatementHead,
+        )?;
+        let result = self.parse_statement_or_decl(completion, StatementPosition::Single);
+        if result.is_ok() {
+            self.leave_recursion_weight(weight);
+        }
+        result?;
         self.pop_scope(scope)
     }
 
@@ -355,6 +412,10 @@ impl<'source> Parser<'source> {
         } else {
             StatementPosition::AnnexBIfArm
         };
+        // The head is consumed; charge at the first controlled-body token.
+        let weight = self.enter_recursion_weight_at_current(
+            crate::engine::compiler::stack_guard::ParserStackFrame::StatementHead,
+        )?;
         self.parse_statement_or_decl(completion, branch_position)?;
         let joined_stack = self.current_ir().context.stack_depth;
 
@@ -376,6 +437,7 @@ impl<'source> Parser<'source> {
             }
             self.patch_jump(false_jump, self.current_ir().ops.len())?;
         }
+        self.leave_recursion_weight(weight);
         self.current_ir_mut().context.last_member_reference = None;
         self.current_ir_mut().context.last_identifier_reference = None;
         self.current_ir_mut().context.last_optional_chain = None;
@@ -412,6 +474,10 @@ impl<'source> Parser<'source> {
 
         let mut pending_no_match = None;
         let mut default_target = None;
+        // Pinned's switch frame trips while fetching the first case-body
+        // statement token (the leaf in a `switch…default:` chain), not at the
+        // `switch` keyword. Charge once, when the first body statement starts.
+        let mut head_weight: Option<u64> = None;
         while !self.is_punctuator(Punctuator::RightBrace) {
             match self.current().kind {
                 TokenKind::Keyword(Keyword::Case) => {
@@ -468,12 +534,20 @@ impl<'source> Parser<'source> {
                     if pending_no_match.is_none() {
                         return Err(self.syntax_here("invalid switch statement"));
                     }
+                    if head_weight.is_none() {
+                        head_weight = Some(self.enter_recursion_weight_at_current(
+                            crate::engine::compiler::stack_guard::ParserStackFrame::StatementHead,
+                        )?);
+                    }
                     self.parse_statement_or_decl(completion, StatementPosition::NestedList)?;
                     self.require_stack_depth(switch_depth, "switch case body")?;
                 }
             }
         }
         self.advance()?;
+        if let Some(weight) = head_weight {
+            self.leave_recursion_weight(weight);
+        }
 
         let no_match_target = default_target.unwrap_or(self.current_ir().ops.len());
         if let Some(pending_no_match) = pending_no_match {

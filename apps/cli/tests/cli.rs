@@ -85,5 +85,7 @@ mod modules;
 #[path = "cli/options.rs"]
 mod options;
 
+#[path = "cli/parser_depth_columns.rs"]
+mod parser_depth_columns;
 #[path = "cli/rejections.rs"]
 mod rejections;

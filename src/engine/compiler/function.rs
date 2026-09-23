@@ -705,7 +705,10 @@ impl<'source> Parser<'source> {
             self.insert_generator_initial_yield()?;
         }
         self.functions[child].context.in_function_body = true;
-        self.parse_function_body()?;
+        self.parse_recursion(
+            super::stack_guard::ParserStackFrame::FunctionBody,
+            Self::parse_function_body,
+        )?;
         let closing_brace = self.current().span;
         self.relex_current_with_context(parent_context)?;
         self.expect_punctuator(Punctuator::RightBrace)?;
