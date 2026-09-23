@@ -402,6 +402,21 @@ per-runtime 表下帧不可能持有外来句柄，该收敛符合 §2 边界原
 回归（binding 与返回 root 共享一条 cell 边），由
 `immediate_cell_writes_*`/`captured_reads_*`/test262 pinned 用例捕获。
 
+**Test262 阶段收尾（`--full`，workers=12，2026-09-23）**：分类汇总与冻结
+向量逐项对照——`fail-parse=7`、`fail-runtime=43`、`skipped-config-exclude=6700`、
+`skipped-feature=11775`、`unsupported-feature=847`、`unsupported-module=121`
+全部不变；`pass` 79982 → 80010（+28），`unsupported-negative-provenance`
+2562 → 2534（−28）。+28 行经报告逐行核对，恰为 `00bb387f fix(lexer)` 新增的
+14 条精确诊断契约 ×2 变体（28 行全部 pass），即该改进在 T1/T2 之前就已并入，
+**T2 未引入任何 Test262 行级变化、零回归**。字节比对门禁因基线过旧退出 5：
+冻结 receipt 的结果字节与源码身份仍停留在 `022e7b48`（`00bb387f` 的 +28
+契约改进未随附 promotion），且任何源码演进都会改变工作区指纹（T1/T2 亦然）；
+`--focused` 按设计拒绝过旧源码，未跑。基线 promotion（重跑 full → 派生
+focused → 更新 `current.conf`/`docs/status.md`）留作独立事项。
+`python3 scripts/checks/check-source-layout.py` 通过（698 个 reachable
+Rust 文件）。证据：`target/s3-a-t2-test262-197162f5/`（full.log、TSV/JSONL、
+status.json）。
+
 ## 5. 排程
 
 1. T1.0（饱和语义）→ T1.1 → T1.2 → T1.3，各自独立提交 + 独立 A/B；
