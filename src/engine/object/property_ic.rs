@@ -71,6 +71,7 @@ impl PropertyReadCache {
         }
     }
 
+    #[inline(always)]
     fn read_location(
         location: Location,
         heap: &Heap,
