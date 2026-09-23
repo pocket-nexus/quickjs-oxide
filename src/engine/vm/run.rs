@@ -1273,13 +1273,13 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             | Instruction::SetLocalCheck(index)
                 if matches!(slots.local(*index)?, FrameBinding::Captured(_)) =>
             {
-                let stored = if let (FrameBinding::Captured(root), Some(definition)) = (
+                let stored = if let (FrameBinding::Captured(var_ref), Some(definition)) = (
                     slots.local(*index)?,
                     executable.local_definitions.get(usize::from(*index)),
                 ) {
                     super::bindings::try_write_immediate_cell(
                         runtime,
-                        &root,
+                        &crate::engine::heap::roots::VarRefView::from_frame(runtime, *var_ref),
                         slots.peek(0)?,
                         Some((definition.is_lexical, definition.is_const, definition.kind)),
                     )
@@ -1319,9 +1319,10 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             {
                 let immediate = if matches!(instruction, Instruction::GetArg(_)) {
                     match slots.parameter(*index)? {
-                        FrameBinding::Captured(root) => {
-                            super::bindings::read_run_cell(runtime, &root)
-                        }
+                        FrameBinding::Captured(var_ref) => super::bindings::read_run_cell(
+                            runtime,
+                            &crate::engine::heap::roots::VarRefView::from_frame(runtime, *var_ref),
+                        ),
                         _ => None,
                     }
                 } else {
@@ -1341,10 +1342,12 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         slots.parameter(*index)?,
                         executable.argument_definitions.get(usize::from(*index)),
                     ) {
-                        (FrameBinding::Captured(root), Some(definition)) => {
+                        (FrameBinding::Captured(var_ref), Some(definition)) => {
                             super::bindings::try_write_immediate_cell(
                                 runtime,
-                                &root,
+                                &crate::engine::heap::roots::VarRefView::from_frame(
+                                    runtime, *var_ref,
+                                ),
                                 slots.peek(0)?,
                                 Some((definition.is_lexical, definition.is_const, definition.kind)),
                             )
@@ -1441,10 +1444,12 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         }
                         true
                     }
-                    FrameBinding::Captured(root) => {
+                    FrameBinding::Captured(var_ref) => {
+                        let view =
+                            crate::engine::heap::roots::VarRefView::from_frame(runtime, *var_ref);
                         let fused = match executable.code.get(next_pc) {
                             Some(Instruction::GetField(key)) => {
-                                runtime.borrow_cell_object_fast(root).and_then(|base| {
+                                runtime.borrow_cell_object_fast(&view).and_then(|base| {
                                     borrowed_base_field_read(
                                         runtime,
                                         executable,
@@ -1463,7 +1468,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                             next_pc += 1;
                             true
                         } else if let Some((value, _owned)) =
-                            super::bindings::read_run_cell(runtime, &root)
+                            super::bindings::read_run_cell(runtime, &view)
                         {
                             slots.push(value)?;
                             #[cfg(feature = "profiling")]

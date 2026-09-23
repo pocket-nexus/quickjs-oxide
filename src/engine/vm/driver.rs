@@ -1621,12 +1621,12 @@ mod tests {
                     .is_none()
             );
             let frame = execution.frames.current_mut(id).unwrap();
-            let super::super::bindings::FrameBinding::Private(name) =
+            let super::super::bindings::FrameBinding::Private(atom_index) =
                 execution.slots.local(&frame.window, index).unwrap()
             else {
                 panic!("expected private identity owner")
             };
-            names.push(name.clone());
+            names.push(*atom_index);
             assert_eq!(frame.resume_pc, pc + 1);
             drop(execution);
             assert!(runtime.0.state.borrow().active_frames.is_empty());

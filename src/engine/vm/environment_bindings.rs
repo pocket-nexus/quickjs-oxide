@@ -54,10 +54,10 @@ pub(super) fn eval_variable_object<'a>(
             let binding = local(index).ok_or_else(|| {
                 Error::internal("eval variable-object local index is out of bounds")
             })?;
-            if let FrameBinding::Captured(root) = binding {
+            if let FrameBinding::Captured(var_ref) = binding {
                 runtime
                     .validate_var_ref_metadata(
-                        &root,
+                        &crate::engine::heap::roots::VarRefView::from_frame(runtime, *var_ref),
                         ClosureVariable {
                             source: ClosureSource::ParentLocal(index),
                             name: definition
@@ -147,10 +147,10 @@ pub(super) fn with_object<'a>(
             }
             let binding = local(index)
                 .ok_or_else(|| Error::internal("with-object local index is out of bounds"))?;
-            if let FrameBinding::Captured(root) = binding {
+            if let FrameBinding::Captured(var_ref) = binding {
                 runtime
                     .validate_var_ref_metadata(
-                        &root,
+                        &crate::engine::heap::roots::VarRefView::from_frame(runtime, *var_ref),
                         ClosureVariable {
                             source: ClosureSource::ParentLocal(index),
                             name: definition

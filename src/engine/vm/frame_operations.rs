@@ -258,12 +258,16 @@ pub(super) fn reset_captured(
 ) -> Result<CallStep, Error> {
     let frame = execution.frames.current_mut(id)?;
     let reusable = std::mem::take(&mut frame.cold.reusable_captured_locals[usize::from(index)]);
-    let super::bindings::FrameBinding::Captured(root) =
+    let super::bindings::FrameBinding::Captured(var_ref) =
         execution.slots.local(&frame.window, index)?
     else {
         return Err(Error::internal("captured reset lost its cell"));
     };
-    super::bindings::reset_captured_binding(runtime, root, reusable)?;
+    super::bindings::reset_captured_binding(
+        runtime,
+        &crate::engine::heap::roots::VarRefView::from_frame(runtime, *var_ref),
+        reusable,
+    )?;
     frame.resume_pc = frame
         .fault_pc
         .checked_add(1)
@@ -431,11 +435,11 @@ pub(super) fn binding(
                     ClosureSource::ParentArgument(index),
                 )
             };
-            let super::bindings::FrameBinding::Captured(root) = binding else {
+            let super::bindings::FrameBinding::Captured(var_ref) = binding else {
                 return Err(Error::internal("captured access lost its cell"));
             };
             (
-                root.clone(),
+                crate::engine::heap::roots::VarRefView::from_frame(runtime, *var_ref).clone(),
                 ClosureVariable {
                     source,
                     name: definition

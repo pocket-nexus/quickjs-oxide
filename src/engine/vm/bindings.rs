@@ -7,20 +7,31 @@
 
 use crate::engine::api::error::Error;
 use crate::engine::api::runtime::Runtime;
+use crate::engine::atom::AtomIdx;
 use crate::engine::code::function::metadata::{ClosureVariable, ClosureVariableKind};
-use crate::engine::heap::RawValue;
-use crate::engine::heap::roots::VarRefRoot;
-use crate::engine::object::{CallableRef, PrivateNameRef};
+use crate::engine::heap::roots::{VarRefRoot, VarRefView};
+use crate::engine::heap::{ObjectId, RawValue, VarRefId};
 use crate::engine::value::JsValue;
 use crate::engine::vm::exception::runtime_error_to_vm_error;
 
+/// A running frame binding owns exactly one edge for every non-direct variant.
+///
+/// `Private`, `PrivateCallable` and `Captured` store unbranded handles instead
+/// of rooted wrappers: they have no `Drop`, so every move, overwrite and
+/// abandonment path must release them explicitly through
+/// [`release_frame_binding`].
 pub(in crate::engine::vm) enum FrameBinding {
     Direct(JsValue),
-    Private(PrivateNameRef),
-    PrivateCallable(CallableRef),
+    Private(AtomIdx),
+    PrivateCallable(ObjectId),
     Uninitialized,
-    Captured(VarRefRoot),
+    Captured(VarRefId),
 }
+
+// The tag packs into `JsValue`'s spare discriminant values, so the whole
+// binding plus its optional slot fit in the direct payload.
+const _: () = assert!(std::mem::size_of::<FrameBinding>() == 16);
+const _: () = assert!(std::mem::size_of::<Option<FrameBinding>>() == 16);
 
 pub(in crate::engine::vm) const fn is_private_callable_kind(kind: ClosureVariableKind) -> bool {
     matches!(
@@ -33,8 +44,8 @@ pub(in crate::engine::vm) const fn is_private_callable_kind(kind: ClosureVariabl
 }
 
 /// Release every owner a frame binding carried. Direct internal values take
-/// the deferred-release path; the rooted private/captured wrappers release
-/// through their own `Drop`.
+/// the deferred-release path; the handle variants release their single edge
+/// through the nothrow heap paths.
 pub(in crate::engine::vm) fn release_frame_binding(
     runtime: &Runtime,
     binding: FrameBinding,
@@ -43,10 +54,19 @@ pub(in crate::engine::vm) fn release_frame_binding(
         FrameBinding::Direct(value) => runtime
             .release_jsvalue(value)
             .map_err(runtime_error_to_vm_error),
-        FrameBinding::Private(_)
-        | FrameBinding::PrivateCallable(_)
-        | FrameBinding::Uninitialized
-        | FrameBinding::Captured(_) => Ok(()),
+        FrameBinding::Private(index) => {
+            runtime.release_atom_index(index);
+            Ok(())
+        }
+        FrameBinding::PrivateCallable(object) => {
+            runtime.release_object_handle(object);
+            Ok(())
+        }
+        FrameBinding::Captured(var_ref) => {
+            runtime.release_var_ref_handle(var_ref);
+            Ok(())
+        }
+        FrameBinding::Uninitialized => Ok(()),
     }
 }
 
@@ -170,10 +190,25 @@ pub(in crate::engine::vm) fn read_frame_binding(
         FrameBinding::Uninitialized => Err(Error::internal(
             "unchecked local read reached an uninitialized lexical binding",
         )),
-        FrameBinding::Captured(root) => runtime
-            .read_var_ref(root)
+        FrameBinding::Captured(var_ref) => runtime
+            .read_var_ref(&VarRefView::from_frame(runtime, *var_ref))
             .map_err(|error| Error::internal(error.to_string())),
     }
+}
+
+/// Publish a freshly created shared cell as both the frame binding and the
+/// caller's returned root. The binding and the returned root are independent
+/// owners, so the binding retains its own edge before the store.
+fn publish_captured_cell(
+    runtime: &Runtime,
+    binding: &mut FrameBinding,
+    root: VarRefRoot,
+) -> Result<VarRefRoot, Error> {
+    runtime
+        .retain_var_ref_handle(root.id())
+        .map_err(|error| Error::internal(error.to_string()))?;
+    *binding = FrameBinding::Captured(root.id());
+    Ok(root)
 }
 
 pub(in crate::engine::vm) fn capture_frame_binding(
@@ -202,10 +237,9 @@ pub(in crate::engine::vm) fn capture_frame_binding(
                     descriptor.kind,
                 )
                 .map_err(|error| Error::internal(error.to_string()))?;
-            *binding = FrameBinding::Captured(root.clone());
-            Ok(root)
+            publish_captured_cell(runtime, binding, root)
         }
-        FrameBinding::Private(name) => {
+        FrameBinding::Private(index) => {
             if descriptor.kind != ClosureVariableKind::PrivateField
                 || !descriptor.is_lexical
                 || !descriptor.is_const
@@ -214,13 +248,16 @@ pub(in crate::engine::vm) fn capture_frame_binding(
                     "private-field frame cell used an incompatible closure descriptor",
                 ));
             }
+            let index = *index;
             let root = runtime
-                .new_private_var_ref(name)
+                .new_private_var_ref_from_index(index)
                 .map_err(|error| Error::internal(error.to_string()))?;
-            *binding = FrameBinding::Captured(root.clone());
+            let root = publish_captured_cell(runtime, binding, root)?;
+            // The shared cell owns its own atom edge now; drop the frame's.
+            runtime.release_atom_index(index);
             Ok(root)
         }
-        FrameBinding::PrivateCallable(callable) => {
+        FrameBinding::PrivateCallable(object) => {
             if !is_private_callable_kind(descriptor.kind)
                 || !descriptor.is_lexical
                 || !descriptor.is_const
@@ -229,10 +266,13 @@ pub(in crate::engine::vm) fn capture_frame_binding(
                     "private-callable frame cell used an incompatible closure descriptor",
                 ));
             }
+            let object = *object;
             let root = runtime
-                .new_private_callable_var_ref(callable, descriptor.kind)
+                .new_private_callable_var_ref_from_id(object, descriptor.kind)
                 .map_err(|error| Error::internal(error.to_string()))?;
-            *binding = FrameBinding::Captured(root.clone());
+            let root = publish_captured_cell(runtime, binding, root)?;
+            // The shared cell owns its own object edge now; drop the frame's.
+            runtime.release_object_handle(object);
             Ok(root)
         }
         FrameBinding::Uninitialized => {
@@ -243,10 +283,13 @@ pub(in crate::engine::vm) fn capture_frame_binding(
                     descriptor.kind,
                 )
                 .map_err(|error| Error::internal(error.to_string()))?;
-            *binding = FrameBinding::Captured(root.clone());
-            Ok(root)
+            publish_captured_cell(runtime, binding, root)
         }
-        FrameBinding::Captured(root) => reuse_frame_capture(runtime, root, descriptor),
+        FrameBinding::Captured(var_ref) => reuse_frame_capture(
+            runtime,
+            &VarRefView::from_frame(runtime, *var_ref),
+            descriptor,
+        ),
     }
 }
 
@@ -268,22 +311,24 @@ pub(in crate::engine::vm) fn close_frame_binding(
     binding: &mut FrameBinding,
     kind: ClosureVariableKind,
 ) -> Result<(), Error> {
-    let FrameBinding::Captured(root) = binding else {
+    let FrameBinding::Captured(var_ref) = binding else {
         return Ok(());
     };
+    let var_ref = *var_ref;
+    let view = VarRefView::from_frame(runtime, var_ref);
     let raw = runtime
-        .raw_var_ref_value(root)
+        .raw_var_ref_value(&view)
         .map_err(|error| Error::internal(error.to_string()))?;
     let detached = match raw {
         RawValue::Uninitialized => FrameBinding::Uninitialized,
         RawValue::Private(_) if kind == ClosureVariableKind::PrivateField => FrameBinding::Private(
             runtime
-                .private_name_from_raw_var_ref(root)
+                .private_name_index_from_raw_var_ref(&view)
                 .map_err(runtime_error_to_vm_error)?,
         ),
         RawValue::Object(_) if is_private_callable_kind(kind) => FrameBinding::PrivateCallable(
             runtime
-                .private_callable_from_raw_var_ref(root, kind)
+                .private_callable_id_from_raw_var_ref(&view, kind)
                 .map_err(runtime_error_to_vm_error)?,
         ),
         _ if kind.is_private() => {
@@ -303,6 +348,8 @@ pub(in crate::engine::vm) fn close_frame_binding(
         }
     };
     *binding = detached;
+    // The detached owner holds its own edge; release the frame's cell edge.
+    runtime.release_var_ref_handle(var_ref);
     Ok(())
 }
 
@@ -348,9 +395,9 @@ pub(in crate::engine::vm) fn finish_derived_return(
                         .map(Completion::Throw)
                         .map_err(runtime_error_to_vm_error);
                 }
-                FrameBinding::Captured(root) => {
+                FrameBinding::Captured(var_ref) => {
                     let raw = runtime
-                        .raw_var_ref_value(root)
+                        .raw_var_ref_value(&VarRefView::from_frame(runtime, *var_ref))
                         .map_err(runtime_error_to_vm_error)?;
                     if matches!(raw, RawValue::Uninitialized) {
                         return runtime
@@ -430,7 +477,7 @@ pub(in crate::engine::vm) fn initialize_derived_binding(
     };
     let captured = match binding {
         FrameBinding::Uninitialized => None,
-        FrameBinding::Captured(root) => Some(root.clone()),
+        FrameBinding::Captured(var_ref) => Some(*var_ref),
         FrameBinding::Direct(_) | FrameBinding::Private(_) | FrameBinding::PrivateCallable(_) => {
             runtime
                 .release_jsvalue(value)
@@ -441,9 +488,10 @@ pub(in crate::engine::vm) fn initialize_derived_binding(
             ));
         }
     };
-    if let Some(root) = captured {
+    if let Some(var_ref) = captured {
+        let view = VarRefView::from_frame(runtime, var_ref);
         let raw = runtime
-            .raw_var_ref_value(&root)
+            .raw_var_ref_value(&view)
             .map_err(runtime_error_to_vm_error)?;
         if !matches!(raw, RawValue::Uninitialized) {
             runtime
@@ -455,7 +503,7 @@ pub(in crate::engine::vm) fn initialize_derived_binding(
             ));
         }
         return runtime
-            .write_var_ref(&root, value)
+            .write_var_ref(&view, value)
             .map(|()| None)
             .map_err(runtime_error_to_vm_error);
     }
@@ -619,8 +667,12 @@ pub(in crate::engine::vm) fn capture_local_binding(
     definition: crate::engine::code::function::metadata::VariableDefinition,
     descriptor: ClosureVariable,
 ) -> Result<VarRefRoot, Error> {
-    if let FrameBinding::Captured(root) = binding {
-        reuse_frame_capture(runtime, root, descriptor)
+    if let FrameBinding::Captured(var_ref) = binding {
+        reuse_frame_capture(
+            runtime,
+            &VarRefView::from_frame(runtime, *var_ref),
+            descriptor,
+        )
     } else {
         capture_frame_binding(
             runtime,
@@ -697,8 +749,8 @@ pub(in crate::engine::vm) fn initialize_local_binding(
             *binding = FrameBinding::Direct(value);
             Ok(())
         }
-        FrameBinding::Captured(root) => runtime
-            .write_var_ref(root, value)
+        FrameBinding::Captured(var_ref) => runtime
+            .write_var_ref(&VarRefView::from_frame(runtime, *var_ref), value)
             .map_err(runtime_error_to_vm_error),
     }
 }

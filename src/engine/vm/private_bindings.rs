@@ -2,7 +2,7 @@
 use super::bindings::FrameBinding;
 use super::exception::runtime_error_to_vm_error;
 use crate::engine::api::{error::Error, runtime::Runtime};
-use crate::engine::atom::Atom;
+use crate::engine::atom::{Atom, AtomIdx};
 use crate::engine::code::function::metadata::{ClosureVariableKind, VariableDefinition};
 use crate::engine::value::JsValue;
 
@@ -53,7 +53,10 @@ pub(in crate::engine::vm) fn initialize_name(
         .map_err(runtime_error_to_vm_error)?;
     match binding {
         FrameBinding::Uninitialized => {
-            *binding = FrameBinding::Private(name);
+            runtime
+                .retain_atom_handle(name.atom())
+                .map_err(|error| Error::internal(error.to_string()))?;
+            *binding = FrameBinding::Private(AtomIdx::from_raw(name.atom().raw()));
             Ok(())
         }
         FrameBinding::Private(_) => Err(Error::internal(
@@ -62,8 +65,11 @@ pub(in crate::engine::vm) fn initialize_name(
         FrameBinding::PrivateCallable(_) => Err(Error::internal(
             "private-name initializer reached a private-method frame cell",
         )),
-        FrameBinding::Captured(root) => runtime
-            .initialize_private_var_ref(&root, &name)
+        FrameBinding::Captured(var_ref) => runtime
+            .initialize_private_var_ref(
+                &crate::engine::heap::roots::VarRefView::from_frame(runtime, *var_ref),
+                &name,
+            )
             .map_err(runtime_error_to_vm_error),
         FrameBinding::Direct(_) => Err(Error::internal(
             "private-name initializer reached an ordinary frame value",
@@ -115,11 +121,19 @@ pub(in crate::engine::vm) fn initialize_callable(
 
         match binding {
             FrameBinding::Uninitialized => {
-                *binding = FrameBinding::PrivateCallable(callable);
+                let object = callable.as_object().object_id();
+                runtime
+                    .retain_object_handle(object)
+                    .map_err(|error| Error::internal(error.to_string()))?;
+                *binding = FrameBinding::PrivateCallable(object);
                 Ok(())
             }
-            FrameBinding::Captured(root) => runtime
-                .initialize_private_callable_var_ref(&root, &callable, kind)
+            FrameBinding::Captured(var_ref) => runtime
+                .initialize_private_callable_var_ref(
+                    &crate::engine::heap::roots::VarRefView::from_frame(runtime, *var_ref),
+                    &callable,
+                    kind,
+                )
                 .map_err(runtime_error_to_vm_error),
             FrameBinding::PrivateCallable(_) => Err(Error::internal(
                 "private-callable local was initialized more than once",
@@ -289,8 +303,23 @@ pub(in crate::engine::vm) fn optional_field_name(
                 ));
             }
             match binding {
-                FrameBinding::Private(name) => Ok(Some(name.clone())),
-                FrameBinding::Captured(root) => captured_name(runtime, &root),
+                FrameBinding::Private(index) => {
+                    let atom = runtime
+                        .0
+                        .state
+                        .borrow()
+                        .atoms
+                        .brand(*index)
+                        .map_err(|error| Error::internal(error.to_string()))?;
+                    Ok(Some(
+                        PrivateNameRef::from_borrowed_atom(runtime.clone(), atom)
+                            .map_err(|error| Error::internal(error.to_string()))?,
+                    ))
+                }
+                FrameBinding::Captured(var_ref) => captured_name(
+                    runtime,
+                    &crate::engine::heap::roots::VarRefView::from_frame(runtime, *var_ref),
+                ),
                 FrameBinding::Uninitialized => Ok(None),
                 FrameBinding::PrivateCallable(_) => Err(Error::internal(
                     "private-field local contains a private method",
@@ -349,8 +378,22 @@ pub(in crate::engine::vm) fn optional_callable(
                 ));
             }
             match binding {
-                FrameBinding::PrivateCallable(callable) => Ok(Some(callable.clone())),
-                FrameBinding::Captured(root) => captured_callable(runtime, &root, expected_kind),
+                FrameBinding::PrivateCallable(object) => {
+                    let object = ObjectRef::from_borrowed_handle(runtime.clone(), *object)
+                        .map_err(|error| Error::internal(error.to_string()))?;
+                    let callable = runtime
+                        .as_callable(&object)
+                        .map_err(runtime_error_to_vm_error)?
+                        .ok_or_else(|| {
+                            Error::internal("private-callable local lost callability")
+                        })?;
+                    Ok(Some(callable))
+                }
+                FrameBinding::Captured(var_ref) => captured_callable(
+                    runtime,
+                    &crate::engine::heap::roots::VarRefView::from_frame(runtime, *var_ref),
+                    expected_kind,
+                ),
                 FrameBinding::Uninitialized => Ok(None),
                 FrameBinding::Private(_) => Err(Error::internal(
                     "private-callable local contains a private field identity",

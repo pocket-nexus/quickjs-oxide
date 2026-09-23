@@ -940,6 +940,14 @@ impl<'a> VarRefView<'a> {
             .borrowed_cell(index)
             .map(|(runtime, id)| Self { runtime, id })
     }
+    /// Borrow a cell owned by a live frame binding.
+    ///
+    /// Trust argument: the caller holds the owning frame-storage edge for the
+    /// whole view lifetime, so the cell cannot be reclaimed while the view is
+    /// used. Frame bindings retain their cell exactly like closure slots do.
+    pub(crate) fn from_frame(runtime: &'a Runtime, id: VarRefId) -> Self {
+        Self { runtime, id }
+    }
     pub(crate) fn id(&self) -> VarRefId {
         self.id
     }

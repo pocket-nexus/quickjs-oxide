@@ -5,20 +5,19 @@
 //! The language state machines and microtask policy stay with their own drivers.
 
 use crate::engine::api::{runtime::Runtime, runtime_error::RuntimeError};
-use crate::engine::atom::{Atom, AtomKind};
+use crate::engine::atom::{Atom, AtomIdx, AtomKind};
 use crate::engine::code::function::metadata::{
     ClosureVariableKind, FunctionKind, VariableDefinition,
 };
 use crate::engine::code::rooted::FunctionBytecodeRef;
 use crate::engine::code::runtime::PublishedFunctionData;
 use crate::engine::heap::ownership::ConvertedValue;
-use crate::engine::heap::roots::VarRefRoot;
 use crate::engine::heap::{
     ContextId, GeneratorActivationData, GeneratorFrameBinding, GeneratorVmActivation, RawValue,
 };
-use crate::engine::object::{ObjectRef, PrivateNameRef};
+use crate::engine::object::ObjectRef;
 use crate::engine::value::JsValue;
-use crate::engine::vm::bindings::{FrameBinding, is_private_callable_kind};
+use crate::engine::vm::bindings::{FrameBinding, is_private_callable_kind, release_frame_binding};
 use crate::engine::vm::call::CallableExecution;
 use crate::engine::vm::frames::ActiveFrameToken;
 use crate::engine::vm::{BytecodePc, Completion, VmResume, VmSuspendKind};
@@ -44,27 +43,15 @@ fn encode_generator_frame_binding(
 ) -> Result<GeneratorFrameBinding, RuntimeError> {
     Ok(match binding {
         FrameBinding::Direct(value) => GeneratorFrameBinding::Direct(value.as_raw()),
-        FrameBinding::Private(name) => {
-            if !name.belongs_to(runtime) {
-                return Err(RuntimeError::WrongRuntime("generator private binding"));
-            }
-            GeneratorFrameBinding::Private(name.atom())
+        FrameBinding::Private(index) => {
+            // Handle bindings carry no runtime tag; the dormant record stores
+            // the branded atom until the record itself is unbranded.
+            let atom = runtime.0.state.borrow().atoms.brand(*index)?;
+            GeneratorFrameBinding::Private(atom)
         }
-        FrameBinding::PrivateCallable(callable) => {
-            if !callable.belongs_to(runtime) {
-                return Err(RuntimeError::WrongRuntime(
-                    "generator private callable binding",
-                ));
-            }
-            GeneratorFrameBinding::PrivateCallable(callable.as_object().object_id())
-        }
+        FrameBinding::PrivateCallable(object) => GeneratorFrameBinding::PrivateCallable(*object),
         FrameBinding::Uninitialized => GeneratorFrameBinding::Uninitialized,
-        FrameBinding::Captured(root) => {
-            if !root.belongs_to(runtime) {
-                return Err(RuntimeError::WrongRuntime("generator captured binding"));
-            }
-            GeneratorFrameBinding::Captured(root.id())
-        }
+        FrameBinding::Captured(var_ref) => GeneratorFrameBinding::Captured(*var_ref),
     })
 }
 
@@ -106,9 +93,9 @@ fn validate_decoded_generator_binding(
         FrameBinding::Uninitialized if !definition.is_lexical => Err(RuntimeError::Invariant(
             "generator non-lexical binding decoded as uninitialized",
         )),
-        FrameBinding::Captured(root) => {
+        FrameBinding::Captured(var_ref) => {
             let state = runtime.0.state.borrow();
-            let cell = state.heap.var_ref(root.id())?;
+            let cell = state.heap.var_ref(*var_ref)?;
             if (cell.is_lexical, cell.is_const, cell.kind)
                 != (definition.is_lexical, definition.is_const, definition.kind)
             {
@@ -140,23 +127,36 @@ fn decode_generator_frame_binding(
                     "generator private binding contains a non-private atom",
                 ));
             }
-            FrameBinding::Private(PrivateNameRef::from_borrowed_atom(runtime.clone(), *atom)?)
+            runtime.retain_atom_handle(*atom)?;
+            FrameBinding::Private(AtomIdx::from_raw(atom.raw()))
         }
         GeneratorFrameBinding::PrivateCallable(object) => {
-            let object = ObjectRef::from_borrowed_handle(runtime.clone(), *object)?;
+            // Validate callability through a temporary root, then retain the
+            // frame's own object edge.
+            let object_root = ObjectRef::from_borrowed_handle(runtime.clone(), *object)?;
             let callable = runtime
-                .as_callable(&object)?
+                .as_callable(&object_root)?
                 .ok_or(RuntimeError::Invariant(
                     "generator private callable binding lost callability",
                 ))?;
-            FrameBinding::PrivateCallable(callable)
+            drop(callable);
+            drop(object_root);
+            runtime.retain_object_handle(*object)?;
+            FrameBinding::PrivateCallable(*object)
         }
         GeneratorFrameBinding::Uninitialized => FrameBinding::Uninitialized,
         GeneratorFrameBinding::Captured(var_ref) => {
-            FrameBinding::Captured(VarRefRoot::from_borrowed_handle(runtime.clone(), *var_ref)?)
+            runtime.retain_var_ref_handle(*var_ref)?;
+            FrameBinding::Captured(*var_ref)
         }
     };
-    validate_decoded_generator_binding(runtime, &binding, definition)?;
+    if let Err(error) = validate_decoded_generator_binding(runtime, &binding, definition) {
+        // A rejected record must not keep the freshly retained edge. Handle
+        // releases are nothrow; a Direct release failure is secondary to the
+        // validation error on this invariant path.
+        let _ = release_frame_binding(runtime, binding);
+        return Err(error);
+    }
     Ok(binding)
 }
 
