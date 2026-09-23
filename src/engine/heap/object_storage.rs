@@ -1905,7 +1905,7 @@ impl Heap {
                                 "generator frame binding contains an internal-only value",
                             ));
                         }
-                        GeneratorFrameBinding::Private(atom) if atom.is_null() => {
+                        GeneratorFrameBinding::Private(index) if index.is_null() => {
                             return Err(HeapError::Invariant(
                                 "generator private binding contains the null atom",
                             ));

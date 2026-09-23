@@ -5,7 +5,7 @@
 //! The language state machines and microtask policy stay with their own drivers.
 
 use crate::engine::api::{runtime::Runtime, runtime_error::RuntimeError};
-use crate::engine::atom::{Atom, AtomIdx, AtomKind};
+use crate::engine::atom::{Atom, AtomKind};
 use crate::engine::code::function::metadata::{
     ClosureVariableKind, FunctionKind, VariableDefinition,
 };
@@ -37,22 +37,14 @@ fn decode_raw_jsvalue(runtime: &Runtime, raw: RawValue) -> Result<JsValue, Runti
     runtime.dup_jsvalue(&value)
 }
 
-fn encode_generator_frame_binding(
-    runtime: &Runtime,
-    binding: &FrameBinding,
-) -> Result<GeneratorFrameBinding, RuntimeError> {
-    Ok(match binding {
+fn encode_generator_frame_binding(binding: &FrameBinding) -> GeneratorFrameBinding {
+    match binding {
         FrameBinding::Direct(value) => GeneratorFrameBinding::Direct(value.as_raw()),
-        FrameBinding::Private(index) => {
-            // Handle bindings carry no runtime tag; the dormant record stores
-            // the branded atom until the record itself is unbranded.
-            let atom = runtime.0.state.borrow().atoms.brand(*index)?;
-            GeneratorFrameBinding::Private(atom)
-        }
+        FrameBinding::Private(index) => GeneratorFrameBinding::Private(*index),
         FrameBinding::PrivateCallable(object) => GeneratorFrameBinding::PrivateCallable(*object),
         FrameBinding::Uninitialized => GeneratorFrameBinding::Uninitialized,
         FrameBinding::Captured(var_ref) => GeneratorFrameBinding::Captured(*var_ref),
-    })
+    }
 }
 
 fn validate_decoded_generator_binding(
@@ -121,14 +113,15 @@ fn decode_generator_frame_binding(
         GeneratorFrameBinding::Direct(value) => {
             FrameBinding::Direct(decode_raw_jsvalue(runtime, value.clone())?)
         }
-        GeneratorFrameBinding::Private(atom) => {
-            if runtime.0.state.borrow().atoms.kind(*atom)? != AtomKind::Private {
+        GeneratorFrameBinding::Private(index) => {
+            let atom = runtime.0.state.borrow().atoms.brand(*index)?;
+            if runtime.0.state.borrow().atoms.kind(atom)? != AtomKind::Private {
                 return Err(RuntimeError::Invariant(
                     "generator private binding contains a non-private atom",
                 ));
             }
-            runtime.retain_atom_handle(*atom)?;
-            FrameBinding::Private(AtomIdx::from_raw(atom.raw()))
+            runtime.retain_atom_handle(atom)?;
+            FrameBinding::Private(*index)
         }
         GeneratorFrameBinding::PrivateCallable(object) => {
             // Validate callability through a temporary root, then retain the
@@ -172,8 +165,8 @@ pub(crate) struct EncodedVmActivation {
 
 impl EncodedVmActivation {
     /// Brand every retained atom index for the caller's explicit retain pass.
-    /// `GeneratorFrameBinding::Private` already carries a branded boundary
-    /// `Atom` and passes through untouched.
+    /// Every binding stores unbranded indices; this boundary conversion is the
+    /// only place a dormant activation's atoms become branded again.
     pub(crate) fn atoms(
         &self,
         table: &crate::engine::atom::AtomTable,
@@ -199,7 +192,7 @@ impl EncodedVmActivation {
                         atoms.push(table.brand(*index)?);
                     }
                 }
-                GeneratorFrameBinding::Private(atom) => atoms.push(*atom),
+                GeneratorFrameBinding::Private(index) => atoms.push(table.brand(*index)?),
                 GeneratorFrameBinding::PrivateCallable(_)
                 | GeneratorFrameBinding::Uninitialized
                 | GeneratorFrameBinding::Captured(_) => {}
@@ -422,13 +415,13 @@ pub(super) fn freeze_entry(
     let arguments = storage
         .parameters
         .iter()
-        .map(|binding| encode_generator_frame_binding(runtime, binding))
-        .collect::<Result<Vec<_>, _>>()?;
+        .map(encode_generator_frame_binding)
+        .collect::<Vec<_>>();
     let locals = storage
         .locals
         .iter()
-        .map(|binding| encode_generator_frame_binding(runtime, binding))
-        .collect::<Result<Vec<_>, _>>()?;
+        .map(encode_generator_frame_binding)
+        .collect::<Vec<_>>();
     let normalized_this = entry.cold.normalized_this.as_ref().map(JsValue::as_raw);
     let vm = GeneratorVmActivation {
         stack: storage

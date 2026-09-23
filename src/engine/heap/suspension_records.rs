@@ -16,7 +16,7 @@ pub enum GeneratorState {
 #[derive(Clone, Debug)]
 pub enum GeneratorFrameBinding {
     Direct(RawValue),
-    Private(Atom),
+    Private(AtomIdx),
     PrivateCallable(ObjectId),
     Uninitialized,
     Captured(VarRefId),
@@ -209,7 +209,7 @@ pub(in crate::engine::heap) fn validate_async_function_state(
                     "AsyncFunction frame binding contains an internal-only value",
                 ));
             }
-            GeneratorFrameBinding::Private(atom) if atom.is_null() => {
+            GeneratorFrameBinding::Private(index) if index.is_null() => {
                 return Err(HeapError::Invariant(
                     "AsyncFunction private binding contains the null atom",
                 ));
@@ -454,7 +454,7 @@ pub(in crate::engine::heap) fn validate_async_generator_state(
                     "AsyncGenerator frame binding contains an internal-only value",
                 ));
             }
-            GeneratorFrameBinding::Private(atom) if atom.is_null() => {
+            GeneratorFrameBinding::Private(index) if index.is_null() => {
                 return Err(HeapError::Invariant(
                     "AsyncGenerator private binding contains the null atom",
                 ));

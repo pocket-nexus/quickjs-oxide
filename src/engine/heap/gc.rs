@@ -2467,7 +2467,7 @@ pub(super) fn generator_activation_atoms(activation: &GeneratorActivationData) -
                 .chain(activation.locals.iter())
                 .filter_map(|binding| match binding {
                     GeneratorFrameBinding::Direct(value) => raw_value_atom(value),
-                    GeneratorFrameBinding::Private(atom) => Some(AtomIdx::from_raw(atom.raw())),
+                    GeneratorFrameBinding::Private(index) => Some(*index),
                     GeneratorFrameBinding::PrivateCallable(_)
                     | GeneratorFrameBinding::Uninitialized
                     | GeneratorFrameBinding::Captured(_) => None,
