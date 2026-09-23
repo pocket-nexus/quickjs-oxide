@@ -19,14 +19,17 @@ impl Heap {
     /// Mutable payload access requires a single owning arena edge. The
     /// JsString append kernel additionally authenticates its Rc buffer owner,
     /// covering public roots, constants, and payloads shared by distinct nodes.
+    ///
+    /// Callers own the edge, so the count check and the borrow are trusted:
+    /// debug builds assert the slot identity through `live_node_fast`.
     pub(crate) fn unique_string_mut(
         &mut self,
         id: StringId,
     ) -> Result<Option<&mut JsString>, HeapError> {
-        if self.strong_count(RawId::String(id))? != 1 {
+        if self.live_node_fast(RawId::String(id)).strong.get() != 1 {
             return Ok(None);
         }
-        match &mut self.live_node_mut(RawId::String(id))?.data {
+        match &mut self.live_node_fast_mut(RawId::String(id)).data {
             NodeData::String(value) => Ok(Some(value)),
             _ => Err(HeapError::Invariant(
                 "typed string mutation reached another node payload",
@@ -56,14 +59,17 @@ impl Heap {
     /// Callers must own (not merely borrow) that edge and transfer it to the result.
     /// The old Rc payload may still be shared by public values or other nodes;
     /// replacing the payload does not mutate any such shared BigInt.
+    ///
+    /// Callers own the edge, so the count check and the borrow are trusted:
+    /// debug builds assert the slot identity through `live_node_fast`.
     pub(crate) fn unique_bigint_mut(
         &mut self,
         id: BigIntId,
     ) -> Result<Option<&mut JsBigInt>, HeapError> {
-        if self.strong_count(RawId::BigInt(id))? != 1 {
+        if self.live_node_fast(RawId::BigInt(id)).strong.get() != 1 {
             return Ok(None);
         }
-        match &mut self.live_node_mut(RawId::BigInt(id))?.data {
+        match &mut self.live_node_fast_mut(RawId::BigInt(id)).data {
             NodeData::BigInt(value) => Ok(Some(value)),
             _ => Err(HeapError::Invariant(
                 "typed bigint mutation reached another node payload",
