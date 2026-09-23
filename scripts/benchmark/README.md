@@ -130,6 +130,36 @@ ns/op, N, median/min/max/stdev across independent runs and per-case ratios.
 Only the shared clock prefix is added; workload bodies are untouched. On engines without `std`/`fs`, the harness's
 reference-file operations are no-ops; Python owns result files.
 
+## Cross-engine front-end compile matrix
+
+```sh
+python3 scripts/benchmark/compile_workloads.py --output target/compile-corpus
+python3 scripts/benchmark/build_compile_probes.py \
+  --repo . --output target/compile-probes \
+  --quickjs-source target/oracle/quickjs-2026-06-04
+python3 scripts/benchmark/compile_matrix.py --metric compile \
+  --corpus target/compile-corpus --repeat 5 \
+  --engine oxide=target/compile-probes/oxide/target/release/oxide-compile-probe \
+  --engine quickjs=target/compile-probes/quickjs/quickjs-compile-probe \
+  --engine boa=target/compile-probes/boa/target/release/boa-compile-probe \
+  --engine node="$(command -v node)" \
+  --output target/compile-matrix
+```
+
+`compile_workloads.py` generates deterministic Script-goal sources (syntax-mixed,
+functions, expressions) with per-repetition unique names; generated files stay in
+the requested output directory. `build_compile_probes.py` builds the QuickJS C
+probe against the pinned oracle's `libquickjs.a` and an offline Boa crate outside
+the workspace; the Oxide probe reuses `build_compile_probe.py`. `compile_matrix.py`
+classifies each engine by its `--version` line, runs one fresh process per sample,
+requires exactly one `compile_ns:`/`parse_ns:` line on stdout with empty stderr,
+rotates engine order, and never derives a ratio from a partial matrix. `--metric
+parse` admits only Boa and V8; Oxide and QuickJS expose no public parse-only entry.
+Use `--corpus` with any flat directory of `.js` files, or with a manifest produced
+by `compile_workloads.py`. Third-party bundles (for example the primitive-vm S07
+workloads) stay outside the repository. Results, ratios and caveats are described
+in [docs/compile-benchmark.md](../../docs/compile-benchmark.md).
+
 ## Profiler collection and overhead
 
 ```sh
