@@ -18,6 +18,10 @@ use super::{
     VarRefData, VarRefId, VecDeque, WeakCollectionKey, is_map_storable_value,
 };
 
+/// Fast retains saturate at this count, matching QuickJS's immortal value.
+/// Every release path must treat it as immortal: no decrement, no retirement.
+const IMMORTAL_STRONG: u32 = u32::MAX;
+
 /// Resources finalized by a release, mutation, or collection operation.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HeapCleanup {
@@ -1298,6 +1302,11 @@ impl Heap {
                 });
             }
             let strong = node.strong.get();
+            if strong == IMMORTAL_STRONG {
+                // A saturated fast retain is immortal: consume the release
+                // without decrementing or retiring the leaf.
+                return Ok(Some(false));
+            }
             if strong > 1 {
                 // The live leaf and its identity are already validated. With
                 // no queued work this decrement cannot trigger finalization.
@@ -1377,6 +1386,11 @@ impl Heap {
         };
         if let SlotState::Live(node) = &self.slots[index].state {
             let strong = node.strong.get();
+            if strong == IMMORTAL_STRONG {
+                // A saturated fast retain is immortal: the release is
+                // consumed without a decrement.
+                return true;
+            }
             if strong > 1 {
                 node.strong.set(strong - 1);
                 return true;
@@ -1427,6 +1441,11 @@ impl Heap {
             let slot = &mut self.slots[index];
             match &mut slot.state {
                 SlotState::Live(node) => {
+                    if node.strong.get() == IMMORTAL_STRONG {
+                        // A saturated fast retain is immortal: no decrement,
+                        // no zero-queue migration.
+                        return Ok(());
+                    }
                     node.strong.set(node.strong.get().checked_sub(1).ok_or(
                         HeapError::Underflow {
                             kind: id.kind(),
@@ -1456,6 +1475,11 @@ impl Heap {
                     }
                 }
                 SlotState::Zombie { strong, .. } => {
+                    if *strong == IMMORTAL_STRONG {
+                        // Symmetric with the live branch: an immortal count
+                        // never decrements, so it can never vacate.
+                        return Ok(());
+                    }
                     *strong = strong.checked_sub(1).ok_or(HeapError::Underflow {
                         kind: id.kind(),
                         index: id.index(),
@@ -2722,5 +2746,57 @@ impl Heap {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod immortal_release_tests {
+    use super::*;
+    use crate::engine::value::bigint::JsBigInt;
+
+    fn saturated_bigint(heap: &mut Heap) -> RawId {
+        let id = heap
+            .allocate_bigint(JsBigInt::from(i128::MAX))
+            .expect("bigint allocation");
+        let raw = RawId::BigInt(id);
+        heap.set_strong_count_for_test(raw, IMMORTAL_STRONG);
+        raw
+    }
+
+    #[test]
+    fn saturated_leaf_fast_retain_is_immortal_to_release() {
+        let mut heap = Heap::new();
+        let raw = saturated_bigint(&mut heap);
+
+        heap.retain_raw_fast(raw);
+        assert_eq!(heap.strong_count(raw).unwrap(), IMMORTAL_STRONG);
+
+        assert_eq!(heap.try_release_leaf_reference(raw).unwrap(), Some(false));
+        assert_eq!(heap.strong_count(raw).unwrap(), IMMORTAL_STRONG);
+
+        assert!(heap.try_release_nonfinal(raw));
+        assert_eq!(heap.strong_count(raw).unwrap(), IMMORTAL_STRONG);
+
+        heap.release_raw_no_drain(raw).unwrap();
+        assert_eq!(heap.strong_count(raw).unwrap(), IMMORTAL_STRONG);
+        assert!(heap.zero_queue.is_empty());
+    }
+
+    #[test]
+    fn ordinary_leaf_counts_still_decrement_and_retire() {
+        let mut heap = Heap::new();
+        let id = heap
+            .allocate_bigint(JsBigInt::from(i128::MAX))
+            .expect("bigint allocation");
+        let raw = RawId::BigInt(id);
+
+        heap.retain_raw_fast(raw);
+        assert_eq!(heap.strong_count(raw).unwrap(), 2);
+
+        assert_eq!(heap.try_release_leaf_reference(raw).unwrap(), Some(false));
+        assert_eq!(heap.strong_count(raw).unwrap(), 1);
+
+        assert_eq!(heap.try_release_leaf_reference(raw).unwrap(), Some(true));
+        assert!(heap.bigint(id).is_err());
     }
 }

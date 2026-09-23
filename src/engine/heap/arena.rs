@@ -313,6 +313,12 @@ impl Heap {
         })
     }
 
+    /// Overwrite one live node's strong count for saturation tests.
+    #[cfg(test)]
+    pub(in crate::engine::heap) fn set_strong_count_for_test(&mut self, id: RawId, count: u32) {
+        self.live_node_fast_mut(id).strong.set(count);
+    }
+
     pub(in crate::engine::heap) fn is_live(&self, id: RawId) -> bool {
         self.validate_slot_identity(id)
             .is_ok_and(|index| matches!(self.slots[index].state, SlotState::Live(_)))
