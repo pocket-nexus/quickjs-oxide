@@ -110,6 +110,9 @@ impl Context {
         kind: NativeErrorKind,
         message: &str,
     ) -> Result<Value, RuntimeError> {
-        self.runtime.new_native_error(self.realm, kind, message)
+        let error = self
+            .runtime
+            .new_native_error_jsvalue(self.realm, kind, message)?;
+        self.runtime.root_and_release_jsvalue(error)
     }
 }

@@ -1353,7 +1353,7 @@ mod continuation_publication_tests {
                     target,
                     min_readable_args,
                     NativeInvocation::Call {
-                        this_value: Value::Undefined,
+                        this_value: JsValue::Undefined,
                     },
                     vec![Value::Int(7)],
                     NativeInvokeMode::Ordinary,

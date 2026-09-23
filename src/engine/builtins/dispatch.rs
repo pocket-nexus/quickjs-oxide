@@ -1050,10 +1050,12 @@ impl Runtime {
                 self.call_string_code_point_range(realm, invocation, arguments)
             }
             #[cfg(feature = "test262-host")]
-            NativeFunctionId::Test262DetachArrayBuffer => self
-                .dispatch_borrowed_invocation(invocation, |invocation| {
+            NativeFunctionId::Test262DetachArrayBuffer => {
+                let handler = |invocation: &NativeInvocation| {
                     self.call_test262_detach_array_buffer(invocation, arguments)
-                }),
+                };
+                self.dispatch_borrowed_invocation(invocation, handler)
+            }
             #[cfg(feature = "test262-host")]
             NativeFunctionId::Test262EvalScript => {
                 self.call_test262_eval_script(realm, invocation, arguments)

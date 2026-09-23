@@ -883,7 +883,7 @@ fn promise_resolving_frames_are_hidden_from_error_stacks() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
     let source = "var e; Promise.resolve({ get then() { e = new Error(\"gt\"); throw e; } });";
-    context.eval_with_filename(source, "<cmdline>").unwrap();
+    drop(context.eval_with_filename(source, "<cmdline>").unwrap());
     let Value::Object(error) = context.eval("e").unwrap() else {
         panic!("then getter did not capture an Error");
     };
