@@ -223,15 +223,16 @@ pub struct JsValue(u64);  // 内部执行值；不实现 Copy/Drop
 ### 4.4 级联收益
 
 > 2026-09-23 修正：A 只落地 16B 句柄 enum，下列 8B/减半收益是 A4 预期
-> 而非已得事实；`FrameBinding` 的 A 后实测与 24B 上限见
-> [阶段 A 收口计划](s3-a-closure-plan.md)。
+> 而非已得事实；`FrameBinding` 的 A 后实测与 T2 后的 16B 实测见
+> [阶段 A 收口计划](s3-a-closure-plan.md) §4.7。
 
 - `RawValue`（`identity.rs:254-280`）现为 16B（编译期断言 ≤16B），A4 目标
   8B；`PropertySlot::Data` 同减，属性内存减半；
-- `FrameBinding`（`vm/bindings.rs:17-23`）**实测 32B**：A 落地后
-  `Direct`=16B 已不是步长决定者，24B 的 `Private(PrivateNameRef)` 才是；
-  `SlotStore.slots` 同一向量还承载 operands，槽步长同受 32B 约束。
-  私有/捕获变体句柄化后可达 24B（A4 8B 值下 16B），见收口计划 T2；
+- `FrameBinding`（`vm/bindings.rs:17-23`）pre-T2 **实测 32B**；T2 句柄化
+  后**实测 16B**（tag 打进 `JsValue` 判别值空位，原 24B 预测作废）；
+  `SlotStore.slots` 同一向量还承载 operands，槽步长同受约束。
+  A4 8B `Direct` 下句柄化形态仍 16B（8B 载荷 + tag），8B 绑定需 T2d
+  整体打包，见收口计划 T2/§4.7；
 - `copy_value`（`vm/stack.rs:1731`，S0 实测 ~8%）标量臂从 73B outlined
   变为一条 `mov`；值搬运总量降 4×（A4 预期）；
 - 每条 64B 缓存行放 4 个值（A 后 16B；A4 8B 后 8 个；pre-A 32B 时 2 个）。
@@ -461,7 +462,7 @@ codec 自测门禁（`status.md:319-320`）、修订 `status.md:3` 的 "unsafe-f
 
 ### 路线（2026-09-23 修订；C 关闭、B 回退后重排）
 
-**E（已完成）→ 残余批（T1 所有权事务 + T2 帧槽 24B + 字符串簇归因）→
+**E（已完成）→ 残余批（T1 所有权事务 + T2 帧槽 32B→16B + 字符串簇归因）→
 A4 决策点 → D**。B 须按负结果重新设计并独立立项，C 已关闭回退，二者都
 不在活动路线内。每阶段独立可回退，严禁跨阶段混合提交。S4（RC →
 tracing GC）不在此路线内，按 §10.6 双门禁另行决策。

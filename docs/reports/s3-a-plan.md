@@ -1206,8 +1206,8 @@ property probe（20M 次、3 repeats）：prop_read_int 227.69→159.44 ns（−
 5. **布局敏感性**：LTO off + CGU16 下任意源改动可使无关 case 摆动 ±5–10%（本轮多次复现，指令数为稳定副指标）；insert 曾因 std BTree drop 失去内联出现 +13% teardown，重建后自然消失。评估小幅残余时必须配对同构建采样。
 
 > 2026-09-23：下一轮入口已具体化为 [阶段 A 收口计划](s3-a-closure-plan.md)
-> （T1 所有权事务窄修 / T2 帧槽 24B），并纳入 E 同协议重测新增的 fixed
-> 字符串簇（`string_build1/3/large1`、`int_to_string`）与 `map_delete`
+> （T1 所有权事务窄修 / T2 帧槽 32B→16B 实测），并纳入 E 同协议重测新增的
+> fixed 字符串簇（`string_build1/3/large1`、`int_to_string`）与 `map_delete`
 > 归因；bigint256 以 [全量重测结果](s3-full-rerun-results.md) §4.6 为准
 > （m0/pre-A 墙钟 1.21×、指令 1.32×）。
 

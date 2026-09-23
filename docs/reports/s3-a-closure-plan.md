@@ -66,6 +66,11 @@ store-forward / 16B-32B 搬运：
 - owned-storage 计数在 `vm/call/prepare.rs:88-90` 用
   `size_of::<FrameBinding>()` 乘容量，瘦身后自动反映。
 
+> T2 实测修正（2026-09-23）：句柄化后整个 enum 是 **16B**，不是预测的 24B。
+> rustc 把枚举 tag 打进 `JsValue` 的判别值空位（niche-filling），
+> `Option<FrameBinding>` 同为 16B。`PrivateNameRef` 的 24B 载荷在句柄化后
+> 已不存在。见 §4.7。
+
 ### 1.4 共同根因
 
 两件事是同一个根因的两面：**A 迁移后，内部存储与热路径仍残留
@@ -193,7 +198,7 @@ ownership 成本与 32B 帧槽算进宽度账。
   （obj −7.3%）；判为布局噪声带内，最终以官方 property 套件复测。
 - 不做：其余内联钉住（无因果证据且增指令），避免 whack-a-mole。
 
-## 4. T2：FrameBinding 32B → 24B
+## 4. T2：FrameBinding 32B → 16B（实测）
 
 ### 4.1 现状
 
@@ -225,10 +230,12 @@ ownership 成本与 32B 帧槽算进宽度账。
    kind/liveness 检查（跨域防护从"值品牌"移到"解码校验"，属信任模型
    变更，需在结果文档记录）。
 4. 尺寸门禁重建（编译期）：
-   `assert!(size_of::<FrameBinding>() == 24)`、
-   `assert!(size_of::<Option<FrameBinding>>() == 24)`；重建 A4 反事实
+   `assert!(size_of::<FrameBinding>() == 16)`、
+   `assert!(size_of::<Option<FrameBinding>>() == 16)`（实测：tag 打进
+   `JsValue` 判别值空位，不是原估的 24B）；重建 A4 反事实
    spike：8B `Direct` 下 16B binding；并加 T2d 反事实（绑定 kind 复用
-   A4 tag 空间、整体打包 u64 → 8B）为 A4 联合设计喂数据。反事实断言
+   A4 tag 空间、整体打包 u64 → 8B，空槽需保留 tag 而非 Rust niche）
+   为 A4 联合设计喂数据。反事实断言
    全部用测试内镜像类型，不触碰产品类型；post-A4 的真实尺寸断言只能在
    A4 落地后写。
 5. owned-storage 计数与 RSS 自动反映槽步长 −25%。
@@ -251,9 +258,12 @@ ownership 成本与 32B 帧槽算进宽度账。
   但每绑定一次分配。句柄化零分配、A4 后自动 16B，且挂起层已按 id 形态
   就绪（`GeneratorFrameBinding`，仅 `Private` 的 branded `Atom` 顺带瘦为
   `AtomIdx`），选它。
-- **24B 是 A4 前下限**：A4 前最大载荷是 `Direct(JsValue)`=16B，tag + 对齐
-  → 24B；A4 后 `Direct`=8B、句柄 ≤8B，最大载荷 8B → 16B。8B 绑定只能由
-  T2d（整体打包 u64）得到，列为 A4 后联合设计决策项。
+- **16B 是实测结果，24B 是错误预测**：原推理（A4 前最大载荷 16B，tag +
+  对齐 → 24B）忽略了 rustc 的 niche-filling——tag 打进 `JsValue` 判别值
+  空位，`FrameBinding`/`Option<FrameBinding>` 均 16B。A4 后 `Direct`=8B、
+  句柄 ≤8B，载荷 8B + tag 仍需 16B（`A4HandleBinding` 镜像实测 16B）；
+  8B 绑定只能由 T2d（整体打包 u64，空槽用保留 tag）得到，列为 A4 后联合
+  设计决策项。
 - **信任模型变更**：跨域防护从「值品牌」移到 decode 的 kind/liveness 校验
   （§4.2 第 3 点），须在 T2 结果文档记录。
 - **全方案零 `unsafe`**：句柄化、显式 retain/release、尺寸断言均为安全
@@ -334,7 +344,7 @@ ownership 成本与 32B 帧槽算进宽度账。
 ### 4.6 提交切片（每片独立可回退）
 
 1. `perf(vm): handle-ize frame bindings`：新表示 + 全部读写/构造/释放点 +
-   覆盖审计 + 24B 断言；encode 暂以 `brand(idx)` 适配旧 `GeneratorFrameBinding`。
+   覆盖审计 + 16B 断言；encode 暂以 `brand(idx)` 适配旧 `GeneratorFrameBinding`。
 2. `perf(vm): store unbranded atom indices in dormant frames`：
    `GeneratorFrameBinding::Private(AtomIdx)` + encode/decode/`atoms()`/gc/校验简化 +
    删除 `belongs_to`（结果文档记录信任模型变更）。
@@ -343,6 +353,54 @@ ownership 成本与 32B 帧槽算进宽度账。
    门禁记录。
 
 测量在 T1 收尾后串行；每片单独提交、单独回退（§6）。
+
+### 4.7 实施结果（2026-09-23）
+
+**提交**（均未推送，基线 `c662790e`）：
+
+1. `dfe73e42 perf(vm): handle-ize frame bindings`
+2. `5d60dc7b perf(vm): store unbranded atom indices in dormant frames`
+3. `2f558a8f test(vm): rebuild frame-binding representation spike`
+
+**表示尺寸（编译期断言 + spike 实测，`vm/bindings.rs`）**：
+
+| 类型 | pre-T2 | T2 |
+| --- | --- | --- |
+| `FrameBinding` | 32B | **16B** |
+| `Option<FrameBinding>` | 32B | **16B** |
+| `JsValue`（参照） | 16B | 16B |
+
+tag 由 rustc 打进 `JsValue` 判别值空位；`align_of` 保持 8B。
+spike 镜像：pre-T2 rooted 形态 32B、A4 8B `Direct` + 现有句柄 16B、
+T2d 整体打包 u64 可达 8B 但空槽须用保留 tag（`Option` 无 niche，16B）。
+
+**owned-storage（帧密集微负载）**：脚本
+`sum(n)=n+sum(n-1)`，200×100 递归，`--features profiling` 下同脚本
+pre-T2（`c662790e`）与 T2 各跑一次：
+
+| 指标 | pre-T2 | T2 |
+| --- | --- | --- |
+| `frames_prepared` | 20202 | 20202 |
+| `maximum_slot_capacity`（槽） | 1024 | 1024 |
+| `maximum_live_slots` | 208 | 208 |
+| `maximum_frame_depth` | 103 | 103 |
+| 槽容量隐含字节（容量 × 步长） | 32768B | **16384B** |
+
+执行形状不变、槽数一致，容量字节随步长减半。RSS 在本微负载规模
+（16KB 量级）不可分辨，未作为证据；正式 LTO 配对基准留待 A4 决策前
+按 §6 协议与 T1 结果同批复测。
+
+**信任模型变更（须记录）**：切片 ① 因 root 消失，encode 的 3 处
+`belongs_to` 值品牌校验移除；跨域/kind 防护收敛到 decode 的
+`brand`+kind/liveness 校验（切片 ② 后 `GeneratorFrameBinding::Private`
+存无品牌 `AtomIdx`，仅在 `atoms()`/decode 边界 brand）。单线程
+per-runtime 表下帧不可能持有外来句柄，该收敛符合 §2 边界原则。
+
+**门禁记录**：`cargo fmt --all`、`cargo check --all-targets` 零警告；
+`cargo test --locked --workspace --all-targets` 全绿（lib 2371 + 908 +
+122 + …，0 failed）。切片 ① 期间发现并修复 capture 双 owner 单边的
+回归（binding 与返回 root 共享一条 cell 边），由
+`immediate_cell_writes_*`/`captured_reads_*`/test262 pinned 用例捕获。
 
 ## 5. 排程
 
