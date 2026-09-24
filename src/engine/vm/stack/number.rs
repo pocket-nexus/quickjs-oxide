@@ -44,6 +44,37 @@ impl SlotStore {
         Ok(Some(result))
     }
 
+    /// Non-failing writeback after `immediate_local` proved the target holds a
+    /// direct number: the replaced binding is a scalar, so no release,
+    /// capacity check or arena access is involved.
+    #[inline]
+    pub(super) fn store_number_local_current(
+        &mut self,
+        window: &FrameWindow,
+        index: u16,
+        value: Number,
+    ) {
+        self.slots[window.locals().start + usize::from(index)] =
+            Some(FrameBinding::Direct(value.into()));
+        #[cfg(feature = "profiling")]
+        record_owned_storage(Cost::Move(1));
+    }
+
+    /// Non-failing result push paired with `store_number_local_current`. The
+    /// caller proved capacity with `has_operand_room`.
+    #[inline]
+    pub(super) fn push_number_current(&mut self, window: &mut FrameWindow, value: Number) {
+        let destination = window.operands().start + window.depth;
+        self.slots[destination] = Some(FrameBinding::Direct(value.into()));
+        window.depth += 1;
+        #[cfg(feature = "profiling")]
+        {
+            self.live_slots += 1;
+            record_owned_storage(Cost::Move(1));
+            self.record_occupancy();
+        }
+    }
+
     pub(super) fn update_number_local_current(
         &mut self,
         window: &mut FrameWindow,

@@ -1,5 +1,5 @@
 //! Number-only execution of publication-authenticated canonical spans.
-use super::{Error, Instruction, RunSlots};
+use super::{BytecodeConstant, Error, Instruction, RawValue, RunSlots};
 use crate::engine::code::fusion::UpdateLocal;
 use crate::engine::value::number::operations::Number;
 
@@ -8,6 +8,26 @@ pub(super) fn update_local(
     index: u16,
     update: UpdateLocal,
 ) -> Result<bool, Error> {
+    // S4: a direct numeric binding updates inside the scalar domain, so the
+    // transaction cannot release an owner, allocate or fail.
+    if let Some(previous) = slots.immediate_local(index)
+        && (update.discard || slots.has_operand_room())
+    {
+        let next = previous.update(update.increment);
+        slots.store_number_local(index, next);
+        if !update.discard {
+            slots.push_number(if update.postfix { previous } else { next });
+        }
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(if update.discard {
+            "fusion.UpdateLocalDiscard"
+        } else if update.postfix {
+            "fusion.UpdateLocalPostfix"
+        } else {
+            "fusion.UpdateLocalPrefix"
+        });
+        return Ok(true);
+    }
     if !slots.update_number_local(index, |previous| {
         let next = previous.update(update.increment);
         let result = (!update.discard).then_some(if update.postfix { previous } else { next });
@@ -42,6 +62,39 @@ fn compare_numbers(instruction: &Instruction, left: Number, right: Number) -> bo
         Instruction::Neq | Instruction::StrictNeq => left != right,
         _ => unreachable!("comparison opcode was validated before the transaction"),
     }
+}
+
+/// S2/S4 numeric writeback for one `LocalAdd` span:
+/// `producer(a); producer(b) | number; Add; store(a)[; Drop]`. The guard reads
+/// the operands non-owningly and the writeback replaces a scalar, so a hit
+/// cannot release an owner, allocate or fail; a miss returns `None` before
+/// changing anything. Outlined on purpose: the `GetLocal` arm keeps the shape
+/// of the pre-S2 build, whose hot loops are sensitive to added inline branches.
+#[inline(never)]
+pub(super) fn numeric_local_add(
+    slots: &mut RunSlots<'_>,
+    executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
+    pc: usize,
+    index: u16,
+) -> Option<()> {
+    let operands = executable.code.get(pc..)?;
+    let right = match operands {
+        [
+            _,
+            Instruction::GetLocal(right) | Instruction::GetLocalCheck(right),
+            ..,
+        ] => slots.immediate_local(*right)?,
+        [_, Instruction::PushI32(value), ..] => Number::Int(*value),
+        [_, Instruction::PushConst(key), ..] => match executable.constant(*key) {
+            Some(BytecodeConstant::Value(RawValue::Int(value))) => Number::Int(*value),
+            Some(BytecodeConstant::Value(RawValue::Float(value))) => Number::Float(*value),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let left = slots.immediate_local(index)?;
+    slots.store_number_local(index, left.add(right));
+    Some(())
 }
 
 /// Execute an S1 `producer(a); producer(b); cmp; If*; [Goto]` span. Both
@@ -305,6 +358,63 @@ mod local_compare_tests {
             let big=0; for (let i=0n;i<3n;i++) big++;
             return conversions===4 && body===3 && textBody===0
                 && captured===3 && peek()===3 && tdz && big===3;
+        })()"#
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+    }
+}
+
+#[cfg(test)]
+mod local_add_tests {
+    use crate::engine::api::{Runtime, Value};
+
+    #[test]
+    fn numeric_literal_and_pair_accumulators_match_canonical_results() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(
+            context
+                .eval(
+                    r#"(()=>{
+            let s=0; for (let i=0;i<1000;i++) s=s+1;
+            let t=0; for (let i=0;i<1000;i++) t=t+t;
+            let u=5; for (let i=0;i<10;i++) u=u+u;
+            let v=0; for (let i=0;i<1000;i++) v=v+0.5;
+            let w=2147483645; for (let i=0;i<5;i++) w=w+1;
+            let x=0; for (let i=0;i<3;i++) x=x+2.5;
+            let direct; direct=1; let y=0; for (let i=0;i<4;i++) y=y+direct;
+            let kept=0; for (let i=0;i<3;i++) kept=(kept=kept+1);
+            return s===1000 && t===0 && u===5120 && v===500
+                && w===2147483650 && x===7.5 && y===4 && kept===3;
+        })()"#
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+    }
+
+    #[test]
+    fn string_bigint_captured_and_tdz_accumulators_stay_canonical() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(
+            context
+                .eval(
+                    r#"(()=>{
+            let text='a'; for (let i=0;i<3;i++) text=text+1;
+            let big=0n; for (let i=0;i<3;i++) big=big+1n;
+            let typeError=false;
+            try { let mixed=0n; for (let i=0;i<1;i++) mixed=mixed+1; }
+            catch(e) { typeError=e instanceof TypeError; }
+            let captured=0; function peek(){return captured;}
+            for (let i=0;i<3;i++) captured=captured+1;
+            let tdz=false;
+            try { (()=>{ later=later+1; let later; })(); }
+            catch(e) { tdz=e instanceof ReferenceError; }
+            return text==='a111' && big===3n && typeError
+                && captured===3 && peek()===3 && tdz;
         })()"#
                 )
                 .unwrap(),

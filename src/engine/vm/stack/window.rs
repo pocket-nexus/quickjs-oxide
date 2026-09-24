@@ -406,6 +406,26 @@ impl RunSlots<'_> {
         value.as_number_repr()
     }
 
+    /// Write a number back into a local whose direct numeric binding was
+    /// already proved by `immediate_local` for the same index.
+    #[inline]
+    pub(in crate::engine::vm) fn store_number_local(&mut self, index: u16, value: Number) {
+        self.store
+            .store_number_local_current(self.window, index, value);
+    }
+
+    /// Push a number consumed from a direct binding; the caller proved
+    /// capacity with `has_operand_room`.
+    #[inline]
+    pub(in crate::engine::vm) fn push_number(&mut self, value: Number) {
+        self.store.push_number_current(self.window, value);
+    }
+
+    #[inline]
+    pub(in crate::engine::vm) fn has_operand_room(&self) -> bool {
+        self.window.depth < self.window.operands().len()
+    }
+
     pub(in crate::engine::vm) fn replace_local(
         &mut self,
         index: u16,

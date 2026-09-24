@@ -1390,7 +1390,20 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 });
             }
             Instruction::GetLocal(index) | Instruction::GetLocalCheck(index) => {
-                if executable.fusion.local_add_span(pc.fault).is_some() {
+                if let Some(instructions) = executable.fusion.local_add_span(pc.fault) {
+                    // S2/S4: a numeric pair or numeric literal completes
+                    // inside the scalar domain; every other kind keeps the
+                    // outlined primitive-addition bridge.
+                    if fusion::numeric_local_add(&mut slots, executable, pc.fault, *index).is_some()
+                    {
+                        #[cfg(feature = "profiling")]
+                        fusion::record_span(
+                            &executable.code[pc.fault..pc.fault + instructions],
+                            observed_depth,
+                        );
+                        pc.resume = pc.fault + instructions;
+                        continue;
+                    }
                     let supported = match executable.code.get(pc.fault + 1) {
                         Some(Instruction::GetLocal(right) | Instruction::GetLocalCheck(right)) => {
                             slots.local_add_supported(runtime, *index, *right)?

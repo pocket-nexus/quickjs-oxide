@@ -1331,6 +1331,7 @@ impl Heap {
             bytecode.fusion = crate::engine::code::fusion::FusionPlan::build(
                 &bytecode.code,
                 &bytecode.local_definitions,
+                &bytecode.constants,
             );
         }
         let (index, generation) = self.reserve(HeapNodeKind::FunctionBytecode)?;
