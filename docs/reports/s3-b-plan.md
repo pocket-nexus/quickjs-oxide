@@ -617,6 +617,29 @@ borrow + shape 重验）每次执行，S1/S2/update 的 outlined 调用每轮各
 即静态跨度无法覆盖的动态形态（不同 local/属性/类型复用同一 PC）正是
 §4.3 per-PC 槽的目标；缺口远超 3%。
 
+**B2.2 收益上界实验（临时补丁，已回退）**：为量出「准入 + 校验」中真正可
+移除的部分，给 `PropertyReadCache` 加临时 `read_bound`（跳过
+`linked_field_atom`、IC 状态匹配、domain/realm、`ordinary_receiver`、shape、
+revision、depth 与 slot kind 校验，只按缓存 location.slot 直读），S3 handler
+改调 `property_ic_peek_number_bound`。10M 轮结果：
+
+| 负载 | H1 | 上界构建 | 差值 |
+| --- | --- | --- | --- |
+| `prop_read` | 7,522,819,933 | 6,322,820,901 | **−120.0/轮（−16.0%，752→632）** |
+| `int_local` | 4,562,738,248 | 4,572,737,329 | +10/轮（+0.22%，布局伪影） |
+| `empty_loop` | 3,512,681,775 | 3,512,682,520 | ≈0 |
+
+专用路径仍须保留对象 id、shape、revision 与 slot `Data` 校验及 site 状态
+加载（约 20–25 指令/轮），现实可回收约 90–100 指令/轮（`prop_read` 约
+−12%~−13%），远超 3% 门禁。
+
+**S3 站点编码修正**：location 含 `revision: u64` 与 `shape/slot`，单 u64
+装不下。实现改为每候选站点一个定长结构（`Cell<SiteState>`：object id、
+shape、revision、slot、local、tag；默认关闭构建不含该状态），安装只接受
+IC monomorphic 命中且 `depth == 0` / 非 numeric key 的 location；专用
+guard 保留 identity + shape + revision，失败原地 canonical 并按 §4.3
+惩罚/禁用。内存按 §4.3 门禁单列入账。
+
 判定：B2.2 进入实现（`oxide_specialize` 默认关闭），B2.4 默认路径裁决
 按三方 A/B：base / B2.1 / B2.1+B2.2。
 
