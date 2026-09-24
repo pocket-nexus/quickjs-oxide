@@ -531,6 +531,48 @@ BigInt 固定
 该缺口记入 B2.1c/B2.4 的默认路径裁决：若 B2.1c 无法回收，需要一次专门的
 布局/内联整理或按 kind 回退 S1/S2/S4 之一。
 
+### 5.4 B2.1c 结果：S3 `LocalFieldAddStore`
+
+实现：生成器新增 flag 37（`PutLocal`，长 5）/38（`SetLocal;Drop`，长 6），
+形态 `GetLocal(acc); GetLocal(base); GetField(key); Add; store(acc)[; Drop]`；
+base 只接受 `GetLocal`/`GetLocalCheck`。运行期 guard 用新访问器
+`immediate_object_local`（返回 `ObjectId`，无 owner 边）取 base，再经新的
+`Runtime::property_ic_peek_number` 投影 IC 位置缓存的命中值：只接受立即数
+`Int/Float`、不 retain、不在 miss 时预热缓存、不记 `property_ic.hit`（因为
+未产生 owner）；getter/Proxy/IC miss/shape 失效/非数值一律回落 canonical。
+peek 只读 `PropertyReadCache::read` 的借用值，遵守 §3.2 第 5 条的「三件套」
+失效纪律。canonical 侧仍由既有 `borrowed_base_field_read` 兜底。
+
+分发位置：S3 检查放在 `GetLocal` 臂的**最后**（S1 之后、canonical match 之前）。
+把它与 S2 块相邻会使 `empty_loop` +6.25%、`int_local` +5.03%（纯布局，这些
+负载不执行 S3）；放最后反而比 B2.1b 构建更优，说明该臂的现有检查顺序已覆盖
+热 PC，新增检查只应在全部 miss 后才评估。
+
+实测（`taskset -c 2`，相对 B2.1b；括号为相对 base）：
+
+| 负载 | B2.1b | B2.1c | 片内 | 累计 |
+| --- | --- | --- | --- | --- |
+| `prop_read` | 15,222,819,227 | 7,522,819,823 | **−50.58%**（1522.28 → 752.28/轮） | −56.52% |
+| `empty_loop` | 3,522,682,120 | 3,512,683,206 | −0.28% | −42.16% |
+| `int_local` | 4,572,737,477 | 4,562,737,194 | −0.22% | −66.33% |
+| `array_read` | 23,002,836,043 | 23,302,836,856 | +1.30% | −6.27% |
+| `call0` | 39,172,880,757 | 39,262,881,437 | +0.23% | −5.42% |
+| `bigint_loop` | 5,844,694,411 | 5,846,493,839 | +0.03% | −0.76% |
+| `ic_share_1prop/2prop` | 43,713,078,853 | 43,933,353,035 | +0.50% | +1.72% |
+| `prop_read_same_key` | — | — | +0.08% | −0.12% |
+| `map_get_same_key` / `rotate_keys` | — | — | +0.03% / +0.03% | −0.06% / −0.11% |
+| `bigint32` 固定行 | 4,271,413,857 | 4,323,449,995 | +1.22% | +4.07% |
+| `bigint64` 固定行 | 4,777,100,669 | 4,829,136,439 | +1.09% | +3.64% |
+| `bigint256` 固定行 | 7,663,046,430 | 7,715,083,006 | +0.68% | +2.30% |
+
+输出全部逐字节一致。验收判断：`prop_read` 每轮 752（目标 ≤450 未达）——
+剩余缺口是每轮仍存在的 S1 条件调用、S4 更新调用、4 个派发入口以及
+`property_ic_peek_number` 的 IC 准入（`linked_field_atom` + borrow + shape
+重验）。BigInt 固定行片内均 <2%，累计 +4.1%/+3.6%/+2.3%：由三片布局漂移
+叠加（B2.1a +1.7/+1.5/+1.0、B2.1b +1.1/+1.0/+0.6、B2.1c +1.2/+1.1/+0.7），
+`perf record` 对比未发现单一热点，归因为 `run` 代码布局变化；列入 B2.4
+默认路径裁决（需要一次专门的布局/内联整理或按 kind 回退）。
+
 ## 6. 验收门禁
 
 ### 6.1 每片必跑
