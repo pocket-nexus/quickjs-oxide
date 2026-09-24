@@ -22,7 +22,7 @@
 //! lexical errors for the parser's fallible token advance.
 
 use crate::engine::value::{JsString as RuntimeJsString, JsStringError, decode_quickjs_utf8};
-use crate::source::text::SourceText;
+use crate::source::text::{INVALID_BYTE_CARRIER, SourceText};
 use std::fmt;
 use std::iter::FusedIterator;
 use std::ops::Range;
@@ -689,7 +689,12 @@ impl<'a> Lexer<'a> {
                 return self.scan_template(true, line_terminator_before);
             }
             '0'..='9' => self.scan_number(false)?,
-            '.' if self.peek_nth_char(1).is_some_and(|c| c.is_ascii_digit()) => {
+            '.' if self
+                .source
+                .as_bytes()
+                .get(self.offset + 1)
+                .is_some_and(u8::is_ascii_digit) =>
+            {
                 self.scan_number(true)?
             }
             c if is_identifier_start(c) || c == '\\' => self.scan_identifier(false)?,
@@ -705,6 +710,10 @@ impl<'a> Lexer<'a> {
     }
 
     fn peek_char(&self) -> Option<char> {
+        let byte = *self.source.as_bytes().get(self.offset)?;
+        if byte < 0x80 {
+            return Some(byte as char);
+        }
         self.source.get(self.offset..)?.chars().next()
     }
 
@@ -759,14 +768,34 @@ impl<'a> Lexer<'a> {
 
     /// Advances one scalar value, treating CRLF as one logical character.
     fn bump_char(&mut self) -> Option<char> {
-        let ch = self.peek_char()?;
-        if ch == '\r' && self.source[self.offset..].starts_with("\r\n") {
-            self.offset += 2;
-            self.line = self.line.saturating_add(1);
-            self.column = 1;
-            return Some('\r');
+        let byte = *self.source.as_bytes().get(self.offset)?;
+        // `INVALID_BYTE_CARRIER` is ASCII in the carrier but can stand for a raw
+        // continuation byte with a zero column delta, so it stays on the slow
+        // path; every other ASCII byte contributes exactly one column.
+        if byte < 0x80 && byte != INVALID_BYTE_CARRIER as u8 {
+            self.offset += 1;
+            return Some(match byte {
+                b'\r' => {
+                    if self.source.as_bytes().get(self.offset) == Some(&b'\n') {
+                        self.offset += 1;
+                    }
+                    self.line = self.line.saturating_add(1);
+                    self.column = 1;
+                    '\r'
+                }
+                b'\n' => {
+                    self.line = self.line.saturating_add(1);
+                    self.column = 1;
+                    '\n'
+                }
+                _ => {
+                    self.column = self.column.saturating_add(1);
+                    byte as char
+                }
+            });
         }
 
+        let ch = self.source.get(self.offset..)?.chars().next()?;
         let byte_len = ch.len_utf8();
         let column_delta = self.quickjs_column_delta(self.offset, byte_len);
         self.offset += byte_len;
@@ -791,15 +820,6 @@ impl<'a> Lexer<'a> {
             .copied()
             .filter(|byte| !(0x80..=0xbf).contains(byte))
             .count() as u32
-    }
-
-    fn consume_ascii(&mut self, text: &str) {
-        debug_assert!(text.is_ascii());
-        debug_assert!(self.starts_with(text));
-        for _ in text.bytes() {
-            let consumed = self.bump_char();
-            debug_assert!(consumed.is_some());
-        }
     }
 
     fn error_from(&self, start: Position, kind: LexErrorKind, message: &'static str) -> LexError {
@@ -845,80 +865,146 @@ impl<'a> Lexer<'a> {
         let token_search_start = self.offset;
 
         loop {
-            let Some(ch) = self.peek_char() else {
+            let Some(&byte) = self.source.as_bytes().get(self.offset) else {
                 return Ok(saw_line_terminator);
             };
 
-            if self.offset == 0 && self.starts_with("#!") {
-                self.consume_ascii("#!");
-                self.skip_to_line_end();
-                continue;
-            }
-
-            if is_line_terminator(ch) {
-                self.bump_char();
-                saw_line_terminator = true;
-                continue;
-            }
-
-            if is_js_whitespace(ch) {
-                self.bump_char();
-                continue;
-            }
-
-            if self.starts_with("//") {
-                self.consume_ascii("//");
-                self.skip_to_line_end();
-                continue;
-            }
-
-            if self.starts_with("/*") {
-                let comment_start = self.current_position();
-                self.consume_ascii("/*");
-                let mut terminated = false;
-                while self.offset < self.source.len() {
-                    if self.starts_with("*/") {
-                        self.consume_ascii("*/");
-                        terminated = true;
-                        break;
-                    }
-                    let next = self.peek_char().expect("not at end");
-                    if is_line_terminator(next) {
-                        saw_line_terminator = true;
-                    }
+            if byte >= 0x80 {
+                let ch = self.peek_char().expect("checked non-empty source");
+                if is_line_terminator(ch) {
                     self.bump_char();
+                    saw_line_terminator = true;
+                    continue;
                 }
-                if !terminated {
-                    return Err(self.error_from(
-                        comment_start,
-                        LexErrorKind::UnterminatedComment,
-                        "unterminated block comment",
-                    ));
+                if is_js_whitespace(ch) {
+                    self.bump_char();
+                    continue;
                 }
-                continue;
+                return Ok(saw_line_terminator);
             }
 
-            if self.options.allow_html_comments && self.starts_with("<!--") {
-                self.consume_ascii("<!--");
-                self.skip_to_line_end();
-                continue;
+            match byte {
+                b' ' | b'\t' | 0x0b | 0x0c => {
+                    let bytes = self.source.as_bytes();
+                    let mut end = self.offset + 1;
+                    while let Some(&next) = bytes.get(end) {
+                        if matches!(next, b' ' | b'\t' | 0x0b | 0x0c) {
+                            end += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    self.column = self.column.saturating_add((end - self.offset) as u32);
+                    self.offset = end;
+                }
+                b'\n' => {
+                    self.offset += 1;
+                    self.line = self.line.saturating_add(1);
+                    self.column = 1;
+                    saw_line_terminator = true;
+                }
+                b'\r' => {
+                    self.offset += 1;
+                    if self.source.as_bytes().get(self.offset) == Some(&b'\n') {
+                        self.offset += 1;
+                    }
+                    self.line = self.line.saturating_add(1);
+                    self.column = 1;
+                    saw_line_terminator = true;
+                }
+                b'#' if self.offset == 0 && self.source.as_bytes().get(1) == Some(&b'!') => {
+                    self.offset = 2;
+                    self.column = self.column.saturating_add(2);
+                    self.skip_to_line_end();
+                }
+                b'/' => match self.source.as_bytes().get(self.offset + 1) {
+                    Some(b'/') => {
+                        self.offset += 2;
+                        self.column = self.column.saturating_add(2);
+                        self.skip_to_line_end();
+                    }
+                    Some(b'*') => {
+                        let comment_start = self.current_position();
+                        self.offset += 2;
+                        self.column = self.column.saturating_add(2);
+                        let bytes = self.source.as_bytes();
+                        let mut terminated = false;
+                        while self.offset < bytes.len() {
+                            if bytes[self.offset] == b'*'
+                                && bytes.get(self.offset + 1) == Some(&b'/')
+                            {
+                                self.offset += 2;
+                                self.column = self.column.saturating_add(2);
+                                terminated = true;
+                                break;
+                            }
+                            let next = self.peek_char().expect("not at end");
+                            if is_line_terminator(next) {
+                                saw_line_terminator = true;
+                            }
+                            self.bump_char();
+                        }
+                        if !terminated {
+                            return Err(self.error_from(
+                                comment_start,
+                                LexErrorKind::UnterminatedComment,
+                                "unterminated block comment",
+                            ));
+                        }
+                    }
+                    _ => return Ok(saw_line_terminator),
+                },
+                b'<' if self.options.allow_html_comments
+                    && self.source.as_bytes().get(self.offset + 1) == Some(&b'!')
+                    && self.source.as_bytes().get(self.offset + 2) == Some(&b'-')
+                    && self.source.as_bytes().get(self.offset + 3) == Some(&b'-') =>
+                {
+                    self.offset += 4;
+                    self.column = self.column.saturating_add(4);
+                    self.skip_to_line_end();
+                }
+                b'-' if self.options.allow_html_comments
+                    && (saw_line_terminator || token_search_start == 0)
+                    && self.source.as_bytes().get(self.offset + 1) == Some(&b'-')
+                    && self.source.as_bytes().get(self.offset + 2) == Some(&b'>') =>
+                {
+                    self.offset += 3;
+                    self.column = self.column.saturating_add(3);
+                    self.skip_to_line_end();
+                }
+                _ => return Ok(saw_line_terminator),
             }
-
-            let at_line_start = saw_line_terminator || token_search_start == 0;
-            if self.options.allow_html_comments && at_line_start && self.starts_with("-->") {
-                self.consume_ascii("-->");
-                self.skip_to_line_end();
-                continue;
-            }
-
-            return Ok(saw_line_terminator);
         }
     }
 
     fn skip_to_line_end(&mut self) {
-        while let Some(ch) = self.peek_char() {
+        loop {
+            let Some(&byte) = self.source.as_bytes().get(self.offset) else {
+                return;
+            };
+            if byte < 0x80 && byte != b'\n' && byte != b'\r' && byte != INVALID_BYTE_CARRIER as u8 {
+                let bytes = self.source.as_bytes();
+                let mut end = self.offset + 1;
+                while let Some(&next) = bytes.get(end) {
+                    if next < 0x80
+                        && next != b'\n'
+                        && next != b'\r'
+                        && next != INVALID_BYTE_CARRIER as u8
+                    {
+                        end += 1;
+                    } else {
+                        break;
+                    }
+                }
+                self.column = self.column.saturating_add((end - self.offset) as u32);
+                self.offset = end;
+                continue;
+            }
+            let Some(ch) = self.peek_char() else {
+                return;
+            };
             if is_line_terminator(ch) {
-                break;
+                return;
             }
             self.bump_char();
         }
@@ -952,6 +1038,49 @@ impl<'a> Lexer<'a> {
         let mut first = true;
 
         loop {
+            // ASCII fast path: consume a whole identifier run with a byte table
+            // instead of decoding and classifying one scalar per character.
+            if let Some(&byte) = self.source.as_bytes().get(self.offset) {
+                if byte < 0x80 && byte != b'\\' {
+                    let valid = if first {
+                        is_ascii_identifier_start_byte(byte)
+                    } else {
+                        is_ascii_identifier_continue_byte(byte)
+                    };
+                    if valid {
+                        let bytes = self.source.as_bytes();
+                        let mut end = self.offset + 1;
+                        while let Some(&next) = bytes.get(end) {
+                            if next < 0x80 && is_ascii_identifier_continue_byte(next) {
+                                end += 1;
+                            } else {
+                                break;
+                            }
+                        }
+                        let run_len = end - self.offset;
+                        let Some(length) = value_utf16_len
+                            .checked_add(run_len)
+                            .filter(|length| *length <= self.string_limit)
+                        else {
+                            // Mirror the per-character error position: the first
+                            // character that pushes the length past the limit.
+                            let consumed = self.string_limit - value_utf16_len + 1;
+                            self.offset += consumed;
+                            self.column = self.column.saturating_add(consumed as u32);
+                            return Err(self.string_too_long(start));
+                        };
+                        value_utf16_len = length;
+                        if let Some(value) = value.as_mut() {
+                            value.push_str(&self.source[self.offset..end]);
+                        }
+                        self.column = self.column.saturating_add(run_len as u32);
+                        self.offset = end;
+                        first = false;
+                        continue;
+                    }
+                }
+            }
+
             let Some(ch) = self.peek_char() else {
                 if first {
                     return Err(self.error_from(
@@ -2006,83 +2135,116 @@ impl<'a> Lexer<'a> {
     fn scan_punctuator(&mut self) -> Result<TokenKind<'a>, LexError> {
         use Punctuator::*;
 
-        if self.starts_with("?.") && !self.peek_nth_char(2).is_some_and(|ch| ch.is_ascii_digit()) {
-            self.consume_ascii("?.");
-            return Ok(TokenKind::Punctuator(OptionalChain));
-        }
+        let bytes = self.source.as_bytes();
+        let byte = bytes[self.offset];
+        let at = |offset: usize| bytes.get(self.offset + offset).copied();
 
-        const PUNCTUATORS: &[(&str, Punctuator)] = &[
-            (">>>=", UnsignedShiftRightAssign),
-            ("===", StrictEqual),
-            ("!==", StrictNotEqual),
-            ("**=", ExponentAssign),
-            ("<<=", ShiftLeftAssign),
-            (">>=", ShiftRightAssign),
-            ("&&=", LogicalAndAssign),
-            ("||=", LogicalOrAssign),
-            ("??=", NullishAssign),
-            (">>>", UnsignedShiftRight),
-            ("...", Ellipsis),
-            ("=>", Arrow),
-            ("==", EqualEqual),
-            ("!=", NotEqual),
-            ("<=", LessEqual),
-            (">=", GreaterEqual),
-            ("++", Increment),
-            ("--", Decrement),
-            ("**", Exponent),
-            ("<<", ShiftLeft),
-            (">>", ShiftRight),
-            ("&&", LogicalAnd),
-            ("||", LogicalOr),
-            ("??", NullishCoalesce),
-            ("+=", PlusAssign),
-            ("-=", MinusAssign),
-            ("*=", MultiplyAssign),
-            ("/=", DivideAssign),
-            ("%=", RemainderAssign),
-            ("&=", BitAndAssign),
-            ("|=", BitOrAssign),
-            ("^=", BitXorAssign),
-            ("{", LeftBrace),
-            ("}", RightBrace),
-            ("(", LeftParen),
-            (")", RightParen),
-            ("[", LeftBracket),
-            ("]", RightBracket),
-            (".", Dot),
-            (";", Semicolon),
-            (",", Comma),
-            ("<", Less),
-            (">", Greater),
-            ("=", Equal),
-            ("!", Not),
-            ("+", Plus),
-            ("-", Minus),
-            ("*", Multiply),
-            ("/", Divide),
-            ("%", Remainder),
-            ("&", BitAnd),
-            ("|", BitOr),
-            ("^", BitXor),
-            ("~", BitNot),
-            ("?", Question),
-            (":", Colon),
-        ];
-
-        for (text, punctuator) in PUNCTUATORS {
-            if self.starts_with(text) {
-                self.consume_ascii(text);
-                return Ok(TokenKind::Punctuator(*punctuator));
+        let (len, punctuator) = match byte {
+            b'>' => match (at(1), at(2), at(3)) {
+                (Some(b'>'), Some(b'>'), Some(b'=')) => (4, UnsignedShiftRightAssign),
+                (Some(b'>'), Some(b'>'), _) => (3, UnsignedShiftRight),
+                (Some(b'>'), Some(b'='), _) => (3, ShiftRightAssign),
+                (Some(b'>'), _, _) => (2, ShiftRight),
+                (Some(b'='), _, _) => (2, GreaterEqual),
+                _ => (1, Greater),
+            },
+            b'=' => match (at(1), at(2)) {
+                (Some(b'='), Some(b'=')) => (3, StrictEqual),
+                (Some(b'='), _) => (2, EqualEqual),
+                (Some(b'>'), _) => (2, Arrow),
+                _ => (1, Equal),
+            },
+            b'!' => match (at(1), at(2)) {
+                (Some(b'='), Some(b'=')) => (3, StrictNotEqual),
+                (Some(b'='), _) => (2, NotEqual),
+                _ => (1, Not),
+            },
+            b'*' => match (at(1), at(2)) {
+                (Some(b'*'), Some(b'=')) => (3, ExponentAssign),
+                (Some(b'*'), _) => (2, Exponent),
+                (Some(b'='), _) => (2, MultiplyAssign),
+                _ => (1, Multiply),
+            },
+            b'<' => match (at(1), at(2)) {
+                (Some(b'<'), Some(b'=')) => (3, ShiftLeftAssign),
+                (Some(b'<'), _) => (2, ShiftLeft),
+                (Some(b'='), _) => (2, LessEqual),
+                _ => (1, Less),
+            },
+            b'&' => match (at(1), at(2)) {
+                (Some(b'&'), Some(b'=')) => (3, LogicalAndAssign),
+                (Some(b'&'), _) => (2, LogicalAnd),
+                (Some(b'='), _) => (2, BitAndAssign),
+                _ => (1, BitAnd),
+            },
+            b'|' => match (at(1), at(2)) {
+                (Some(b'|'), Some(b'=')) => (3, LogicalOrAssign),
+                (Some(b'|'), _) => (2, LogicalOr),
+                (Some(b'='), _) => (2, BitOrAssign),
+                _ => (1, BitOr),
+            },
+            b'?' => {
+                if at(1) == Some(b'.') && !at(2).is_some_and(|byte| byte.is_ascii_digit()) {
+                    (2, OptionalChain)
+                } else {
+                    match (at(1), at(2)) {
+                        (Some(b'?'), Some(b'=')) => (3, NullishAssign),
+                        (Some(b'?'), _) => (2, NullishCoalesce),
+                        _ => (1, Question),
+                    }
+                }
             }
-        }
+            b'.' => match (at(1), at(2)) {
+                (Some(b'.'), Some(b'.')) => (3, Ellipsis),
+                _ => (1, Dot),
+            },
+            b'-' => match at(1) {
+                Some(b'-') => (2, Decrement),
+                Some(b'=') => (2, MinusAssign),
+                _ => (1, Minus),
+            },
+            b'+' => match at(1) {
+                Some(b'+') => (2, Increment),
+                Some(b'=') => (2, PlusAssign),
+                _ => (1, Plus),
+            },
+            b'/' => match at(1) {
+                Some(b'=') => (2, DivideAssign),
+                _ => (1, Divide),
+            },
+            b'%' => match at(1) {
+                Some(b'=') => (2, RemainderAssign),
+                _ => (1, Remainder),
+            },
+            b'^' => match at(1) {
+                Some(b'=') => (2, BitXorAssign),
+                _ => (1, BitXor),
+            },
+            b'{' => (1, LeftBrace),
+            b'}' => (1, RightBrace),
+            b'(' => (1, LeftParen),
+            b')' => (1, RightParen),
+            b'[' => (1, LeftBracket),
+            b']' => (1, RightBracket),
+            b';' => (1, Semicolon),
+            b',' => (1, Comma),
+            b'~' => (1, BitNot),
+            b':' => (1, Colon),
+            _ => {
+                let ch = self.peek_char().expect("called before end of source");
+                if ch.is_ascii() {
+                    self.bump_char();
+                    return Ok(TokenKind::RawAscii(ch as u8));
+                }
+                return Err(
+                    self.error_here(LexErrorKind::UnexpectedCharacter, "unexpected character")
+                );
+            }
+        };
 
-        let ch = self.peek_char().expect("called before end of source");
-        if ch.is_ascii() {
-            self.bump_char();
-            return Ok(TokenKind::RawAscii(ch as u8));
-        }
-        Err(self.error_here(LexErrorKind::UnexpectedCharacter, "unexpected character"))
+        self.offset += len;
+        self.column = self.column.saturating_add(len as u32);
+        Ok(TokenKind::Punctuator(punctuator))
     }
 }
 
@@ -2364,6 +2526,14 @@ fn is_ascii_identifier_start(ch: char) -> bool {
 
 fn is_ascii_identifier_continue(ch: char) -> bool {
     is_ascii_identifier_start(ch) || ch.is_ascii_digit()
+}
+
+fn is_ascii_identifier_start_byte(byte: u8) -> bool {
+    byte.is_ascii_alphabetic() || matches!(byte, b'_' | b'$')
+}
+
+fn is_ascii_identifier_continue_byte(byte: u8) -> bool {
+    is_ascii_identifier_start_byte(byte) || byte.is_ascii_digit()
 }
 
 fn is_identifier_start(ch: char) -> bool {
