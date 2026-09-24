@@ -361,68 +361,56 @@ pub struct JsString {
 }
 
 impl JsString {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    #[cfg(test)]
-    pub fn try_from_utf8(value: &str) -> Result<Self, JsStringError> {
-        let mut result = Self::new();
-        for ch in value.chars() {
-            result.push_char(ch)?;
-        }
-        Ok(result)
-    }
-
-    #[cfg(test)]
-    pub fn push_char(&mut self, ch: char) -> Result<(), JsStringError> {
-        self.push_char_with_limit(ch, RuntimeJsString::MAX_LEN)
-    }
-
-    fn push_char_with_limit(&mut self, ch: char, limit: usize) -> Result<(), JsStringError> {
-        let mut units = [0_u16; 2];
-        let encoded = ch.encode_utf16(&mut units);
-        RuntimeJsString::checked_length_with_limit(self.utf16.len(), encoded.len(), limit)?;
-        self.utf16.extend_from_slice(encoded);
-        Ok(())
-    }
-
-    fn push_code_unit_with_limit(&mut self, unit: u16, limit: usize) -> Result<(), JsStringError> {
-        RuntimeJsString::checked_length_with_limit(self.utf16.len(), 1, limit)?;
-        self.utf16.push(unit);
-        Ok(())
-    }
-
-    #[cfg(test)]
-    pub fn push_code_point(&mut self, value: u32) -> Result<(), JsStringError> {
-        self.push_code_point_with_limit(value, RuntimeJsString::MAX_LEN)
-    }
-
-    fn push_code_point_with_limit(
-        &mut self,
-        value: u32,
-        limit: usize,
-    ) -> Result<(), JsStringError> {
-        let additional = if value <= 0xffff { 1 } else { 2 };
-        RuntimeJsString::checked_length_with_limit(self.utf16.len(), additional, limit)?;
-        if value <= 0xffff {
-            self.utf16.push(value as u16);
-        } else {
-            let adjusted = value - 0x1_0000;
-            self.utf16.push(0xd800 | ((adjusted >> 10) as u16));
-            self.utf16.push(0xdc00 | ((adjusted & 0x3ff) as u16));
-        }
-        Ok(())
-    }
-
     #[cfg(test)]
     pub fn to_string(&self) -> Result<String, std::string::FromUtf16Error> {
         String::from_utf16(&self.utf16)
     }
+}
 
-    #[cfg(test)]
-    pub fn to_string_lossy(&self) -> String {
-        String::from_utf16_lossy(&self.utf16)
+/// Streaming sink for UTF-16 code units produced while scanning string and
+/// template literals. Scanners push through this trait so the eager value and
+/// the validation-only paths share one code path.
+trait StringSink {
+    fn push_code_unit(&mut self, unit: u16) -> Result<(), JsStringError>;
+
+    fn push_char(&mut self, ch: char) -> Result<(), JsStringError> {
+        self.push_code_point(ch as u32)
+    }
+
+    fn push_code_point(&mut self, value: u32) -> Result<(), JsStringError> {
+        if value <= 0xffff {
+            self.push_code_unit(value as u16)
+        } else {
+            let adjusted = value - 0x1_0000;
+            self.push_code_unit(0xd800 | ((adjusted >> 10) as u16))?;
+            self.push_code_unit(0xdc00 | ((adjusted & 0x3ff) as u16))
+        }
+    }
+}
+
+struct Utf16Sink {
+    units: Vec<u16>,
+    limit: usize,
+}
+
+impl Utf16Sink {
+    fn new(limit: usize) -> Self {
+        Self {
+            units: Vec::new(),
+            limit,
+        }
+    }
+
+    fn into_js_string(self) -> JsString {
+        JsString { utf16: self.units }
+    }
+}
+
+impl StringSink for Utf16Sink {
+    fn push_code_unit(&mut self, unit: u16) -> Result<(), JsStringError> {
+        RuntimeJsString::checked_length_with_limit(self.units.len(), 1, self.limit)?;
+        self.units.push(unit);
+        Ok(())
     }
 }
 
@@ -1343,7 +1331,7 @@ impl<'a> Lexer<'a> {
         } else {
             Quote::Double
         };
-        let mut value = JsString::new();
+        let mut value = Utf16Sink::new(self.string_limit);
         let mut has_escape = false;
         let mut has_legacy_octal_escape = false;
 
@@ -1366,7 +1354,7 @@ impl<'a> Lexer<'a> {
                 self.bump_char();
                 return Ok(TokenKind::String(StringLiteral {
                     raw: &self.source[raw_start..self.offset],
-                    value,
+                    value: value.into_js_string(),
                     quote,
                     has_escape,
                     has_legacy_octal_escape,
@@ -1414,7 +1402,7 @@ impl<'a> Lexer<'a> {
                 has_legacy_octal_escape |= escape.legacy_octal;
                 if let Some(code_point) = escape.code_point {
                     value
-                        .push_code_point_with_limit(code_point, self.string_limit)
+                        .push_code_point(code_point)
                         .map_err(|_| self.string_too_long(start))?;
                 }
                 continue;
@@ -1424,11 +1412,11 @@ impl<'a> Lexer<'a> {
             self.bump_char();
             if let Some(unit) = lone_surrogate {
                 value
-                    .push_code_unit_with_limit(unit, self.string_limit)
+                    .push_code_unit(unit)
                     .map_err(|_| self.string_too_long(start))?;
             } else {
                 value
-                    .push_char_with_limit(ch, self.string_limit)
+                    .push_char(ch)
                     .map_err(|_| self.string_too_long(start))?;
             }
         }
@@ -1676,8 +1664,8 @@ impl<'a> Lexer<'a> {
             self.bump_char();
         }
         let raw_start = self.offset;
-        let mut raw_value = JsString::new();
-        let mut cooked = Some(JsString::new());
+        let mut raw_value = Utf16Sink::new(self.string_limit);
+        let mut cooked = Some(Utf16Sink::new(self.string_limit));
         let mut invalid_escape = None;
 
         loop {
@@ -1703,8 +1691,8 @@ impl<'a> Lexer<'a> {
                 return Ok(Token {
                     kind: TokenKind::Template(TemplatePart {
                         raw: &self.source[raw_start..raw_end],
-                        raw_value,
-                        cooked,
+                        raw_value: raw_value.into_js_string(),
+                        cooked: cooked.map(Utf16Sink::into_js_string),
                         invalid_escape,
                         kind,
                     }),
@@ -1725,8 +1713,8 @@ impl<'a> Lexer<'a> {
                 return Ok(Token {
                     kind: TokenKind::Template(TemplatePart {
                         raw: &self.source[raw_start..raw_end],
-                        raw_value,
-                        cooked,
+                        raw_value: raw_value.into_js_string(),
+                        cooked: cooked.map(Utf16Sink::into_js_string),
                         invalid_escape,
                         kind,
                     }),
@@ -1756,17 +1744,13 @@ impl<'a> Lexer<'a> {
                     self.bump_char();
                     self.bump_char();
                 }
-                self.append_template_raw_source(
-                    &mut raw_value,
-                    escape_start..self.offset,
-                    self.string_limit,
-                )
-                .map_err(|_| self.string_too_long(start))?;
+                self.append_template_raw_source(&mut raw_value, escape_start..self.offset)
+                    .map_err(|_| self.string_too_long(start))?;
                 match escape {
                     Ok(escape) => {
                         if let (Some(value), Some(output)) = (escape.code_point, cooked.as_mut()) {
                             output
-                                .push_code_point_with_limit(value, self.string_limit)
+                                .push_code_point(value)
                                 .map_err(|_| self.string_too_long(start))?;
                         }
                     }
@@ -1787,25 +1771,25 @@ impl<'a> Lexer<'a> {
             self.bump_char();
             if let Some(unit) = lone_surrogate {
                 raw_value
-                    .push_code_unit_with_limit(unit, self.string_limit)
+                    .push_code_unit(unit)
                     .map_err(|_| self.string_too_long(start))?;
                 if let Some(output) = cooked.as_mut() {
                     output
-                        .push_code_unit_with_limit(unit, self.string_limit)
+                        .push_code_unit(unit)
                         .map_err(|_| self.string_too_long(start))?;
                 }
             } else {
                 raw_value
-                    .push_char_with_limit(if ch == '\r' { '\n' } else { ch }, self.string_limit)
+                    .push_char(if ch == '\r' { '\n' } else { ch })
                     .map_err(|_| self.string_too_long(start))?;
                 if let Some(output) = cooked.as_mut() {
                     if ch == '\r' {
                         output
-                            .push_char_with_limit('\n', self.string_limit)
+                            .push_char('\n')
                             .map_err(|_| self.string_too_long(start))?;
                     } else {
                         output
-                            .push_char_with_limit(ch, self.string_limit)
+                            .push_char(ch)
                             .map_err(|_| self.string_too_long(start))?;
                     }
                 }
@@ -1815,14 +1799,13 @@ impl<'a> Lexer<'a> {
 
     fn append_template_raw_source(
         &self,
-        value: &mut JsString,
+        value: &mut impl StringSink,
         range: Range<usize>,
-        limit: usize,
     ) -> Result<(), JsStringError> {
         let units = self
             .semantic_utf16_units(range)
             .expect("template raw range is a trusted source slice");
-        append_template_raw_units(value, units, limit)
+        append_template_raw_units(value, units)
     }
 
     fn scan_regexp(
@@ -2307,9 +2290,8 @@ fn radix_value(radix: NumericRadix) -> u32 {
 }
 
 fn append_template_raw_units(
-    value: &mut JsString,
+    value: &mut impl StringSink,
     units: impl IntoIterator<Item = u16>,
-    limit: usize,
 ) -> Result<(), JsStringError> {
     let mut units = units.into_iter().peekable();
     while let Some(unit) = units.next() {
@@ -2317,9 +2299,9 @@ fn append_template_raw_units(
             if units.peek() == Some(&u16::from(b'\n')) {
                 units.next();
             }
-            value.push_code_unit_with_limit(u16::from(b'\n'), limit)?;
+            value.push_code_unit(u16::from(b'\n'))?;
         } else {
-            value.push_code_unit_with_limit(unit, limit)?;
+            value.push_code_unit(unit)?;
         }
     }
     Ok(())
