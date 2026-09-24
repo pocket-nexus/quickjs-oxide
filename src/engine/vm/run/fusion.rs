@@ -77,6 +77,38 @@ pub(super) fn numeric_local_add(
     Some(())
 }
 
+/// S3 numeric writeback for one `LocalFieldAddStore` span:
+/// `producer(acc); producer(base); GetField(key); Add; store(acc)[; Drop]`.
+/// The guard reads the accumulator and the base binding non-owningly and takes
+/// the cached field value without creating an owner edge, so a hit cannot
+/// release an owner, allocate or fail; a miss returns `None` before changing
+/// anything. Outlined for the same layout reason as `numeric_local_add`.
+#[inline(never)]
+pub(super) fn numeric_local_field_add(
+    slots: &mut RunSlots<'_>,
+    runtime: &crate::engine::api::runtime::Runtime,
+    executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
+    pc: usize,
+    index: u16,
+) -> Option<()> {
+    let operands = executable.code.get(pc..)?;
+    let (base, key) = match operands {
+        [
+            _,
+            Instruction::GetLocal(base) | Instruction::GetLocalCheck(base),
+            Instruction::GetField(key),
+            Instruction::Add,
+            ..,
+        ] => (*base, *key),
+        _ => return None,
+    };
+    let base = slots.immediate_object_local(base)?;
+    let value = runtime.property_ic_peek_number(base, executable, pc + 2, key)?;
+    let left = slots.immediate_local(index)?;
+    slots.store_number_local(index, left.add(value));
+    Some(())
+}
+
 /// Execute an S1 `producer(a); producer(b); cmp; If*; [Goto]` span. Both
 /// bindings are read non-owningly; on any guard miss nothing has changed and
 /// the caller re-runs the canonical span start. `code` begins at the span's
@@ -338,6 +370,62 @@ mod local_compare_tests {
             let big=0; for (let i=0n;i<3n;i++) big++;
             return conversions===4 && body===3 && textBody===0
                 && captured===3 && peek()===3 && tdz && big===3;
+        })()"#
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+    }
+}
+
+#[cfg(test)]
+mod local_field_add_tests {
+    use crate::engine::api::{Runtime, Value};
+
+    #[test]
+    fn field_accumulators_match_canonical_results() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(
+            context
+                .eval(
+                    r#"(()=>{
+            let s=0; let o={a:1}; for(let i=0;i<1000;i++) s+=o.a;
+            let t=0; let f={a:0.5}; for(let i=0;i<1000;i++) t+=f.a;
+            let proto={a:2}; let p=Object.create(proto); let u=0; for(let i=0;i<10;i++) u+=p.a;
+            let w={a:10}; let overflow=2147483645; overflow+=w.a;
+            let z=1; let n={a:-0}; z+=n.a;
+            let sum=0n; let b={a:1n}; for(let i=0;i<3;i++) sum+=b.a;
+            return s===1000 && t===500 && u===20 && overflow===2147483655 && z===1 && sum===3n;
+        })()"#
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+    }
+
+    #[test]
+    fn getters_strings_and_shape_changes_stay_canonical() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(
+            context
+                .eval(
+                    r#"(()=>{
+            let log=[];
+            let g={get a(){log.push('get'); return 3;}}; let s=0; for(let i=0;i<3;i++) s+=g.a;
+            let text={a:'x'}; let joined=''; for(let i=0;i<2;i++) joined+=text.a;
+            let changing={a:1}; let mixed=0; for(let i=0;i<2;i++) mixed+=changing.a;
+            changing.a='2'; mixed+=changing.a;
+            let captured=0; let c={a:1}; function read(){return captured;}
+            for(let i=0;i<3;i++) captured+=c.a;
+            let base={a:5}; let deleted=0; for(let i=0;i<2;i++) deleted+=base.a;
+            delete base.a; base.a=7; deleted+=base.a;
+            let inherited=0; let holder={a:1}; let child=Object.create(holder);
+            for(let i=0;i<2;i++) inherited+=child.a;
+            Object.setPrototypeOf(child,{a:4}); inherited+=child.a;
+            return s===9 && log.length===3 && joined==='xx' && mixed==='22'
+                && captured===3 && read()===3 && deleted===17 && inherited===6;
         })()"#
                 )
                 .unwrap(),

@@ -3,8 +3,9 @@ use super::{LinkedNativeSelection, linked_field_atom};
 use crate::engine::api::{runtime::Runtime, runtime_error::RuntimeError};
 use crate::engine::atom::AtomIdx;
 use crate::engine::code::runtime::PublishedFunctionSnapshot;
-use crate::engine::heap::{ObjectPayload, RawValue, SlotReleaseReadiness};
+use crate::engine::heap::{ObjectId, ObjectPayload, RawValue, SlotReleaseReadiness};
 use crate::engine::value::JsValue;
+use crate::engine::value::number::operations::Number;
 
 impl Runtime {
     /// A miss only records a location and leaves the canonical read untouched.
@@ -214,6 +215,33 @@ impl Runtime {
             crate::engine::api::profiling::record_owned_execution_event("property_ic.hit");
         }
         result
+    }
+
+    /// Non-owning immediate projection of the location cache.
+    ///
+    /// Mirrors the `keep_receiver` admission of `property_ic_read_fast` while
+    /// creating no owner edge: only a live cache hit whose stored data value is
+    /// an immediate number returns `Some`. Every other kind, and every miss,
+    /// declines without warming the site, so a guard failure leaves the IC
+    /// exactly as the canonical read would have found it. It never records the
+    /// owning-hit event because it promotes no owner.
+    #[inline]
+    pub(crate) fn property_ic_peek_number(
+        &self,
+        receiver: ObjectId,
+        executable: &PublishedFunctionSnapshot,
+        pc: usize,
+        key_index: u32,
+    ) -> Option<Number> {
+        linked_field_atom(self, executable, key_index)?;
+        let cache = executable.property_read_ic.site(pc)?;
+        let state = self.0.state.try_borrow().ok()?;
+        let raw = cache.read(&state.heap, self.domain_id(), executable.realm, receiver)?;
+        match raw {
+            RawValue::Int(value) => Some(Number::Int(*value)),
+            RawValue::Float(value) => Some(Number::Float(*value)),
+            _ => None,
+        }
     }
 }
 

@@ -1452,6 +1452,24 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         continue;
                     }
                 }
+                // S3: one direct object base completes one linked field read
+                // into the numeric accumulator. The location-cache peek is
+                // non-owning; every other shape stays canonical.
+                if let Some(instructions) = executable.fusion.local_field_add_span(pc.fault) {
+                    if fusion::numeric_local_field_add(
+                        &mut slots, runtime, executable, pc.fault, *index,
+                    )
+                    .is_some()
+                    {
+                        #[cfg(feature = "profiling")]
+                        fusion::record_span(
+                            &executable.code[pc.fault..pc.fault + instructions],
+                            observed_depth,
+                        );
+                        pc.resume = pc.fault + instructions;
+                        continue;
+                    }
+                }
                 match slots.local(*index)? {
                     FrameBinding::Direct(value) => {
                         // Borrowed-base fusion: the frame slot keeps this base

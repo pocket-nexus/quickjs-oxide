@@ -167,6 +167,41 @@ impl FusionPlan {
                 _ => None,
             };
             let method = method_call_count(rest).map(|count| (160 + count as u8, count + 2));
+            // S3: one numeric accumulator and one direct object base whose
+            // linked field read completes the addition. The IC peek is
+            // non-owning; IC misses, accessors, proxies and non-number values
+            // fall back canonically.
+            let local_field_add = match rest {
+                [
+                    Instruction::GetLocal(left) | Instruction::GetLocalCheck(left),
+                    Instruction::GetLocal(base) | Instruction::GetLocalCheck(base),
+                    Instruction::GetField(_),
+                    Instruction::Add,
+                    store,
+                    ..,
+                ] if locals
+                    .get(usize::from(*left))
+                    .is_some_and(|d| !d.is_const && d.kind == ClosureVariableKind::Normal)
+                    && locals
+                        .get(usize::from(*base))
+                        .is_some_and(|d| d.kind == ClosureVariableKind::Normal) =>
+                {
+                    match store {
+                        Instruction::PutLocal(index) | Instruction::PutLocalCheck(index)
+                            if index == left =>
+                        {
+                            Some((37, 5))
+                        }
+                        Instruction::SetLocal(index) | Instruction::SetLocalCheck(index)
+                            if index == left && matches!(rest.get(5), Some(Instruction::Drop)) =>
+                        {
+                            Some((38, 6))
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
             let const_local_add = match rest {
                 [
                     Instruction::PushConst(_constant),
@@ -236,6 +271,7 @@ impl FusionPlan {
             };
             let candidate = local_compare
                 .or(method)
+                .or(local_field_add)
                 .or(local_add_const)
                 .or(local_add)
                 .or(const_local_add)
@@ -350,6 +386,18 @@ impl FusionPlan {
             _ => None,
         }
     }
+    /// S3 `producer(acc); producer(base); GetField(key); Add; store(acc)[; Drop]`
+    /// span length. Admission is structural; the runtime guard requires a
+    /// direct number accumulator, a direct object base and a location-cache
+    /// hit whose stored value is an immediate number.
+    #[inline]
+    pub(crate) fn local_field_add_span(&self, pc: usize) -> Option<usize> {
+        match self.flag(pc) {
+            37 => Some(5),
+            38 => Some(6),
+            _ => None,
+        }
+    }
     /// Constant-left (prepend) LocalAdd span length. Admission is structural;
     /// the runtime still proves the constant is a String and the local is a
     /// direct, non-Object, domain-valid binding.
@@ -459,6 +507,93 @@ mod tests {
             FusionPlan::build(&code, &[local(false), local(false)], &[]).local_add_span(0),
             None
         );
+    }
+
+    #[test]
+    fn local_field_add_span_requires_number_target_and_normal_base() {
+        use Instruction::*;
+        let code = [
+            GetLocal(0),
+            GetLocal(1),
+            GetField(0),
+            Add,
+            PutLocal(0),
+            ReturnUndefined,
+        ];
+        let plan = FusionPlan::build(&code, &[local(false), local(false)], &[]);
+        assert_eq!(plan.local_field_add_span(0), Some(5));
+        assert_eq!(plan.local_add_span(0), None);
+
+        let code = [
+            GetLocal(0),
+            GetLocalCheck(1),
+            GetField(0),
+            Add,
+            SetLocal(0),
+            Drop,
+            ReturnUndefined,
+        ];
+        let plan = FusionPlan::build(&code, &[local(false), local(false)], &[]);
+        assert_eq!(plan.local_field_add_span(0), Some(6));
+
+        // The store must target the accumulator local; a dropped or value-used
+        // SetLocal is not part of the shape.
+        for code in [
+            [
+                GetLocal(0),
+                GetLocal(1),
+                GetField(0),
+                Add,
+                PutLocal(1),
+                ReturnUndefined,
+            ],
+            [
+                GetLocal(0),
+                GetLocal(1),
+                GetField(0),
+                Add,
+                SetLocal(0),
+                ReturnUndefined,
+            ],
+        ] {
+            assert_eq!(
+                FusionPlan::build(&code, &[local(false), local(false)], &[])
+                    .local_field_add_span(0),
+                None
+            );
+        }
+        // A constant accumulator cannot be written.
+        let code = [
+            GetLocal(0),
+            GetLocal(1),
+            GetField(0),
+            Add,
+            PutLocal(0),
+            ReturnUndefined,
+        ];
+        assert_eq!(
+            FusionPlan::build(&code, &[local(true), local(false)], &[]).local_field_add_span(0),
+            None
+        );
+
+        // Any interior control target rejects the span.
+        let base = [
+            GetLocal(0),
+            GetLocal(1),
+            GetField(0),
+            Add,
+            PutLocal(0),
+            ReturnUndefined,
+        ];
+        for target in 1..5 {
+            let mut code = base.to_vec();
+            code.push(Goto(target));
+            assert_eq!(
+                FusionPlan::build(&code, &[local(false), local(false)], &[])
+                    .local_field_add_span(0),
+                None
+            );
+        }
     }
 
     #[test]
