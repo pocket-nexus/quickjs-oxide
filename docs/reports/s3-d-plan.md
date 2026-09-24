@@ -1,7 +1,9 @@
 # 阶段 D 实施计划：数据导向堆与形状/键存储（2026-09-24）
 
 > 状态：实施中。D1a/D1b 已提交（`84654cc8`/`98bd54c3`）；D2 leaf/cold payload
-> 与 D3a/D3b/D3c 已落地（见 §4 实施记录），D4/D5 待做。基线为 `feat/pr27-a4`
+> 与 D3a/D3b/D3c 已落地，D4 已实现并提交（`17a77e6e`/`2bb3595c`，见 §4
+> 实施记录；指令与 slice RSS 门禁未达，待裁决），D5 待做。基线为
+> `feat/pr27-a4`
 > （= PR27 tip，T1/T2 已收口），裁决依据见
 > [A4/D/B 决策报告](s3-a4-d-b-decision.md)。本计划取代
 > `performance-architecture.md` §6 的旧 D 草图（旧草图含过时事实，
@@ -536,6 +538,70 @@ map-string SipHash 6.4%（含 `hash_one`）；map_get 同键微负载 7.29×。
 <0.5%。
 
 **回退**：记录存储与哈希缓存两个独立提交。
+
+### D4 实施记录（2026-09-24）
+
+**提交**：`17a77e6e`（记录存储）、`2bb3595c`（字符串键哈希）；最终配置
+（下称 d4d）为两提交之和。
+
+**实施**：
+- `CollectionRecords` 改为稠密槽数组 + 有序 live 索引：`slots:
+  Vec<Slot { record, hash }>`、`live: Vec<LiveEntry { id: usize,
+  slot: u32 }>`（按 id 升序）、`live_len`、`next_id`；删除置 `DEAD`
+  墓碑，几何压缩回收（`slots.len() > 4*live_len + 64` → 重建，O(live)
+  摊销）。API 与语义（id 不复用、cursor 失效边界、双向 ExactSize
+  迭代器、`take_all` 时钟保留）全部保留；`validate` 改为校验 live
+  有序唯一、槽引用与 `key_index` 一致。
+- **偏离 1**：计划的 `free: Vec<u32>` 未实现——墓碑 + 压缩已把槽数
+  限定在 `4*live+64` 内，少一份状态；容量契约测试仍覆盖收缩与
+  `take_all` 归零。
+- **偏离 2**：`LiveEntry.id` 保留 `usize`（非计划的 `u32`），以保住
+  `usize::MAX` 耗尽的现有语义与测试。
+- `CollectionIndex` 字符串键改走进程级随机种子的 FxHash
+  （`hash.rs:collection_hash_seed` + `FxHasher::with_seed`、
+  `collection_key::string_hash`），非字符串键保留每索引 SipHash。
+- **偏离 3**：计划的 `StringRepr.seeded_hash` 每节点缓存最终不做：
+  实测每百万字符串 +16 MiB RSS（strings.js 176.7→192.0、maps.js
+  326.7→342.1），而指令数与无缓存版逐项相同（per-index memo 已覆盖
+  同节点复用）；改为未命中即时 FxHash。信任模型收敛（进程级种子、
+  与 V8/QuickJS per-runtime 同级）照计划记录。
+- **偏离 4**：非字符串键扩展到 seeded FxHash 的尝试在 fat LTO 下
+  map_set_int 回退 +9.1%（368.6M→402.2M，疑布局敏感；哈希分布已
+  验证 max bucket ≤2），已回滚并保留每索引 SipHash；回滚后 d4c2 与
+  d4b 逐项一致。
+- 计划点 3 的 `CollectionsState` 已不存在，实际改
+  `CollectionIteratorCurrentIndices` 与 `WeakCollectionRecords` 为
+  `FxBuildHasher`。
+- `ArenaSlot` 304 → 288B（非 272：272 出现在已回滚的
+  no-`key_hasher` 变体）。
+
+**实测**（vs D3c，5 样本中位）：
+- map-int 39235.93M → 36579.17M（−6.77%；对 d1a 累计 −8.00%）
+- map-string 12588.50M → 11461.80M（−8.95%；累计 −11.19%）
+- map_delete 513.62M → 480.11M（−6.52%；累计 −8.20%）
+- map_set_int −7.61%、map_set_string −6.06%、weak_map_set ±0.00%、
+  map_get_rotate_keys −5.44%、map_get_same_key −0.75%（per-index
+  memo 早已覆盖同节点）。
+- RSS：maps.js 401.2→326.8 MiB（−18.55%）；objects.js 348.7→333.1
+  （−4.46%）；arrays.js 424.8→409.5（−3.59%）；strings.js
+  176.7→176.5（−0.08%，无回退）。
+- 字符串键路径 profiling 无 SipHash/`hash_one` 符号（占比 <0.5% ✓）。
+
+**门禁结果**：
+- 指令下降 ≥10%：**未达**（slice 6.5–9.0%；对 d1a 累计 8.0–11.2%）。
+  剩余成本集中在 native 调用编组链（~25%，计划明确归 B），D4 边界
+  内无更多结构性空间；按「记录收窄 + 累计口径」接受或扩大范围待裁决。
+- Map 1M RSS 下降 ≥25%：slice −18.6% 未达；对 d1a 累计 −59.0%
+  （797.0→326.8 MiB）。
+- Map/Set/WeakMap Test262：全量冻结向量复跑（`--full`，workers=2，
+  `target/test262-full.tsv`）中 Map/Set/WeakMap/WeakSet 共 1620 行全部
+  pass、零 fail；全量分类汇总与阶段 A 收尾状态逐项一致（pass=80010、
+  unsupported-negative-provenance=2534，其余类别与冻结 receipt 相同），
+  +28 行经核对恰为 `00bb387f fix(lexer)` 的 14 条契约 ×2 变体，D 未
+  引入行级变化。字节比对门禁仍因冻结 receipt 停留 `022e7b48` 而不过
+  （promotion 为独立事项，见 `s3-a-closure-plan.md`）。
+- 验证：lib 2319、workspace `--all-targets` 全绿、零警告；
+  `--features profiling` 仅剩基线既有失败。
 
 ### D5 per-prototype validity cell（条件项，需先补证据）
 
