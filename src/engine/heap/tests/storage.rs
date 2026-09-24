@@ -1391,6 +1391,30 @@ fn property_slot_transaction_retains_before_publish_and_marks_cleanup_failures()
 }
 
 #[test]
+fn immediate_property_replacement_skips_the_transactional_edges() {
+    let mut heap = Heap::new();
+    let shape = one_slot_shape(&mut heap);
+    let object = heap
+        .allocate_object(ObjectData::ordinary(
+            shape,
+            vec![PropertySlot::Data(RawValue::Int(7))],
+        ))
+        .unwrap();
+    let cleanup = heap
+        .replace_object_slot(object, 0, PropertySlot::Data(RawValue::Bool(true)))
+        .unwrap();
+    assert_eq!(cleanup, HeapCleanup::default());
+    assert!(matches!(
+        heap.object(object).unwrap().slots[0],
+        PropertySlot::Data(RawValue::Bool(true))
+    ));
+    assert_eq!(heap.object_strong_count(object), Ok(1));
+    heap.release_object(object).unwrap();
+    heap.release_shape(shape).unwrap();
+    assert_eq!(heap.counts().live, 0);
+}
+
+#[test]
 fn property_slot_transaction_keeps_new_symbol_owned_after_post_publish_failure() {
     use crate::engine::api::runtime::Runtime;
     use crate::engine::object::{DescriptorField, OrdinaryPropertyDescriptor};

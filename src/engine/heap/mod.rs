@@ -43,8 +43,8 @@ use gc::{
     async_generator_request_edges, context_edges, function_bytecode_edges,
     generator_activation_atoms, generator_activation_edges, object_edges, object_layout_edges,
     promise_reaction_edges, property_slot_atoms, property_slot_edges, raw_module_record_atoms,
-    raw_module_record_edges, raw_value_atom, raw_value_edges, raw_value_matches_weak_key,
-    shape_edges, var_ref_edges,
+    raw_module_record_edges, raw_value_atom, raw_value_edges, raw_value_is_immediate,
+    raw_value_matches_weak_key, shape_edges, var_ref_edges,
 };
 
 pub(crate) use slot_ownership::SlotReleaseReadiness;

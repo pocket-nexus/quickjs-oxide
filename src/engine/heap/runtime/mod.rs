@@ -600,7 +600,14 @@ impl RuntimeState {
         index: usize,
         replacement: PropertySlot,
     ) -> Result<(), RuntimeError> {
-        let atoms = self.retain_slot_atoms(std::slice::from_ref(&replacement))?;
+        // Scalar payloads own no atom, which is the common write case; skip
+        // the iterator/collect machinery of the retain helper entirely.
+        let atoms = match &replacement {
+            PropertySlot::Data(RawValue::Symbol(_) | RawValue::Private(_)) => {
+                self.retain_slot_atoms(std::slice::from_ref(&replacement))?
+            }
+            _ => Vec::new(),
+        };
         match self
             .heap
             .replace_object_slot_with_status(object, index, replacement)
@@ -616,6 +623,9 @@ impl RuntimeState {
     }
 
     pub(crate) fn apply_cleanup(&mut self, cleanup: HeapCleanup) -> Result<(), RuntimeError> {
+        if cleanup == HeapCleanup::default() {
+            return Ok(());
+        }
         self.unlink_finalized_shapes(cleanup.finalized_shape_ids);
         self.release_atom_indices(cleanup.atoms)
     }

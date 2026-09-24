@@ -420,8 +420,7 @@ impl Runtime {
                 | JsValue::Int(_)
                 | JsValue::Float(_)
                 | JsValue::ShortBigInt(_)
-        ) || self.slot_value_release_readiness_jsvalue(base)? != SlotReleaseReadiness::Ready
-        {
+        ) {
             return Ok(false);
         }
         let Some(atom) = linked_field_atom(self, executable, key) else {
@@ -458,7 +457,15 @@ impl Runtime {
             return Ok(false);
         };
         if super::immediate_value(old).is_none() {
-            return Ok(false);
+            // Releasing a non-scalar old value may need a driver boundary.
+            // Re-check the receiver once the heap borrow is dropped; the slot
+            // index stays valid because the readiness probe never mutates the
+            // heap.
+            drop(state);
+            if self.slot_value_release_readiness_jsvalue(base)? != SlotReleaseReadiness::Ready {
+                return Ok(false);
+            }
+            state = self.0.state.borrow_mut();
         }
         // `value` was matched to a scalar above, so this id copy allocates
         // nothing and never takes the state borrow the caller still holds.

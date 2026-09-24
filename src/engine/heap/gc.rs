@@ -2243,6 +2243,20 @@ pub(super) fn var_ref_edges(var_ref: &VarRefData) -> Edges {
     raw_value_edges(&var_ref.value)
 }
 
+/// True when a data payload owns neither a heap edge nor an atom, so a
+/// replacement can commit without any retain, release, or zero-queue work.
+pub(super) const fn raw_value_is_immediate(value: &RawValue) -> bool {
+    matches!(
+        value,
+        RawValue::Undefined
+            | RawValue::Null
+            | RawValue::Bool(_)
+            | RawValue::Int(_)
+            | RawValue::Float(_)
+            | RawValue::ShortBigInt(_)
+    )
+}
+
 pub(super) fn property_slot_edges(slot: &PropertySlot) -> Edges {
     let mut edges = Edges::new();
     match slot {

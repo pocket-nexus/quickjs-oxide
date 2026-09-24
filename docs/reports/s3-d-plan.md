@@ -1,7 +1,7 @@
 # 阶段 D 实施计划：数据导向堆与形状/键存储（2026-09-24）
 
 > 状态：实施中。D1a/D1b 已提交（`84654cc8`/`98bd54c3`）；D2 leaf/cold payload
-> 与 D3a/D3b 已落地（见 §4 实施记录），D3c 与 D4/D5 待做。基线为 `feat/pr27-a4`
+> 与 D3a/D3b/D3c 已落地（见 §4 实施记录），D4/D5 待做。基线为 `feat/pr27-a4`
 > （= PR27 tip，T1/T2 已收口），裁决依据见
 > [A4/D/B 决策报告](s3-a4-d-b-decision.md)。本计划取代
 > `performance-architecture.md` §6 的旧 D 草图（旧草图含过时事实，
@@ -434,6 +434,37 @@ objects 1M RSS 再降 ≥ 20%；`property_slots` capacity/used ≤ 1.1。
 - 顺带：`NativeCProto::SetterMagic` 与 `RawValue::Exception` 的
   `expect(dead_code)` 因可达性变化不再触发（lint 报 unfulfilled），改为
   `allow(dead_code, reason = ...)`，语义注释保留。
+
+**D3c 实施记录（写事务快路径，2026-09-24）**：
+
+- `replace_object_slot_with_status` 新增 immediate→immediate 快路径：
+  旧槽与新载荷都是无 edge/无 atom 的标量时，直接写入并返回空
+  `HeapCleanup`，跳过 `validate_replacement_slot`、`property_slot_edges`、
+  `retain_edges_transactionally` 与释放/drain。跳过校验的依据是不变量
+  「活槽与 shape storage 平行且匹配」：`validate_object_layout`
+  （`allocate_object` 入口）与所有替换路径都强制该不变量，且新载荷是
+  标量（不可能是 Private），故存储类别校验冗余。条件比计划的
+  「receiver 非最后 owner」更强：旧值为标量时释放不触碰任何引用计数，
+  receiver 是否最后 owner 无关。快路径只做一次 `object_mut` 查找
+  （D3c 迭代中从两次查找合并）。
+- `RuntimeState::replace_property_slot`：载荷无 atom（非 Symbol/Private）
+  时跳过 `retain_slot_atoms` 的迭代/收集机械（原为 12.7% cycles 热点，
+  空 `Vec` 仍需走一遍 filter_map+collect）。
+- `apply_cleanup` 对 `HeapCleanup::default()` 提前返回。
+- IC 写路径（`try_property_ic_write_scalar`）重排：先定位槽并读取旧值，
+  只有旧值非标量时才做 `slot_value_release_readiness_jsvalue` 预检
+  （需先 drop heap borrow 再 re-borrow；就绪探针不改堆，槽索引保持有效）。
+  旧值为标量时释放无物可放，readiness 与回收无关，直接提交。缓存 miss
+  现在先于 readiness 预检填充（纯缓存预热，语义无副作用）。
+- 新增测试 `immediate_property_replacement_skips_the_transactional_edges`
+  断言快路径返回空 cleanup、槽已替换、receiver strong 不变。
+- 实测（vs D3b，7 样本中位，固定负载）：prop_write 3358.43M →
+  **2457.86M（−26.82%）**；按计划口径 insn/写 670 → ≈488（≤500 ✓，
+  ≥25% ✓）。prop_read −0.00%、prop_create −1.17%、prop_clone +0.02%、
+  prop_delete +0.11%、arguments_read −0.04%，均 ≤2% 门禁。D3c 不改布局
+  （尺寸断言不变），RSS 不变。
+- 验证：lib 2319、workspace 全绿；`--features profiling` 仅剩基线既有
+  失败；零警告。
 
 ### D4 Map/Set 记录与索引
 
