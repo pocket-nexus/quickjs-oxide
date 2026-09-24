@@ -42,10 +42,10 @@ fn main() {
                 phase.attempts, phase.inclusive_ns, phase.exclusive_ns
             );
         }
-        let (probe_hits, probe_misses, commit_hits) =
+        let (probe_hits, probe_misses, commit_hits, max_entries) =
             quickjs_oxide::engine::api::profiling::lookahead_probe_counters();
         eprintln!(
-            "{{\"lookahead_cache\":{{\"probe_hits\":{probe_hits},\"probe_misses\":{probe_misses},\"commit_hits\":{commit_hits}}}}}"
+            "{{\"lookahead_cache\":{{\"probe_hits\":{probe_hits},\"probe_misses\":{probe_misses},\"commit_hits\":{commit_hits},\"max_entries\":{max_entries}}}}}"
         );
     }
 }
