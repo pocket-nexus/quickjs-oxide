@@ -402,7 +402,7 @@ site 不参与 GC 扫描；generator 恢复走 canonical PC + 同一
 
 | 切片 | 产物 | 依赖 | 关闭条件 |
 | --- | --- | --- | --- |
-| B2.0 | 证据冻结（§2 表格 + `target/s3-b-recon/`）；尺寸断言（`Instruction`/`RunExit` 固定断言；`Error`/`Result` 记为诊断指标不加断言）；`SpanKind` 单次查询重构（不改语义） | 无 | 重构本身 ±0.5% 指令内；全量测试绿 |
+| B2.0 | 证据冻结（§2 表格 + `target/s3-b-recon/`）；尺寸断言（`Instruction`==12、`RunExit`==16 编译期 `const` 断言；`Error`/`Result` 记为诊断指标不加断言）；`SpanKind` 单次查询重构实测不成立，已回退（§5.1） | 无 | 断言随 lib 测试编译；基线 A/A 复现 607.27/1355.27/1730.28 |
 | B2.1a | S1 `LocalCompareBranch`（含 `Goto` 折叠） | B2.0 | `empty_loop` 每轮 ≤200；`ic_share_*` 不退化；Test262 绿 |
 | B2.1b | S2 `LocalAddConstStore` + S4 UpdateLocal/LocalAdd 快路径 | B2.1a | `int_local` 每轮 ≤300；BigInt/字符串固定行不退化 |
 | B2.1c | S3 `LocalFieldAddStore`（含 IC peek 变体） | B2.1b | `prop_read` 每轮 ≤450；属性固定行不退化 |
@@ -412,6 +412,25 @@ site 不参与 GC 扫描；generator 恢复走 canonical PC + 同一
 
 排程：B2.0 → B2.1a → 裁决点（kill criterion）→ B2.1b/c → B2.2 门禁评估
 → B2.3 设计。所有测量串行（`taskset -c 2`），编码可并行。
+
+### 5.1 B2.0 负结果：`SpanKind` 单次查询重构不成立
+
+把 `update`/`local_add_span`/`const_add_span`/`compare_branch` 收敛为
+`span(pc) -> Option<SpanKind>` 单次查询后，同一 fat-LTO 构建的每轮指令数：
+
+| 负载 | 基线 | 重构后 | 变化 |
+| --- | --- | --- | --- |
+| `empty_loop` | 607.27 | 624.27 | **+2.8%** |
+| `int_local` | 1355.27 | 1370.27 | +1.1% |
+| `prop_read` | 1730.28 | 1735.28 | +0.29% |
+
+`perf report` 显示 `SlotStore::parameter_current`（3.39% cycles）与
+`SlotStore::push_current`（2.71%）被 out-line：`run` 的体量跨过 LLVM 内联
+阈值，GetArg/操作数压栈从内联退化为调用。该重构违反 ±0.5% 门禁，已整体
+回退（仅保留两个 `const` 尺寸断言）。**结论**：B2.1 不再预置统一解码层；
+每个 kind 以「新增一个小 accessor + 臂内最小分支」增量加入；若新分支再次
+触发同类内联翻转，优先用 `#[inline(always)]` 固定被 out-line 的既有小
+helper，再评估。
 
 ## 6. 验收门禁
 
@@ -444,7 +463,7 @@ Test262 全量在每片合并入默认路径前复跑，对照当轮冻结 recei
 ### 6.3 kill criterion
 
 - B2.1a 若 `empty_loop` 每轮指令数下降 <15%，停止铺开 S2/S3，
-  以负结果文档收口（保留已合入的 span 查询重构或按需回退）。
+  以负结果文档收口（B2.0 已证明预置统一解码层无收益，无需保留）。
 - 任一 span kind 连续两轮有 profile 依据的调整仍不达标 → 回退该 kind，
   不阻塞其他。
 
