@@ -658,6 +658,16 @@ python3 scripts/checks/check-source-layout.py
 Test262 全量在每片合并入默认路径前复跑，对照当轮冻结 receipt
 （当前基线 `1ce1d4f2…`，pass 80010 / eligible 80060）；不得出现行级变化。
 
+**H1 复跑结果（2026-09-24，认证通过）**：`scripts/test262/test-test262.sh
+--spec dev-support/test262/current.conf --full`（8 workers）输出
+`r3fj complete Test262 vector matches: 80010 pass of 80060 eligible
+(102037 total) variants`，无 error；引擎指纹 `433df1df…`（相对基线的预期
+漂移，待 B2.4/CI promotion 更新 current.conf）。把 receipt 头部指纹行归一化
+回基线后 `sha256 = 59ad8137acd644ca9a7ab9cf0efb80a41b1069e9a27aec76f52e1c3846ee12b4`、
+行数 102050，与冻结 `full_tsv_sha256`/`full_tsv_lines` 完全一致 ⇒ 零行级
+变化。日志 `target/test262-full-b21.log`，receipt 备份
+`target/s3-b-recon/test262-full-h1.tsv`。
+
 ### 6.2 A/B 协议
 
 - 构建：fat LTO + CGU=1、无 PGO/profiling（`cargo build --release
