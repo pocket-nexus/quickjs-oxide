@@ -232,7 +232,7 @@ fn private_readonly_instruction(
         tree.functions
             .get_mut(consuming_function)
             .ok_or_else(|| Error::internal("private-name consumer is out of bounds"))?,
-        tree.names.name(name),
+        tree.names.js_string(name)?,
     )?;
     Ok(Instruction::ThrowReadOnly(name))
 }

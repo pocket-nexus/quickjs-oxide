@@ -6,6 +6,8 @@
 
 use std::collections::HashMap;
 
+use crate::engine::value::{JsString, JsStringError};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(in crate::engine::compiler) struct NameId(u32);
 
@@ -13,6 +15,7 @@ pub(in crate::engine::compiler) struct NameId(u32);
 pub(in crate::engine::compiler) struct NameTable {
     names: Vec<Box<str>>,
     by_name: HashMap<Box<str>, NameId>,
+    js_strings: HashMap<NameId, JsString>,
 }
 
 impl NameTable {
@@ -20,6 +23,7 @@ impl NameTable {
         Self {
             names: Vec::new(),
             by_name: HashMap::new(),
+            js_strings: HashMap::new(),
         }
     }
 
@@ -41,5 +45,19 @@ impl NameTable {
 
     pub(in crate::engine::compiler) fn lookup(&self, name: &str) -> Option<NameId> {
         self.by_name.get(name).copied()
+    }
+
+    /// Reuse one `JsString` per interned name instead of re-allocating it at
+    /// every constant lookup.
+    pub(in crate::engine::compiler) fn js_string(
+        &mut self,
+        id: NameId,
+    ) -> Result<JsString, JsStringError> {
+        if let Some(cached) = self.js_strings.get(&id) {
+            return Ok(cached.clone());
+        }
+        let string = JsString::try_from_utf8(&self.names[id.0 as usize])?;
+        self.js_strings.insert(id, string.clone());
+        Ok(string)
     }
 }
