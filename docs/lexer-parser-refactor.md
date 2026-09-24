@@ -704,7 +704,9 @@ P2/P3 收尾：
    **2026-09-24 决策**：本项的 verify/publish 部分由
    `docs/verify-publication-plan.md` 承接——删除 verify 阶段、删除 BC5 读取
    路径、publication 单遍化，验收指标在该计划 §4 重定义；IR/常量侧剩余项
-   仍按本条继续评估。
+   仍按本条继续评估。该计划已执行完毕，实测见其 §7 与
+   `docs/compile-benchmark.md` §9.12（publish 时间 −29.7%、总编译
+   −21.7%、test262 全量向量逐字节一致）。
 3. **u32 Span / 坐标计算**：当前 `Span` 为 4×usize；改 u32 需源大小上限约定。
    触发已部分成立（§9.9：P3 `QuickJsSourceCursor::locate` 自时间 1.64%，P1b 1.9%，
    附录 D：1.6%~2.3% 为独立候选；line/col 计算随 span 使用增长）；动作=先做

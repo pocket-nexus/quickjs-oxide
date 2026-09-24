@@ -982,3 +982,74 @@ python3 target/p4-attr/symbolize.py target/p4-attr/samples.bin \
 
 # 大块精确：TRACE_EVERY=1 TRACE_MIN=8192（同一拦截器）
 ```
+
+上述 9.11.1–9.11.4 是 P3 基线的实测；其中 `flatten_unlinked_tree`、
+`FlattenFrame::new`、`Vec→Box` 与 verify 站点已在 2026-09-24 的
+verify/publication 简化中删除或改写，结果见 §9.12。
+
+#### 9.12 verify/publication 简化实测（P4-2 收尾，2026-09-24）
+
+对照三个提交，语料均为 `functions-4194304.js`：
+
+- P3：`172fde6e`（基线，含 verify 与 flatten）；
+- verify：`ca88c763`（删除独立 verify 阶段）；
+- walk：`cf91f28a`（publication 单遍后序 walk）。
+
+阶段时间（release `qjs -d`，同机同语料，各 3 次取 min，单位 ms）：
+
+| 阶段 | P3 | verify | walk | walk vs P3 |
+| --- | ---: | ---: | ---: | ---: |
+| parse | 322.98 | 329.85 | 323.86 | +0.3% |
+| resolution | 188.48 | 192.39 | 187.85 | −0.3% |
+| lowering | 197.28 | 207.37 | 199.48 | +1.1% |
+| fusion | 7.23 | 6.94 | 6.97 | −3.6% |
+| relocation | 2.48 | 2.45 | 2.44 | −1.5% |
+| verify | 173.02 | 0 | 0 | −100% |
+| publish | 281.83 | 223.41 | 198.19 | −29.7% |
+| 合计 | 1173.31 | 962.41 | 918.79 | −21.7% |
+
+verify+publish：454.85 → 223.41 → 198.19ms（walk 相对 P3 −56.4%）。
+verify 提交同时把 publish 从 281.83ms 降到 223.41ms：P3 的 publish 计时
+包含 verification 产物包装（`VerifiedFunction`）与 flatten 两段调用，删除
+这些包装后 publish 自身即少一次整树拷贝。
+
+分配探针（`scripts/benchmark/probes/compile_alloc_probe.rs`，单次运行）：
+
+| 指标 | P3 | verify | walk | walk vs P3 |
+| --- | ---: | ---: | ---: | ---: |
+| alloc 次数 | 5,574,827 | 4,252,556 | 4,194,756 | −24.8% |
+| alloc 字节 | 831.9MB | 718.5MB | 691.5MB | −16.9% |
+| realloc 次数 | 700,361 | 594,977 | 588,165 | −16.0% |
+| realloc 字节 | 849.8MB | 813.2MB | 771.1MB | −9.3% |
+| peak live | 342.2MB | 342.2MB | 342.2MB | 0% |
+| 窗口内 compile | 1226.8ms | 972.5ms | 937.1ms | −23.6% |
+
+peak live 未变：高水位由 parser/token 与 FunctionBuilder 的大块缓冲决定
+（§9.11.4），不属于本次简化范围。publish 阶段的独立分配计数未单列：P3 的
+临时分配阶段插桩补丁不在仓库中，本次只重建了总量探针；总量已覆盖 flatten
+的 43.0MB 大块、`FlattenFrame` 3.7 万次与定义重收集。
+
+验收对照（计划 §4）：
+
+| 条目 | 目标 | 实测 |
+| --- | ---: | ---: |
+| verify 提交编译时间 | ≥ −10% | −18.0% |
+| verify 提交 alloc 次数 | ≥ −20% | −23.7% |
+| verify 提交 alloc 字节 | ≥ −13.9% | −13.6% |
+| publish 阶段时间 | ≥ −25% | −29.7% |
+| verify+publish 时间 | ≥ −40% | −56.4% |
+| verify+publish alloc 次数 | ≥ −40% | −24.8% |
+| realloc 字节 | ≥ −5% | −9.3% |
+
+未达两项为边际偏差：alloc 字节差 0.3pp（噪声量级），verify+publish 的
+alloc 次数目标假设 publish 阶段有 ≥ −25% 分配削减，但单遍化主要削减的是
+大块与中间层，publish 剩余成本是定义/闭包名 atom 驻留与堆节点注册，未纳入
+本次范围。test262 语义中性：P3 与 walk 各跑一次 `--full`
+（12 workers，102,037 variants），除首行 metadata 的 engine 哈希外 TSV 与
+JSONL 逐字节一致（pass=80010、fail=3552、unsupported=3502、
+skipped=18475）；pinned milestone 的 `full_passes=79982` 差额 +28 是 P1a
+已记录的既有漂移，本阶段不 promote 里程碑。fixtures 13/13 稳定。
+
+复现：`cargo build --release -p quickjs-oxide-cli --features profiling --bin
+qjs` + `qjs -d`；分配探针见 §9.11.5 的第一条命令（`compile_alloc_probe.rs`）；
+test262 对照需 `env -i` 清空 `GIT_*` 后 `--full`。

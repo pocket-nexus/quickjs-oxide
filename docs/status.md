@@ -75,6 +75,20 @@ loads its profile and exact admissions from hash-authenticated data instead of
 compiling milestone identity or admission tables, and its `$262` realm/agent
 host is isolated behind a non-default feature.
 
+## Compiler pipeline simplification
+
+The BC5 bytecode reader was removed on 2026-09-24, and a follow-up removed the
+standalone verification pass and publication's flatten layer: drafts now reach
+execution through one iterative post-order publication walk which allocates
+each heap node as soon as its subtree completes. On `functions-4194304`
+(release `qjs -d`, min of 3 runs) the publish phase fell from 281.8ms to
+198.2ms (−29.7%) and verify+publish from 454.9ms to 198.2ms (−56.4%); total
+compile fell from 1173.3ms to 918.8ms (−21.7%). Allocation-probe totals fell
+24.8% (calls) and 16.9% (bytes), and the full Test262 outcome vector is
+byte-identical to the `172fde6e` baseline across 102,037 variants (the
++28-pass drift against the pinned milestone is pre-existing). See
+`docs/verify-publication-plan.md` and `docs/compile-benchmark.md` §9.12.
+
 ## Remaining parity work
 
 Major open frontiers include remaining module-host lifetime and
