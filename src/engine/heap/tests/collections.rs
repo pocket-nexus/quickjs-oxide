@@ -589,7 +589,7 @@ fn set_layout_and_iterator_source_are_structurally_validated() {
 
     let malformed = ObjectData {
         shape,
-        slots: Vec::new(),
+        slots: Slots::new(),
 
         used_as_prototype: false,
         private_brand_home: None,

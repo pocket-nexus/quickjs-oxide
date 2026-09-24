@@ -1,6 +1,6 @@
 use super::Runtime;
 use crate::engine::builtins::native::{DateNativeKind, NativeFunctionId};
-use crate::engine::heap::{AutoInitProperty, PropertySlot, RawId, ShapeId};
+use crate::engine::heap::{AutoInitProperty, PropertySlot, RawId, ShapeId, Slots};
 use crate::engine::object::ObjectRef;
 use crate::engine::object::builtin_properties::NativeBuiltinProperty;
 use crate::engine::object::shape::PropertyFlags;
@@ -15,7 +15,7 @@ fn method(name: &'static str) -> NativeBuiltinProperty {
     )
 }
 
-fn layout(runtime: &Runtime, object: &ObjectRef) -> (ShapeId, Vec<PropertySlot>) {
+fn layout(runtime: &Runtime, object: &ObjectRef) -> (ShapeId, Slots) {
     let state = runtime.0.state.borrow();
     let object = state.heap.object(object.object_id()).unwrap();
     (object.shape, object.slots.clone())
@@ -23,7 +23,7 @@ fn layout(runtime: &Runtime, object: &ObjectRef) -> (ShapeId, Vec<PropertySlot>)
 
 /// `PropertySlot` has no `PartialEq` (its payloads embed `RawValue`), so
 /// layout snapshots compare through their debug rendering instead.
-fn layout_summary(layout: &(ShapeId, Vec<PropertySlot>)) -> (ShapeId, String) {
+fn layout_summary(layout: &(ShapeId, Slots)) -> (ShapeId, String) {
     (layout.0, format!("{:?}", layout.1))
 }
 

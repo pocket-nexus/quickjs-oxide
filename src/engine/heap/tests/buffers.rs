@@ -21,7 +21,7 @@ fn layout_replacement_preserves_array_buffer_payload_and_rolls_back_failures() {
     let property_shape = one_slot_shape(&mut heap);
 
     assert_eq!(
-        heap.replace_object_layout(object, property_shape, Vec::new()),
+        heap.replace_object_layout(object, property_shape, Slots::new()),
         Err(HeapError::Invariant(
             "object slot count does not match its shape",
         )),
@@ -39,7 +39,7 @@ fn layout_replacement_preserves_array_buffer_payload_and_rolls_back_failures() {
         heap.replace_object_layout(
             object,
             property_shape,
-            vec![PropertySlot::Data(RawValue::Int(42))],
+            Slots::from_vec(vec![PropertySlot::Data(RawValue::Int(42))]),
         )
         .unwrap(),
         HeapCleanup::default(),
@@ -393,7 +393,7 @@ fn data_view_retains_its_buffer_and_survives_oob_detach_and_cycle_collection() {
         Ok(()),
     );
     assert_eq!(
-        heap.replace_object_layout(view, base_shape, Vec::new())
+        heap.replace_object_layout(view, base_shape, Slots::new())
             .unwrap(),
         HeapCleanup::default(),
     );
@@ -415,7 +415,7 @@ fn data_view_retains_its_buffer_and_survives_oob_detach_and_cycle_collection() {
         Ok(()),
     );
     assert_eq!(
-        heap.replace_object_layout(view, base_shape, Vec::new())
+        heap.replace_object_layout(view, base_shape, Slots::new())
             .unwrap(),
         HeapCleanup::default(),
     );
@@ -431,7 +431,7 @@ fn data_view_retains_its_buffer_and_survives_oob_detach_and_cycle_collection() {
     let buffer_cycle_shape = heap
         .allocate_shape(Shape::new(Some(view), []).unwrap())
         .unwrap();
-    heap.replace_object_layout(buffer, buffer_cycle_shape, Vec::new())
+    heap.replace_object_layout(buffer, buffer_cycle_shape, Slots::new())
         .unwrap();
     assert_eq!(
         heap.release_shape(base_shape).unwrap(),

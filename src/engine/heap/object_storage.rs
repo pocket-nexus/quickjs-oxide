@@ -1091,7 +1091,7 @@ impl Heap {
         &mut self,
         id: ObjectId,
         shape: ShapeId,
-        slots: Vec<PropertySlot>,
+        slots: Slots,
     ) -> Result<HeapCleanup, HeapError> {
         self.validate_property_layout(shape, &slots)?;
         let replacement_prototype = self.shape(shape)?.prototype();

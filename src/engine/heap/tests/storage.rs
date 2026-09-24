@@ -1311,7 +1311,7 @@ fn shape_prototype_edge_participates_in_cycle_collection() {
     let prototype_shape = heap
         .allocate_shape(Shape::new(Some(object), []).unwrap())
         .unwrap();
-    heap.replace_object_layout(object, prototype_shape, Vec::new())
+    heap.replace_object_layout(object, prototype_shape, Slots::new())
         .unwrap();
 
     assert_eq!(

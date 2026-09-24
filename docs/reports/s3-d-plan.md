@@ -1,7 +1,7 @@
 # 阶段 D 实施计划：数据导向堆与形状/键存储（2026-09-24）
 
-> 状态：实施中。D1a/D1b 已提交（`84654cc8`/`98bd54c3`）；D2 leaf 与
-> cold payload 批次已落地（见 §4 D2 实施记录），shape/object 批次待做。基线为 `feat/pr27-a4`
+> 状态：实施中。D1a/D1b 已提交（`84654cc8`/`98bd54c3`）；D2 leaf/cold payload
+> 与 D3a/D3b 已落地（见 §4 实施记录），D3c 与 D4/D5 待做。基线为 `feat/pr27-a4`
 > （= PR27 tip，T1/T2 已收口），裁决依据见
 > [A4/D/B 决策报告](s3-a4-d-b-decision.md)。本计划取代
 > `performance-architecture.md` §6 的旧 D 草图（旧草图含过时事实，
@@ -410,6 +410,30 @@ objects 1M RSS 再降 ≥ 20%；`property_slots` capacity/used ≤ 1.1。
   固定行全部 ±1.6% 内（prop_clone +1.57%、arguments_read +1.58%）。
 - 验证：lib 2318、workspace 全绿；`--features profiling` 仅剩基线既有失败；
   release 零警告。
+
+**D3b 实施记录（inline slots，2026-09-24）**：
+
+- `ObjectData.slots: Vec<PropertySlot>` 改为 `Slots` 枚举：
+  `Inline { len: u8, slots: [PropertySlot; 2] }` 前两槽内联，第 3 次 push
+  转 `Spilled(Vec)`（`with_capacity(3)`）。
+- API 比计划更宽：除 `len/get/get_mut/push/replace/iter/clear` 外实现
+  `as_slice/as_mut_slice`（内联活跃前缀本身就是连续切片，安全）、
+  `Deref/DerefMut`、`&Slots/&mut Slots` 的 `IntoIterator`，并补齐
+  `swap_remove/remove/shrink_to/try_reserve/extend/capacity`。计划以
+  “无法安全返回连续切片”为由拒绝 `as_slice`，该论证不成立；提供后
+  迁移面显著缩小，字典/稀疏数组路径语义不变。
+- `shrink_to` 在溢出向量缩到 ≤2 槽时回到内联；`accounted_capacity`
+  供 profiling 使用（内联按 len 计容量）。
+- 尺寸：`Slots` 56B、`ObjectData` 224 → 256B、`ArenaSlot` 272 → 304B
+  （断言更新；另加 `ObjectData ≤ 272` 断言）。对象槽变宽 32B，但每个
+  ≤2 属性对象省掉一次 Vec 分配与 2× 容量浪费。
+- 实测（vs D1a）：objects.js 425.2 → **349.1 MiB**（较 D3a 再降 17.9%，
+  较 D1a −44.0%；D3 门禁“再降 ≥20%”以 D3a 为基为 23.4% ✓，≤380 目标 ✓）；
+  arrays.js 425.5 MiB（数组走 dense 载荷，不受影响）；固定行全部
+  ±0.50% 内。profiling `property_slots` capacity/used = 1.0004 ≤ 1.1 ✓。
+- 顺带：`NativeCProto::SetterMagic` 与 `RawValue::Exception` 的
+  `expect(dead_code)` 因可达性变化不再触发（lint 报 unfulfilled），改为
+  `allow(dead_code, reason = ...)`，语义注释保留。
 
 ### D4 Map/Set 记录与索引
 

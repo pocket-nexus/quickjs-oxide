@@ -6,7 +6,7 @@
 
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
-use crate::engine::heap::ObjectPayload;
+use crate::engine::heap::{ObjectPayload, Slots};
 use crate::engine::object::ObjectRef;
 
 impl Runtime {
@@ -61,7 +61,7 @@ impl Runtime {
             }
             let survivors = data.slots.len() - removed;
             let mut entries = Vec::with_capacity(survivors);
-            let mut slots = Vec::with_capacity(survivors);
+            let mut slots = Slots::new();
             for ((entry, slot), index) in shape.entries().iter().zip(&data.slots).zip(indices) {
                 if !remove(index) {
                     entries.push(*entry);

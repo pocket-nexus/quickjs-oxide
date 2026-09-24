@@ -10,15 +10,14 @@ use super::HeapNodeKind;
 #[cfg(debug_assertions)]
 use super::LeafSlot;
 use super::{
-    AsyncGeneratorRequestData, AtomIdx, BigIntId, BytecodeConstant, ContextData,
-    ContextId, FinalizationRegistryEntry, FunctionBytecodeData, FunctionBytecodeId,
-    GeneratorActivationData, GeneratorFrameBinding, Hash, HashMap, Heap, HeapError,
-    InternalCallableData, LeafValue, NativeErrorKind, Node, NodeData, ObjectData, ObjectId,
-    ObjectPayload, PrimitiveKind, PrimitiveObjectData, PromiseCapabilityData, PromiseReaction,
-    PropertySlot, RawId, RawModuleEvaluationState, RawModuleLinkRealm, RawModuleNamespaceState,
-    RawModuleRecord, RawModuleRecordBody, RawValue, Shape, ShapeId, SlotState, StringId,
-    TypedArrayElementKind, VarRefData, VarRefId, VecDeque, WeakCollectionKey,
-    is_map_storable_value,
+    AsyncGeneratorRequestData, AtomIdx, BigIntId, BytecodeConstant, ContextData, ContextId,
+    FinalizationRegistryEntry, FunctionBytecodeData, FunctionBytecodeId, GeneratorActivationData,
+    GeneratorFrameBinding, Hash, HashMap, Heap, HeapError, InternalCallableData, LeafValue,
+    NativeErrorKind, Node, NodeData, ObjectData, ObjectId, ObjectPayload, PrimitiveKind,
+    PrimitiveObjectData, PromiseCapabilityData, PromiseReaction, PropertySlot, RawId,
+    RawModuleEvaluationState, RawModuleLinkRealm, RawModuleNamespaceState, RawModuleRecord,
+    RawModuleRecordBody, RawValue, Shape, ShapeId, SlotState, StringId, TypedArrayElementKind,
+    VarRefData, VarRefId, VecDeque, WeakCollectionKey, is_map_storable_value,
 };
 
 /// Fast retains saturate at this count, matching QuickJS's immortal value.

@@ -4,7 +4,8 @@
 use super::shape::{Shape, ShapeEntry};
 use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::heap::runtime::RuntimeState;
-use crate::engine::heap::{ObjectId, PropertySlot, ShapeId};
+use crate::engine::heap::{ObjectId, ShapeId, Slots};
+
 use std::collections::HashMap;
 
 impl RuntimeState {
@@ -46,7 +47,7 @@ impl RuntimeState {
         object: ObjectId,
         prototype: Option<ObjectId>,
         entries: &[ShapeEntry],
-        slots: Vec<PropertySlot>,
+        slots: Slots,
     ) -> Result<(), RuntimeError> {
         if entries.len() != slots.len() {
             return Err(RuntimeError::Invariant(
@@ -65,7 +66,7 @@ impl RuntimeState {
         let mut pairs = entries
             .iter()
             .copied()
-            .zip(slots)
+            .zip(slots.iter().cloned())
             .map(Some)
             .collect::<Vec<_>>();
         let mut ordered = Vec::with_capacity(pairs.len());
@@ -82,7 +83,7 @@ impl RuntimeState {
         let mut shape = Shape::new(prototype, entries)?;
         shape.enable_dictionary();
         let shape_id = self.allocate_uncached_shape(shape)?;
-        self.replace_layout_with_owned_shape(object, shape_id, slots)
+        self.replace_layout_with_owned_shape(object, shape_id, Slots::from_vec(slots))
     }
 }
 
@@ -180,7 +181,10 @@ mod tests {
             let slots = data.slots.clone();
             let second = state
                 .heap
-                .allocate_object(crate::engine::heap::ObjectData::ordinary(shape, slots))
+                .allocate_object(crate::engine::heap::ObjectData::ordinary(
+                    shape,
+                    slots.into(),
+                ))
                 .unwrap();
             (shape, second)
         };

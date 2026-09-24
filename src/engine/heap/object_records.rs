@@ -542,6 +542,312 @@ pub enum ObjectKind {
     Promise,
 }
 
+/// Inline-or-spilled property slot storage for one object.
+///
+/// Most objects hold one or two properties, so the first two slots live in the
+/// object record and only larger objects allocate a vector. The inline form
+/// removes one allocation per object and the vector's growth waste, while the
+/// spilled form keeps the previous `Vec` behavior.
+#[derive(Clone, Debug)]
+pub enum Slots {
+    Inline { len: u8, slots: [PropertySlot; 2] },
+    Spilled(Vec<PropertySlot>),
+}
+
+impl Slots {
+    /// Number of slots kept inline before a spill.
+    pub const INLINE_CAPACITY: usize = 2;
+
+    /// Placeholder for inline slots beyond `len`. Never observed: every
+    /// accessor respects `len`.
+    const EMPTY: PropertySlot = PropertySlot::Data(RawValue::Undefined);
+
+    /// An empty inline layout.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self::Inline {
+            len: 0,
+            slots: [Self::EMPTY; Self::INLINE_CAPACITY],
+        }
+    }
+
+    /// Adopt one slot vector, keeping small layouts inline.
+    #[must_use]
+    pub fn from_vec(slots: Vec<PropertySlot>) -> Self {
+        if slots.len() <= Self::INLINE_CAPACITY {
+            let mut inline = Self::new();
+            for slot in slots {
+                inline.push(slot);
+            }
+            inline
+        } else {
+            Self::Spilled(slots)
+        }
+    }
+
+    /// Number of live property slots.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Inline { len, .. } => usize::from(*len),
+            Self::Spilled(slots) => slots.len(),
+        }
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    #[must_use]
+    pub fn get(&self, index: usize) -> Option<&PropertySlot> {
+        match self {
+            Self::Inline { len, slots } => (index < usize::from(*len)).then(|| &slots[index]),
+            Self::Spilled(slots) => slots.get(index),
+        }
+    }
+
+    #[must_use]
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut PropertySlot> {
+        match self {
+            Self::Inline { len, slots } => (index < usize::from(*len)).then(|| &mut slots[index]),
+            Self::Spilled(slots) => slots.get_mut(index),
+        }
+    }
+
+    /// Append one slot, spilling the inline pair on the third push.
+    pub fn push(&mut self, slot: PropertySlot) {
+        match self {
+            Self::Inline { len, slots } => {
+                let index = usize::from(*len);
+                if index < Self::INLINE_CAPACITY {
+                    slots[index] = slot;
+                    *len += 1;
+                    return;
+                }
+                let mut spilled = Vec::with_capacity(3);
+                for existing in slots.iter() {
+                    spilled.push(existing.clone());
+                }
+                spilled.push(slot);
+                *self = Self::Spilled(spilled);
+            }
+            Self::Spilled(slots) => slots.push(slot),
+        }
+    }
+
+    /// Replace one live slot, returning the previous payload.
+    pub fn replace(&mut self, index: usize, slot: PropertySlot) -> Option<PropertySlot> {
+        match self {
+            Self::Inline { len, slots } => {
+                if index < usize::from(*len) {
+                    Some(std::mem::replace(&mut slots[index], slot))
+                } else {
+                    None
+                }
+            }
+            Self::Spilled(slots) => {
+                if index < slots.len() {
+                    Some(std::mem::replace(&mut slots[index], slot))
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    /// Contiguous view of the live slots. Inline layouts expose their live
+    /// prefix; spilled layouts expose the vector.
+    #[must_use]
+    pub fn as_slice(&self) -> &[PropertySlot] {
+        match self {
+            Self::Inline { len, slots } => &slots[..usize::from(*len)],
+            Self::Spilled(slots) => slots,
+        }
+    }
+
+    #[must_use]
+    pub fn as_mut_slice(&mut self) -> &mut [PropertySlot] {
+        match self {
+            Self::Inline { len, slots } => &mut slots[..usize::from(*len)],
+            Self::Spilled(slots) => slots,
+        }
+    }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, PropertySlot> {
+        match self {
+            Self::Inline { len, slots } => slots[..usize::from(*len)].iter(),
+            Self::Spilled(slots) => slots.iter(),
+        }
+    }
+
+    pub fn iter_mut(&mut self) -> std::slice::IterMut<'_, PropertySlot> {
+        match self {
+            Self::Inline { len, slots } => slots[..usize::from(*len)].iter_mut(),
+            Self::Spilled(slots) => slots.iter_mut(),
+        }
+    }
+
+    /// Capacity for memory accounting: inline slots allocate nothing, so the
+    /// live length is fully used; spilled layouts report the vector capacity.
+    #[must_use]
+    pub fn accounted_capacity(&self) -> usize {
+        match self {
+            Self::Inline { .. } => self.len(),
+            Self::Spilled(slots) => slots.capacity(),
+        }
+    }
+
+    /// Backing capacity; inline layouts report their fixed inline capacity.
+    #[must_use]
+    pub fn capacity(&self) -> usize {
+        match self {
+            Self::Inline { .. } => Self::INLINE_CAPACITY,
+            Self::Spilled(slots) => slots.capacity(),
+        }
+    }
+
+    /// Reserve room for `additional` more slots, promoting to a spilled
+    /// vector when the inline pair cannot hold them.
+    pub fn try_reserve(
+        &mut self,
+        additional: usize,
+    ) -> Result<(), std::collections::TryReserveError> {
+        let needed = self.len().saturating_add(additional);
+        if needed <= Self::INLINE_CAPACITY {
+            return Ok(());
+        }
+        let mut spilled = Vec::new();
+        spilled.try_reserve(needed)?;
+        for slot in self.iter() {
+            spilled.push(slot.clone());
+        }
+        *self = Self::Spilled(spilled);
+        Ok(())
+    }
+
+    /// Remove one slot, moving the last live slot into its place.
+    pub fn swap_remove(&mut self, index: usize) -> PropertySlot {
+        match self {
+            Self::Inline { len, slots } => {
+                let live = usize::from(*len);
+                assert!(index < live, "swap_remove index out of bounds");
+                let removed = std::mem::replace(&mut slots[index], Self::EMPTY);
+                if index < live - 1 {
+                    slots[index] = std::mem::replace(&mut slots[live - 1], Self::EMPTY);
+                }
+                *len -= 1;
+                removed
+            }
+            Self::Spilled(slots) => slots.swap_remove(index),
+        }
+    }
+
+    /// Remove one slot, shifting later slots left.
+    pub fn remove(&mut self, index: usize) -> PropertySlot {
+        match self {
+            Self::Inline { len, slots } => {
+                let live = usize::from(*len);
+                assert!(index < live, "remove index out of bounds");
+                let removed = std::mem::replace(&mut slots[index], Self::EMPTY);
+                for cursor in index..live - 1 {
+                    slots[cursor] = std::mem::replace(&mut slots[cursor + 1], Self::EMPTY);
+                }
+                *len -= 1;
+                removed
+            }
+            Self::Spilled(slots) => slots.remove(index),
+        }
+    }
+
+    /// Shrink spilled capacity, returning small layouts to inline storage.
+    pub fn shrink_to(&mut self, min_capacity: usize) {
+        let Self::Spilled(slots) = self else {
+            return;
+        };
+        slots.shrink_to(min_capacity);
+        if slots.len() <= Self::INLINE_CAPACITY {
+            *self = Self::from_vec(std::mem::take(slots));
+        }
+    }
+
+    /// Append every slot from one iterator.
+    pub fn extend<I>(&mut self, slots: I)
+    where
+        I: IntoIterator<Item = PropertySlot>,
+    {
+        for slot in slots {
+            self.push(slot);
+        }
+    }
+
+    /// Drop every slot, keeping any spilled capacity for reuse.
+    pub fn clear(&mut self) {
+        match self {
+            Self::Inline { len, slots } => {
+                for index in 0..usize::from(*len) {
+                    slots[index] = Self::EMPTY;
+                }
+                *len = 0;
+            }
+            Self::Spilled(slots) => slots.clear(),
+        }
+    }
+}
+
+impl Default for Slots {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl From<Vec<PropertySlot>> for Slots {
+    fn from(slots: Vec<PropertySlot>) -> Self {
+        Self::from_vec(slots)
+    }
+}
+
+impl From<Slots> for Vec<PropertySlot> {
+    fn from(slots: Slots) -> Self {
+        match slots {
+            Slots::Inline { .. } => slots.as_slice().to_vec(),
+            Slots::Spilled(slots) => slots,
+        }
+    }
+}
+
+impl std::ops::Deref for Slots {
+    type Target = [PropertySlot];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_slice()
+    }
+}
+
+impl std::ops::DerefMut for Slots {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.as_mut_slice()
+    }
+}
+
+impl<'a> IntoIterator for &'a Slots {
+    type Item = &'a PropertySlot;
+    type IntoIter = std::slice::Iter<'a, PropertySlot>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut Slots {
+    type Item = &'a mut PropertySlot;
+    type IntoIter = std::slice::IterMut<'a, PropertySlot>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter_mut()
+    }
+}
+
 /// Runtime-owned ordinary object record.
 ///
 /// The shape entries and slots are parallel arrays and must have identical
@@ -551,7 +857,7 @@ pub struct ObjectData {
     pub shape: ShapeId,
 
     pub(crate) used_as_prototype: bool,
-    pub slots: Vec<PropertySlot>,
+    pub slots: Slots,
     /// QuickJS's hidden `JS_CLASS_PRIVATE` brand stored on a private method's
     /// HomeObject. The object owns one atom reference independently from any
     /// receiver marker using the same private atom in its shape.
@@ -581,10 +887,10 @@ impl ObjectData {
 
     /// Construct an ordinary extensible object with a mutable prototype.
     #[must_use]
-    pub const fn ordinary(shape: ShapeId, slots: Vec<PropertySlot>) -> Self {
+    pub fn ordinary(shape: ShapeId, slots: Vec<PropertySlot>) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -601,10 +907,10 @@ impl ObjectData {
     /// ordinary payload and internal methods; only the QuickJS class tag is
     /// distinct.
     #[must_use]
-    pub const fn iterator(shape: ShapeId, slots: Vec<PropertySlot>) -> Self {
+    pub fn iterator(shape: ShapeId, slots: Vec<PropertySlot>) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -624,10 +930,10 @@ impl ObjectData {
     /// The caller supplies a null-prototype shape and installs the complete
     /// sorted export table through the runtime's private construction path.
     #[must_use]
-    pub const fn module_namespace(shape: ShapeId, slots: Vec<PropertySlot>) -> Self {
+    pub fn module_namespace(shape: ShapeId, slots: Vec<PropertySlot>) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -642,10 +948,10 @@ impl ObjectData {
 
     /// Construct one Raw JSON branded object with ordinary internal methods.
     #[must_use]
-    pub const fn raw_json(shape: ShapeId, slots: Vec<PropertySlot>) -> Self {
+    pub fn raw_json(shape: ShapeId, slots: Vec<PropertySlot>) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -661,10 +967,10 @@ impl ObjectData {
     /// Construct one genuine Array exotic object. The caller supplies the
     /// validated `length`-first layout used by QuickJS's initial Array shape.
     #[must_use]
-    pub const fn array(shape: ShapeId, slots: Vec<PropertySlot>) -> Self {
+    pub fn array(shape: ShapeId, slots: Vec<PropertySlot>) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -683,7 +989,7 @@ impl ObjectData {
     /// installs the exact actual-argument prefix and the class-specific
     /// `length`, `callee`, and `@@iterator` properties after allocation.
     #[must_use]
-    pub const fn arguments(
+    pub fn arguments(
         shape: ShapeId,
         slots: Vec<PropertySlot>,
         mapped: bool,
@@ -691,7 +997,7 @@ impl ObjectData {
     ) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -709,7 +1015,7 @@ impl ObjectData {
 
     /// Construct a branded Array Iterator at index zero.
     #[must_use]
-    pub const fn array_iterator(
+    pub fn array_iterator(
         shape: ShapeId,
         slots: Vec<PropertySlot>,
         object: ObjectId,
@@ -717,7 +1023,7 @@ impl ObjectData {
     ) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -736,14 +1042,14 @@ impl ObjectData {
 
     /// Construct one hidden QuickJS-compatible for-in enumeration object.
     #[must_use]
-    pub const fn for_in_iterator(
+    pub fn for_in_iterator(
         shape: ShapeId,
         slots: Vec<PropertySlot>,
         data: ForInIteratorData,
     ) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -759,14 +1065,10 @@ impl ObjectData {
     /// Construct one extensible primitive wrapper object with its validated
     /// internal primitive data slot.
     #[must_use]
-    pub const fn primitive(
-        shape: ShapeId,
-        slots: Vec<PropertySlot>,
-        data: PrimitiveObjectData,
-    ) -> Self {
+    pub fn primitive(shape: ShapeId, slots: Vec<PropertySlot>, data: PrimitiveObjectData) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -783,10 +1085,10 @@ impl ObjectData {
     /// The runtime is responsible for applying TimeClip before publication;
     /// NaN remains valid because it represents an invalid Date.
     #[must_use]
-    pub const fn date(shape: ShapeId, slots: Vec<PropertySlot>, value: f64) -> Self {
+    pub fn date(shape: ShapeId, slots: Vec<PropertySlot>, value: f64) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -803,10 +1105,10 @@ impl ObjectData {
     /// This mirrors QuickJS's derived-constructor order, in which object
     /// allocation can succeed before compilation reports a SyntaxError.
     #[must_use]
-    pub const fn regexp(shape: ShapeId, slots: Vec<PropertySlot>) -> Self {
+    pub fn regexp(shape: ShapeId, slots: Vec<PropertySlot>) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -829,7 +1131,7 @@ impl ObjectData {
     ) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -846,7 +1148,7 @@ impl ObjectData {
     /// matcher. The matcher and input string remain retained after completion;
     /// only finalization releases them in pinned QuickJS.
     #[must_use]
-    pub const fn regexp_string_iterator(
+    pub fn regexp_string_iterator(
         shape: ShapeId,
         slots: Vec<PropertySlot>,
         regexp: ObjectId,
@@ -856,7 +1158,7 @@ impl ObjectData {
     ) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -882,7 +1184,7 @@ impl ObjectData {
     pub fn map(shape: ShapeId, slots: Vec<PropertySlot>) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -899,7 +1201,7 @@ impl ObjectData {
 
     /// Construct a branded Map Iterator at stable record index zero.
     #[must_use]
-    pub const fn map_iterator(
+    pub fn map_iterator(
         shape: ShapeId,
         slots: Vec<PropertySlot>,
         object: ObjectId,
@@ -907,7 +1209,7 @@ impl ObjectData {
     ) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -932,7 +1234,7 @@ impl ObjectData {
     pub fn set(shape: ShapeId, slots: Vec<PropertySlot>) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -954,7 +1256,7 @@ impl ObjectData {
     pub fn weak_map(shape: ShapeId, slots: Vec<PropertySlot>) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -974,7 +1276,7 @@ impl ObjectData {
     pub fn weak_set(shape: ShapeId, slots: Vec<PropertySlot>) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -992,14 +1294,14 @@ impl ObjectData {
     /// Construct one heap-internal genuine WeakRef. The runtime intrinsic
     /// layer supplies the public constructor and selected prototype.
     #[must_use]
-    pub(crate) const fn weak_ref(
+    pub(crate) fn weak_ref(
         shape: ShapeId,
         slots: Vec<PropertySlot>,
         target: WeakCollectionKey,
     ) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -1017,7 +1319,7 @@ impl ObjectData {
     /// Construct one heap-internal genuine FinalizationRegistry. Its callback
     /// and creation realm are ordinary traced payload edges.
     #[must_use]
-    pub(crate) const fn finalization_registry(
+    pub(crate) fn finalization_registry(
         shape: ShapeId,
         slots: Vec<PropertySlot>,
         callback: ObjectId,
@@ -1025,7 +1327,7 @@ impl ObjectData {
     ) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -1044,7 +1346,7 @@ impl ObjectData {
 
     /// Construct a branded Set Iterator at stable record index zero.
     #[must_use]
-    pub const fn set_iterator(
+    pub fn set_iterator(
         shape: ShapeId,
         slots: Vec<PropertySlot>,
         object: ObjectId,
@@ -1052,7 +1354,7 @@ impl ObjectData {
     ) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -1073,14 +1375,14 @@ impl ObjectData {
     /// Construct a realm global object with QuickJS's hidden unresolved-name
     /// VarRef table.
     #[must_use]
-    pub const fn global_object(
+    pub fn global_object(
         shape: ShapeId,
         slots: Vec<PropertySlot>,
         uninitialized_vars: ObjectId,
     ) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -1097,10 +1399,10 @@ impl ObjectData {
     /// properties remain in the shape/slot arrays; the payload preserves the
     /// native class tag used by `Error.isError`.
     #[must_use]
-    pub const fn error(shape: ShapeId, slots: Vec<PropertySlot>) -> Self {
+    pub fn error(shape: ShapeId, slots: Vec<PropertySlot>) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -1115,14 +1417,10 @@ impl ObjectData {
 
     /// Construct a branded String Iterator at code-unit index zero.
     #[must_use]
-    pub const fn string_iterator(
-        shape: ShapeId,
-        slots: Vec<PropertySlot>,
-        string: JsString,
-    ) -> Self {
+    pub fn string_iterator(shape: ShapeId, slots: Vec<PropertySlot>, string: JsString) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -1144,14 +1442,14 @@ impl ObjectData {
     /// `flatMap` later replaces it while traversing a mapped iterator. All
     /// supplied edges transfer to the object when allocation succeeds.
     #[must_use]
-    pub const fn iterator_helper(
+    pub fn iterator_helper(
         shape: ShapeId,
         slots: Vec<PropertySlot>,
         data: IteratorHelperData,
     ) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -1166,7 +1464,7 @@ impl ObjectData {
 
     /// Construct the branded forwarding iterator used by `Iterator.from`.
     #[must_use]
-    pub const fn iterator_wrap(
+    pub fn iterator_wrap(
         shape: ShapeId,
         slots: Vec<PropertySlot>,
         source: RawValue,
@@ -1174,7 +1472,7 @@ impl ObjectData {
     ) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -1190,7 +1488,7 @@ impl ObjectData {
     /// Construct the branded Promise adapter used by async iteration over a
     /// synchronous iterator.
     #[must_use]
-    pub const fn async_from_sync_iterator(
+    pub fn async_from_sync_iterator(
         shape: ShapeId,
         slots: Vec<PropertySlot>,
         sync_iterator: ObjectId,
@@ -1198,7 +1496,7 @@ impl ObjectData {
     ) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -1216,14 +1514,14 @@ impl ObjectData {
 
     /// Construct the lazy sequencing iterator returned by `Iterator.concat`.
     #[must_use]
-    pub const fn iterator_concat(
+    pub fn iterator_concat(
         shape: ShapeId,
         slots: Vec<PropertySlot>,
         items: Vec<Option<IteratorConcatItem>>,
     ) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -1248,7 +1546,7 @@ impl ObjectData {
     /// QuickJS sets the Proxy object's constructor bit independently from its
     /// callable class hook.
     #[must_use]
-    pub const fn proxy(
+    pub fn proxy(
         shape: ShapeId,
         slots: Vec<PropertySlot>,
         target: ObjectId,
@@ -1258,7 +1556,7 @@ impl ObjectData {
     ) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -1288,7 +1586,7 @@ impl ObjectData {
     ) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -1316,7 +1614,7 @@ impl ObjectData {
     ) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -1335,14 +1633,10 @@ impl ObjectData {
     /// and currently out-of-bounds states remain valid so later resize/detach
     /// operations never corrupt the object graph.
     #[must_use]
-    pub const fn data_view(
-        shape: ShapeId,
-        slots: Vec<PropertySlot>,
-        data: ArrayBufferViewData,
-    ) -> Self {
+    pub fn data_view(shape: ShapeId, slots: Vec<PropertySlot>, data: ArrayBufferViewData) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -1357,14 +1651,10 @@ impl ObjectData {
 
     /// Construct one genuine integer-indexed TypedArray over an ArrayBuffer.
     #[must_use]
-    pub const fn typed_array(
-        shape: ShapeId,
-        slots: Vec<PropertySlot>,
-        data: TypedArrayData,
-    ) -> Self {
+    pub fn typed_array(shape: ShapeId, slots: Vec<PropertySlot>, data: TypedArrayData) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -1387,7 +1677,7 @@ impl ObjectData {
     ) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -1414,7 +1704,7 @@ impl ObjectData {
     ) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -1444,7 +1734,7 @@ impl ObjectData {
     ) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -1464,7 +1754,7 @@ impl ObjectData {
     /// `name` properties are installed by the runtime after allocation; the
     /// class payload owns the target, bound receiver and argument vector.
     #[must_use]
-    pub(crate) const fn bound_function(
+    pub(crate) fn bound_function(
         shape: ShapeId,
         slots: Vec<PropertySlot>,
         target: ObjectId,
@@ -1474,7 +1764,7 @@ impl ObjectData {
     ) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -1503,7 +1793,7 @@ impl ObjectData {
     ) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -1537,7 +1827,7 @@ impl ObjectData {
     ) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -1567,7 +1857,7 @@ impl ObjectData {
     ) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -1592,7 +1882,7 @@ impl ObjectData {
     ) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -1614,7 +1904,7 @@ impl ObjectData {
     /// phase. The runtime roots the active frame until the first suspension;
     /// the state object owns the outer resolving functions immediately.
     #[must_use]
-    pub const fn async_function_state(
+    pub fn async_function_state(
         shape: ShapeId,
         slots: Vec<PropertySlot>,
         driver_realm: ContextId,
@@ -1623,7 +1913,7 @@ impl ObjectData {
     ) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,
@@ -1646,10 +1936,10 @@ impl ObjectData {
     /// `undefined` and owns no reactions until `PerformPromiseThen` appends
     /// them through `Heap::promise_add_reactions`.
     #[must_use]
-    pub const fn promise(shape: ShapeId, slots: Vec<PropertySlot>) -> Self {
+    pub fn promise(shape: ShapeId, slots: Vec<PropertySlot>) -> Self {
         Self {
             shape,
-            slots,
+            slots: Slots::from_vec(slots),
 
             used_as_prototype: false,
             private_brand_home: None,

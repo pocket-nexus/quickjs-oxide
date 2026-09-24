@@ -18,7 +18,7 @@ use crate::engine::code::debug::DebugInfoMode;
 use crate::engine::hash::FxBuildHasher;
 use crate::engine::heap::{
     BigIntId, ContextId, FunctionBytecodeId, Heap, HeapCleanup, ObjectId, PropertySlot, RawValue,
-    ShapeId, StringId, VarRefId,
+    ShapeId, StringId, VarRefId, object_records::Slots,
 };
 use crate::engine::object::WellKnownSymbol;
 use crate::engine::object::shape::{self, Shape, ShapeEntry};
@@ -516,7 +516,7 @@ impl RuntimeState {
         object: ObjectId,
         prototype: Option<ObjectId>,
         entries: &[ShapeEntry],
-        slots: Vec<PropertySlot>,
+        slots: Slots,
     ) -> Result<(), RuntimeError> {
         if self
             .heap
@@ -544,7 +544,7 @@ impl RuntimeState {
         &mut self,
         object: ObjectId,
         shape: ShapeId,
-        slots: Vec<PropertySlot>,
+        slots: Slots,
     ) -> Result<(), RuntimeError> {
         let retained_atoms = match self.retain_slot_atoms(&slots) {
             Ok(atoms) => atoms,

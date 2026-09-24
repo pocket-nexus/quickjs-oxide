@@ -148,6 +148,10 @@ mod tests {
             "ArenaSlot bytes: {}",
             std::mem::size_of::<super::super::ArenaSlot>()
         );
-        assert_eq!(std::mem::size_of::<super::super::ArenaSlot>(), 272);
+        assert_eq!(std::mem::size_of::<super::super::ArenaSlot>(), 304);
+        assert!(
+            std::mem::size_of::<super::super::ObjectData>() <= 272,
+            "ObjectData grew past the inline-slots budget"
+        );
     }
 }

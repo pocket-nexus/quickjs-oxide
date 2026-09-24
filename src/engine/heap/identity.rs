@@ -269,7 +269,7 @@ pub enum RawValue {
     Uninitialized,
     #[cfg_attr(
         not(test),
-        expect(
+        allow(
             dead_code,
             reason = "Raw exception sentinels must be recognized and rejected at value boundaries."
         )

@@ -156,7 +156,7 @@ impl Heap {
                     add_storage(
                         &mut properties,
                         object.slots.len(),
-                        object.slots.capacity(),
+                        object.slots.accounted_capacity(),
                         size_of::<PropertySlot>(),
                     );
                     match &object.payload {
