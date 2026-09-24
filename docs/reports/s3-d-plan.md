@@ -1,7 +1,7 @@
 # 阶段 D 实施计划：数据导向堆与形状/键存储（2026-09-24）
 
-> 状态：实施中。D1a/D1b 已提交（`84654cc8`/`98bd54c3`）；D2 leaf
-> 批次已落地（见 §4 D2 实施记录），shape/object 批次待做。基线为 `feat/pr27-a4`
+> 状态：实施中。D1a/D1b 已提交（`84654cc8`/`98bd54c3`）；D2 leaf 与
+> cold payload 批次已落地（见 §4 D2 实施记录），shape/object 批次待做。基线为 `feat/pr27-a4`
 > （= PR27 tip，T1/T2 已收口），裁决依据见
 > [A4/D/B 决策报告](s3-a4-d-b-decision.md)。本计划取代
 > `performance-architecture.md` §6 的旧 D 草图（旧草图含过时事实，
@@ -273,7 +273,7 @@ arena 归零；profiling 记账不重复计数。
   `String`/`BigInt` 变体；object/shape/var_ref/context/function 仍共用
   原 440B `ArenaSlot` 表，待 shape 批次与 object/其余批次继续拆分。
 - `LeafSlot { generation: u32, strong: Cell<u32>, value: LeafValue }`
-  = 32B（`LeafValue { Vacant, Retired, String(JsString), BigInt(JsBigInt) }`；
+  = 24B 实测（`LeafValue { Vacant, Retired, String(JsString), BigInt(JsBigInt) }`；
   折叠状态：`strong == 0` 即 zero-queued，generation 饱和 → `Retired`）。
   `RawId` 12B 布局与跨 kind 序号语义不变。
 - 分发：`RawId::is_leaf()` 在 retain/release/validate/counts/is_live/
@@ -301,6 +301,23 @@ arena 归零；profiling 记账不重复计数。
 - 新增测试：`heap/tests.rs` 的
   `leaf_arena_keeps_leaf_slots_compact_and_out_of_the_shared_arena`
   （LeafSlot ≤32B、统一槽表不因叶增长、typed lookup 报错、释放回 free）。
+
+**D2 实施记录（cold payload 批次，2026-09-24）**：
+
+- 批次顺序调整：profiling 实测 objects.js 仅 88 个 shape（canonical
+  形状复用极高），shape arena 对 1M 内存负载几乎无收益；真正撑大统一槽的
+  是 `NodeData` 的最大变体 `FunctionBytecodeData`（392B）。因此本批先
+  **box 冷载荷**：`NodeData::FunctionBytecode(Box<FunctionBytecodeData>)`，
+  shape arena 顺延。
+- 尺寸：`NodeData` 392 → 224（= `ObjectData`）、`SlotState` 408 → 240、
+  `ArenaSlot` 440 → 272（`edges.rs` 断言同步；plan 的 ≤256B 目标留待
+  weak 链外移或 D3 的 `ObjectData` 瘦身）。
+- 实测（vs D1a `84654cc8`）：objects.js 623.2 → 455.8 MiB（−26.9%）、
+  arrays.js 608.0 → 440.6 MiB（−27.5%）；maps/strings 不变（叶批已收益）。
+  固定行指令全部 ±0.83% 内（prop_read −0.01%、prop_write −0.61%、
+  prop_create −0.36%、prop_clone +0.20%、prop_delete +0.19%、
+  arguments_read −0.83%）。
+- 验证：lib 2317 通过（尺寸断言更新）；release 零警告。
 
 ### D3 对象/属性存储：槽瘦身 + 内联槽 + 写快路径
 

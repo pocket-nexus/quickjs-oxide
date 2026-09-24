@@ -1342,7 +1342,7 @@ impl Heap {
             return Err(error);
         }
 
-        self.publish(index, NodeData::FunctionBytecode(bytecode))?;
+        self.publish(index, NodeData::FunctionBytecode(Box::new(bytecode)))?;
         Ok(id)
     }
 

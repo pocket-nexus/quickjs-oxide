@@ -148,6 +148,6 @@ mod tests {
             "ArenaSlot bytes: {}",
             std::mem::size_of::<super::super::ArenaSlot>()
         );
-        assert_eq!(std::mem::size_of::<super::super::ArenaSlot>(), 440);
+        assert_eq!(std::mem::size_of::<super::super::ArenaSlot>(), 272);
     }
 }

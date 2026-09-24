@@ -191,7 +191,7 @@ enum NodeData {
     Shape(Shape),
     VarRef(VarRefData),
     Context(Box<ContextData>),
-    FunctionBytecode(FunctionBytecodeData),
+    FunctionBytecode(Box<FunctionBytecodeData>),
 }
 
 impl NodeData {
