@@ -27,7 +27,7 @@ impl<'source> Parser<'source> {
         } else if let TokenKind::Identifier(identifier) = &self.current().kind
             && !identifier.escaped_reserved_word
         {
-            Some(identifier.value.clone())
+            Some(self.identifier_text(identifier).into_owned())
         } else {
             None
         };

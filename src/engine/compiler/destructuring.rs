@@ -24,8 +24,6 @@ use crate::engine::compiler::parser::context::Parser;
 use crate::engine::compiler::parser::diagnostics::IdentifierContext;
 use crate::engine::compiler::parser::diagnostics::source_offset;
 use crate::engine::compiler::parser::diagnostics::source_span;
-use crate::engine::compiler::parser::diagnostics::validate_identifier;
-use crate::engine::compiler::parser::diagnostics::validate_identifier_reservation;
 use crate::engine::compiler::parser::literals::parse_number;
 use crate::engine::compiler::parser::tokens::for_head_regexp_allowed_after;
 use crate::engine::value::JsString;
@@ -579,7 +577,7 @@ impl<'source> Parser<'source> {
             ForIterationKind::Of => matches!(
                 &token.kind,
                 TokenKind::Identifier(identifier)
-                    if identifier.value == "of" && !identifier.has_escape
+                    if identifier.raw == "of" && !identifier.has_escape
             ),
         }
     }
@@ -1443,13 +1441,18 @@ impl<'source> Parser<'source> {
         token: Token<'source>,
         identifier: Identifier<'source>,
     ) -> Result<DestructuringAssignmentReference, Error> {
-        validate_identifier(
+        self.validate_identifier(
             &identifier,
             token.span,
             self.current_ir().strict,
             IdentifierContext::Reference,
         )?;
-        if self.current_ir().strict && matches!(identifier.value.as_str(), "eval" | "arguments") {
+        if self.current_ir().strict
+            && matches!(
+                self.identifier_text(&identifier).as_ref(),
+                "eval" | "arguments"
+            )
+        {
             return Err(self.syntax_here("invalid destructuring target"));
         }
 
@@ -1457,7 +1460,7 @@ impl<'source> Parser<'source> {
         let object_environment =
             self.parser_scope_has_authored_with(self.current_function, scope)?;
         let reference = IdentifierReference {
-            name: identifier.value,
+            name: self.identifier_text(&identifier).into_owned(),
             span: token.span,
             scope,
             object_environment,
@@ -1676,15 +1679,15 @@ impl<'source> Parser<'source> {
                     source_span(token.span),
                 ));
             }
-            validate_identifier_reservation(
+            self.validate_identifier_reservation(
                 &identifier,
                 token.span,
                 self.current_ir().strict,
                 IdentifierContext::Variable,
             )?;
-            let invalid_lexical_let =
-                declaration == ForAssignmentDeclaration::Lexical && identifier.value == "let";
-            let name = identifier.value;
+            let invalid_lexical_let = declaration == ForAssignmentDeclaration::Lexical
+                && self.identical_name(&identifier, "let");
+            let name = self.identifier_text(&identifier).into_owned();
             let strict = self.current_ir().strict;
             self.advance()?;
             if invalid_lexical_let {
@@ -1939,7 +1942,7 @@ impl<'source> Parser<'source> {
         let token = self.current().clone();
         match token.kind.clone() {
             TokenKind::Identifier(identifier) => {
-                let key = JsString::try_from_utf8(&identifier.value)?;
+                let key = JsString::try_from_utf8(&self.identifier_text(&identifier))?;
                 self.advance()?;
                 // QuickJS's `js_parse_property_name` permits shorthand only
                 // for a non-reserved identifier. An escaped reserved spelling
@@ -2097,18 +2100,18 @@ impl<'source> Parser<'source> {
                 source_span(token.span),
             ));
         }
-        validate_identifier_reservation(
+        self.validate_identifier_reservation(
             &identifier,
             token.span,
             self.current_ir().strict,
             IdentifierContext::Variable,
         )?;
-        let invalid_lexical_let =
-            declaration == ForAssignmentDeclaration::Lexical && identifier.value == "let";
+        let invalid_lexical_let = declaration == ForAssignmentDeclaration::Lexical
+            && self.identical_name(&identifier, "let");
         if invalid_lexical_let {
             return Err(self.syntax_here("invalid lexical variable name"));
         }
-        let name = identifier.value;
+        let name = self.identifier_text(&identifier).into_owned();
         if self.current_ir().strict && matches!(name.as_str(), "eval" | "arguments") {
             // For shorthand properties QuickJS has already advanced to the
             // token following the property name when it diagnoses this case.
@@ -2244,13 +2247,14 @@ impl<'source> Parser<'source> {
                 source_span(token.span),
             ));
         }
-        validate_identifier_reservation(
+        let name = self.identifier_text(&identifier).into_owned();
+        self.validate_identifier_reservation(
             &identifier,
             token.span,
             self.current_ir().strict,
             IdentifierContext::Variable,
         )?;
-        if self.current_ir().strict && matches!(identifier.value.as_str(), "eval" | "arguments") {
+        if self.current_ir().strict && matches!(name.as_str(), "eval" | "arguments") {
             return Err(Error::syntax(
                 "invalid destructuring target",
                 source_span(token.span),
@@ -2260,12 +2264,12 @@ impl<'source> Parser<'source> {
         if !self.is_punctuator(Punctuator::RightBrace) {
             return Err(self.syntax_here("assignment rest property must be last"));
         }
-        if declaration == ForAssignmentDeclaration::Lexical && identifier.value == "let" {
+        if declaration == ForAssignmentDeclaration::Lexical && name == "let" {
             return Err(self.syntax_here("invalid lexical variable name"));
         }
         match declaration {
             ForAssignmentDeclaration::Lexical => self.register_lexical_binding(
-                &identifier.value,
+                &name,
                 token.span,
                 self.current().span,
                 is_const,
@@ -2274,12 +2278,12 @@ impl<'source> Parser<'source> {
             ForAssignmentDeclaration::Var => {
                 if site == BindingSite::Parameter {
                     self.register_pattern_parameter_binding(
-                        &identifier.value,
+                        &name,
                         token.span,
                         self.current().span,
                     )?;
                 } else {
-                    self.register_var_binding(&identifier.value, token.span, self.current().span)?;
+                    self.register_var_binding(&name, token.span, self.current().span)?;
                 }
             }
             ForAssignmentDeclaration::Assignment => {
@@ -2300,7 +2304,7 @@ impl<'source> Parser<'source> {
             // QuickJS prepares a potentially dynamic sloppy-var Reference
             // before allocating/enumerating the rest object.
             self.emit_identifier_reference_inherited(
-                identifier.value.clone(),
+                name.clone(),
                 token.span,
                 reference_scope,
                 IdentifierReferenceAccess::Prepare,
@@ -2323,7 +2327,7 @@ impl<'source> Parser<'source> {
         )?;
         if declaration == ForAssignmentDeclaration::Var && !parameter_lexical {
             self.emit_identifier_reference_inherited(
-                identifier.value,
+                name,
                 token.span,
                 reference_scope,
                 IdentifierReferenceAccess::Set,
@@ -2331,7 +2335,7 @@ impl<'source> Parser<'source> {
             self.emit_instruction(Instruction::Drop)?;
         } else {
             self.emit_identifier_inherited(
-                identifier.value,
+                name,
                 token.span,
                 reference_scope,
                 IdentifierAccess::Initialize,

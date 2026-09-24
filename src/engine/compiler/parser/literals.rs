@@ -22,7 +22,6 @@ use crate::engine::compiler::parser::context::Parser;
 use crate::engine::compiler::parser::diagnostics::source_offset;
 use crate::engine::compiler::parser::diagnostics::source_span;
 use crate::engine::compiler::parser::diagnostics::strict_reserved_identifier;
-use crate::engine::compiler::parser::diagnostics::validate_identifier;
 use crate::engine::compiler::pseudo_binding::THIS_LOCAL_NAME;
 use crate::engine::value::JsString;
 use crate::engine::value::PrimitiveValue as Value;
@@ -119,23 +118,21 @@ impl<'source> Parser<'source> {
                 self.parse_template_literal()?;
             }
             TokenKind::Identifier(ref identifier)
-                if identifier.value == "async"
-                    && !identifier.has_escape
-                    && self.async_function_ahead() =>
+                if self.is_unescaped_name(identifier, "async") && self.async_function_ahead() =>
             {
                 self.parse_function_expression()?;
             }
             TokenKind::Identifier(identifier) => {
-                self.reject_forbidden_identifier_reference(&identifier.value, token.span)?;
-                validate_identifier(
+                let name = self.identifier_text(&identifier).into_owned();
+                self.reject_forbidden_identifier_reference(&name, token.span)?;
+                self.validate_identifier(
                     &identifier,
                     token.span,
                     self.current_ir().strict,
                     IdentifierContext::Reference,
                 )?;
                 self.advance()?;
-                let operation =
-                    self.emit_identifier(identifier.value, token.span, IdentifierAccess::Get)?;
+                let operation = self.emit_identifier(name, token.span, IdentifierAccess::Get)?;
                 self.current_ir_mut().context.last_identifier_reference = Some(operation);
             }
             TokenKind::Keyword(Keyword::Function) => {

@@ -892,7 +892,7 @@ impl<'source> Parser<'source> {
         let (name, declaration_span) = header
             .name
             .as_ref()
-            .map(|(identifier, span)| (identifier.value.clone(), *span))
+            .map(|(identifier, span)| (self.identifier_text(identifier).into_owned(), *span))
             .ok_or_else(|| Error::internal("required Program Annex B function lost its name"))?;
         let conflict_span = self.current().span;
 
@@ -973,7 +973,7 @@ impl<'source> Parser<'source> {
         let (name, declaration_span) = header
             .name
             .as_ref()
-            .map(|(identifier, span)| (identifier.value.clone(), *span))
+            .map(|(identifier, span)| (self.identifier_text(identifier).into_owned(), *span))
             .ok_or_else(|| Error::internal("required scoped function lost its name"))?;
         let non_ordinary = header.execution_kind != BytecodeFunctionKind::Normal;
         let prepared = self.prepare_scoped_function(&name, declaration_span, non_ordinary)?;

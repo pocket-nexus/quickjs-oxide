@@ -8,6 +8,7 @@ use crate::engine::compiler::lexer::Keyword;
 use crate::engine::compiler::lexer::LexError;
 use crate::engine::compiler::lexer::LexErrorKind;
 use crate::engine::compiler::lexer::Span;
+use crate::engine::compiler::parser::context::Parser;
 use crate::engine::value::JsString;
 use crate::engine::value::JsStringError;
 use crate::source::SourceLocation;
@@ -22,63 +23,72 @@ pub(in crate::engine::compiler) enum IdentifierContext {
     Argument,
 }
 
-pub(in crate::engine::compiler) fn validate_identifier(
-    identifier: &Identifier<'_>,
-    span: Span,
-    strict: bool,
-    context: IdentifierContext,
-) -> Result<(), Error> {
-    validate_identifier_reservation(identifier, span, strict, context)?;
-    if strict
-        && !matches!(context, IdentifierContext::Reference)
-        && matches!(identifier.value.as_str(), "eval" | "arguments")
-    {
-        let message = match context {
-            IdentifierContext::Variable => "invalid variable name in strict mode",
-            IdentifierContext::FunctionName => "invalid function name in strict code",
-            IdentifierContext::Argument => "invalid argument name in strict code",
-            IdentifierContext::Reference => unreachable!("reference context was excluded"),
-        };
-        return Err(Error::syntax(message, source_span(span)));
+impl<'source> Parser<'source> {
+    pub(in crate::engine::compiler) fn validate_identifier(
+        &self,
+        identifier: &Identifier<'source>,
+        span: Span,
+        strict: bool,
+        context: IdentifierContext,
+    ) -> Result<(), Error> {
+        self.validate_identifier_reservation(identifier, span, strict, context)?;
+        if strict
+            && !matches!(context, IdentifierContext::Reference)
+            && matches!(
+                self.identifier_text(identifier).as_ref(),
+                "eval" | "arguments"
+            )
+        {
+            let message = match context {
+                IdentifierContext::Variable => "invalid variable name in strict mode",
+                IdentifierContext::FunctionName => "invalid function name in strict code",
+                IdentifierContext::Argument => "invalid argument name in strict code",
+                IdentifierContext::Reference => unreachable!("reference context was excluded"),
+            };
+            return Err(Error::syntax(message, source_span(span)));
+        }
+        Ok(())
     }
-    Ok(())
-}
 
-pub(in crate::engine::compiler) fn validate_identifier_reservation(
-    identifier: &Identifier<'_>,
-    span: Span,
-    strict: bool,
-    context: IdentifierContext,
-) -> Result<(), Error> {
-    if identifier.escaped_reserved_word {
-        return Err(syntax_atom_error(
-            "'",
-            &identifier.value,
-            "' is a reserved identifier",
-            span,
-        )?);
+    pub(in crate::engine::compiler) fn validate_identifier_reservation(
+        &self,
+        identifier: &Identifier<'source>,
+        span: Span,
+        strict: bool,
+        context: IdentifierContext,
+    ) -> Result<(), Error> {
+        if identifier.escaped_reserved_word {
+            let text = self.identifier_text(identifier);
+            return Err(syntax_atom_error(
+                "'",
+                &text,
+                "' is a reserved identifier",
+                span,
+            )?);
+        }
+        if strict
+            && identifier
+                .keyword_hint
+                .is_some_and(strict_reserved_identifier)
+        {
+            let message = match context {
+                IdentifierContext::Reference => {
+                    let text = self.identifier_text(identifier);
+                    return Err(syntax_atom_error(
+                        "'",
+                        &text,
+                        "' is a reserved identifier",
+                        span,
+                    )?);
+                }
+                IdentifierContext::Variable => "invalid variable name in strict mode",
+                IdentifierContext::FunctionName => "invalid function name in strict code",
+                IdentifierContext::Argument => "invalid argument name in strict code",
+            };
+            return Err(Error::syntax(message, source_span(span)));
+        }
+        Ok(())
     }
-    if strict
-        && identifier
-            .keyword_hint
-            .is_some_and(strict_reserved_identifier)
-    {
-        let message = match context {
-            IdentifierContext::Reference => {
-                return Err(syntax_atom_error(
-                    "'",
-                    &identifier.value,
-                    "' is a reserved identifier",
-                    span,
-                )?);
-            }
-            IdentifierContext::Variable => "invalid variable name in strict mode",
-            IdentifierContext::FunctionName => "invalid function name in strict code",
-            IdentifierContext::Argument => "invalid argument name in strict code",
-        };
-        return Err(Error::syntax(message, source_span(span)));
-    }
-    Ok(())
 }
 
 pub(in crate::engine::compiler) fn syntax_atom_error(

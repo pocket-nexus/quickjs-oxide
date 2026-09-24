@@ -458,10 +458,9 @@ pub struct RegExpLiteral<'a> {
     pub flags: &'a str,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Identifier<'a> {
     pub raw: &'a str,
-    pub value: String,
     pub has_escape: bool,
     /// Set even when parser context means the word remains an identifier.
     pub keyword_hint: Option<Keyword>,
@@ -921,13 +920,25 @@ impl<'a> Lexer<'a> {
     }
 
     fn scan_identifier(&mut self, private: bool) -> Result<TokenKind<'a>, LexError> {
+        self.scan_identifier_with_value(private)
+            .map(|(kind, _)| kind)
+    }
+
+    /// Scans an identifier and, only when an escape sequence actually decoded,
+    /// returns the decoded text. Plain identifiers leave `None` so the common
+    /// path allocates nothing; callers fall back to the source slice.
+    fn scan_identifier_with_value(
+        &mut self,
+        private: bool,
+    ) -> Result<(TokenKind<'a>, Option<String>), LexError> {
         let start = self.current_position();
         let raw_start = self.offset;
         if private {
             self.bump_char();
         }
+        let value_start = self.offset;
 
-        let mut value = String::new();
+        let mut value: Option<String> = None;
         // QuickJS interns private names with their leading `#`, so that code
         // unit participates in the same 30-bit atom/StringBuffer limit even
         // though the public identifier value excludes it.
@@ -963,7 +974,7 @@ impl<'a> Lexer<'a> {
                     Err(_) if first && !private => {
                         (self.offset, self.line, self.column) = checkpoint;
                         self.bump_char();
-                        return Ok(TokenKind::RawAscii(b'\\'));
+                        return Ok((TokenKind::RawAscii(b'\\'), None));
                     }
                     Err(_) if first => {
                         (self.offset, self.line, self.column) = checkpoint;
@@ -996,7 +1007,7 @@ impl<'a> Lexer<'a> {
                         ));
                     }
                     self.bump_char();
-                    return Ok(TokenKind::RawAscii(b'\\'));
+                    return Ok((TokenKind::RawAscii(b'\\'), None));
                 }
                 let decoded =
                     char::from_u32(decoded).expect("ID_Start/ID_Continue excluded a surrogate");
@@ -1006,7 +1017,9 @@ impl<'a> Lexer<'a> {
                     self.string_limit,
                 )
                 .map_err(|_| self.string_too_long(start))?;
-                value.push(decoded);
+                value
+                    .get_or_insert_with(|| self.source[value_start..checkpoint.0].to_owned())
+                    .push(decoded);
                 has_escape = true;
                 first = false;
                 continue;
@@ -1025,7 +1038,9 @@ impl<'a> Lexer<'a> {
                     self.string_limit,
                 )
                 .map_err(|_| self.string_too_long(start))?;
-                value.push(ch);
+                if let Some(value) = value.as_mut() {
+                    value.push(ch);
+                }
                 first = false;
                 continue;
             }
@@ -1056,27 +1071,58 @@ impl<'a> Lexer<'a> {
         }
 
         let raw = &self.source[raw_start..self.offset];
-        let keyword_hint = keyword_from_str(&value);
+        let keyword_hint = match &value {
+            Some(value) => keyword_from_str(value),
+            None => keyword_from_str(&raw[usize::from(private)..]),
+        };
         let active_keyword = keyword_hint.filter(|keyword| self.keyword_is_active(*keyword));
         let identifier = Identifier {
             raw,
-            value,
             has_escape,
             keyword_hint,
             escaped_reserved_word: has_escape && active_keyword.is_some(),
         };
 
-        if private {
-            Ok(TokenKind::PrivateIdentifier(identifier))
+        let kind = if private {
+            TokenKind::PrivateIdentifier(identifier)
         } else if !has_escape {
             if let Some(keyword) = active_keyword {
-                Ok(TokenKind::Keyword(keyword))
+                TokenKind::Keyword(keyword)
             } else {
-                Ok(TokenKind::Identifier(identifier))
+                TokenKind::Identifier(identifier)
             }
         } else {
-            Ok(TokenKind::Identifier(identifier))
+            TokenKind::Identifier(identifier)
+        };
+        Ok((kind, value))
+    }
+
+    /// Re-decodes a committed identifier token's text. The lexer clone keeps
+    /// `source_text` and `string_limit`, so the injected test limit and lone
+    /// surrogate carriers behave exactly like the original scan.
+    pub fn decode_identifier_text(&self, raw: &str) -> String {
+        let private = raw.starts_with('#');
+        let start = raw.as_ptr() as usize - self.source.as_ptr() as usize;
+        let mut lexer = self.clone();
+        lexer.seek(self.position_at(start));
+        match lexer.scan_identifier_with_value(private) {
+            Ok((_, Some(value))) => value,
+            _ => raw[usize::from(private)..].to_owned(),
         }
+    }
+
+    /// Recomputes the position of a trusted source offset by replaying the
+    /// scanner's own advancement rules. Only used by the cold decode path.
+    fn position_at(&self, byte_offset: usize) -> Position {
+        let mut lexer = self.clone();
+        lexer.offset = 0;
+        lexer.line = 1;
+        lexer.column = 1;
+        while lexer.offset < byte_offset {
+            lexer.bump_char();
+        }
+        debug_assert_eq!(lexer.offset, byte_offset);
+        lexer.current_position()
     }
 
     fn scan_identifier_escape(&mut self) -> Result<u32, LexError> {
@@ -2431,10 +2477,14 @@ mod tests {
 
     #[test]
     fn escaped_keyword_remains_identifier_with_reserved_marker() {
-        let token = Lexer::new(r"\u0069f").next_token().unwrap();
+        let source = r"\u0069f";
+        let token = Lexer::new(source).next_token().unwrap();
         match token.kind {
             TokenKind::Identifier(identifier) => {
-                assert_eq!(identifier.value, "if");
+                assert_eq!(
+                    Lexer::new(source).decode_identifier_text(identifier.raw),
+                    "if"
+                );
                 assert!(identifier.has_escape);
                 assert_eq!(identifier.keyword_hint, Some(Keyword::If));
                 assert!(identifier.escaped_reserved_word);
@@ -2465,32 +2515,47 @@ mod tests {
             panic!("expected a Unicode identifier");
         };
         assert_eq!(identifier.raw, source);
-        assert_eq!(identifier.value, source);
+        assert_eq!(
+            Lexer::new(source).decode_identifier_text(identifier.raw),
+            source
+        );
         assert!(!identifier.has_escape);
         assert_eq!(
             token.span,
             Span::new(Position::new(0, 1, 1), Position::new(21, 1, 9))
         );
 
-        let escaped = Lexer::new(r"\u03c0\u{10400}a\u0300").next_token().unwrap();
+        let escaped_source = r"\u03c0\u{10400}a\u0300";
+        let escaped = Lexer::new(escaped_source).next_token().unwrap();
         let TokenKind::Identifier(identifier) = escaped.kind else {
             panic!("expected an escaped Unicode identifier");
         };
-        assert_eq!(identifier.value, "π𐐀a\u{0300}");
+        assert_eq!(
+            Lexer::new(escaped_source).decode_identifier_text(identifier.raw),
+            "π𐐀a\u{0300}"
+        );
         assert!(identifier.has_escape);
 
-        let leading_zero_escape = Lexer::new(r"\u{0000000000010400}").next_token().unwrap();
+        let leading_zero_source = r"\u{0000000000010400}";
+        let leading_zero_escape = Lexer::new(leading_zero_source).next_token().unwrap();
         let TokenKind::Identifier(identifier) = leading_zero_escape.kind else {
             panic!("expected a leading-zero Unicode escape identifier");
         };
-        assert_eq!(identifier.value, "𐐀");
+        assert_eq!(
+            Lexer::new(leading_zero_source).decode_identifier_text(identifier.raw),
+            "𐐀"
+        );
 
-        let mut escaped_invalid_tail = Lexer::new(r"a\u{2d}");
+        let escaped_tail_source = r"a\u{2d}";
+        let mut escaped_invalid_tail = Lexer::new(escaped_tail_source);
         let TokenKind::Identifier(identifier) = escaped_invalid_tail.next_token().unwrap().kind
         else {
             panic!("expected the valid identifier prefix");
         };
-        assert_eq!(identifier.value, "a");
+        assert_eq!(
+            Lexer::new(escaped_tail_source).decode_identifier_text(identifier.raw),
+            "a"
+        );
         assert!(identifier.has_escape);
         assert!(matches!(
             escaped_invalid_tail.next_token().unwrap().kind,
@@ -2523,11 +2588,15 @@ mod tests {
 
     #[test]
     fn scans_private_identifiers_and_identifier_escapes() {
-        let token = Lexer::new(r"#pr\u0069vate").next_token().unwrap();
+        let private_source = r"#pr\u0069vate";
+        let token = Lexer::new(private_source).next_token().unwrap();
         match token.kind {
             TokenKind::PrivateIdentifier(identifier) => {
-                assert_eq!(identifier.raw, r"#pr\u0069vate");
-                assert_eq!(identifier.value, "private");
+                assert_eq!(identifier.raw, private_source);
+                assert_eq!(
+                    Lexer::new(private_source).decode_identifier_text(identifier.raw),
+                    "private"
+                );
                 assert!(identifier.has_escape);
             }
             other => panic!("expected private identifier, got {other:?}"),
@@ -2542,18 +2611,25 @@ mod tests {
             assert_eq!(error.kind, LexErrorKind::InvalidPrivateIdentifier);
             assert_eq!(error.span.start, Position::new(0, 1, 1));
         }
-        let token = Lexer::new("#π\u{0300}").next_token().unwrap();
+        let unicode_private_source = "#π\u{0300}";
+        let token = Lexer::new(unicode_private_source).next_token().unwrap();
         let TokenKind::PrivateIdentifier(identifier) = token.kind else {
             panic!("expected a Unicode private identifier");
         };
-        assert_eq!(identifier.value, "π\u{0300}");
+        assert_eq!(
+            Lexer::new(unicode_private_source).decode_identifier_text(identifier.raw),
+            "π\u{0300}"
+        );
 
         for source in [r"#a\u{}", r"#a\u{2d}", r"#a\uD800"] {
             let mut lexer = Lexer::new(source);
             let TokenKind::PrivateIdentifier(identifier) = lexer.next_token().unwrap().kind else {
                 panic!("expected the valid private-name prefix for {source}");
             };
-            assert_eq!(identifier.value, "a");
+            assert_eq!(
+                Lexer::new(source).decode_identifier_text(identifier.raw),
+                "a"
+            );
             assert!(identifier.has_escape);
             assert!(matches!(
                 lexer.next_token().unwrap().kind,
@@ -2659,7 +2735,10 @@ mod tests {
         else {
             panic!("expected escaped identifier after the number");
         };
-        assert_eq!(identifier.value, "a");
+        assert_eq!(
+            escaped_identifier.decode_identifier_text(identifier.raw),
+            "a"
+        );
     }
 
     #[test]
@@ -3012,7 +3091,7 @@ mod tests {
         let TokenKind::Identifier(name) = token.kind else {
             panic!("expected identifier before malformed escape");
         };
-        assert_eq!(name.value, "a");
+        assert_eq!(lexer.decode_identifier_text(name.raw), "a");
         assert_eq!(token.span.end.byte_offset, 1);
         let backslash = lexer.next_token().unwrap();
         assert!(matches!(backslash.kind, TokenKind::RawAscii(b'\\')));
@@ -3423,7 +3502,7 @@ mod tests {
         let identifiers = enabled
             .iter()
             .filter_map(|token| match &token.kind {
-                TokenKind::Identifier(identifier) => Some(identifier.value.as_str()),
+                TokenKind::Identifier(identifier) => Some(identifier.raw),
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -3444,7 +3523,7 @@ mod tests {
             let identifiers = tokens
                 .iter()
                 .filter_map(|token| match &token.kind {
-                    TokenKind::Identifier(identifier) => Some(identifier.value.as_str()),
+                    TokenKind::Identifier(identifier) => Some(identifier.raw),
                     _ => None,
                 })
                 .collect::<Vec<_>>();
@@ -3473,7 +3552,7 @@ mod tests {
             let identifiers = tokens
                 .iter()
                 .filter_map(|token| match &token.kind {
-                    TokenKind::Identifier(identifier) => Some(identifier.value.as_str()),
+                    TokenKind::Identifier(identifier) => Some(identifier.raw),
                     _ => None,
                 })
                 .collect::<Vec<_>>();

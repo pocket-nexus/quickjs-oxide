@@ -1,5 +1,7 @@
 //! Token lookahead, lexical goals and diagnostic cursor.
 
+use std::borrow::Cow;
+
 use crate::engine::api::error::Error;
 use crate::engine::code::function::metadata::EvalKind;
 
@@ -49,13 +51,45 @@ impl<'source> Parser<'source> {
         matches!(self.current().kind, TokenKind::Punctuator(current) if current == punctuator)
     }
 
+    /// Decoded identifier text, matching the retired `Identifier.value`.
+    /// Private identifiers exclude their leading `#`; escaped spellings decode
+    /// through a lexer clone so `source_text` carriers survive.
+    pub(in crate::engine::compiler) fn identifier_text(
+        &self,
+        identifier: &Identifier<'source>,
+    ) -> Cow<'source, str> {
+        let raw = identifier.raw.strip_prefix('#').unwrap_or(identifier.raw);
+        if !identifier.has_escape {
+            return Cow::Borrowed(raw);
+        }
+        Cow::Owned(self.lexer.decode_identifier_text(identifier.raw))
+    }
+
+    /// Contextual-keyword comparison over decoded identifier text.
+    pub(in crate::engine::compiler) fn identical_name(
+        &self,
+        identifier: &Identifier<'source>,
+        expected: &str,
+    ) -> bool {
+        self.identifier_text(identifier) == expected
+    }
+
+    /// Comparison for sites that must reject escaped spellings, such as plain
+    /// contextual-keyword checks.
+    pub(in crate::engine::compiler) fn is_unescaped_name(
+        &self,
+        identifier: &Identifier<'source>,
+        expected: &str,
+    ) -> bool {
+        !identifier.has_escape && identifier.raw == expected
+    }
+
     /// `of` is a QuickJS pseudo-keyword: escapes prevent it from acting as
     /// the for-of delimiter even though the decoded identifier text matches.
     pub(in crate::engine::compiler) fn is_for_of_keyword(&self) -> bool {
         matches!(
             &self.current().kind,
-            TokenKind::Identifier(identifier)
-                if identifier.value == "of" && !identifier.has_escape
+            TokenKind::Identifier(identifier) if self.is_unescaped_name(identifier, "of")
         )
     }
 
@@ -104,7 +138,7 @@ impl<'source> Parser<'source> {
                 match &token.kind {
                     TokenKind::Keyword(Keyword::In) => return Some(ForIterationKind::In),
                     TokenKind::Identifier(identifier)
-                        if identifier.value == "of" && !identifier.has_escape =>
+                        if self.is_unescaped_name(identifier, "of") =>
                     {
                         return Some(ForIterationKind::Of);
                     }
@@ -289,7 +323,7 @@ impl<'source> Parser<'source> {
         let TokenKind::Identifier(identifier) = &self.current().kind else {
             return Ok(false);
         };
-        if identifier.value != "let" || identifier.has_escape {
+        if !self.is_unescaped_name(identifier, "let") {
             return Ok(false);
         }
 
@@ -324,7 +358,7 @@ impl<'source> Parser<'source> {
         if identifier.escaped_reserved_word {
             return None;
         }
-        let label_name = identifier.value.clone();
+        let label_name = self.identifier_text(identifier).into_owned();
         let mut lexer = self.lexer.clone();
         lexer.seek(self.current().span.end);
         let Ok(next) = lexer.next_token() else {
@@ -365,7 +399,7 @@ impl<'source> Parser<'source> {
         let TokenKind::Identifier(identifier) = &self.current().kind else {
             return false;
         };
-        if identifier.value != "async" || identifier.has_escape {
+        if !self.is_unescaped_name(identifier, "async") {
             return false;
         }
         let mut lexer = self.lexer.clone();
@@ -631,7 +665,7 @@ pub(in crate::engine::compiler) fn for_head_regexp_allowed_after(kind: &TokenKin
     if matches!(
         kind,
         TokenKind::Identifier(identifier)
-            if !identifier.has_escape && matches!(identifier.value.as_str(), "of" | "yield")
+            if !identifier.has_escape && matches!(identifier.raw, "of" | "yield")
     ) {
         return true;
     }
