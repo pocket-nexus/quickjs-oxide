@@ -25,6 +25,7 @@ use crate::engine::compiler::parser::diagnostics::strict_reserved_identifier;
 use crate::engine::compiler::pseudo_binding::THIS_LOCAL_NAME;
 use crate::engine::value::JsString;
 use crate::engine::value::PrimitiveValue as Value;
+use std::borrow::Cow;
 use std::rc::Rc;
 
 impl<'source> Parser<'source> {
@@ -406,7 +407,11 @@ use num_bigint::BigUint;
 pub(in crate::engine::compiler) fn parse_number(
     number: &crate::engine::compiler::lexer::NumberLiteral<'_>,
 ) -> Result<Value, String> {
-    let raw = number.raw.replace('_', "");
+    let raw = if number.raw.contains('_') {
+        Cow::Owned(number.raw.replace('_', ""))
+    } else {
+        Cow::Borrowed(number.raw)
+    };
     if let NumberKind::BigInt(radix) = number.kind {
         let literal = raw
             .strip_suffix('n')
