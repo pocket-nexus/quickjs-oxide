@@ -34,7 +34,6 @@ fn main() {
             ("blocks", snapshot.blocks),
             ("fusion", snapshot.fusion),
             ("relocation", snapshot.relocation),
-            ("verify", snapshot.verify),
             ("publish", snapshot.publish),
         ] {
             eprintln!(

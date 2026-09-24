@@ -101,7 +101,7 @@ fn compiler_vm_cost_report_labels_the_execution_path_and_failures() {
         .find(|line| line.contains("oxide-compile-vm-cost-v1"))
         .unwrap();
     assert!(costs.contains("\"exclusive_ns\":"));
-    assert!(costs.contains("\"verify\":{\"attempts\":1,"));
+    assert!(!costs.contains("\"verify\""));
     assert!(costs.contains("\"publish\":{\"attempts\":1,"));
     {
         assert!(costs.contains("\"execution_path\":\"owned-stack\""));
