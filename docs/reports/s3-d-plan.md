@@ -136,29 +136,53 @@ arguments_read/map-* 的公共前置路径。
 **实施点**：
 
 1. **D1a 一致性修复**（独立最小提交）：
-   - `store_selected_property_slot` 的 in-place 条件
-     （`object/storage.rs:588-601`）与 `MIN_UNIQUE_SHAPE_APPEND_ENTRIES`
-     （`object/properties.rs:36-38`）联动：in-place append 只有在目标
-     shape **不是** `shape_cache` 的 canonical 条目时才允许；否则改走
-     `append_transition`（`heap/runtime/mod.rs:328-360`）。
-   - 或等价地，在 `append_unique_layout_inner`
-     （`object/properties.rs:67-120`，已正确 unlink fingerprint）里当
-     `owned_cache_entry == true` 时拒绝 in-place，返回可回退信号。
-   - 该 shape 的指纹一致性不变量新增 debug 断言：`shape_cache` 中
-     `fingerprint → shape` 成立时，`shape.entries()` 必须等于
-     fingerprint.entries。
-2. **D1b 查找路径免分配 + 哈希**：
-   - `ShapeFingerprint`（`object/operations.rs:17-20`）不再作为 HashMap
-     键直接持有 `Box<[ShapeEntry]>`；改为在 `Shape` 上缓存
-     `fingerprint_hash: u64`（对 `prototype + entries` 做 FxHash），
-     `shape_cache` 改 `HashMap<u64, Vec<ShapeId>>`（碰撞时逐项比较
-     entries），或至少给现有 `HashMap<ShapeFingerprint, …>` 换
-     `FxBuildHasher` 作为过渡。
-   - `shape_transitions`（`heap/runtime/mod.rs:121`）由
-     `HashMap<ShapeId, HashMap<ShapeEntry, ShapeId>>` 改为 per-shape
-     `Vec<(ShapeEntry, ShapeId)>`（实测典型 1–4 项）或 `FxBuildHasher`。
-   - `shape_cache`/`shape_fingerprints`/`shape_transition_parents` 全部
-     换 `FxBuildHasher`（`heap/runtime/mod.rs:119-123`）。
+   - **根因定位**：`append_unique_layout_inner`（`object/properties.rs:67-120`）
+     对命中 `MIN_UNIQUE_SHAPE_APPEND_ENTRIES`（`properties.rs:36-38`）的
+     shape **无条件** unlink `shape_fingerprints`/`shape_cache`
+     （`properties.rs:92-95`），随后原地改 entries 并把 fingerprint 重新
+     指向同一个已被改写的 shape（`properties.rs:108-118`）。若该 shape
+     原本是旧 fingerprint（如 `{x}`）的 canonical 条目，旧条目的
+     canonical 映射即被摧毁 → 下一次 `{x}` 查找 miss → 新 shape（实测
+     10k 对象 10167 shapes）。
+   - **修复**：新增 `RuntimeState::shape_is_canonical(shape) -> bool`
+     （`heap/runtime/mod.rs`，读 `shape_fingerprints` + `shape_cache`），
+     在 `store_selected_property_slot` 的 in-place 分支
+     （`object/storage.rs:588-601`）前置：canonical 时返回
+     「不可原地」信号，改走 `append_transition`
+     （`heap/runtime/mod.rs:328-360`）；非 canonical 保持现有
+     unlink→改写→restore 路径（`properties.rs:108-118` 语义不变）。
+   - **debug 不变量**：`shape_cache` 中 `fingerprint → shape` 成立时
+     `heap.shape(shape).entries() == fingerprint.entries`；在
+     `validate_object_layout` 或 `unlink_finalized_shapes` 路径加
+     `debug_assert`。
+   - **测试**：在 `object/storage.rs:641-691` 现有 fingerprint 测试上新增
+     「canonical 中间 shape 不被原地追加」用例；微负载见验收。
+2. **D1b 查找路径免分配 + 哈希**（独立提交）：
+   - **Shape 侧**：`Shape` 增加 `fingerprint_hash: u64`，在 shape 构造点
+     （`get_or_create_shape` 建形分支，`heap/runtime/mod.rs:288-325`）
+     对 `prototype + entries` 用 `FxHasher` 一次算出。
+   - **缓存结构**：`shape_cache: FxHashMap<u64, Vec<ShapeId>>`、
+     `shape_fingerprints: FxHashMap<ShapeId, ShapeFingerprint>`
+     （`heap/runtime/mod.rs:119-120`）。查找时对**借用**的
+     `&[ShapeEntry]` 流式 FxHash，直接命中 bucket；碰撞逐项比较
+     entries + prototype（保证与 hash 无关的正确性）。删除
+     `get_or_create_shape` 里为查找构造的
+     `entries.to_vec().into_boxed_slice()` 分配
+     （`runtime/mod.rs:288-325`）；`ShapeFingerprint`
+     （`object/operations.rs:17-20`）仅保留作校验/调试载荷。
+   - **消费点迁移**（全部改用存储的 `fingerprint_hash`）：
+     `append_unique_layout_inner` 的 unlink/restore
+     （`object/properties.rs:92-118`，新增
+     `RuntimeState::shape_cache_remove(shape)` /
+     `shape_cache_restore(shape)`）、`unlink_finalized_shapes`
+     （`runtime/mod.rs:555-563`）、断言
+     （`runtime/layout.rs:73-74`）、fingerprint 测试
+     （`object/storage.rs:668-689`）。
+   - **过渡表**：`shape_transitions` 由
+     `HashMap<ShapeId, HashMap<ShapeEntry, ShapeId>>` 改为
+     `FxHashMap<ShapeId, Vec<(ShapeEntry, ShapeId)>>`（实测典型 1–4 项，
+     线性扫描）；`shape_transition_parents` 换 `FxBuildHasher`
+     （`runtime/mod.rs:119-123`）。
 3. **D1c（可选，D1a 后评估）**：对象字面量一次性建形（lowering 传完整
    entries，等价 QuickJS `JS_NewObjectFromShape`），彻底消除中间 shape；
    仅在 D1a/D1b 后仍有可测成本时启动。
@@ -189,23 +213,39 @@ arguments_read/map-* 的公共前置路径。
 
 **实施点**：
 
-1. `Heap.slots: Vec<ArenaSlot>`（`heap/mod.rs:262-265`）拆为
+1. **类型泛型化**：`SlotState`（`heap/mod.rs:224-231`）与 `Node`
+   改为 `SlotState<T>` / `Node<T> { strong: Cell<u32>, data: T }`，
+   非 `Live`/`ZeroQueued` 变体不携带 payload；`ArenaSlot<T>
+   { generation: u32, state: SlotState<T> }`。`Heap.slots: Vec<ArenaSlot>`
+   （`heap/mod.rs:262-265`）拆为
    `objects/shapes/var_refs/contexts/functions/strings/bigints` 各自
-   `Vec` + 各自 free list；`ArenaSlot` 的 `weak_prev/weak_next` 只保留
-   在 object arena（weak 链仅对象用，`heap/gc.rs:889-1003`）。
-2. `RawId::index()` 仍为全局槽索引（`identity.rs`，12B 保持），访问器按
-   kind 分发到对应 arena；`validate_slot_identity`
-   （`heap/object_storage.rs:2202-2228`）、`live_node(_fast/_mut)`、
-   `reserve_vacant`、`publish`、`abort_initializing`
-   （`heap/arena.rs:78-205`）平移。
-3. 叶节点：`allocate_string_leaf`/`allocate_bigint_leaf`
+   `Arena<T>` + 各自 free list。
+2. **`Arena<T>` 分段增长**：`chunks: Vec<Vec<ArenaSlot<T>>>`，块 64Ki
+   槽，索引 = `chunk * CHUNK + offset`；`Vacant` 可不经 `T` 构造，
+   避免整表 `Vec` 翻倍峰值（当前 1M 槽 ru_maxrss 可到 used 的 ~1.5×）；
+   现有 `reserve_vacant/publish/abort_initializing`（`heap/arena.rs:78-205`）
+   泛型化。
+3. **weak 链仅对象**：`gc.rs:889-1003` 的 `weak_prev/weak_next` 移到
+   `ObjectArena` 的并行向量（随槽增长，仅 weak 路径触碰），
+   不给其它 kind 的槽加宽；`weak_collections` 语义不变。
+4. **访问层**：`RawId` 布局 12B 不变，`index` 改为 per-kind 索引（kind
+   消歧）；`validate_slot_identity`
+   （`heap/object_storage.rs:2202-2228`）、`live_node(_fast/_mut)` 按
+   kind 分发。`heap/*.rs` 中 37 处 `self.slots[...]` 直接索引
+   （`gc.rs` 43 处 `.slots`、`module_storage.rs:802/875/959/1094`）改为
+   `slot(id)/object_slot(id)/slot_mut(id)` 等窄访问器。
+5. **调试账本**：`alloc_sites`（`gc.rs:2576-2597` 记录/清除，
+   2612/2642 读取）改为 per-arena，索引空间随 per-kind 索引。
+6. **叶节点**：`allocate_string_leaf`/`allocate_bigint_leaf`
    （`heap/arena.rs:126-152`）槽只存 `generation + strong + JsString/
-   JsBigInt`；`StringRepr` 仍为 `Rc` 外部载荷（不改值/共享语义）。
-4. 分段增长：arena 用 chunk（如 64k 槽）或 `reserve_exact` 策略，避免
-   `Vec` 翻倍造成的 ru_maxrss 峰值（当前 1M 槽峰值可到 used 的 ~1.5×）。
-5. 配套：`counts()`（`heap/arena.rs:49-76`）、`memory_categories`
+   JsBigInt`（≈24–32B）；`StringRepr` 仍为 `Rc` 外部载荷（值/共享语义
+   不变）。
+7. **配套**：`counts()`（`heap/arena.rs:49-76`）、`memory_categories`
    （`heap/profiling.rs:86-221`）按 kind 出数；`ArenaStorage` 每 arena
    独立 trace（`heap/profiling.rs:9-77`）。
+8. **尺寸算术**（探针实测：ArenaSlot 440 / NodeData 392 / SlotState 408 /
+   ObjectData 224 / Shape 88）：object 槽 ≈ 4(generation) + tag +
+   Node<ObjectData 224> ≈ 240B；shape 槽 ≈ 104B；叶槽 ≈ 24–32B。
 
 **不变量**：generational identity 语义不变（槽复用必换 generation）；
 zero_queue 仍存 `RawId` 且跨 kind 保序；weak 链仅对象；teardown 时所有
@@ -234,22 +274,51 @@ arena 归零；profiling 记账不重复计数。
 
 **实施点**：
 
-1. **D3a 槽瘦身**：`AutoInitProperty`（`heap/object_records.rs:23-…`）
-   的 `NativeBuiltin { name: &'static str, length, min_readable_args }`
-   改由 `NativeFunctionId` 派生（name/length 可从目标注册表取回），
-   payload 收进 16B；`PropertySlot::AutoInit` 仍 32B 前先 box
-   （`AutoInit(Box<AutoInitProperty>)`）作为最小步骤，目标
-   `size_of::<PropertySlot>() == 24`。
+1. **D3a 槽瘦身**（两个独立提交，先 accessor 后 autoinit）：
+   - **尺寸事实**：`PropertySlot` 现 32B。`AutoInitProperty` 的 32B
+     借枚举 niche 压进了槽；但
+     `Accessor { get: Option<ObjectId>, set: Option<ObjectId> }`
+     （`heap/object_records.rs:10-13`）的 `Option<ObjectId>` 无 niche
+     时 12B，两项 24B payload + tag 无法再压。**只 box `AutoInit`
+     无法把槽降到 24B**，必须同时压缩 accessor。
+   - **accessor 打包**：`ObjectId` 保留 8B，`Accessor { get: ObjectId,
+     set: ObjectId }`，以 `{ index: 0, generation: 0 }` 为 null 哨兵。
+     安全性依据：generation 从 1 起、`checked_add(1)` 溢出即 retire
+     （`gc.rs:1360-1365`、`1717-1722`），0 永不指向活槽。迁移
+     `PropertySlot::Accessor` 共 30 处 / 12 文件（`object/storage.rs`、
+     `ordinary_storage.rs`、`properties.rs`、`arguments.rs`、
+     `private_elements.rs`、`access.rs`、`realm/bindings.rs`、
+     `heap/mod.rs`、`heap/gc.rs`、`vm/generator.rs`、
+     `builtins/qjs_value_printer.rs`、`builtins/regexp/replace.rs`）。
+     备选 `NonZeroU32` generation newtype 因构造点/测试面过大否决。
+   - **autoinit box**：`NativeBuiltin { name, length, min_readable_args }`
+     （`heap/object_records.rs:27-…`，4 处生产构造）无法从
+     `NativeFunctionId` 派生（`descriptor()` 仅含 cproto，
+     `builtins/native.rs:1528`，无 name/length 表），故
+     `AutoInit(Box<AutoInitProperty>)`；一次性分配只发生在 realm/
+     builtin 初始化，不在热路径。
+   - **结果**：最大 payload = `Data(RawValue)` 16B → 目标
+     `size_of::<PropertySlot>() == 24`，新增断言。
+   - **16B 拉伸 spike**（独立，不阻塞主线）：`RawValue` niche 或按
+     shape flags 分离 data 载荷表示；有实测收益才上默认路径。
 2. **D3b 内联槽**：`ObjectData.slots: Vec<PropertySlot>`
    （`heap/object_records.rs:466-484`）改为无 unsafe 的
-   `Slots { inline: [PropertySlot; 2], len: u8, spilled: Option<Vec<…>> }`
-   或等价结构；未用尾槽用占位值 + `len` 门控，所有读写经
-   `as_slice()`，`validate_object_layout` 校验 `slots.len() ==
-   shape.entries().len()` 语义不变。
-   - 若 `PropertySlot` 已到 24B，2 内联 = 48B，`ObjectData` 约 240B；
-     0/1/2 属性对象零堆分配。
-   - 16B 拉伸项：让 `Option<ObjectId>` 借 `generation` 非零得到 niche，
-     使 accessor 与 `Data` 同为 16B；作为独立 spike，不阻塞主线。
+   `enum Slots { Inline { len: u8, slots: [PropertySlot; 2] },
+   Spilled(Vec<PropertySlot>) }`。
+   - API：`len/is_empty/get/get_mut/push/replace/iter/clone_from`；
+     不提供 `as_slice()`（内联+溢出无法安全返回连续切片），需要连续
+     访问的调用点改 `iter()`。内联第 3 次 push 转 `Spilled`
+     （`Vec::with_capacity(3)`，拷贝 2 槽）。
+   - 迁移对象载荷 `.slots` 直接访问：`object/*.rs` 约 53 处
+     （properties 11、ordinary_storage 11、private_elements 4、
+     function_initialization 4、storage 3、array_storage 3、
+     property_ic 2、dictionary 2、arguments 2、其余 11）+ 
+     `heap/object_storage.rs` 13 处（`gc.rs` 43 处是 Heap 槽索引，
+     属 D2）。
+   - 尺寸算术：`ObjectData` 224B − Vec 24B + 枚举 56B ≈ 256B；
+     2 属性以内对象零堆分配；断言 `size_of::<ObjectData>() ≤ 272`。
+   - `validate_object_layout` 的 `slots.len() == shape.entries().len()`
+     语义不变；内联空位不进入任何语义路径。
 3. **D3c 写事务快路径**：`replace_property_slot_with_status`
    （`heap/object_storage.rs:728-779`）对「旧值 immediate、新值
    immediate、receiver 非最后 owner」的组合跳过
@@ -282,19 +351,48 @@ map-string SipHash 6.4%（含 `hash_one`）；map_get 同键微负载 7.29×。
 
 **实施点**：
 
-1. `CollectionRecords`（`heap/collection_records.rs:15-26`）：以
-   `next_id` 单调 id 为键的稠密 `Vec`（`Option<MapRecord>` + 空闲链）+
-   `order: Vec<usize>`/双向链维护插入序；删除为 O(1) 并保持迭代顺序
-   （与 QuickJS 记录数组一致）。`MapRecord` 32B 不变（D2 后随 arena）。
-2. `CollectionIndex`（`heap/collection_index.rs:20-30`）：
-   - 字符串键：在 `StringRepr` 缓存 **64-bit 每运行时随机种子哈希**
-     （进程/运行时级 `RandomState` 一次性种子，懒计算），替代每次
-     `hash_code_units` 全文 SipHash；`buckets` 已是 identity hasher。
+1. `CollectionRecords`（`heap/collection_records.rs:15-26`，现为
+   `entries: HashMap<usize,(MapRecord,u64)> + order: BTreeSet<usize>`）改为
+   稠密槽 + 有序 live 索引：
+   - `slots: Vec<Slot>`，`Slot { record: MapRecord, hash: u64 }` +
+     `free: Vec<u32>`；`live: Vec<LiveEntry { id: u32, slot: u32 }>`
+     按 id 升序（id 单调 ⇒ 天然插入序），删除置 `slot = DEAD` 墓碑；
+     `live_len` 单独维护；`next_id: usize` 时钟不变。
+   - 语义映射：`get(id)` = `live` 二分 → 槽；`next_at_or_after(cursor)`
+     = 二分后跳过墓碑（O(log n)，无需 BTreeSet）；`ids()/iter()` 自定义
+     `DoubleEndedIterator + ExactSizeIterator` 扫 `live` 跳墓碑；
+     `insert_hashed` = 复用 `free` 或 push 槽 + `live.push`（id 递增）；
+     `remove` = 二分 + 墓碑 + 槽入 `free`；`take_all` 排空并归零
+     `slots/live/key_index` 容量（时钟保留）。
+   - **容量回收契约**（`heap/collection_records.rs:201` 测试）：删除后
+     几何收缩（沿用现值策略 `capacity > 4*live+64` → `shrink_to(2*live+32)`，
+     收缩时重建 `free`），`take_all` 后容量为 0 且下一次 `insert` 仍返回
+     原 `next_id`（id 不复用）。
+   - **必须保住的 API/语义**（调用点与测试即契约）：
+     `len/is_empty/next_id/get/get_mut/replace_value/ids/iter/
+     next_at_or_after/find/find_entry/preflight_insert/
+     precompute_insert_hash/insert/insert_hashed/remove/take_all/validate`；
+     `next_at_or_after` 的 cursor 是**记录 id**（`builtins/map.rs:842`、
+     `map/callback.rs:201`、`set.rs:529/778`），id 有效性以
+     `id < next_id` 为界（`heap/object_storage.rs:2052/2097`、
+     `qjs_value_printer.rs:974`），墓碑/过期 id 必须 miss；墓碑参考模型
+     测试（`collection_records.rs:229`）逐条对齐；`validate` 仅发布期
+     全量校验（live 有序唯一、槽引用有效、`key_index` 一致）。
+   - `CollectionIndex`（`heap/collection_index.rs`）仍以记录 id 为
+     桶内容，`retained_capacities` 语义不变（测试依赖）。
+2. `CollectionIndex`（`heap/collection_index.rs:20-30`）哈希：
+   - 字符串键：`StringRepr`（`value/primitive.rs:141`）增加
+     `seeded_hash: Cell<Option<u64>>`（懒计算，不影响 `JsString` 8B 与
+     共享语义）；进程级 `OnceLock<RandomState>` 一次性随机种子，
+     对 `hash_code_units` 流式 FxHash 后缓存。`CollectionIndex::hash`
+     （`collection_index.rs:77-105`）与 `collection_key::hash` 字符串分支
+     （`value/collection_key.rs:88-96`）改读该缓存值，不再每次全文
+     SipHash；`buckets` 已是 identity hasher。
      - 安全口径：随机种子不可预测，抗 hash-flooding 性质保留；不再
        逐 Map 独立种子（与 V8/QuickJS 的 per-runtime 种子同级），
        在计划验收中显式记录该信任模型收敛。
-   - 保留/放大现有 per-index memo（`STRING_HASH_CACHE_SIZE = 8`）作为
-     过渡措施，正式方案为上述缓存。
+   - 现有 per-index memo（`STRING_HASH_CACHE_SIZE = 8`）保留为过渡，
+     正式方案为上述 `StringRepr` 缓存。
    - BigInt 键维持现状（未测到热点），如后续测量需要按同法缓存。
 3. `CollectionsState.maps/sets: HashMap<ObjectId, HashSet<usize>>`
    （`heap/collections.rs:20-21`）与 `WeakCollectionRecords` 改
@@ -335,7 +433,8 @@ map-string SipHash 6.4%（含 `hash_one`）；map_get 同键微负载 7.29×。
 1. **D1a**（最小一致性修复）→ 独立提交 + 微负载/Test262 验证。
 2. **D1b**（查找免分配/哈希）→ 独立提交。
 3. **D2**（typed arenas）→ 按 kind 分批（leaf+shape 先行）提交。
-4. **D3a → D3b → D3c** 独立提交；16B 拉伸 spike 可并行但不上默认路径。
+4. **D3a-accessor → D3a-autoinit → D3b → D3c** 独立提交；16B 拉伸
+   spike 可并行但不上默认路径。
 5. **D4** 记录存储 → 字符串哈希缓存，独立提交。
 6. **D5** 仅在门禁满足时另立 spike；否则记入 backlog。
 7. D1 与 D2 可并行改码；所有测量串行（`taskset -c 2`）。
@@ -372,6 +471,9 @@ map-string SipHash 6.4%（含 `hash_one`）；map_get 同键微负载 7.29×。
 - **D3 改变布局校验**：`validate_object_layout` 与所有
   `PropertySlot` 匹配点（含 release/atom 收集）需同步；内联占位值
   绝不能泄漏到任何语义路径。
+- **D3a 哨兵风险**：accessor 的 generation 0 空哨兵依赖「generation
+  从 1 起且溢出即 retire」不变量；以 `debug_assert` + 构造集中化
+  保证，测试覆盖 remove 后槽复用与 accessor 读写。
 - **D4 顺序语义**：插入序、`forEach` 删除可见性、迭代器失效必须与
   QuickJS 对齐；以 Test262 Map/Set 全绿 + 现有 `ActiveCollectionRecord`
   测试为门禁。
