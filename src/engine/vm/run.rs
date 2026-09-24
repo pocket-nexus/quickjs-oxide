@@ -12,6 +12,11 @@ use crate::engine::vm::execution::RunningExecution;
 use crate::engine::vm::frame::FrameId;
 use crate::engine::vm::stack::{RunSlots, copy_value};
 
+// Stage B exit-transfer budget: every `RunExit` stays within one 16-byte
+// transfer so the outlined driver bridge keeps its current call footprint.
+// Recheck the stage B measurements before widening any variant.
+const _: () = assert!(std::mem::size_of::<RunExit>() == 16);
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum BindingSource {
     Closure,
@@ -1412,6 +1417,25 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                             observed_depth,
                         );
                         pc.resume = pc.fault + update.instructions;
+                        continue;
+                    }
+                }
+                // S1: two direct producers, one numeric comparison, one
+                // conditional branch. Nothing is pushed or popped, so a guard
+                // miss leaves the canonical span start untouched.
+                if let Some(instructions) = executable.fusion.local_compare_branch(pc.fault) {
+                    if let Some(next) = fusion::local_compare_branch(
+                        &slots,
+                        &executable.code[pc.fault..],
+                        pc.fault,
+                        instructions,
+                    ) {
+                        #[cfg(feature = "profiling")]
+                        fusion::record_span(
+                            &executable.code[pc.fault..pc.fault + instructions],
+                            observed_depth,
+                        );
+                        pc.resume = next;
                         continue;
                     }
                 }

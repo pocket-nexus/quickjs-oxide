@@ -158,7 +158,48 @@ impl FusionPlan {
                 }
                 _ => None,
             };
-            let candidate = method
+            // S1: two direct producers feeding one comparison and its branch.
+            // The trailing Goto collapses the not-taken edge; it stays out of
+            // the interior-entry requirement because entering it directly is
+            // still canonical.
+            let local_compare = match rest {
+                [
+                    Instruction::GetLocal(_) | Instruction::GetLocalCheck(_),
+                    Instruction::GetLocal(_)
+                    | Instruction::GetLocalCheck(_)
+                    | Instruction::GetArg(_),
+                    Instruction::Lt
+                    | Instruction::Lte
+                    | Instruction::Gt
+                    | Instruction::Gte
+                    | Instruction::Eq
+                    | Instruction::Neq
+                    | Instruction::StrictEq
+                    | Instruction::StrictNeq,
+                    Instruction::IfTrue(_) | Instruction::IfFalse(_),
+                    Instruction::Goto(_),
+                    ..,
+                ] => Some((34, 5)),
+                [
+                    Instruction::GetLocal(_) | Instruction::GetLocalCheck(_),
+                    Instruction::GetLocal(_)
+                    | Instruction::GetLocalCheck(_)
+                    | Instruction::GetArg(_),
+                    Instruction::Lt
+                    | Instruction::Lte
+                    | Instruction::Gt
+                    | Instruction::Gte
+                    | Instruction::Eq
+                    | Instruction::Neq
+                    | Instruction::StrictEq
+                    | Instruction::StrictNeq,
+                    Instruction::IfTrue(_) | Instruction::IfFalse(_),
+                    ..,
+                ] => Some((33, 4)),
+                _ => None,
+            };
+            let candidate = local_compare
+                .or(method)
                 .or(local_add)
                 .or(const_local_add)
                 .or(update)
@@ -199,7 +240,15 @@ impl FusionPlan {
                     _ => None,
                 });
             if let Some((flag, length)) = candidate {
-                if !entries[pc + 1..pc + length].iter().any(|v| *v) {
+                // The folded S1 Goto is an authenticated span tail: it may be
+                // entered canonically on its own, so it is exempt from the
+                // interior-entry rule.
+                let interior_end = if flag == 34 {
+                    pc + length - 1
+                } else {
+                    pc + length
+                };
+                if !entries[pc + 1..interior_end].iter().any(|v| *v) {
                     if flags.is_empty() {
                         flags.resize(code.len(), 0);
                     }
@@ -232,6 +281,17 @@ impl FusionPlan {
     #[inline]
     pub(crate) fn compare_branch(&self, pc: usize) -> bool {
         self.flag(pc) == 32
+    }
+    /// S1 `producer(a); producer(b); cmp; If*; [Goto]` span length. Admission
+    /// is structural; the runtime guard requires both bindings to be direct
+    /// numbers, so captured, TDZ and non-number operands fall back canonically.
+    #[inline]
+    pub(crate) fn local_compare_branch(&self, pc: usize) -> Option<usize> {
+        match self.flag(pc) {
+            33 => Some(4),
+            34 => Some(5),
+            _ => None,
+        }
     }
     #[inline]
     pub(crate) fn add_store(&self, pc: usize) -> bool {
@@ -452,6 +512,54 @@ mod tests {
         let update = FusionPlan::build(&code, &[local(false)]).update(0).unwrap();
         assert_eq!((update.instructions, update.discard), (4, true));
     }
+    #[test]
+    fn local_compare_branch_spans_require_producers_and_fold_trailing_gotos() {
+        use Instruction::*;
+        let code = [
+            GetLocal(0),
+            GetArg(1),
+            Lt,
+            IfFalse(6),
+            Goto(5),
+            Nop,
+            ReturnUndefined,
+        ];
+        assert_eq!(
+            FusionPlan::build(&code, &[local(false)]).local_compare_branch(0),
+            Some(5)
+        );
+        let code = [
+            GetLocal(0),
+            GetLocalCheck(1),
+            Lte,
+            IfTrue(4),
+            ReturnUndefined,
+        ];
+        assert_eq!(
+            FusionPlan::build(&code, &[local(false)]).local_compare_branch(0),
+            Some(4)
+        );
+        // Any interior entry still rejects the unfused content.
+        let code = [GetLocal(0), GetArg(1), Lt, IfFalse(5), Nop, Goto(1)];
+        assert_eq!(
+            FusionPlan::build(&code, &[local(false)]).local_compare_branch(0),
+            None
+        );
+        // The first producer must be a local binding and the operator a
+        // comparison; otherwise the canonical sequence stays in charge.
+        let code = [GetArg(0), GetArg(1), Lt, IfFalse(4), Return];
+        assert_eq!(
+            FusionPlan::build(&code, &[local(false)]).local_compare_branch(0),
+            None
+        );
+        let code = [GetLocal(0), GetArg(1), Add, IfFalse(4), Return];
+        assert_eq!(
+            FusionPlan::build(&code, &[local(false)]).local_compare_branch(0),
+            None
+        );
+        assert_eq!(FusionPlan::default().local_compare_branch(0), None);
+    }
+
     #[test]
     fn all_interior_control_targets_prevent_fusion() {
         use Instruction::*;

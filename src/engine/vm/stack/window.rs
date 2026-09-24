@@ -1,5 +1,6 @@
 //! One authenticated continuous execution borrow. No arena mutation API escapes.
 use super::{Error, FrameBinding, FrameWindow, JsValue, Runtime, SlotStore};
+use crate::engine::value::number::operations::Number;
 
 pub(in crate::engine::vm) enum LinkedReadCompletion {
     Completed,
@@ -370,6 +371,39 @@ impl RunSlots<'_> {
 
     pub(in crate::engine::vm) fn parameter(&self, index: u16) -> Result<&FrameBinding, Error> {
         self.store.parameter_current(self.window, index)
+    }
+
+    /// Non-owning numeric read of a direct local binding. Bounds, binding kind
+    /// and domain form one guard; every miss leaves canonical diagnostics and
+    /// evaluation untouched, and no owner edge is created.
+    #[inline]
+    pub(in crate::engine::vm) fn immediate_local(&self, index: u16) -> Option<Number> {
+        let index = usize::from(index);
+        if index >= self.window.locals().len() {
+            return None;
+        }
+        let FrameBinding::Direct(value) =
+            self.store.slots[self.window.locals().start + index].as_ref()?
+        else {
+            return None;
+        };
+        value.as_number_repr()
+    }
+
+    /// Non-owning numeric read of a direct parameter binding; shaped exactly
+    /// like `immediate_local` over the parameter region.
+    #[inline]
+    pub(in crate::engine::vm) fn immediate_parameter(&self, index: u16) -> Option<Number> {
+        let index = usize::from(index);
+        if index >= self.window.parameters().len() {
+            return None;
+        }
+        let FrameBinding::Direct(value) =
+            self.store.slots[self.window.parameters().start + index].as_ref()?
+        else {
+            return None;
+        };
+        value.as_number_repr()
     }
 
     pub(in crate::engine::vm) fn replace_local(

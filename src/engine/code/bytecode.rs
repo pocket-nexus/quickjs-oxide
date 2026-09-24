@@ -715,6 +715,11 @@ pub enum Instruction {
     Throw,
 }
 
+// Stage B dispatch budget: one canonical instruction moves through the owned
+// match in a single 12-byte slot. Recheck the stage B measurements before
+// widening any variant.
+const _: () = assert!(std::mem::size_of::<Instruction>() == 12);
+
 impl Instruction {
     /// String constant used as a static name by the VM's property-key bridge.
     /// Publication links these operands once, including unreachable code.

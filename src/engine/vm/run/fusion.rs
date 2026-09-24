@@ -1,6 +1,7 @@
 //! Number-only execution of publication-authenticated canonical spans.
 use super::{Error, Instruction, RunSlots};
 use crate::engine::code::fusion::UpdateLocal;
+use crate::engine::value::number::operations::Number;
 
 pub(super) fn update_local(
     slots: &mut RunSlots<'_>,
@@ -23,6 +24,71 @@ pub(super) fn update_local(
         "fusion.UpdateLocalPrefix"
     });
     Ok(true)
+}
+
+/// The comparison semantics shared by the stack-consuming `CompareBranch`
+/// span and the non-consuming local span. NaN and signed-zero behavior is the
+/// float comparison itself; the caller has already proven both operands are
+/// numbers.
+#[inline(always)]
+fn compare_numbers(instruction: &Instruction, left: Number, right: Number) -> bool {
+    let (left, right) = (left.float(), right.float());
+    match instruction {
+        Instruction::Lt => left < right,
+        Instruction::Lte => left <= right,
+        Instruction::Gt => left > right,
+        Instruction::Gte => left >= right,
+        Instruction::Eq | Instruction::StrictEq => left == right,
+        Instruction::Neq | Instruction::StrictNeq => left != right,
+        _ => unreachable!("comparison opcode was validated before the transaction"),
+    }
+}
+
+/// Execute an S1 `producer(a); producer(b); cmp; If*; [Goto]` span. Both
+/// bindings are read non-owningly; on any guard miss nothing has changed and
+/// the caller re-runs the canonical span start. `code` begins at the span's
+/// first PC, `instructions` is its authenticated length (4 or 5), and `pc`
+/// supplies the no-`Goto` fallthrough.
+#[inline]
+pub(super) fn local_compare_branch(
+    slots: &RunSlots<'_>,
+    code: &[Instruction],
+    pc: usize,
+    instructions: usize,
+) -> Option<usize> {
+    let (left, right) = match (code.first()?, code.get(1)?) {
+        (
+            Instruction::GetLocal(left) | Instruction::GetLocalCheck(left),
+            Instruction::GetLocal(right) | Instruction::GetLocalCheck(right),
+        ) => (
+            slots.immediate_local(*left)?,
+            slots.immediate_local(*right)?,
+        ),
+        (
+            Instruction::GetLocal(left) | Instruction::GetLocalCheck(left),
+            Instruction::GetArg(right),
+        ) => (
+            slots.immediate_local(*left)?,
+            slots.immediate_parameter(*right)?,
+        ),
+        _ => return None,
+    };
+    let (target, when) = match code.get(3)? {
+        Instruction::IfTrue(target) => (*target as usize, true),
+        Instruction::IfFalse(target) => (*target as usize, false),
+        _ => return None,
+    };
+    let taken = compare_numbers(code.get(2)?, left, right) == when;
+    Some(if taken {
+        target
+    } else if instructions == 5 {
+        match code.get(4)? {
+            Instruction::Goto(next) => *next as usize,
+            _ => return None,
+        }
+    } else {
+        pc + 4
+    })
 }
 
 // Keep the number-pair comparison inlined into `run`: without the hint the
@@ -179,6 +245,66 @@ mod tests {
             let final=0;try{final++;throw 1;}catch(error){++final;}finally{final++;}
             return old===3 && x===4 && caught && y===77 && add===3 && sum===3 && read===2
                 && first.value===0 && !first.done && second.value===2 && second.done && final===3;
+        })()"#
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+    }
+}
+
+#[cfg(test)]
+mod local_compare_tests {
+    use crate::engine::api::{Runtime, Value};
+
+    #[test]
+    fn every_operator_and_edge_value_matches_canonical_results() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(
+            context
+                .eval(
+                    r#"((n)=>{
+            let a=0; for (let i=0;i<n;i++) a++;
+            let b=0; for (let i=n;i>0;i--) b++;
+            let c=0; for (let i=0;i<=n;i++) c++;
+            let d=0; for (let i=n;i>=0;i--) d++;
+            let e=0; for (let i=0;i!=n;i++) e++;
+            let base=0; let f=0; for (let i=0;i==base;i++) f++;
+            let g=0; for (let i=0;i!==n;i++) g++;
+            let h=0; for (let i=0;i===base;i++) h++;
+            let localBound=3; let lb=0; for (let i=0;i<localBound;i++) lb++;
+            let nan=NaN; let zeros=0; for (let i=0;i<nan;i++) zeros++;
+            let negative=-0; let negativeBody=0; for (let i=0;i<negative;i++) negativeBody++;
+            return a===4&&b===4&&c===5&&d===5&&e===4&&f===1&&g===4&&h===1&&lb===3
+                && zeros===0 && negativeBody===0;
+        })(4)"#
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+    }
+
+    #[test]
+    fn coercion_capture_tdz_and_bigint_stay_canonical() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(
+            context
+                .eval(
+                    r#"(()=>{
+            let conversions=0;
+            let limit={valueOf(){conversions++; return 3;}};
+            let body=0; for (let i=0;i<limit;i++) body++;
+            let text='0'; let textBody=0; for (let i=0;i<text;i++) textBody++;
+            let captured=0; function peek(){return captured;}
+            let three=3; for (;captured<three;) captured++;
+            let tdz=false;
+            try { if (later<1) {} } catch(e) { tdz=e instanceof ReferenceError; }
+            let later=1;
+            let big=0; for (let i=0n;i<3n;i++) big++;
+            return conversions===4 && body===3 && textBody===0
+                && captured===3 && peek()===3 && tdz && big===3;
         })()"#
                 )
                 .unwrap(),
