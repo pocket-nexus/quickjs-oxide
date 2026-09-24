@@ -474,7 +474,7 @@ impl Runtime {
             )
             .map_err(|_| RuntimeError::Invariant("shape index does not fit usize"))?;
             let initializer = match object.slots.get(slot_index) {
-                Some(PropertySlot::AutoInit(initializer)) => *initializer,
+                Some(PropertySlot::AutoInit(initializer)) => **initializer,
                 Some(
                     PropertySlot::Data(_) | PropertySlot::VarRef(_) | PropertySlot::Accessor { .. },
                 ) => return Ok(()),

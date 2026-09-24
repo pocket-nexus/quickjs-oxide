@@ -504,9 +504,9 @@ impl Runtime {
             atom: AtomIdx::from_raw(key.atom().raw()),
             flags: PropertyFlags::data(false, false, true),
         });
-        slots.push(PropertySlot::AutoInit(AutoInitProperty::ArrayUnscopables {
-            realm,
-        }));
+        slots.push(PropertySlot::auto_init(
+            AutoInitProperty::ArrayUnscopables { realm },
+        ));
         state.replace_layout(object_id, prototype, &entries, slots)
     }
 

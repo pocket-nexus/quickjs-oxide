@@ -40,10 +40,10 @@ fn global_json_is_realm_aware_lazy_and_reserves_the_pinned_table_order() {
             PropertyFlags::data(true, false, true),
         );
         assert!(matches!(
-            object.slots.get(slot),
-            Some(PropertySlot::AutoInit(AutoInitProperty::Json {
+            object.slots.get(slot).and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::Json {
                 realm: defining_realm,
-            })) if *defining_realm == realm
+            }) if *defining_realm == realm
         ));
     }
 
@@ -72,14 +72,14 @@ fn global_json_is_realm_aware_lazy_and_reserves_the_pinned_table_order() {
             PropertyFlags::data(true, false, true),
         );
         assert!(matches!(
-            object.slots.get(slot),
-            Some(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
+            object.slots.get(slot).and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::NativeBuiltin {
                 realm,
                 target: NativeFunctionId::Json(target),
                 name: target_name,
                 length: target_length,
                 min_readable_args,
-            })) if *realm == first.realm
+            }) if *realm == first.realm
                 && *target == kind
                 && *target_name == name
                 && *target_length == length

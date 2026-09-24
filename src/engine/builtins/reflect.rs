@@ -229,7 +229,7 @@ impl Runtime {
             global_object,
             &key,
             PropertyFlags::data(true, false, true),
-            PropertySlot::AutoInit(AutoInitProperty::Reflect { realm }),
+            PropertySlot::auto_init(AutoInitProperty::Reflect { realm }),
         )
     }
 

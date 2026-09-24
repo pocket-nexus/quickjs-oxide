@@ -108,14 +108,14 @@ fn object_keys_family_autoinit_preserves_pinned_metadata() {
             PropertyFlags::data(true, false, true),
         );
         assert!(matches!(
-            object.slots.get(slot_index),
-            Some(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
+            object.slots.get(slot_index).and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::NativeBuiltin {
                 realm,
                 target: NativeFunctionId::ObjectKeys(target_kind),
                 name: target_name,
                 length: 1,
                 min_readable_args: 1,
-            })) if *realm == context.realm && *target_kind == kind && *target_name == name
+            }) if *realm == context.realm && *target_kind == kind && *target_name == name
         ));
     }
 }
@@ -151,14 +151,14 @@ fn object_extensibility_autoinit_preserves_pinned_metadata() {
             PropertyFlags::data(true, false, true),
         );
         assert!(matches!(
-            object.slots.get(slot_index),
-            Some(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
+            object.slots.get(slot_index).and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::NativeBuiltin {
                 realm,
                 target: NativeFunctionId::ObjectExtensibility(target_kind),
                 name: target_name,
                 length: 1,
                 min_readable_args: 1,
-            })) if *realm == context.realm && *target_kind == kind && *target_name == name
+            }) if *realm == context.realm && *target_kind == kind && *target_name == name
         ));
     }
 }
@@ -252,14 +252,14 @@ fn object_descriptor_statics_autoinit_preserve_pinned_metadata() {
             PropertyFlags::data(true, false, true),
         );
         assert!(matches!(
-            object.slots.get(slot_index),
-            Some(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
+            object.slots.get(slot_index).and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::NativeBuiltin {
                 realm,
                 target: actual_target,
                 name: target_name,
                 length: actual_length,
                 min_readable_args: actual_min_readable_args,
-            })) if *realm == context.realm
+            }) if *realm == context.realm
                 && *actual_target == target
                 && *target_name == name
                 && *actual_length == length
@@ -295,14 +295,14 @@ fn object_is_autoinit_and_same_value_semantics_match_pinned_quickjs() {
             PropertyFlags::data(true, false, true),
         );
         assert!(matches!(
-            object.slots.get(slot_index),
-            Some(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
+            object.slots.get(slot_index).and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::NativeBuiltin {
                 realm,
                 target: NativeFunctionId::ObjectIs,
                 name: "is",
                 length: 2,
                 min_readable_args: 2,
-            })) if *realm == context.realm
+            }) if *realm == context.realm
         ));
     }
 
@@ -359,14 +359,14 @@ fn object_assign_autoinit_and_ordinary_snapshot_semantics_match_pinned_quickjs()
             PropertyFlags::data(true, false, true),
         );
         assert!(matches!(
-            object.slots.get(slot_index),
-            Some(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
+            object.slots.get(slot_index).and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::NativeBuiltin {
                 realm,
                 target: NativeFunctionId::ObjectAssign,
                 name: "assign",
                 length: 2,
                 min_readable_args: 2,
-            })) if *realm == context.realm
+            }) if *realm == context.realm
         ));
     }
 
@@ -426,11 +426,11 @@ fn object_assign_autoinit_and_ordinary_snapshot_semantics_match_pinned_quickjs()
         let slot_index =
             usize::try_from(shape.find(AtomIdx::from_raw(key.atom().raw())).unwrap()).unwrap();
         assert!(matches!(
-            object.slots.get(slot_index),
-            Some(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
+            object.slots.get(slot_index).and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::NativeBuiltin {
                 target: NativeFunctionId::ObjectKeys(target_kind),
                 ..
-            })) if *target_kind == kind
+            }) if *target_kind == kind
         ));
     }
 }
@@ -500,14 +500,14 @@ fn object_from_entries_autoinit_preserves_pinned_metadata() {
         PropertyFlags::data(true, false, true),
     );
     assert!(matches!(
-        object.slots.get(slot_index),
-        Some(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
-            realm,
-            target: NativeFunctionId::ObjectFromEntries,
-            name: "fromEntries",
-            length: 1,
-            min_readable_args: 1,
-        })) if *realm == context.realm
+        object.slots.get(slot_index).and_then(PropertySlot::auto_init_payload),
+        Some(AutoInitProperty::NativeBuiltin {
+        realm,
+        target: NativeFunctionId::ObjectFromEntries,
+        name: "fromEntries",
+        length: 1,
+        min_readable_args: 1,
+    }) if *realm == context.realm
     ));
 }
 
@@ -542,14 +542,14 @@ fn object_has_own_autoinit_preserves_pinned_metadata_and_presence_is_non_materia
             PropertyFlags::data(true, false, true),
         );
         assert!(matches!(
-            object.slots.get(slot_index),
-            Some(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
+            object.slots.get(slot_index).and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::NativeBuiltin {
                 realm,
                 target: NativeFunctionId::ObjectHasOwn,
                 name: "hasOwn",
                 length: 2,
                 min_readable_args: 2,
-            })) if *realm == context.realm
+            }) if *realm == context.realm
         ));
     }
 
@@ -570,11 +570,14 @@ fn object_has_own_autoinit_preserves_pinned_metadata_and_presence_is_non_materia
     )
     .unwrap();
     assert!(matches!(
-        object.slots.get(slot_index),
-        Some(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
+        object
+            .slots
+            .get(slot_index)
+            .and_then(PropertySlot::auto_init_payload),
+        Some(AutoInitProperty::NativeBuiltin {
             target: NativeFunctionId::ObjectKeys(ObjectKeysKind::Keys),
             ..
-        }))
+        })
     ));
 }
 
@@ -729,14 +732,14 @@ fn object_integrity_autoinit_materializes_and_tightens_in_pinned_order() {
             PropertyFlags::data(true, false, true),
         );
         assert!(matches!(
-            object.slots.get(slot_index),
-            Some(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
+            object.slots.get(slot_index).and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::NativeBuiltin {
                 realm,
                 target: NativeFunctionId::ObjectIntegrity(target_kind),
                 name: target_name,
                 length: 1,
                 min_readable_args: 1,
-            })) if *realm == context.realm && *target_kind == kind && *target_name == name
+            }) if *realm == context.realm && *target_kind == kind && *target_name == name
         ));
     }
 
@@ -812,10 +815,11 @@ fn object_is_sealed_scans_descriptors_before_extensibility_and_short_circuits_au
         let slot_index =
             usize::try_from(shape.find(AtomIdx::from_raw(key.atom().raw())).unwrap()).unwrap();
         assert!(matches!(
-            object.slots.get(slot_index),
-            Some(PropertySlot::AutoInit(
-                AutoInitProperty::NativeBuiltin { .. }
-            ))
+            object
+                .slots
+                .get(slot_index)
+                .and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::NativeBuiltin { .. })
         ));
     }
 
@@ -860,11 +864,14 @@ fn object_is_sealed_scans_descriptors_before_extensibility_and_short_circuits_au
         Some(PropertySlot::Data(RawValue::Object(_)))
     ));
     assert!(matches!(
-        object.slots.get(get_prototype_slot),
-        Some(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
+        object
+            .slots
+            .get(get_prototype_slot)
+            .and_then(PropertySlot::auto_init_payload),
+        Some(AutoInitProperty::NativeBuiltin {
             target: NativeFunctionId::ObjectGetPrototypeOf,
             ..
-        }))
+        })
     ));
 }
 
@@ -1181,10 +1188,11 @@ fn object_keys_descriptor_recheck_materializes_non_enumerable_autoinits() {
         let slot_index =
             usize::try_from(shape.find(AtomIdx::from_raw(key.atom().raw())).unwrap()).unwrap();
         assert!(matches!(
-            object.slots.get(slot_index),
-            Some(PropertySlot::AutoInit(
-                AutoInitProperty::NativeBuiltin { .. }
-            ))
+            object
+                .slots
+                .get(slot_index)
+                .and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::NativeBuiltin { .. })
         ));
     }
 

@@ -263,10 +263,10 @@ fn global_math_is_realm_aware_and_materializes_only_on_get() {
             PropertyFlags::data(true, false, true),
         );
         assert!(matches!(
-            object.slots.get(slot_index),
-            Some(PropertySlot::AutoInit(AutoInitProperty::Math {
+            object.slots.get(slot_index).and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::Math {
                 realm: defining_realm,
-            })) if *defining_realm == realm
+            }) if *defining_realm == realm
         ));
     }
 

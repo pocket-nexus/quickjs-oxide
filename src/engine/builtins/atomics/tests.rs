@@ -122,10 +122,10 @@ fn global_atomics_is_lazy_realm_local_and_has_the_pinned_surface() {
             PropertyFlags::data(true, false, true),
         );
         assert!(matches!(
-            object.slots.get(slot),
-            Some(PropertySlot::AutoInit(AutoInitProperty::Atomics {
+            object.slots.get(slot).and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::Atomics {
                 realm: defining_realm,
-            })) if *defining_realm == realm
+            }) if *defining_realm == realm
         ));
     }
 

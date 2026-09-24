@@ -10,7 +10,7 @@ use super::HeapNodeKind;
 #[cfg(debug_assertions)]
 use super::LeafSlot;
 use super::{
-    AsyncGeneratorRequestData, AtomIdx, AutoInitProperty, BigIntId, BytecodeConstant, ContextData,
+    AsyncGeneratorRequestData, AtomIdx, BigIntId, BytecodeConstant, ContextData,
     ContextId, FinalizationRegistryEntry, FunctionBytecodeData, FunctionBytecodeId,
     GeneratorActivationData, GeneratorFrameBinding, Hash, HashMap, Heap, HeapError,
     InternalCallableData, LeafValue, NativeErrorKind, Node, NodeData, ObjectData, ObjectId,
@@ -2249,23 +2249,13 @@ pub(super) fn property_slot_edges(slot: &PropertySlot) -> Edges {
     match slot {
         PropertySlot::Data(value) => edges.extend(raw_value_edge(value)),
         PropertySlot::VarRef(var_ref) => edges.push(RawId::VarRef(*var_ref)),
-        PropertySlot::Accessor { get, set } => {
-            edges.extend(get.option().into_iter().chain(set.option()).map(RawId::Object))
-        }
-        PropertySlot::AutoInit(
-            AutoInitProperty::FunctionPrototype { realm }
-            | AutoInitProperty::NativeBuiltin { realm, .. }
-            | AutoInitProperty::String { realm, .. }
-            | AutoInitProperty::ArrayUnscopables { realm }
-            | AutoInitProperty::Math { realm }
-            | AutoInitProperty::Reflect { realm }
-            | AutoInitProperty::Json { realm }
-            | AutoInitProperty::Atomics { realm },
-        ) => edges.push(RawId::Context(*realm)),
-        #[cfg(test)]
-        PropertySlot::AutoInit(AutoInitProperty::FailureProbe { realm }) => {
-            edges.push(RawId::Context(*realm))
-        }
+        PropertySlot::Accessor { get, set } => edges.extend(
+            get.option()
+                .into_iter()
+                .chain(set.option())
+                .map(RawId::Object),
+        ),
+        PropertySlot::AutoInit(initializer) => edges.push(RawId::Context(initializer.realm())),
     }
     edges
 }

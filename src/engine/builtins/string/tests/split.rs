@@ -46,14 +46,14 @@ fn string_split_is_a_pinned_generic_autoinit_between_search_and_substring() {
             PropertyFlags::data(true, false, true)
         );
         assert!(matches!(
-            object.slots.get(split),
-            Some(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
+            object.slots.get(split).and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::NativeBuiltin {
                 realm,
                 target: NativeFunctionId::StringPrototypeSplit,
                 name: "split",
                 length: 2,
                 min_readable_args: 2,
-            })) if *realm == context.realm
+            }) if *realm == context.realm
         ));
     }
 

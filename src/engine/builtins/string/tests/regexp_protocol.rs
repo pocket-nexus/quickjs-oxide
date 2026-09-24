@@ -91,42 +91,42 @@ fn match_match_all_search_and_split_entries_preserve_pinned_cproto_and_order() {
             PropertyFlags::data(true, false, true)
         );
         assert!(matches!(
-            string_object.slots.get(match_position),
-            Some(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
+            string_object.slots.get(match_position).and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::NativeBuiltin {
                 realm,
                 target: NativeFunctionId::StringPrototypeMatch,
                 name: "match",
                 length: 1,
                 min_readable_args: 1,
-            })) if *realm == context.realm
+            }) if *realm == context.realm
         ));
         assert_eq!(
             string_shape.entries()[match_all].flags,
             PropertyFlags::data(true, false, true)
         );
         assert!(matches!(
-            string_object.slots.get(match_all),
-            Some(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
+            string_object.slots.get(match_all).and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::NativeBuiltin {
                 realm,
                 target: NativeFunctionId::StringPrototypeMatchAll,
                 name: "matchAll",
                 length: 1,
                 min_readable_args: 1,
-            })) if *realm == context.realm
+            }) if *realm == context.realm
         ));
         assert_eq!(
             string_shape.entries()[search].flags,
             PropertyFlags::data(true, false, true)
         );
         assert!(matches!(
-            string_object.slots.get(search),
-            Some(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
+            string_object.slots.get(search).and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::NativeBuiltin {
                 realm,
                 target: NativeFunctionId::StringPrototypeSearch,
                 name: "search",
                 length: 1,
                 min_readable_args: 1,
-            })) if *realm == context.realm
+            }) if *realm == context.realm
         ));
 
         let regexp_object = state.heap.object(regexp_prototype.object_id()).unwrap();
@@ -163,56 +163,56 @@ fn match_match_all_search_and_split_entries_preserve_pinned_cproto_and_order() {
             PropertyFlags::data(true, false, true)
         );
         assert!(matches!(
-            regexp_object.slots.get(match_position),
-            Some(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
+            regexp_object.slots.get(match_position).and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::NativeBuiltin {
                 realm,
                 target: NativeFunctionId::RegExp(RegExpNativeKind::Match),
                 name: "[Symbol.match]",
                 length: 1,
                 min_readable_args: 1,
-            })) if *realm == context.realm
+            }) if *realm == context.realm
         ));
         assert_eq!(
             regexp_shape.entries()[match_all].flags,
             PropertyFlags::data(true, false, true)
         );
         assert!(matches!(
-            regexp_object.slots.get(match_all),
-            Some(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
+            regexp_object.slots.get(match_all).and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::NativeBuiltin {
                 realm,
                 target: NativeFunctionId::RegExp(RegExpNativeKind::MatchAll),
                 name: "[Symbol.matchAll]",
                 length: 1,
                 min_readable_args: 1,
-            })) if *realm == context.realm
+            }) if *realm == context.realm
         ));
         assert_eq!(
             regexp_shape.entries()[search].flags,
             PropertyFlags::data(true, false, true)
         );
         assert!(matches!(
-            regexp_object.slots.get(search),
-            Some(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
+            regexp_object.slots.get(search).and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::NativeBuiltin {
                 realm,
                 target: NativeFunctionId::RegExp(RegExpNativeKind::Search),
                 name: "[Symbol.search]",
                 length: 1,
                 min_readable_args: 1,
-            })) if *realm == context.realm
+            }) if *realm == context.realm
         ));
         assert_eq!(
             regexp_shape.entries()[split].flags,
             PropertyFlags::data(true, false, true)
         );
         assert!(matches!(
-            regexp_object.slots.get(split),
-            Some(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
+            regexp_object.slots.get(split).and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::NativeBuiltin {
                 realm,
                 target: NativeFunctionId::RegExp(RegExpNativeKind::Split),
                 name: "[Symbol.split]",
                 length: 2,
                 min_readable_args: 2,
-            })) if *realm == context.realm
+            }) if *realm == context.realm
         ));
     }
 
@@ -441,16 +441,16 @@ fn replace_entries_preserve_pinned_cproto_autoinit_and_table_order() {
                 PropertyFlags::data(true, false, true)
             );
             assert!(matches!(
-                string_object.slots.get(position),
-                Some(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
-                    realm,
-                    target: actual_target,
-                    name: actual_name,
-                    length: 2,
-                    min_readable_args: 2,
-                })) if *realm == context.realm
-                    && *actual_target == target
-                    && *actual_name == name
+                string_object.slots.get(position).and_then(PropertySlot::auto_init_payload),
+                Some(AutoInitProperty::NativeBuiltin {
+                        realm,
+                        target: actual_target,
+                        name: actual_name,
+                        length: 2,
+                        min_readable_args: 2,
+                    }) if *realm == context.realm
+                        && *actual_target == target
+                        && *actual_name == name
             ));
         }
 
@@ -474,14 +474,14 @@ fn replace_entries_preserve_pinned_cproto_autoinit_and_table_order() {
             PropertyFlags::data(true, false, true)
         );
         assert!(matches!(
-            regexp_object.slots.get(replace),
-            Some(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
+            regexp_object.slots.get(replace).and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::NativeBuiltin {
                 realm,
                 target: NativeFunctionId::RegExp(RegExpNativeKind::Replace),
                 name: "[Symbol.replace]",
                 length: 2,
                 min_readable_args: 2,
-            })) if *realm == context.realm
+            }) if *realm == context.realm
         ));
     }
 

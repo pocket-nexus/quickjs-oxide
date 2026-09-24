@@ -62,10 +62,10 @@ fn global_reflect_is_realm_aware_lazy_and_complete() {
             PropertyFlags::data(true, false, true),
         );
         assert!(matches!(
-            object.slots.get(slot_index),
-            Some(PropertySlot::AutoInit(AutoInitProperty::Reflect {
+            object.slots.get(slot_index).and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::Reflect {
                 realm: defining_realm,
-            })) if *defining_realm == realm
+            }) if *defining_realm == realm
         ));
     }
 
@@ -120,14 +120,14 @@ fn global_reflect_is_realm_aware_lazy_and_complete() {
             PropertyFlags::data(true, false, true),
         );
         assert!(matches!(
-            object.slots.get(slot_index),
-            Some(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
+            object.slots.get(slot_index).and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::NativeBuiltin {
                 realm,
                 target: NativeFunctionId::Reflect(target_kind),
                 name: target_name,
                 length: target_length,
                 min_readable_args,
-            })) if *realm == first.realm
+            }) if *realm == first.realm
                 && *target_kind == kind
                 && *target_name == name
                 && *target_length == length

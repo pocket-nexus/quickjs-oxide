@@ -241,7 +241,7 @@ fn autoinit_property_slot_retains_and_releases_its_creation_realm() {
     let function = heap
         .allocate_object(ObjectData::ordinary(
             property_shape,
-            vec![PropertySlot::AutoInit(
+            vec![PropertySlot::auto_init(
                 AutoInitProperty::FunctionPrototype { realm },
             )],
         ))

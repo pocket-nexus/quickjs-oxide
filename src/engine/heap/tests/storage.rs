@@ -1485,11 +1485,15 @@ fn accessor_refs_pack_the_null_sentinel_into_eight_bytes() {
         index: 7,
         generation: 3,
     };
-    assert_eq!(AccessorRef::from_option(Some(getter)).option(), Some(getter));
+    assert_eq!(
+        AccessorRef::from_option(Some(getter)).option(),
+        Some(getter)
+    );
     let slot = PropertySlot::accessor(None, Some(getter));
     let PropertySlot::Accessor { get, set } = slot else {
         panic!("accessor constructor produced a data slot");
     };
     assert_eq!(get.option(), None);
     assert_eq!(set.option(), Some(getter));
+    assert_eq!(size_of::<PropertySlot>(), 24);
 }

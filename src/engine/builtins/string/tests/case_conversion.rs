@@ -59,16 +59,16 @@ fn string_case_family_is_ordered_autoinit_and_has_distinct_stable_functions() {
                 PropertyFlags::data(true, false, true),
             );
             assert!(matches!(
-                object.slots.get(slot_index),
-                Some(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
-                    realm,
-                    target: NativeFunctionId::StringPrototypeCase(target_selector),
-                    name: target_name,
-                    length: 0,
-                    min_readable_args: 0,
-                })) if *realm == context.realm
-                    && *target_selector == *selector
-                    && *target_name == *name
+                object.slots.get(slot_index).and_then(PropertySlot::auto_init_payload),
+                Some(AutoInitProperty::NativeBuiltin {
+                        realm,
+                        target: NativeFunctionId::StringPrototypeCase(target_selector),
+                        name: target_name,
+                        length: 0,
+                        min_readable_args: 0,
+                    }) if *realm == context.realm
+                        && *target_selector == *selector
+                        && *target_name == *name
             ));
         }
     }

@@ -13,7 +13,7 @@ pub enum PropertySlot {
     },
     /// QuickJS-style lazy intrinsic property. It has ordinary data-property
     /// flags in the shape; only the payload and owned realm edge are deferred.
-    AutoInit(AutoInitProperty),
+    AutoInit(Box<AutoInitProperty>),
 }
 
 impl PropertySlot {
@@ -23,6 +23,25 @@ impl PropertySlot {
         Self::Accessor {
             get: AccessorRef::from_option(get),
             set: AccessorRef::from_option(set),
+        }
+    }
+
+    /// Build one lazy-intrinsic slot. The payload is boxed because it is cold:
+    /// it appears only during realm/builtin initialization, while its 32-byte
+    /// width would otherwise keep every property slot at 32 bytes.
+    #[must_use]
+    pub fn auto_init(property: AutoInitProperty) -> Self {
+        Self::AutoInit(Box::new(property))
+    }
+
+    /// Project one slot onto its lazy-intrinsic payload. Test-facing so pattern
+    /// assertions can still destructure `AutoInitProperty` through the box.
+    #[cfg(test)]
+    #[must_use]
+    pub fn auto_init_payload(&self) -> Option<&AutoInitProperty> {
+        match self {
+            Self::AutoInit(initializer) => Some(initializer),
+            _ => None,
         }
     }
 }
@@ -104,6 +123,25 @@ pub enum AutoInitProperty {
     FailureProbe {
         realm: ContextId,
     },
+}
+
+impl AutoInitProperty {
+    /// Realm edge owned by every lazy-intrinsic payload.
+    #[must_use]
+    pub const fn realm(self) -> ContextId {
+        match self {
+            Self::FunctionPrototype { realm }
+            | Self::NativeBuiltin { realm, .. }
+            | Self::String { realm, .. }
+            | Self::ArrayUnscopables { realm }
+            | Self::Math { realm }
+            | Self::Reflect { realm }
+            | Self::Json { realm }
+            | Self::Atomics { realm } => realm,
+            #[cfg(test)]
+            Self::FailureProbe { realm } => realm,
+        }
+    }
 }
 
 /// Internal primitive payload carried by implemented wrapper classes.

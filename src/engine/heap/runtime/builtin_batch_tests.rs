@@ -55,8 +55,8 @@ fn builtin_batch_preserves_order_flags_metadata_and_lazy_identity() {
             assert_eq!(entries[index].flags, method.flags);
             assert!(
                 matches!(
-                    &object.slots[index],
-                    PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
+                    object.slots[index].auto_init_payload(),
+                    Some(AutoInitProperty::NativeBuiltin {
                         realm,
                         target,
                         name,

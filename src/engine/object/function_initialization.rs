@@ -216,7 +216,7 @@ impl Runtime {
             atom: AtomIdx::from_raw(key.atom().raw()),
             flags: PropertyFlags::data(true, false, false),
         });
-        slots.push(PropertySlot::AutoInit(
+        slots.push(PropertySlot::auto_init(
             AutoInitProperty::FunctionPrototype { realm },
         ));
         state.replace_layout(object_id, prototype, &entries, slots)
@@ -278,7 +278,7 @@ impl Runtime {
             atom: AtomIdx::from_raw(key.atom().raw()),
             flags,
         });
-        slots.push(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
+        slots.push(PropertySlot::auto_init(AutoInitProperty::NativeBuiltin {
             realm,
             target,
             name,
@@ -317,7 +317,7 @@ impl Runtime {
             atom: AtomIdx::from_raw(key.atom().raw()),
             flags: PropertyFlags::data(true, false, true),
         });
-        slots.push(PropertySlot::AutoInit(AutoInitProperty::String {
+        slots.push(PropertySlot::auto_init(AutoInitProperty::String {
             realm,
             value,
         }));
@@ -348,7 +348,7 @@ impl Runtime {
             atom: AtomIdx::from_raw(key.atom().raw()),
             flags: PropertyFlags::data(true, false, true),
         });
-        slots.push(PropertySlot::AutoInit(AutoInitProperty::FailureProbe {
+        slots.push(PropertySlot::auto_init(AutoInitProperty::FailureProbe {
             realm,
         }));
         state.replace_layout(object_id, prototype, &entries, slots)

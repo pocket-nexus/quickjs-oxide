@@ -115,10 +115,9 @@ fn array_unscopables_autoinit_retains_then_releases_its_realm_edge() {
         let slot_index =
             usize::try_from(shape.find(AtomIdx::from_raw(key.atom().raw())).unwrap()).unwrap();
         assert!(matches!(
-            object.slots.get(slot_index),
-            Some(PropertySlot::AutoInit(
-                AutoInitProperty::ArrayUnscopables { realm }
-            )) if *realm == context.realm
+            object.slots.get(slot_index).and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::ArrayUnscopables { realm }
+            ) if *realm == context.realm
         ));
         (
             slot_index,
@@ -169,10 +168,9 @@ fn array_unscopables_metadata_and_delete_preserve_lazy_state() {
         let slot_index =
             usize::try_from(shape.find(AtomIdx::from_raw(key.atom().raw())).unwrap()).unwrap();
         assert!(matches!(
-            object.slots.get(slot_index),
-            Some(PropertySlot::AutoInit(
-                AutoInitProperty::ArrayUnscopables { realm }
-            )) if *realm == context.realm
+            object.slots.get(slot_index).and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::ArrayUnscopables { realm }
+            ) if *realm == context.realm
         ));
         assert_eq!(
             state.heap.context_strong_count(context.realm).unwrap(),

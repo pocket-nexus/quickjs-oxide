@@ -394,6 +394,23 @@ objects 1M RSS 再降 ≥ 20%；`property_slots` capacity/used ≤ 1.1。
 
 **回退**：D3a/D3b/D3c 三个独立提交。
 
+**D3a 实施记录（2026-09-24）**：
+
+- accessor 打包：`PropertySlot::Accessor { get: AccessorRef, set: AccessorRef }`，
+  `AccessorRef` 以 generation==0 为 null 哨兵（8B）；新增
+  `PropertySlot::accessor(get, set)` 构造器，读取点统一 `AccessorRef::option()`。
+  尺寸：accessor pair 24B → 16B。
+- autoinit box：`AutoInit(Box<AutoInitProperty>)` + `PropertySlot::auto_init(...)`
+  构造器；`AutoInitProperty::realm()` 取代 `property_slot_edges` 的宽
+  or-pattern。测试模式断言改为 `slot.auto_init_payload()` 投影
+  （`#[cfg(test)]` 辅助）。
+- 尺寸实测：`PropertySlot` 32 → **24B**（断言在
+  `heap/tests/storage.rs`）；`ObjectData`/`ArenaSlot` 不变（224/272）。
+- 实测（vs D1a）：objects.js 455.8 → 425.2 MiB、arrays.js 440.6 → 425.1 MiB；
+  固定行全部 ±1.6% 内（prop_clone +1.57%、arguments_read +1.58%）。
+- 验证：lib 2318、workspace 全绿；`--features profiling` 仅剩基线既有失败；
+  release 零警告。
+
 ### D4 Map/Set 记录与索引
 
 **目标**：Map/Set 记录存储从「HashMap + BTreeSet 每记录两棵节点」改为

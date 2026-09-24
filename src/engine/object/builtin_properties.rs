@@ -114,7 +114,7 @@ impl Runtime {
                 atom: AtomIdx::from_raw(key.atom().raw()),
                 flags: method.flags,
             });
-            slots.push(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
+            slots.push(PropertySlot::auto_init(AutoInitProperty::NativeBuiltin {
                 realm,
                 target: method.target,
                 name: method.name,

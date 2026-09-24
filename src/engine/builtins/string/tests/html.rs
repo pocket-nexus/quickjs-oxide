@@ -64,18 +64,18 @@ fn string_create_html_family_is_ordered_autoinit_and_has_distinct_stable_functio
                 PropertyFlags::data(true, false, true),
             );
             assert!(matches!(
-                object.slots.get(slot_index),
-                Some(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
-                    realm,
-                    target: NativeFunctionId::StringPrototypeCreateHtml(target_selector),
-                    name: target_name,
-                    length: target_length,
-                    min_readable_args,
-                })) if *realm == context.realm
-                    && *target_selector == *selector
-                    && *target_name == *name
-                    && *target_length == *length
-                    && *min_readable_args == *length
+                object.slots.get(slot_index).and_then(PropertySlot::auto_init_payload),
+                Some(AutoInitProperty::NativeBuiltin {
+                        realm,
+                        target: NativeFunctionId::StringPrototypeCreateHtml(target_selector),
+                        name: target_name,
+                        length: target_length,
+                        min_readable_args,
+                    }) if *realm == context.realm
+                        && *target_selector == *selector
+                        && *target_name == *name
+                        && *target_length == *length
+                        && *min_readable_args == *length
             ));
         }
     }

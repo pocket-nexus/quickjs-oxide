@@ -139,24 +139,24 @@ fn string_unicode_intrinsics_use_pinned_generic_cproto_and_append_order() {
             PropertyFlags::data(true, false, true),
         );
         assert!(matches!(
-            object.slots.get(normalize),
-            Some(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
+            object.slots.get(normalize).and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::NativeBuiltin {
                 realm,
                 target: NativeFunctionId::StringPrototypeNormalize,
                 name: "normalize",
                 length: 0,
                 min_readable_args: 0,
-            })) if *realm == context.realm
+            }) if *realm == context.realm
         ));
         assert!(matches!(
-            object.slots.get(locale_compare),
-            Some(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
+            object.slots.get(locale_compare).and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::NativeBuiltin {
                 realm,
                 target: NativeFunctionId::StringPrototypeLocaleCompare,
                 name: "localeCompare",
                 length: 1,
                 min_readable_args: 1,
-            })) if *realm == context.realm
+            }) if *realm == context.realm
         ));
     }
 
@@ -214,14 +214,14 @@ fn string_subrange_family_publishes_generic_autoinit_entries_and_identities() {
             PropertyFlags::data(true, false, true),
         );
         assert!(matches!(
-            object.slots.get(slot_index),
-            Some(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
+            object.slots.get(slot_index).and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::NativeBuiltin {
                 realm,
                 target: NativeFunctionId::StringPrototypeSubrange(target_selector),
                 name: target_name,
                 length: 2,
                 min_readable_args: 2,
-            })) if *realm == context.realm
+            }) if *realm == context.realm
                 && *target_selector == *selector
                 && *target_name == *name
         ));
@@ -261,14 +261,14 @@ fn string_repeat_publishes_one_generic_autoinit_entry() {
         PropertyFlags::data(true, false, true),
     );
     assert!(matches!(
-        object.slots.get(slot_index),
-        Some(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
-            realm,
-            target: NativeFunctionId::StringPrototypeRepeat,
-            name,
-            length: 1,
-            min_readable_args: 1,
-        })) if *realm == context.realm && *name == "repeat"
+        object.slots.get(slot_index).and_then(PropertySlot::auto_init_payload),
+        Some(AutoInitProperty::NativeBuiltin {
+        realm,
+        target: NativeFunctionId::StringPrototypeRepeat,
+        name,
+        length: 1,
+        min_readable_args: 1,
+    }) if *realm == context.realm && *name == "repeat"
     ));
     drop(state);
 
@@ -317,14 +317,14 @@ fn string_pad_family_publishes_pinned_autoinit_entries_and_identities() {
             PropertyFlags::data(true, false, true),
         );
         assert!(matches!(
-            object.slots.get(slot_index),
-            Some(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
+            object.slots.get(slot_index).and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::NativeBuiltin {
                 realm,
                 target: NativeFunctionId::StringPrototypePad(target_selector),
                 name: target_name,
                 length: 1,
                 min_readable_args: 1,
-            })) if *realm == context.realm
+            }) if *realm == context.realm
                 && *target_selector == *selector
                 && *target_name == *name
         ));
@@ -385,14 +385,14 @@ fn string_trim_family_preserves_alias_materialization_order_and_independence() {
             );
         }
         assert!(matches!(
-            object.slots.get(slot_indices[0]),
-            Some(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
+            object.slots.get(slot_indices[0]).and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::NativeBuiltin {
                 realm,
                 target: NativeFunctionId::StringPrototypeTrim(StringTrimKind::Both),
                 name: "trim",
                 length: 0,
                 min_readable_args: 0,
-            })) if *realm == context.realm
+            }) if *realm == context.realm
         ));
 
         let Some(PropertySlot::Data(RawValue::Object(trim_end_id))) =

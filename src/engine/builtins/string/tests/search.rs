@@ -98,14 +98,14 @@ fn string_includes_family_publishes_typed_autoinit_entries_and_identities() {
             PropertyFlags::data(true, false, true),
         );
         assert!(matches!(
-            object.slots.get(slot_index),
-            Some(PropertySlot::AutoInit(AutoInitProperty::NativeBuiltin {
+            object.slots.get(slot_index).and_then(PropertySlot::auto_init_payload),
+            Some(AutoInitProperty::NativeBuiltin {
                 realm,
                 target: NativeFunctionId::StringPrototypeIncludes(target_selector),
                 name: target_name,
                 length: 1,
                 min_readable_args: 1,
-            })) if *realm == context.realm
+            }) if *realm == context.realm
                 && *target_selector == *selector
                 && *target_name == *name
         ));
