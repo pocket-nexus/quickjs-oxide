@@ -246,7 +246,7 @@ flat profile（self time 百分比）：
 
 | 级别 | 问题 | 证据 | 验证/收口方式 |
 | --- | --- | --- | --- |
-| P0 | 分配总量过高：identifier `String`、UTF-16 转换、map 插入 | libc 27%；`Utf16Units::new`/`JsString::from_validated_utf16`；hashbrown 4.3% | 优化后重跑矩阵 + 分配计数（`profiling` 现有计数器） |
+| P0 | 分配总量过高：identifier `String`、UTF-16 转换、map 插入 | libc 27%；`Utf16Units::new`/`JsString::from_validated_utf16`；hashbrown 4.3% | 优化后重跑矩阵 + §9 分配计数探针 |
 | P0 | lexer 字符扫描：`peek_char` 逐字符 UTF-8 解码、`starts_with` memcmp | lexer 直接 8–14%；callchain 归因 `scan_punctuator` 2.3% | 加 lexer 诊断计数或 ASCII 快路径后 A/B |
 | P0 | verify+publish 占 20–30% | §6.1、单符号 6.4% + 3.1% | 评估增量验证、延迟 publish、更紧凑指令容器 |
 | P1 | resolution/scope_validation 7–8%，随声明数增长 | `functions` resolution 14% | 声明密集语料上单独测量 |
@@ -319,3 +319,89 @@ perf report --stdio --no-children -g none
 ```
 
 正式计时只使用关闭 profiling 的普通构建；诊断构建与 perf 结果不得与正式吞吐混算。
+
+## 9. P0 分配与计数基线（前端重构起点）
+
+本节是 lexer/parser 重构（[lexer-parser-refactor.md](lexer-parser-refactor.md)、
+issue #32）的起点基线：分配计数、perf 硬件计数与进程 RSS。度量边界与 §1 相同
+（源码读取、Runtime/Context 构造与销毁都在计时窗口外），区别只是探针故意插桩。
+
+工具：`scripts/benchmark/probes/compile_alloc_probe.rs`，全局计数分配器统计
+alloc/realloc/dealloc 调用数、请求字节与未释放字节高水位。它由
+`build_compile_probe.py --probe/--name` 生成独立 crate 构建（同一套依赖钉版与
+回执）；`--version` 不匹配矩阵 magic，`compile_matrix.py` 会拒绝消费，因此不会
+混入正式吞吐。探针必须放在 `scripts/benchmark/probes/`：workspace 的
+`unsafe_code = "forbid"` 使 `apps/cli/examples/` 无法承载 `GlobalAlloc` 实现。
+
+### 9.1 分配基线（4MB 档，3 次运行中位数；计数逐次完全一致）
+
+| 语料 | alloc 次数 | alloc 字节 | realloc 次数 | dealloc 次数 | peak live | 进程 max RSS | 窗口内 compile |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| functions | 7,709,081 | 991.5 MB | 938,073 | 6,257,722 | 470.3 MB | 448.9 MB | 1730.8 ms |
+| expressions | 4,058,383 | 857.4 MB | 385,665 | 3,317,557 | 529.7 MB | 355.6 MB | 1098.3 ms |
+| syntax-mixed | 8,442,295 | 1,441.7 MB | 785,789 | 6,990,836 | 691.3 MB | 506.4 MB | 1831.0 ms |
+
+按源码 KB 归一（64KB/512KB/4MB 三档在 ±1% 内一致，计数随体积严格线性）：
+
+| 语料 | alloc/KB | 分配字节/KB | realloc/KB | peak live/KB |
+| --- | ---: | ---: | ---: | ---: |
+| functions | 1,882 | 242,065 | 229 | 114,818 |
+| expressions | 991 | 209,323 | 94 | 129,316 |
+| syntax-mixed | 2,061 | 351,974 | 192 | 168,763 |
+
+要点：
+
+1. `functions` 每源 KB 分配 1,882 次、累计分配 242 倍源字节，peak live 约
+   115 倍源字节、RSS 约 110 MB/源MB（§7 的早期单次测量为 100.3）。这与
+   §7.2 的 libc 27% 相互印证：**分配次数与分配量是前端第一成本**。
+2. realloc 同样密集（functions 229 次/KB），来自 Vec/HashMap 扩容路径；
+   P1/P2 的验收指标应使用“alloc+realloc 总次数”斜率，而不是只看 alloc。
+3. 计数严格线性，说明按 KB 归一可信，优化收益可直接用斜率下降衡量。
+4. `窗口内 compile` 是分配探针自己的 `compile_ns` 中位数；由于插桩有开销、
+   且与 perf `task-clock` 扣除 tiny 档的口径不同，两者不应混算。
+
+### 9.2 perf 计数基线（4MB 档，3 次运行中位数，已扣 64KB tiny 档）
+
+正式探针为 `target/compile-probes/oxide/target/release/oxide-compile-probe`
+（`build_compile_probes.py` 在 00bb387f 构建；此后产品源码未变）。
+`perf stat -x, -u -e instructions,cycles,branches,branch-misses,
+cache-references,cache-misses,task-clock`，对 4MB 与 64KB 各跑 3 次取中位数、
+逐事件相减后除以 4096 KB：
+
+| 语料 | instr/KB | cycles/KB | branches/KB | branch-miss/KB | cache-ref/KB | cache-miss/KB | task-clock/KB | IPC |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| functions | 2,897,169 | 1,816,427 | 666,879 | 2,467 | 123,624 | 17,566 | 0.435 ms | 1.60 |
+| expressions | 1,855,004 | 985,952 | 411,505 | 1,760 | 50,845 | 2,277 | 0.251 ms | 1.89 |
+| syntax-mixed | 2,708,420 | 1,836,293 | 587,696 | 2,726 | 83,364 | 6,867 | 0.462 ms | 1.48 |
+
+与 §7.2 的早期单次测量一致（functions 2.90M instr/KB、17.1k miss/KB、1789ms）；
+本表为扣 tiny 后的 3 次中位数，作为 P1–P3 的固定对照。
+
+### 9.3 与既有结论的对应
+
+- §6.2 的 libc 27%（malloc/free/memcmp）对应 §9.1 的 1,882 alloc/KB 与
+  242 KB/KB；
+- §6.3 候选 1（削减分配）的验收量就是 §9.1 的 alloc+realloc 斜率；
+- §6.3 候选 2（lexer ASCII 快路径）主要压低 instr/KB 与 cache-miss/KB，
+  对分配斜率影响小，可据此区分两类改动的收益归属。
+
+### 9.4 复现命令
+
+```sh
+# 构建分配探针（独立 crate，复用矩阵构建器的依赖钉版与回执）
+python3 scripts/benchmark/build_compile_probe.py --repo . \
+  --output target/p0-alloc-probe \
+  --probe scripts/benchmark/probes/compile_alloc_probe.rs \
+  --name oxide-compile-alloc-probe
+target/p0-alloc-probe/target/release/oxide-compile-alloc-probe FILE
+
+# perf 计数（-u 只统计用户态；tiny 档做逐事件扣除）
+for i in 1 2 3; do
+  perf stat -x, -u -e instructions,cycles,branches,branch-misses,cache-references,cache-misses,task-clock \
+    -- target/compile-probes/oxide/target/release/oxide-compile-probe FILE 2>> out.csv >/dev/null
+done
+
+# 进程 max RSS（系统无 /usr/bin/time 时）
+python3 -c "import resource,subprocess,sys; subprocess.run(sys.argv[1:],check=True,stdout=subprocess.DEVNULL); \
+  print(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss, 'KB')" PROBE FILE
+```

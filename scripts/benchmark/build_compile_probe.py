@@ -1,4 +1,10 @@
-"""Build the same public compile probe against an explicit checkout and feature set."""
+"""Build a probe against an explicit checkout and feature set.
+
+By default this builds the public compile probe. `--probe`/`--name` point the
+same generated standalone crate (and its provenance receipts) at another probe
+source, such as the front-end allocation counter. Probes built this way are
+never consumed by `compile_matrix.py` unless their `--version` line matches its
+recognized magic."""
 import argparse
 import json
 import os
@@ -55,8 +61,14 @@ def main():
     parser.add_argument("--source-manifest", type=Path,
                         help="complete frozen export identity; mandatory when --repo is not an exact Git checkout root")
     parser.add_argument("--profiling", action="store_true")
+    parser.add_argument("--probe", type=Path, default=Path(__file__).resolve().parents[2] / "apps/cli/examples/compile_probe.rs",
+                        help="probe source copied in as src/main.rs")
+    parser.add_argument("--name", default="oxide-compile-probe", help="generated crate and binary name")
     args = parser.parse_args()
     repo, output = args.repo.resolve(), args.output.resolve()
+    source = args.probe.resolve()
+    if not source.is_file():
+        parser.error(f"probe source does not exist: {source}")
     source_receipt = None
     source_manifest_sha256 = None
     if args.source_manifest:
@@ -70,12 +82,11 @@ def main():
         parser.error("--repo is not an exact Git checkout root; supply --source-manifest (ancestor Git metadata is not source identity)")
     output.mkdir(parents=True, exist_ok=False)
     (output / "src").mkdir()
-    source = Path(__file__).resolve().parents[2] / "apps/cli/examples/compile_probe.rs"
     (output / "src/main.rs").write_bytes(source.read_bytes())
     probe_source_sha256 = digest(output / "src/main.rs")
     features = [name for enabled, name in [(args.profiling, "profiling")] if enabled]
     manifest = '\n'.join([
-        '[package]', 'name="oxide-compile-probe"', 'version="0.0.0"', 'edition="2024"',
+        '[package]', f'name={json.dumps(args.name)}', 'version="0.0.0"', 'edition="2024"',
         '[workspace]', '[features]', 'profiling=[]', '[dependencies]',
         f'quickjs-oxide={{path={json.dumps(str(repo))},default-features=false,features={json.dumps(features)}}}',
         f'quickjs-oxide-host={{path={json.dumps(str(repo / "adapters/native"))}}}', '',
@@ -100,7 +111,7 @@ def main():
             key = dependency["name"], dependency["version"], dependency["source"]
             if key not in pinned or pinned[key] != dependency.get("checksum"):
                 raise ValueError("compile probe dependency drift; binary not admitted")
-    binary = output / "target/release/oxide-compile-probe"
+    binary = output / "target/release" / args.name
     if source_receipt is not None:
         (output / "source-manifest.json").write_bytes(args.source_manifest.read_bytes())
         source_identity = dict(kind="frozen-export", manifest_sha256=source_manifest_sha256,

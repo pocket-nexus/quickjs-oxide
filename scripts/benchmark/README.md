@@ -280,3 +280,11 @@ receipt alongside the binary metadata, and refuses to use an ancestor Git
 checkout's revision or working diff as the export's identity. Keep build output
 outside the frozen export. `--profiling` requires a source version containing
 the new phase fields; plain probes remain compatible with older baselines.
+
+`--probe`/`--name` build another probe source through the same generated crate
+and receipts. The front-end allocation counter
+(`scripts/benchmark/probes/compile_alloc_probe.rs`) is built that way and reports
+alloc/realloc/dealloc calls and bytes around the same compile window; its
+`--version` deliberately matches no matrix magic, so `compile_matrix.py` rejects
+it. Baseline numbers and reproduction commands live in
+`docs/compile-benchmark.md` §9.
