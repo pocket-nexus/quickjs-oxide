@@ -366,10 +366,11 @@ value=$(spec_value engine_semantics_source)
     && "$(spec_value focused_eligible)" == "$(spec_value focused_runnable)" \
     && "$(spec_value full_eligible)" == "$(spec_value full_runnable)" ]] \
     || die 'unsupported Test262 gate spec contract'
-expected_engine_semantics_files='Cargo.lock,Cargo.toml,compat/test262-oxide.conf,compat/upstream.toml,scripts/prepare-test262.sh,scripts/test-test262.sh'
+expected_engine_semantics_files='Cargo.lock,Cargo.toml,compat/test262-oxide.conf,compat/upstream.toml,scripts/test262/prepare-test262.sh,scripts/test262/test-test262.sh,scripts/test262/verify-report.cjs'
+expected_engine_semantics_trees='adapters,apps,conformance,examples,src,tests'
 [[ "$(spec_value engine_fingerprint_tool)" == scripts/test262/test262-engine-fingerprint.mjs \
     && "$(spec_value engine_semantics_files)" == "$expected_engine_semantics_files" \
-    && "$(spec_value engine_semantics_trees)" == src ]] \
+    && "$(spec_value engine_semantics_trees)" == "$expected_engine_semantics_trees" ]] \
     || die 'engine semantics coverage cannot be weakened by profile data'
 for implicit_build_input in build.rs rust-toolchain rust-toolchain.toml \
         .cargo/config .cargo/config.toml; do
