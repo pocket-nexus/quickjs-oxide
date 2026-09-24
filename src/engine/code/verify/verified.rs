@@ -3,7 +3,7 @@
 
 use super::{
     EvalPublicationCapabilities, verify_unlinked_eval_tree_with_profile_and_arguments,
-    verify_unlinked_module_tree, verify_unlinked_ordinary_leaf, verify_unlinked_tree,
+    verify_unlinked_module_tree, verify_unlinked_tree,
 };
 use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::code::function::UnlinkedFunction;
@@ -20,17 +20,6 @@ impl VerifiedFunction {
             crate::engine::api::profiling::CompilePhase::Verify,
         );
         verify_unlinked_tree(&function)?;
-        Ok(Self(function))
-    }
-
-    pub(in crate::engine::code) fn ordinary_leaf(
-        function: UnlinkedFunction,
-    ) -> Result<Self, RuntimeError> {
-        #[cfg(feature = "profiling")]
-        let _phase_timer = crate::engine::api::profiling::PhaseTimer::start(
-            crate::engine::api::profiling::CompilePhase::Verify,
-        );
-        verify_unlinked_ordinary_leaf(&function)?;
         Ok(Self(function))
     }
 

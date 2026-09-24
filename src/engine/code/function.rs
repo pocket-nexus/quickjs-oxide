@@ -145,24 +145,6 @@ impl UnlinkedConstant {
         }
     }
 
-    /// Return whether this is an ordinary primitive constant rather than an
-    /// atom-canonicalized String or another compiler-owned constant kind.
-    #[must_use]
-    pub const fn is_plain_primitive(&self) -> bool {
-        matches!(self.0, UnlinkedConstantKind::Primitive(_))
-    }
-
-    /// Return whether this is exactly QuickJS's canonical empty atom String.
-    /// The trusted ordinary-leaf boundary permits this one sealed
-    /// representation without admitting arbitrary atom-backed constants.
-    #[must_use]
-    pub fn is_empty_atom_string(&self) -> bool {
-        matches!(
-            &self.0,
-            UnlinkedConstantKind::AtomString(PrimitiveValue::String(value)) if value.is_empty()
-        )
-    }
-
     /// Borrow a RegExp literal payload, or return `None` for other constants.
     #[must_use]
     pub fn as_regexp(&self) -> Option<(&JsString, &Rc<CompiledRegExp>)> {

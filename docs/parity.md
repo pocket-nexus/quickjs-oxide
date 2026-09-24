@@ -59,7 +59,7 @@
 | Unicode | `libunicode.c` / `libunicode-table.h`、`unicode_normalize`、`unicode_script`、`unicode_prop` | Unicode 17.0.0 的 identifier、case、normalization、script/category/binary/string properties |
 | modules | `js_resolve_module`、`JS_ResolveModule`、`JS_LoadModule`、module namespace exotic methods | parse/link/evaluate、live binding、cycles、TLA、dynamic import、`import.meta`、attributes 和 loader callbacks |
 | GC/生命周期 | `JS_DupValue` / `JS_FreeValue`、`free_zero_refcount`、`gc_decref`、`gc_scan`、`gc_free_cycles`、`JS_RunGC` | 确定性引用计数、循环回收、weak objects、finalizer/mark、内存限制和公开所有权规则 |
-| object serialization | `JS_WriteObject(2)`、`JS_ReadObject`、`JS_EvalFunction`、`BC_VERSION` | 函数/模块字节码、BJSON、byte swap、SAB、共享引用/循环图、source/debug stripping |
+| object serialization | `JS_WriteObject(2)`、`JS_ReadObject`、`JS_EvalFunction` | BJSON 对象图、boxed primitives、TypedArray/ArrayBuffer、共享引用/循环图；**不含上游 `BC_VERSION` 字节码互读**（见 §11） |
 | host library/event loop | `quickjs-libc.c`、`js_std_loop`、`js_std_await`、`js_module_loader` | `std`/`os`、global helpers、文件/进程/信号/定时器/handlers、promise rejection 和事件循环 |
 | Worker | `JSWorkerMessagePipe`、`worker_func`、`js_worker_postMessage` | 每线程独立 runtime/context、FIFO 消息、structured clone、SAB 共享、生命周期及上游限制 |
 | CLI/compiler | `qjs.c`、`repl.js`、`qjsc.c` | `qjs`/REPL 的完整行为，以及 `qjsc` 的 C 源/可执行输出、feature stripping 和 module 收集 |
@@ -151,18 +151,15 @@ Rust-first API 可以更符合 Rust 习惯，但它不能代替 QuickJS 的嵌�
 
 ## 11. 字节码、BJSON 与 `qjsc` 门禁
 
-QuickJS 自己声明字节码与具体版本绑定且不应加载不可信输入。本项目只承诺与 **2026-06-04 / BC_VERSION 5** 互操作，不把该格式宣传为长期稳定或安全的持久化格式。
+QuickJS 自己声明字节码与具体版本绑定、不应加载不可信输入；字节码是**版本绑定的缓存，不是接口**。因此本项目**不承诺与上游 BC5 互操作**：不读取官方 `JS_WriteObject`/`qjsc` 生成的字节码，也不要求官方基线读取本项目产物。原先的窄读取 API（`Context::read_trusted_scalar_script`/`read_trusted_ordinary_function`）、BC5 解码/编码设施、C oracle 字节码 fixtures 与 pinned-atom/opcode 门禁已随 verify 一起移除（2026-09-24 决策，见 `docs/verify-publication-plan.md`）。
 
-门禁是双向的：
+仍然有效的部分：
 
-- Rust 能读取、resolve 并执行官方 `JS_WriteObject`/`qjsc` 生成的 scripts、functions、closures 和 modules；
-- 官方基线能读取并执行 Rust 生成的等价对象；若输出字节不相同，语义、metadata 和再序列化必须等价；
-- `JS_WRITE/READ_OBJ_BYTECODE`、`BSWAP`、`SAB`、`REFERENCE`、ROM-data 读取、循环/共享对象图均有正反向 fixture；
-- source/debug stripping、filename/line table、stack trace、atom table、closure var refs、module imports/attributes 和 JSON module 数据跨引擎保持；
-- malformed/truncated/wrong-version 输入与 oracle 产生相同类别的失败，且 Rust 不 panic 或越界；这不改变“仅信任字节码”的产品警告；
-- `crates/quickjs-oxide/tests/test_bjson.js` 覆盖的 Date、boxed primitives、TypedArray/ArrayBuffer、共享引用和 cycle 必须交叉读取验证，而不只是 Rust 自己 round-trip。
+- BJSON（`JS_WriteObject` 不带 BYTECODE 的对象序列化）与 `qjsc` CLI 打包属于后续 parity 工作，另行规划；在实现前不得声称 bytecode parity。
+- 任何恢复上游字节码互读的计划都必须重新引入独立的输入验证；不得以“仅信任字节码”为由跳过 malformed/truncated 输入的失败契约。
+- 上游升级会使旧字节码缓存失效，重新编译是这类缓存的正常生命周期操作，不构成兼容性回归。
 
-只做到“本引擎能读取自己生成的私有格式”，或让 `qjsc` 退化成打包源码，都不算 bytecode parity。
+只做到“本引擎能读取自己生成的私有格式”，或让 `qjsc` 退化成打包源码，都不算 bytecode parity（该判定保持不变）。
 
 ## 12. `std`、`os` 与事件循环门禁
 
@@ -220,7 +217,7 @@ BigInt 门禁对照 `js_bigint_*` 的任意精度二补数语义和 short-BigInt
 - `+ - * / % ** << >> & | ^ ~`，除零、负指数和 shift 边界；
 - 与 Number/String/Boolean 的 coercion、abstract/strict equality 和 relational comparison；
 - `BigInt.asIntN/asUintN`、BigInt typed arrays、DataView、Atomics；
-- C API `JS_NewBigInt64`/`JS_NewBigUint64`/`JS_ToBigInt64` 及 bytecode/BJSON round-trip。
+- C API `JS_NewBigInt64`/`JS_NewBigUint64`/`JS_ToBigInt64` 及 BJSON round-trip。
 
 除 upstream crates/quickjs-oxide/tests/Test262 外，使用独立任意精度模型生成可复现随机向量，并对 oracle、Rust 和模型三方比较。固定 64/128 位整数实现不可能满足此门禁。
 
@@ -262,7 +259,7 @@ module parser/linker/evaluator 必须覆盖 static import/export、live bindings
 3. **语言基础闭环**：作用域/closure、call/construct、control flow、function/class、eval、exceptions，逐步覆盖 `test_language`、`test_closure`、`test_loop`，同步补 opcode tests。
 4. **对象模型与 intrinsics**：完成 coercion、descriptor/prototype/exotic、Array、Symbol、Date、JSON、Map/Set、Proxy、TypedArray 等，再扩展到 generators、Promises/jobs、async 和 WeakRef。
 5. **精确子系统**：按上游逻辑实现 dtoa/number、BigInt、Unicode 17 和 RegExp，并各自建立生成式差分门禁。
-6. **modules 与序列化**：实现完整 module graph/TLA/import attributes，再完成 BC_VERSION 5、BJSON 和双向 cross-read。
+6. **modules 与序列化**：实现完整 module graph/TLA/import attributes，再完成 BJSON 对象序列化与 `qjsc` 打包（不含上游 BC5 字节码互读，见 §11）。
 7. **生命周期与嵌入**：闭合 refcount/cycle GC、limits/interrupts、完整 Rust API 和由 Rust 导出的 QuickJS C ABI，跑通 upstream C examples/native modules。
 8. **宿主产品面**：实现 `std`、`os`、event loop、native loader 和 Worker，再补齐 `qjs`/REPL/`qjsc` 的全部选项与输出模式。
 9. **收口而非改名**：跑完整 upstream tests、Test262/ES5.1、差分/fuzz、平台/ABI/压力矩阵，清零或批准所有 deviation 后才发布 parity 声明。
@@ -276,9 +273,9 @@ module parser/linker/evaluator 必须覆盖 static import/export、live bindings
 - 只能运行 hello world、算术、JSON 或某个 benchmark；
 - 解析器覆盖大部分语法，但 VM、异常、descriptor、module phase 或 job ordering 是近似实现；
 - Test262 通过率很高，但提交/patch/config 不固定，新增了 skip，或没有逐测试结果；
-- upstream JS tests 通过，却跳过 native module、C API、`std`/`os`、Worker、BJSON/bytecode、REPL 或 `qjsc`；
+- upstream JS tests 通过，却跳过 native module、C API、`std`/`os`、Worker、BJSON、REPL 或 `qjsc`；
 - 只提供 idiomatic Rust API，不提供 `quickjs.h`/`quickjs-libc.h` 兼容面；
-- bytecode 只是自有格式、自身 round-trip，不能与 2026-06-04 双向互读；
+- 把自有指令格式或已删除的 BC5 读取路径包装成 bytecode parity 声明；bytecode 不属于本契约（见 §11）；
 - RegExp、Unicode、BigInt、GC 或 Worker 由 stub、固定宽度近似、宿主库的漂移版本或外部进程代办；
 - 产品包仍含 QuickJS C 实现，或在运行时需要 oracle；
 - 为了让 CI 变绿修改上游测试含义、只比较 stdout 的一部分、吞掉异常、无限重试或扩大排除集；

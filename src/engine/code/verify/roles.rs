@@ -4,9 +4,7 @@ use crate::engine::api::error::Error;
 use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::code::bytecode::Instruction;
 use crate::engine::code::function::UnlinkedFunction;
-use crate::engine::code::function::metadata::{
-    ClosureVariableKind, ConstructorKind, EvalKind, FunctionKind,
-};
+use crate::engine::code::function::metadata::{EvalKind, FunctionKind};
 
 pub(super) fn verify(
     function: &UnlinkedFunction,
@@ -15,9 +13,7 @@ pub(super) fn verify(
 ) -> Result<(), RuntimeError> {
     let expected_eval_kind = if is_root {
         match root_publication {
-            RootPublication::Script
-            | RootPublication::TrustedOrdinaryLeaf
-            | RootPublication::Module(_) => EvalKind::None,
+            RootPublication::Script | RootPublication::Module(_) => EvalKind::None,
             RootPublication::Eval { kind, .. } => kind,
         }
     } else {
@@ -46,46 +42,6 @@ pub(super) fn verify(
                 if function.metadata().super_call_allowed || function.metadata().super_allowed {
                     return Err(RuntimeError::Engine(Error::internal(
                         "script root retained a super capability",
-                    )));
-                }
-            }
-            RootPublication::TrustedOrdinaryLeaf => {
-                let metadata = function.metadata();
-                if metadata.is_module
-                    || metadata.super_call_allowed
-                    || metadata.super_allowed
-                    || metadata.arguments_forbidden
-                    || metadata.needs_home_object
-                    || !metadata.strip_variable_debug
-                    || metadata.function_kind != FunctionKind::Normal
-                    || !metadata.has_prototype
-                    || metadata.constructor_kind != ConstructorKind::Base
-                    || metadata.function_name_local.is_some()
-                    || metadata.derived_this_local.is_some()
-                    || metadata.active_function_local.is_some()
-                    || metadata.eval_variable_object_local.is_some()
-                    || function.parameter_environment().is_some()
-                    || !function.closure_variables().is_empty()
-                    || !function.eval_environments().is_empty()
-                    || function.func_name().is_some()
-                    || function.debug().is_some()
-                    || function.constants().iter().any(|constant| {
-                        !constant.is_plain_primitive() && !constant.is_empty_atom_string()
-                    })
-                    || function
-                        .argument_definitions()
-                        .iter()
-                        .chain(function.local_definitions())
-                        .any(|definition| {
-                            definition.name.is_some()
-                                || definition.is_lexical
-                                || definition.is_const
-                                || definition.is_parameter_initializer
-                                || definition.kind != ClosureVariableKind::Normal
-                        })
-                {
-                    return Err(RuntimeError::Engine(Error::internal(
-                        "trusted ordinary leaf metadata disagrees with its publication entry point",
                     )));
                 }
             }

@@ -113,7 +113,6 @@ fn eval_root_binding_is_super_pseudo(
 #[derive(Clone, Copy)]
 enum RootPublication<'a> {
     Script,
-    TrustedOrdinaryLeaf,
     Module(&'a UnlinkedModule),
     Eval {
         kind: EvalKind,
@@ -133,18 +132,6 @@ pub(crate) struct EvalPublicationCapabilities {
 
 pub(crate) fn verify_unlinked_tree(function: &UnlinkedFunction) -> Result<(), RuntimeError> {
     verify_unlinked_tree_with_root(function, RootPublication::Script)
-}
-
-/// Authenticate one detached ordinary callable translated from trusted BC5.
-///
-/// Unlike a Script root, this role may own arguments and ordinary locals. It
-/// remains a standalone leaf: no module, eval, class, super, HomeObject, or
-/// closure authority may be smuggled through the specialized publication
-/// entry point.
-pub(in crate::engine::code) fn verify_unlinked_ordinary_leaf(
-    function: &UnlinkedFunction,
-) -> Result<(), RuntimeError> {
-    verify_unlinked_tree_with_root(function, RootPublication::TrustedOrdinaryLeaf)
 }
 
 /// Authenticate a compiler-owned module record and the distinct bytecode ABI
@@ -446,9 +433,7 @@ fn verify_unlinked_tree_with_root(
 ) -> Result<(), RuntimeError> {
     let (synthetic_eval_tree, tree_expected_bindings, tree_expected_profile) =
         match root_publication {
-            RootPublication::Script
-            | RootPublication::TrustedOrdinaryLeaf
-            | RootPublication::Module(_) => (false, &[][..], None),
+            RootPublication::Script | RootPublication::Module(_) => (false, &[][..], None),
             RootPublication::Eval {
                 expected_bindings,
                 expected_profile,
@@ -561,9 +546,7 @@ fn verify_unlinked_tree_with_root(
         roles::verify(function, is_root, root_publication)?;
         let expected_eval_bindings = if is_root {
             match root_publication {
-                RootPublication::Script
-                | RootPublication::TrustedOrdinaryLeaf
-                | RootPublication::Module(_) => None,
+                RootPublication::Script | RootPublication::Module(_) => None,
                 RootPublication::Eval {
                     expected_bindings, ..
                 } => Some(expected_bindings),

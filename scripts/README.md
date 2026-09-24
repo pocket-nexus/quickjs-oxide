@@ -4,7 +4,7 @@ Implementations have a single owner:
 
 | Directory | Responsibility |
 | --- | --- |
-| `checks/` | Architecture and provenance checks, BC5 pin checks, oracle inventory, aggregate parity gate |
+| `checks/` | Architecture and provenance checks, oracle inventory, aggregate parity gate |
 | `test262/` | Suite preparation, admission generators, diagnostics, metrics and receipt verification |
 | `benchmark/` | External workload runners, profiler experiments and build/result provenance |
 | `quickjs/` | Pinned reference builds, cache tests, differential fixtures and dynamic-import traces |
@@ -18,7 +18,7 @@ repository-level example. New tools belong in their owner directory.
 Shell scripts coordinate commands and temporary files. Python, Node and AWK
 analysis lives in separate source files, including Unicode extraction, Test262
 report validation, host metadata checks and playground assertions. Helpers stay
-with their owner. The BC5 gates share `checks/lib/bc5-gate-primitives.mjs`; admission
+with their owner. Admission
 generators share `test262/test262-admission-data.mjs`. Avoid a generic shared
 utilities directory until unrelated owners actually need the same contract.
 

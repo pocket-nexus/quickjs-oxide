@@ -184,7 +184,6 @@ mod tests {
     #[test]
     fn compiler_atom_string_keeps_a_structural_publication_marker() {
         let constant = UnlinkedConstant::atom_string(JsString::from_static("literal"));
-        assert!(!constant.is_empty_atom_string());
         assert!(matches!(
             constant.as_primitive(),
             Some(crate::engine::value::PrimitiveValue::String(_))
@@ -197,18 +196,6 @@ mod tests {
         ));
         assert!(atom_string);
         assert!(child.is_none());
-    }
-
-    #[test]
-    fn empty_atom_string_is_the_only_narrow_ordinary_leaf_exception() {
-        let atom = UnlinkedConstant::atom_string(JsString::from_static(""));
-        let primitive =
-            UnlinkedConstant::primitive(Value::String(JsString::from_static(""))).unwrap();
-
-        assert!(atom.is_empty_atom_string());
-        assert!(!atom.is_plain_primitive());
-        assert!(!primitive.is_empty_atom_string());
-        assert!(primitive.is_plain_primitive());
     }
 
     #[test]

@@ -20,7 +20,7 @@
 
 - Test262 冻结向量：`pass=79982 / eligible=80032 / total=102037`。
 - workspace `--all-targets`、profiling lib、`--doc`、test262-host `--lib --bins`、oracle `test262_` 全部通过。
-- pinned 1.88：clippy `-D warnings`、`cargo fmt --check`、source-layout、rust-only、oracle registry、BC5 pinned atoms/opcodes、QuickJS fixtures/c-oracles/dynamic-import 全部通过。
+- pinned 1.88：clippy `-D warnings`、`cargo fmt --check`、source-layout、rust-only、oracle registry、QuickJS fixtures/c-oracles/dynamic-import 全部通过。
 
 ## 性能（相对重写前基线）
 

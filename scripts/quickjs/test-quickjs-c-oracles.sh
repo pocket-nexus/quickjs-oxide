@@ -72,14 +72,6 @@ while IFS=$'\t' read -r id family source source_hash expected expected_hash desc
             [[ "$source" =~ ^apps/cli/tests/fixtures/inputs/module_[a-z0-9_]+\.c$ ]] \
                 || die "invalid module oracle source path: $source"
             ;;
-        function-bytecode)
-            [[ "$source" =~ ^apps/cli/tests/fixtures/inputs/function_bytecode_[a-z0-9_]+\.c$ ]] \
-                || die "invalid function-bytecode oracle source path: $source"
-            ;;
-        shared-array-buffer)
-            [[ "$source" =~ ^apps/cli/tests/fixtures/inputs/shared_array_buffer_[a-z0-9_]+\.c$ ]] \
-                || die "invalid SharedArrayBuffer oracle source path: $source"
-            ;;
         *)
             die "unsupported oracle family: $family"
             ;;
@@ -99,22 +91,6 @@ while IFS=$'\t' read -r id family source source_hash expected expected_hash desc
     done
     verify_hash "$root/$source" "$source_hash"
     verify_hash "$root/$expected" "$expected_hash"
-    if [[ "$id" == function-bytecode-sab-reference ]]; then
-        expected_schema=$'quickjs\nbytecode-version\npointer-output\nwrite-flags\nread-flags\nwire-size\nwire-redacted-hex\nroot\nfunction\ntyped-array\nshared-array-buffer\nobject-references\nsab-records\nside-order\nfresh-runtime\nmessage-retention\nmessage-release\nview-backing-identity\nduplicate-identity\nbytes\ncallbacks'
-        actual_schema=$(sed 's/=.*//' "$root/$expected")
-        [[ "$actual_schema" == "$expected_schema" ]] \
-            || die 'whole-image SAB transcript schema drifted or gained an unreviewed field'
-        redacted_hex=$(sed -n 's/^wire-redacted-hex=//p' "$root/$expected")
-        [[ $(grep -c '^pointer-output=redacted-zero-token$' "$root/$expected") == 1 \
-            && $(grep -c '^wire-size=50$' "$root/$expected") == 1 \
-            && "$redacted_hex" =~ ^[0-9a-f]{100}$ \
-            && "${redacted_hex:76:16}" == 0000000000000000 ]] \
-            || die 'whole-image SAB transcript lost its exact token redaction'
-        if grep -Eq '%p|PRI[diouxX]*PTR' "$root/$source" \
-            || grep -Eq 'print_hex[[:space:]]*\([[:space:]]*(wire|side_table)' "$root/$source"; then
-            die 'whole-image SAB source gained an address formatter or raw-wire printer'
-        fi
-    fi
     ids+=("$id")
     families+=("$family")
     source_paths+=("$source")
@@ -124,14 +100,7 @@ while IFS=$'\t' read -r id family source source_hash expected expected_hash desc
     descriptions+=("$description")
 done < <(tail -n +2 "$manifest")
 
-for required_id in callback-contracts function-bytecode-ancestor-reference \
-    function-bytecode-invalid-data-parent function-bytecode-nested-closure \
-    function-bytecode-non-string-properties \
-    function-bytecode-reference-boundary function-bytecode-sab-reference \
-    function-bytecode-wire \
-    function-bytecode-writer-flags \
-    import-attributes import-meta json module-bytecode-wire \
-    shared-array-buffer-transport; do
+for required_id in callback-contracts import-attributes import-meta json; do
     found=false
     for id in "${ids[@]}"; do
         [[ "$id" != "$required_id" ]] || found=true
@@ -144,17 +113,14 @@ done
 manifest_sources=$(printf '%s\n' "${source_paths[@]}" | LC_ALL=C sort)
 fixture_sources=$(CDPATH='' cd -- "$root" && find apps/cli/tests/fixtures/inputs -maxdepth 1 \
     \( -type f -o -type l \) \
-    \( -name 'module_*.c' -o -name 'function_bytecode_*.c' \
-       -o -name 'shared_array_buffer_*.c' \) \
+    \( -name 'module_*.c' \) \
     -print | LC_ALL=C sort)
 [[ "$manifest_sources" == "$fixture_sources" ]] \
     || die 'QuickJS C oracle manifest does not cover the complete source inventory'
 manifest_transcripts=$(printf '%s\n' "${expected_paths[@]}" | LC_ALL=C sort)
 fixture_transcripts=$(CDPATH='' cd -- "$root" && find apps/cli/tests/fixtures/expected -maxdepth 1 \
     \( -type f -o -type l \) \
-    \( -name 'module_*.quickjs-2026-06-04.txt' \
-       -o -name 'function_bytecode_*.quickjs-2026-06-04.txt' \
-       -o -name 'shared_array_buffer_*.quickjs-2026-06-04.txt' \) \
+    \( -name 'module_*.quickjs-2026-06-04.txt' \) \
     -print | LC_ALL=C sort)
 [[ "$manifest_transcripts" == "$fixture_transcripts" ]] \
     || die 'QuickJS C oracle manifest does not cover the complete transcript inventory'

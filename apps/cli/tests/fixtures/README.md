@@ -2,9 +2,9 @@
 
 `inputs/` contains authored JS, module, and C probes. `expected/` contains frozen
 observations produced with the pinned QuickJS release identified in each file
-name (or its parent suite). These files are shared by Rust integration tests,
-reference-engine scripts, and binary-object contract checks, so they remain in
-the shared fixture tree rather than belonging to the oracle Rust target alone.
+name (or its parent suite). These files are shared by Rust integration tests and
+reference-engine scripts, so they remain in the shared fixture tree rather than
+belonging to the oracle Rust target alone.
 
 The move to separate directories preserves every input and output byte. Paths in
 registries and callers change; the fixture checksums remain the same.

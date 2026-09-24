@@ -52,9 +52,10 @@ The file loader follows QuickJS policy: `.json` is strict JSON,
 file without that attribute remains a JavaScript module. Main files and
 dependencies are read as explicitly sized byte buffers.
 
-Rust embedders can use the narrow QuickJS 2026-06-04 BC5 APIs
-`Context::read_trusted_scalar_script` and `Context::read_trusted_ordinary_function`.
-Neither is a general untrusted-bytecode loader or Feature Parity claim.
+QuickJS bytecode is a version-bound cache rather than a portable interface, so
+the engine does not read or write upstream BC5 images; the previous narrow
+`read_trusted_*` APIs were removed in the verify/publication simplification
+(see `docs/verify-publication-plan.md`).
 
 ## Status
 
@@ -64,6 +65,7 @@ Neither is a general untrusted-bytecode loader or Feature Parity claim.
 - [Profiling and external benchmarks](docs/profiling.md)
 - [Compiler front-end baseline and profiling](docs/compile-benchmark.md)
 - [Lexer/parser front-end refactor plan](docs/lexer-parser-refactor.md)
+- [Verify/publication simplification plan](docs/verify-publication-plan.md)
 - [Pinned Test262 baseline and metric definitions](docs/test262.md)
 - [Parity acceptance contract](docs/parity.md)
 - [Playground build and trust boundary](docs/playground.md)

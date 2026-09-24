@@ -27,9 +27,7 @@ pub(super) fn verify(
     let mut verified_eval_binding_count = 0_usize;
     let eval_allows_global_declarations = is_root
         && match root_publication {
-            RootPublication::Script
-            | RootPublication::TrustedOrdinaryLeaf
-            | RootPublication::Module(_) => false,
+            RootPublication::Script | RootPublication::Module(_) => false,
             RootPublication::Eval {
                 kind,
                 caller_strict,
@@ -226,11 +224,6 @@ pub(super) fn verify(
                             "root bytecode closure descriptor did not use Global",
                         )));
                     }
-                }
-                RootPublication::TrustedOrdinaryLeaf => {
-                    return Err(RuntimeError::Engine(Error::internal(
-                        "trusted ordinary leaf retained a closure descriptor",
-                    )));
                 }
                 RootPublication::Module(_) => match descriptor.source {
                     ClosureSource::ModuleDeclaration => {

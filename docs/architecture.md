@@ -150,11 +150,10 @@ needed by callers. A shared Runtime type does not justify wildcard imports
 through its implementation module. New public capabilities belong in
 `api`; helpers must not expose a second value system or execution path.
 
-The BC5 decoder remains private under `engine/code`; only
-`code/binary_object_publish` consumes its archive models. Decoder
-intermediates retain restricted visibility and `ConstructorRef` remains
-opaque. Internal compiler and code types do not promise a stable external
-bytecode format or an independent compiler product.
+The narrow BC5 bytecode-archive reader and its gates were removed with the
+verify/publication simplification: upstream bytecode is a version-bound cache
+rather than an interface. Internal compiler and code types do not promise a
+stable external bytecode format or an independent compiler product.
 
 ## Documentation and verification
 

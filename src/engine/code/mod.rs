@@ -7,10 +7,6 @@ pub(crate) mod instruction;
 pub mod module;
 pub mod rooted;
 
-mod binary_object;
-
-mod binary_object_publish;
-
 pub(crate) mod bytecode_publish;
 pub(crate) mod verify;
 

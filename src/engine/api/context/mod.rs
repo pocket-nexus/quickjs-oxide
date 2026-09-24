@@ -24,7 +24,6 @@ use crate::engine::value::Value;
 use crate::engine::value::conversion::NativeConversion;
 use crate::engine::vm::Completion;
 
-mod bytecode;
 mod calls;
 mod objects;
 mod realm;

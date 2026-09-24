@@ -3,7 +3,6 @@ use crate::engine::code::bytecode::verify_parts;
 use crate::engine::code::bytecode::{DynamicEnvironmentSource, WithObjectSource};
 use crate::engine::code::function::metadata::ClassInitializerKind;
 use crate::engine::code::function::metadata::ConstructorKind;
-use crate::engine::code::function::metadata::FunctionKind;
 use crate::engine::code::function::metadata::{FunctionMetadata, ParameterEnvironmentLayout};
 use crate::engine::value::Value;
 
@@ -16,123 +15,11 @@ use crate::engine::code::function::metadata::{
     EvalVariableEnvironment, ParameterArgumentCell, ParameterBodyStorage, ParameterDefaultSource,
     ParameterPatternCopy,
 };
-use crate::engine::code::function::{
-    UnlinkedFunctionDebug, UnlinkedFunctionParts, UnlinkedVariableDefinition,
-};
+use crate::engine::code::function::{UnlinkedFunctionParts, UnlinkedVariableDefinition};
 use crate::engine::code::module::{
     ModuleLinkInitializer, ModuleLinkInitializerValue, UnlinkedModuleTables,
 };
 use crate::engine::compiler::compile_unlinked_module_with_filename;
-
-fn trusted_ordinary_leaf(metadata: FunctionMetadata) -> UnlinkedFunction {
-    UnlinkedFunction::fixture(
-        vec![Instruction::GetArg(0), Instruction::Return],
-        Vec::new(),
-        metadata,
-    )
-}
-
-#[test]
-fn trusted_ordinary_leaf_has_a_distinct_root_publication_role() {
-    let metadata = FunctionMetadata {
-        argument_count: 1,
-        defined_argument_count: 1,
-        max_stack: 1,
-        strip_variable_debug: true,
-        function_kind: FunctionKind::Normal,
-        has_prototype: true,
-        constructor_kind: ConstructorKind::Base,
-        ..FunctionMetadata::default()
-    };
-    verify_unlinked_ordinary_leaf(&trusted_ordinary_leaf(metadata)).unwrap();
-
-    for forged in [
-        FunctionMetadata {
-            super_allowed: true,
-            ..metadata
-        },
-        FunctionMetadata {
-            arguments_forbidden: true,
-            ..metadata
-        },
-        FunctionMetadata {
-            has_prototype: false,
-            ..metadata
-        },
-        FunctionMetadata {
-            constructor_kind: ConstructorKind::None,
-            ..metadata
-        },
-        FunctionMetadata {
-            strip_variable_debug: false,
-            ..metadata
-        },
-    ] {
-        assert!(
-            verify_unlinked_ordinary_leaf(&trusted_ordinary_leaf(forged))
-                .unwrap_err()
-                .to_string()
-                .contains(
-                    "trusted ordinary leaf metadata disagrees with its publication entry point"
-                )
-        );
-    }
-
-    let child = trusted_ordinary_leaf(metadata);
-    let with_child = UnlinkedFunction::fixture(
-        vec![Instruction::GetArg(0), Instruction::Return],
-        vec![UnlinkedConstant::child(child)],
-        metadata,
-    );
-    assert!(verify_unlinked_ordinary_leaf(&with_child).is_err());
-
-    let with_atom_string = UnlinkedFunction::fixture(
-        vec![Instruction::PushConst(0), Instruction::Return],
-        vec![UnlinkedConstant::atom_string(JsString::from_static("atom"))],
-        metadata,
-    );
-    assert!(verify_unlinked_ordinary_leaf(&with_atom_string).is_err());
-
-    let with_empty_atom_string = UnlinkedFunction::fixture(
-        vec![Instruction::PushConst(0), Instruction::Return],
-        vec![UnlinkedConstant::atom_string(JsString::from_static(""))],
-        metadata,
-    );
-    verify_unlinked_ordinary_leaf(&with_empty_atom_string).unwrap();
-
-    let named_argument = trusted_ordinary_leaf(metadata).with_fixture_definitions(
-        vec![UnlinkedVariableDefinition::ordinary(Some(
-            JsString::from_static("argument"),
-        ))],
-        Vec::new(),
-    );
-    assert!(verify_unlinked_ordinary_leaf(&named_argument).is_err());
-
-    let lexical_argument = trusted_ordinary_leaf(metadata).with_fixture_definitions(
-        vec![UnlinkedVariableDefinition::lexical(None, false)],
-        Vec::new(),
-    );
-    assert!(verify_unlinked_ordinary_leaf(&lexical_argument).is_err());
-
-    let parameter_environment = trusted_ordinary_leaf(metadata).with_parameter_environment(Some(
-        ParameterEnvironmentLayout {
-            initialization_end: 0,
-            argument_cells: Box::new([]),
-            pattern_copies: Box::new([]),
-            default_sources: Box::new([]),
-            synthetic_arguments_local: None,
-            arg_eval_variable_object_local: None,
-        },
-    ));
-    assert!(verify_unlinked_ordinary_leaf(&parameter_environment).is_err());
-
-    let with_debug = trusted_ordinary_leaf(metadata).with_debug(UnlinkedFunctionDebug {
-        filename: JsString::from_static("ordinary-leaf.js"),
-        pc2line: None,
-        source: None,
-    });
-    assert!(verify_unlinked_ordinary_leaf(&with_debug).is_err());
-}
 
 fn module_with_link_initializers(
     module: UnlinkedModule,

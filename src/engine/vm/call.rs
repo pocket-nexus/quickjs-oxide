@@ -331,46 +331,6 @@ impl Runtime {
         Ok(CallableRef::from_validated_object(object))
     }
 
-    /// QuickJS `JS_CallConstructor2` entry for VM operands whose `newTarget`
-    /// has not passed through the public Reflect/Context constructor check.
-    #[cfg(test)]
-    pub(crate) fn construct_value_with_raw_new_target_internal(
-        &self,
-        caller_realm: ContextId,
-        function: Value,
-        new_target: Value,
-        arguments: &[Value],
-    ) -> Result<Completion, RuntimeError> {
-        let constructor = match self.constructor_from_value(caller_realm, function)? {
-            NativeConversion::Value(constructor) => constructor,
-            NativeConversion::Throw(value) => {
-                return Ok(Completion::Throw(value));
-            }
-        };
-        self.construct_constructor_with_raw_new_target_internal(
-            caller_realm,
-            &constructor,
-            new_target,
-            arguments,
-        )
-    }
-
-    #[cfg(test)]
-    pub(crate) fn construct_constructor_with_raw_new_target_internal(
-        &self,
-        caller_realm: ContextId,
-        constructor: &ConstructorRef,
-        new_target: Value,
-        arguments: &[Value],
-    ) -> Result<Completion, RuntimeError> {
-        self.construct_internal_with_new_target(
-            caller_realm,
-            constructor,
-            ConstructNewTarget::Raw(self.unroot_value(&new_target)?),
-            arguments,
-        )
-    }
-
     pub(crate) fn constructor_from_value(
         &self,
         caller_realm: ContextId,
