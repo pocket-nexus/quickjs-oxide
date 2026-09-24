@@ -789,3 +789,68 @@ flat profile（expressions 4MB，self time）：`next_token_with_goal` 4.08%→3
 
 复现命令：同 §9.8；lexer 探针为 `target/p3-lexer-{compile,alloc}-probe`，
 perf 目录 `target/p3-perf/`，矩阵 `target/p3-matrix-bundles/`。
+
+### 9.10 P4-6 预实验：closure 描述符索引（已回滚，2026-09-24）
+
+`docs/lexer-parser-refactor.md` §3 P4 第 6 条的触发证据与可行性预实验。按 §6
+“P4 候选不进入本分支”，实验代码已回滚，本记录仅保留证据。
+
+触发证据（临时诊断计数，P3 树 + profiling 探针；`ensure_closure_variable` 每次
+调用扫描的候选总数）：
+
+| 语料（4MB） | 查找次数 | 扫描候选总数 | 平均 | 最长 Vec |
+| --- | ---: | ---: | ---: | ---: |
+| functions | 6,798 | 69,315,807 | 10,196 | 13,595 |
+| expressions | 27,530 | 63,314 | 2.3 | 5 |
+| syntax-mixed | 5,524 | 2,761 | 0.5 | 1 |
+
+`functions` 档是唯一的 O(N²) 形态：某个函数（按条目数应为 root）积累约 1.36
+万个 closure 条目，而 `Global` 查找按名字线性扫过整个向量（生成语料每个块都
+声明并引用新名字，属压力档构造，非真实负载形态）。`ensure_captured_closure_variable`
+（captured 路径）在三语料均为 ≤0.5 步/次，无问题。
+
+预实验实现：`FunctionIr` 增加 `global_closure_index: HashMap<GlobalClosureKey, u16>`
+（`Global`/`GlobalDeclaration` 按名字分命名空间索引，`push_closure_variable`
+写入、首见索引优先），`ensure_closure_variable` 对这两种 source 走索引，
+其余 source 保持线性扫描；`limits.rs` 的直写向量测试改为走
+`push_closure_variable`。
+
+perf（4MB 扣 64KB tiny 档，P3/P4 两探针交错 min-of-7）：
+
+| 语料 | 指标 | P3 | P4（vs P3） |
+| --- | --- | ---: | ---: |
+| functions | instr/KB | 2,225,543 | 2,086,331（−6.26%） |
+| | cycles/KB | 1,231,437 | 1,216,343（−1.23%） |
+| | branches/KB | 491,572 | 440,167（−10.46%） |
+| | cache-ref/KB | 84,685 | 75,754（−10.55%） |
+| | task-clock/KB | 0.311 ms | 0.309 ms（−0.63%） |
+| expressions | instr/KB | 1,333,898 | 1,342,261（+0.63%） |
+| | cycles/KB | 653,256 | 660,278（+1.07%） |
+| | task-clock/KB | 0.175 ms | 0.177 ms（+1.32%） |
+| syntax-mixed | instr/KB | 2,144,142 | 2,163,651（+0.91%） |
+| | cycles/KB | 1,333,167 | 1,332,879（−0.02%） |
+| | task-clock/KB | 0.351 ms | 0.350 ms（−0.28%） |
+
+64KB 档：functions instr +0.46%、cycles +1.74%；expressions +0.48%/−0.17%；
+syntax-mixed +0.78%/+2.62%。探针内 `compile_ns`（5 次）：functions
+1.185s→1.167s（−1.5%）。即 69.3M 步扫描被消除，但指令节省多为廉价的向量化
+比较，cycles/task-clock 几乎不动，而小函数侧被 HashMap 常数开销抵消。
+
+真实 bundle（67 case，P1b/P3/P4 交错 5 次）：每 case 速度比值 p3/p4 中位
+**1.007**（38/66 case P4 更快），逐 case 求和耗时 −1.50%，而 459KB 的
+`066-all` 中位 51.79ms→52.42ms（**+1.22%**）——整体在噪声内，无真实负载收益。
+
+分配（4MB）：`FunctionIr` 增大导致 arena 扩容，realloc_bytes
+functions/syntax +67.6MB、expressions +33.8MB；另有 map 表 alloc_bytes
++4.49/+1.57/+3.15MB、alloc 次数 +13/+2/+1；peak live +3.1/+1.6/+3.1MB。
+与 P4 的分配削减目标方向相反。
+
+结论：触发证据成立但**收益不成立**——真实 bundle 中性、分配反向、函数侧常数
+开销。判定为按 §6 不进入本分支；如后端计划重启该候选，应采用“按向量长度阈值
+惰性建索引 + 索引放侧表（避免 `FunctionIr` 增大）”的形态，并先取得真实 bundle
+的明确收益再落地。
+
+复现：探针 `target/p4-global-index-{compile,alloc}-probe`（`build_compile_probe.py`
++ 临时诊断计数，计数源码未保留），perf 目录 `target/p4-perf/`（脚本
+`target/p4-perf.sh`、汇总 `target/p4-summarize.py`），矩阵
+`target/p4-matrix-bundles/`。

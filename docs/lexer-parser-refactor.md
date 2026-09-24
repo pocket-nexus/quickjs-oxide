@@ -690,6 +690,15 @@ P2/P3 收尾：
 6. **closure 描述符查找**：`ensure_closure_variable`（resolution.rs）线性扫描
    2.5% 自时间（§9.7，functions 4MB）；触发=P2 后仍 ≥2%；动作=索引化/哈希，
    或按函数缓存最近命中；可与第 2 条合并做。
+   **预实验（2026-09-24，已回滚）**：触发证据成立（P2b functions-4MB 自时间
+   3.02%；诊断计数 6,798 次查找共 69.3M 个候选、最长 Vec 13,595，全部来自
+   `Global` 名字查找的 O(N²)）。按名字索引实现后：functions-4MB instr −6.3%、
+   branches −10.5%，但 cycles 仅 −1.2%、task-clock −0.6%；expressions/
+   syntax/tiny 的 instr +0.5%~+0.9%（HashMap 常数开销）；真实 bundle 每 case
+   速度比值中位 +0.7%（38/66），`066-all` −1.2%，在噪声内；分配反向（arena
+   扩容 realloc +34~68MB）。判定：**收益不成立，不进入本分支**（§6）；如后端
+   计划重启，需改“阈值惰性建索引 + 侧表”形态并先取得真实 bundle 收益。
+   详见 `docs/compile-benchmark.md` §9.10。
 
 启动任一候选前，在本节记录触发证据、验收指标与回滚点。
 
