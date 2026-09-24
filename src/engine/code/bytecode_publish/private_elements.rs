@@ -1,13 +1,7 @@
 //! Link-time sealing of private binding roles.
 use crate::engine::api::error::Error;
 use crate::engine::api::runtime_error::RuntimeError;
-use crate::engine::code::function::UnlinkedVariableDefinition;
-use crate::engine::code::function::metadata::{
-    ClosureVariable, ClosureVariableKind, ClosureVariableName, VariableDefinition,
-};
-use crate::engine::heap::{
-    BytecodeConstant, Heap, PublishedPrivateBinding, PublishedPrivateBindings, RawValue,
-};
+use crate::engine::code::function::metadata::ClosureVariableKind;
 use crate::engine::value::JsString;
 use std::collections::HashMap;
 
@@ -52,18 +46,41 @@ pub(in crate::engine::code) fn private_binding_info(
     Some(PrivateBindingInfo { kind, role })
 }
 
-pub(in crate::engine::code) fn private_setter_local_pairs(
-    local_definitions: &[UnlinkedVariableDefinition],
-) -> Result<Vec<Option<u16>>, RuntimeError> {
-    let mut pairs = vec![None; local_definitions.len()];
-    let mut unmatched_primaries = HashMap::<Vec<u16>, Vec<u16>>::new();
-    for (index, definition) in local_definitions.iter().enumerate() {
-        let Some(name) = definition.name.as_ref() else {
-            continue;
-        };
-        let Some(info) = private_binding_info(definition.kind, name) else {
-            continue;
-        };
+/// Incremental name-aware sealing of private binding roles during the
+/// publication walk.  The walk already visits every unlinked definition in
+/// source order, so one pass both matches setter primary/storage cells and
+/// assigns roles; the linked names are available in the same loop, so no
+/// second scan over materialized metadata is needed.
+pub(in crate::engine::code) struct PrivateBindingScanner {
+    pairs: Vec<Option<u16>>,
+    unmatched_primaries: HashMap<Vec<u16>, Vec<u16>>,
+}
+
+impl PrivateBindingScanner {
+    pub(in crate::engine::code) fn new(definitions: usize) -> Self {
+        Self {
+            pairs: vec![None; definitions],
+            unmatched_primaries: HashMap::new(),
+        }
+    }
+
+    /// Records one local definition while its name is interned and returns
+    /// the sealed role when the definition declares a private binding.
+    pub(in crate::engine::code) fn observe_local(
+        &mut self,
+        index: usize,
+        kind: ClosureVariableKind,
+        name: Option<&JsString>,
+    ) -> Result<Option<PrivateBindingRole>, RuntimeError> {
+        if !kind.is_private() {
+            return Ok(None);
+        }
+        let name = name.ok_or(RuntimeError::Invariant(
+            "verified private local lost its source name before publication",
+        ))?;
+        let info = private_binding_info(kind, name).ok_or(RuntimeError::Invariant(
+            "verified private local lost its authenticated role before publication",
+        ))?;
         let index = u16::try_from(index).map_err(|_| {
             RuntimeError::Engine(Error::internal(
                 "private-name local index exceeds bytecode range",
@@ -73,7 +90,8 @@ pub(in crate::engine::code) fn private_setter_local_pairs(
             PrivateBindingInfo {
                 kind: ClosureVariableKind::PrivateSetter | ClosureVariableKind::PrivateGetterSetter,
                 role: PrivateBindingRole::Primary,
-            } => unmatched_primaries
+            } => self
+                .unmatched_primaries
                 .entry(name.utf16_units().collect())
                 .or_default()
                 .push(index),
@@ -82,164 +100,51 @@ pub(in crate::engine::code) fn private_setter_local_pairs(
                 role: PrivateBindingRole::SetterStorage,
             } => {
                 let Some(base) = setter_storage_base(name) else {
-                    return Err(RuntimeError::Engine(Error::internal(
-                        "private setter primary/storage cells are not paired",
-                    )));
+                    return Err(unpaired_private_setter_error());
                 };
-                let Some(primary) = unmatched_primaries.get_mut(&base).and_then(Vec::pop) else {
-                    return Err(RuntimeError::Engine(Error::internal(
-                        "private setter primary/storage cells are not paired",
-                    )));
+                let Some(primary) = self.unmatched_primaries.get_mut(&base).and_then(Vec::pop)
+                else {
+                    return Err(unpaired_private_setter_error());
                 };
-                pairs[usize::from(primary)] = Some(index);
-                pairs[usize::from(index)] = Some(primary);
+                self.pairs[usize::from(primary)] = Some(index);
+                self.pairs[usize::from(index)] = Some(primary);
             }
             _ => {}
         }
-    }
-    if unmatched_primaries
-        .values()
-        .any(|primaries| !primaries.is_empty())
-    {
-        return Err(RuntimeError::Engine(Error::internal(
-            "private setter primary/storage cells are not paired",
-        )));
-    }
-    Ok(pairs)
-}
-
-/// Name-aware publication data retained across atom linking. The unlinked
-/// verifier has exact source spellings, while the heap deliberately sees only
-/// atoms, so setter-primary/storage roles and local pair identities must be
-/// sealed at this boundary rather than reconstructed later from `kind`.
-pub(crate) struct PrivateBindingPublicationPlan {
-    local_roles: Vec<Option<PrivateBindingRole>>,
-    local_pairs: Vec<Option<u16>>,
-    closure_roles: Vec<Option<PrivateBindingRole>>,
-    has_private_bindings: bool,
-}
-
-pub(crate) fn prepare_private_binding_publication(
-    local_definitions: &[UnlinkedVariableDefinition],
-    closure_variables: &[ClosureVariable],
-    constants: &[BytecodeConstant],
-    heap: &Heap,
-) -> Result<PrivateBindingPublicationPlan, RuntimeError> {
-    let mut local_roles = vec![None; local_definitions.len()];
-    let local_pairs = private_setter_local_pairs(local_definitions)?;
-    let mut has_private_bindings = false;
-
-    for (index, definition) in local_definitions.iter().enumerate() {
-        if !definition.kind.is_private() {
-            continue;
-        }
-        has_private_bindings = true;
-        let name = definition.name.as_ref().ok_or(RuntimeError::Invariant(
-            "verified private local lost its source name before publication",
-        ))?;
-        let info = private_binding_info(definition.kind, name).ok_or(RuntimeError::Invariant(
-            "verified private local lost its authenticated role before publication",
-        ))?;
-        local_roles[index] = Some(info.role);
+        Ok(Some(info.role))
     }
 
-    let mut closure_roles = vec![None; closure_variables.len()];
-    for (index, descriptor) in closure_variables.iter().enumerate() {
-        if !descriptor.kind.is_private() {
-            continue;
-        }
-        has_private_bindings = true;
-        let ClosureVariableName::Constant(constant) = descriptor.name else {
-            return Err(RuntimeError::Invariant(
-                "verified private closure lost its unlinked source name",
-            ));
-        };
-        let name = usize::try_from(constant)
-            .ok()
-            .and_then(|constant| constants.get(constant))
-            .and_then(|constant| match constant {
-                BytecodeConstant::Value(RawValue::String(name)) => heap.string(*name).ok(),
-                BytecodeConstant::Value(_)
-                | BytecodeConstant::RegExp { .. }
-                | BytecodeConstant::Function(_) => None,
-            })
-            .ok_or(RuntimeError::Invariant(
-                "verified private closure source name was not a string constant",
-            ))?;
-        let info = private_binding_info(descriptor.kind, name).ok_or(RuntimeError::Invariant(
-            "verified private closure lost its authenticated role before publication",
-        ))?;
-        closure_roles[index] = Some(info.role);
+    pub(in crate::engine::code) fn pair_of(&self, index: usize) -> Option<u16> {
+        self.pairs.get(index).and_then(|pair| *pair)
     }
 
-    Ok(PrivateBindingPublicationPlan {
-        local_roles,
-        local_pairs,
-        closure_roles,
-        has_private_bindings,
-    })
-}
-
-impl PrivateBindingPublicationPlan {
-    pub(crate) fn authenticate(
-        self,
-        local_definitions: &[VariableDefinition],
-        closure_variables: &[ClosureVariable],
-    ) -> Result<PublishedPrivateBindings, RuntimeError> {
-        if self.local_roles.len() != local_definitions.len()
-            || self.local_pairs.len() != local_definitions.len()
-            || self.closure_roles.len() != closure_variables.len()
+    pub(in crate::engine::code) fn finish(&self) -> Result<(), RuntimeError> {
+        if self
+            .unmatched_primaries
+            .values()
+            .any(|primaries| !primaries.is_empty())
         {
-            return Err(RuntimeError::Invariant(
-                "private binding publication plan no longer matches linked metadata",
-            ));
+            return Err(unpaired_private_setter_error());
         }
-        if !self.has_private_bindings {
-            return Ok(PublishedPrivateBindings::none());
-        }
-
-        let locals = self
-            .local_roles
-            .into_iter()
-            .zip(self.local_pairs)
-            .zip(local_definitions)
-            .map(|((role, pair), definition)| {
-                role.map(|role| {
-                    let name = definition.name.ok_or(RuntimeError::Invariant(
-                        "linked private local lost its atom name",
-                    ))?;
-                    Ok(match role {
-                        PrivateBindingRole::Primary => PublishedPrivateBinding::primary(name, pair),
-                        PrivateBindingRole::SetterStorage => {
-                            PublishedPrivateBinding::setter_storage(name, pair)
-                        }
-                    })
-                })
-                .transpose()
-            })
-            .collect::<Result<Vec<_>, RuntimeError>>()?;
-        let closures = self
-            .closure_roles
-            .into_iter()
-            .zip(closure_variables)
-            .map(|(role, descriptor)| {
-                role.map(|role| {
-                    let ClosureVariableName::Atom(name) = descriptor.name else {
-                        return Err(RuntimeError::Invariant(
-                            "linked private closure lost its atom name",
-                        ));
-                    };
-                    Ok(match role {
-                        PrivateBindingRole::Primary => PublishedPrivateBinding::primary(name, None),
-                        PrivateBindingRole::SetterStorage => {
-                            PublishedPrivateBinding::setter_storage(name, None)
-                        }
-                    })
-                })
-                .transpose()
-            })
-            .collect::<Result<Vec<_>, RuntimeError>>()?;
-
-        Ok(PublishedPrivateBindings::authenticated(locals, closures))
+        Ok(())
     }
+}
+
+fn unpaired_private_setter_error() -> RuntimeError {
+    RuntimeError::Engine(Error::internal(
+        "private setter primary/storage cells are not paired",
+    ))
+}
+
+/// Seals the role of one private closure descriptor from its unlinked source
+/// spelling; the caller resolved that spelling to a string constant already.
+pub(in crate::engine::code) fn private_closure_role(
+    kind: ClosureVariableKind,
+    name: &JsString,
+) -> Result<PrivateBindingRole, RuntimeError> {
+    private_binding_info(kind, name)
+        .map(|info| info.role)
+        .ok_or(RuntimeError::Invariant(
+            "verified private closure lost its authenticated role before publication",
+        ))
 }

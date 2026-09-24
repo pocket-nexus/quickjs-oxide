@@ -1,18 +1,16 @@
-//! Atom linking and iterative flattening for published bytecode.
+//! Atom linking helpers for bytecode publication.
 use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::atom::Atom;
 use crate::engine::code::bytecode::Instruction;
-use crate::engine::code::function::{
-    UnlinkedFunction,
-    metadata::{EvalBinding, EvalEnvironment, EvalScope},
-};
-use crate::engine::code::runtime::{FlatConstant, FlatFunction, FlattenFrame};
+use crate::engine::code::function::metadata::{EvalBinding, EvalEnvironment, EvalScope};
 use crate::engine::heap::runtime::RuntimeState;
 use crate::engine::heap::{BytecodeConstant, RawValue};
-use crate::engine::value::{JsString, Value};
+use crate::engine::value::JsString;
 
 mod private_elements;
-pub(crate) use private_elements::prepare_private_binding_publication;
+pub(in crate::engine::code) use private_elements::{
+    PrivateBindingRole, PrivateBindingScanner, private_closure_role,
+};
 
 /// Link each distinct static-name constant index once. The caller owns the
 /// atom transaction: any later failure releases `auxiliary_atoms`, while
@@ -88,104 +86,4 @@ pub(crate) fn link_eval_environments(
         });
     }
     Ok(linked_environments)
-}
-
-pub(crate) fn flatten_unlinked_tree(
-    function: UnlinkedFunction,
-) -> Result<Vec<FlatFunction>, RuntimeError> {
-    let mut frames = vec![FlattenFrame::new(function)];
-    let mut functions = Vec::new();
-
-    loop {
-        let next = frames
-            .last_mut()
-            .ok_or(RuntimeError::Invariant(
-                "unlinked function flattening lost its root frame",
-            ))?
-            .remaining
-            .next();
-        if let Some(constant) = next {
-            let constant = match constant.into_template_object() {
-                Ok((cooked, raw)) => {
-                    frames
-                        .last_mut()
-                        .expect("flatten frame remains present")
-                        .constants
-                        .push(FlatConstant::TemplateObject { cooked, raw });
-                    continue;
-                }
-                Err(constant) => constant,
-            };
-            let constant = match constant.into_regexp() {
-                Ok((pattern, program)) => {
-                    frames
-                        .last_mut()
-                        .expect("flatten frame remains present")
-                        .constants
-                        .push(FlatConstant::RegExp { pattern, program });
-                    continue;
-                }
-                Err(constant) => constant,
-            };
-            let (primitive, atom_string, child) = constant.into_parts();
-            match (primitive, atom_string, child) {
-                (Some(crate::engine::value::PrimitiveValue::String(value)), true, None) => frames
-                    .last_mut()
-                    .expect("flatten frame remains present")
-                    .constants
-                    .push(FlatConstant::AtomString(value)),
-                (Some(value), false, None) => frames
-                    .last_mut()
-                    .expect("flatten frame remains present")
-                    .constants
-                    .push(FlatConstant::Value(validate_unlinked_primitive(
-                        value.into(),
-                    )?)),
-                (None, false, Some(child)) => frames.push(FlattenFrame::new(child)),
-                (None, _, None)
-                | (Some(_), true, None)
-                | (Some(_), _, Some(_))
-                | (None, true, Some(_)) => {
-                    return Err(RuntimeError::Invariant(
-                        "unlinked constant did not contain exactly one payload",
-                    ));
-                }
-            }
-            continue;
-        }
-
-        let frame = frames.pop().ok_or(RuntimeError::Invariant(
-            "unlinked function flattening lost a completed frame",
-        ))?;
-        let index = functions.len();
-        functions.push(FlatFunction {
-            code: frame.code,
-            constants: frame.constants,
-            metadata: frame.metadata,
-            parameter_environment: frame.parameter_environment,
-            func_name: frame.func_name,
-            argument_definitions: frame.argument_definitions,
-            local_definitions: frame.local_definitions,
-            closure_variables: frame.closure_variables,
-            eval_environments: frame.eval_environments,
-            debug: frame.debug,
-        });
-        if let Some(parent) = frames.last_mut() {
-            parent.constants.push(FlatConstant::Child(index));
-        } else {
-            return Ok(functions);
-        }
-    }
-}
-
-/// Primitive constants stay as public `Value` payloads through flattening;
-/// the publish transaction in `code::runtime` is their string/BigInt node
-/// creation point, so only the runtime-bound escape invariant is sealed here.
-fn validate_unlinked_primitive(value: Value) -> Result<Value, RuntimeError> {
-    match value {
-        Value::Object(_) | Value::Symbol(_) => Err(RuntimeError::Invariant(
-            "runtime-bound value escaped the unlinked constant invariant",
-        )),
-        value => Ok(value),
-    }
 }
