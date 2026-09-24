@@ -16,9 +16,9 @@ results are in the [primitive VM overview](primitive-vm.md).
 <!-- current-test262-metrics:start -->
 The authoritative R3fj Test262 vector has:
 
-- 79,982 full-corpus passes out of 102,037 variants (78.385%)
-- 80,032 eligible variants out of 102,037 (78.434%)
-- 79,982 passes out of 80,032 runnable variants (99.938%, secondary quality
+- 80,010 full-corpus passes out of 102,037 variants (78.413%)
+- 80,060 eligible variants out of 102,037 (78.462%)
+- 80,010 passes out of 80,060 runnable variants (99.938%, secondary quality
   metric)
 - 50 classified failures and no timeouts among eligible variants
 <!-- current-test262-metrics:end -->
