@@ -6,6 +6,9 @@
 的堆分配与重复扫描，把 `functions` 密集语料上的指令数、cache miss、RSS 和编译
 时间拉下来。**本计划不含 verify/publish/VM 的改动**（另立计划）。
 
+P1a/P1b 已完成（实施记录与提交见 §3），§5 目标表与 P2/P3 条目已按 P1b
+checkpoint 实测重校准；外部对照（oxc）与测量方法见附录 D。
+
 ## 0. 目标与非目标
 
 目标（按实测口径，`docs/compile-benchmark.md` §6/§7）：
@@ -17,8 +20,12 @@
 3. 17 处 clone-lexer 重扫与 `parenthesized_parameter_tokens` 的整段 token 复制
    改为 token 缓冲复用，同一段源码最多扫一次。
 4. `functions-4194304` 上：指令/KB、cache-miss/KB、RSS/源MB、编译时间相对
-   基线（2.90M/KB、17.1k/KB、100.3MB/MB、1789ms）逐阶段下降；终态吞吐至少
-   翻倍（超过 Boa 的 4.69 MB/s，向 QuickJS 靠拢）。
+   基线（2.90M/KB、17.1k/KB、100.3MB/MB、1789ms）逐阶段下降；终态吞吐按
+   P2 checkpoint 重测后重定（原“翻倍/向 QuickJS 靠拢”目标已按 P1b 实测
+   重校准，见 §5；oxc parse-only 天花板见附录 D）。
+
+参考对照：oxc 0.140 parse-only 实测 62.7–87.8 MB/s（同场 V8 parse-only
+24.3 MB/s，口径只到 AST），其热路径无 SIMD（附录 D.1）。
 
 非目标：
 
@@ -27,8 +34,15 @@
   ASI、错误文案、Unicode 标识符表（pinned QuickJS 17 表）必须逐字节保持。
 - 不改公开 API（`src/engine/api/*` 出口不变）；改动限定在 crate 内部。
 - 不改变 Atom 的生成**顺序**（BC5 pinned atoms 与 binary-object 字节一致性依赖它）。
+- 不引入 arena（P1–P3，见 §2.4）、Pratt 解析器（见 §2.5）或可恢复
+  diagnostics（保持 fail-fast，见 §4 第 9 条）。
+- 不把 SIMD 作为验收依赖：P3 lexer 快路只要求可移植 ASCII 字节快路，
+  `memchr` 为 native-only 可选项（见 §3 P3 第 4 条）。
 
 ## 1. 现状（事实，带 file:line）
+
+> 本节描述 P0 基线（`0e59f836`）的现状；P1a/P1b 后部分条目已改变（如
+> `Identifier.value`、`LexError.message` 类型），以 §3 实施记录为准。
 
 ### 1.1 词法
 
@@ -99,8 +113,8 @@
 
 - `cargo test --locked --workspace --all-targets`（compiler 约 308 个 `#[test]`，
   `code` 约 445 个）。
-- `cargo clippy`（4 组 feature 组合，`-D warnings`）、`cargo fmt --check`、
-  `--doc`、test262-host。
+- `cargo clippy`（5 组 feature 组合，CI 命令，`-D warnings`）、
+  `cargo fmt --check`、`--doc`、test262-host。
 - test262 frozen receipt：`./scripts/test262/test-test262.sh --spec dev-support/test262/current.conf --check`
   （focused）与 `--full`；负向诊断 `scripts/test262/audit-negative-diagnostics.mjs`。
 - QuickJS 差分：`./scripts/quickjs/test-quickjs-fixtures.sh --validate`、
@@ -158,8 +172,9 @@ pub struct Identifier<'a> {
      （untagged 报错、tagged 传 `undefined` 的语义不变）。
    - `TemplateEscapeError { message: &'static str, span: Span }` 变 Copy（可达
      message 全是字面量：`"unexpected end of string"`、两条 octal 文案、
-     `"malformed escape sequence in string literal"`；invalid UTF-8 立即返回不
-     入结构）；`LexError.message: String` 保持不动（错误路径不在 token 里）。
+      `"malformed escape sequence in string literal"`；invalid UTF-8 立即返回不
+      入结构）；`LexError.message` 实际实现改为 `&'static str`（P1a 偏差，
+      见 §3 实施记录与 §4 第 3 条）。
    - 消费点按需解码：untagged 模板要 cooked、tagged 模板要 raw_value+cooked，
      字符串/属性键要 cooked；`raw` 是源切片不含 CRLF 归一化与转义还原。
 3. **解码逻辑只保留一份实现**：把 `scan_string`/`scan_template` 的累积器抽象成
@@ -314,16 +329,64 @@ API（取代 `parser/tokens.rs` 现有机制）：
 - regex/div 与 template 续段的判定顺序与今天一致（由 parser 侧调用点决定，
   buffer 只负责缓存与最少重扫）。
 
+PR #30 兼容约定（fork `lfkdsk/quickjs-oxide` 分支 `fix/parser-nesting-guard`，
+未合并；本计划不阻塞于它，也不修改其代码）：
+
+- 该守卫在**每个提交 token** 处采样物理栈，并按产生式加权预算
+  （`PARSER_STACK_BUDGET=1<<32`，深度对齐 718/743/1420/1675/743）。
+  P2b 的 `TokenBuffer` 不得改变“提交 token”的边界与采样时机，也不得扰动
+  逐产生式权重；`TokenEntry` 打包（goal/context 标志位 + `span.start`）时保持
+  entry 创建/提交一一对应。
+- 若 PR #30 先合并，用其标定用例重新对拍深度；若 P2b 先落地，PR #30 需要
+  基于 `TokenBuffer` 复核采样点。
+
 ### 2.4 分配与哈希策略
 
 - 整数键（`ScopeId/BindingId/FunctionId/pc`、`HashSet<(usize,u16)>` 等）引入
   `rustc-hash`（本地已缓存 2.1.3）替换默认 SipHash。
 - 内容键（`NameTable.by_name`、`string_constants`）保留 SipHash：源不可信，
   避免 HashDoS。名字数量远小于 token 数，分配才是瓶颈。
-- 小集合（每控制结构 3-4 个 Vec、闭包描述符）在 P3 用 `smallvec/thin-vec`
-  （本地已缓存），先测量再替换。
+- 小集合（每控制结构 3-4 个 Vec、闭包描述符）在 P3 按决策规则评估
+  `smallvec/thin-vec`（本地已缓存）：触发=对应站点在分配探针中可归因且占比
+  ≥3%；动作=替换并重测分配/RSS；否决=分配降幅 <1% 或 RSS 反升。
 - 依赖以工作区 `workspace.dependencies` 钉版本；本计划最多新增
-  `rustc-hash`，P3 再议 `smallvec/thin-vec/memchr`。
+  `rustc-hash`，P3 决策项再议 `smallvec/thin-vec/memchr`（`memchr` 仅
+  native-only 可选，见 §3 P3 第 4 条）。
+- **arena 不进入 P1–P3**：lifetime 传播风险大、peak live 可能上升；作为 P4
+  候选与 verify/publish 改造一起评估（§3 P4 第 4 条）。P3 的 scratch 复用池
+  是它的低风险切片。
+
+### 2.5 oxc 对照清单（会话调研，2026-09-24）
+
+对照版本 oxc 0.140；测量数据与源码位置见附录 D.1。清单按“抄 / 不抄 / 后置”
+分类，具体条目在 §3 对应阶段以决策规则执行。
+
+**值得抄（按优先级）**：
+
+1. 冷路径错误工程：错误构造集中并走 `#[cold]`/`cold_branch`，热路径不因错误
+   分支膨胀（`cursor.rs:150`）。P2/P3 随手做，不改错误时机与文案。
+2. 首字节 256 项 handler 表：`lexer/byte_handlers.rs:28` 式表驱动，替代
+   `scan_punctuator`/`skip_trivia` 的逐字符分支（P3 决策项）。
+3. 表达式层“单循环 + 静态优先级表”（`js/expression.rs:1286`、
+   `js/operator.rs:43`）：仅当 P2 后 profiling 显示二元/一元阶梯仍显著时考虑；
+   **不引入 Pratt**（§4 第 11 条）。
+4. 转义字符串按 span 缓存解码结果（`lexer/string.rs:255` 的 span 键惰性字符串）：
+   当前 P1a 已惰性解码、P1b 已缓存名字 `JsString`，仅当 profiling 显示同一
+   token 重复解码时启用（P3 决策项）。
+5. checkpoint/rewind + cover grammar + Tristate（`cursor.rs:305-340`、
+   `js/grammar.rs`、`js/arrow.rs:47-80`）：P4“去 token 历史”候选。
+6. 无 token 历史：`NoTokensParserConfig`（`config.rs:53`）证明 AST 路径可零
+   提交缓冲；对应 P4 候选 1。
+
+**不抄**：
+
+- 可恢复 diagnostics/错误恢复：与 fail-fast 单错误模型冲突，且会改动错误时机
+  （§4 第 9 条）。
+- token 收集的泛型 config 体系：Rust 类型体操收益低于成本。
+- JSX/TS 专属路径。
+
+**后置（属追 V8/后端计划）**：u32 Span、arena、parse/semantic 分离、
+IR/字节码发射与 verify/publish 改造。
 
 ## 3. 分阶段实施
 
@@ -459,8 +522,8 @@ A.5 move/绑定点、A.6 token 复制、A.7 标志规则、A.8 测试适配）�
 
 - 全量 Rust 测试 + `check-bc5-pinned-atoms --self-test` +
   `test-quickjs-fixtures --all --oxide`（字节一致性）+ focused test262；
-- 指标：`functions-4194304` 分配次数相对 P1a 再降 ≥70%，
-  instr/KB 再降 ≥15%，cache-miss/KB 再降 ≥40%，时间再降 ≥15%。
+- 指标：按 §5 重校准表执行（原目标“分配再降 ≥70%、instr ≥15%、miss ≥40%、
+  时间 ≥15%”已被 P1b 实测证伪，见下方实施记录）。
 
 实施记录（P1b 完成，HEAD `bd3eb461`）：
 
@@ -490,9 +553,10 @@ A.5 move/绑定点、A.6 token 复制、A.7 标志规则、A.8 测试适配）�
   unsupported-negative-provenance=2534 vs 里程碑 79982/2562，28 例漂移），
   与 P1a 记录的既有漂移一致、与本次重构无关；`--focused` 仍因 stale 被拒。
   不 promote，留到分支合并/阶段收尾一次性完成。
-- 指标：见 §5 校准段与 `docs/compile-benchmark.md` §9.6。未达 §5 的 P1b
-  方向目标（分配 ≥70%、instr ≥15%、miss ≥40%、时间 ≥15%），仅 functions 的
-  miss（−68.5%）/时间（−16.5%）达标；原因与后续校准见 §9.6。
+- 指标：见 §5 校准段与 `docs/compile-benchmark.md` §9.6。未达原 P1b 方向
+  目标（分配 ≥70%、instr ≥15%、miss ≥40%、时间 ≥15%，已被 §5 重校准表
+  取代），仅 functions 的 miss（−68.5%）/时间（−16.5%）达标；原因与后续
+  校准见 §9.6。
 
 ### P2a 前瞻备忘缓存（低风险第一步）
 
@@ -503,8 +567,9 @@ A.5 move/绑定点、A.6 token 复制、A.7 标志规则、A.8 测试适配）�
 `relex` 清掉 `start >= future_offset` 的条目。
 
 验收：全量 Rust 测试 + focused test262 + fixtures；新增缓存命中/失效单测
-（C.4）；分配次数下降（探针缓存省掉重复 token 扫描的分配）；instr/KB 下降
-≥10%。此阶段不追求 P2 的总目标。
+（C.4）；分配次数下降（探针缓存省掉重复 token 扫描的分配）；instr/KB 相对
+P1b 下降 5%~10%（方向性，P2 checkpoint 后按实测钉死；P1b 实测 instr 仅
+−0.9%~−6.2%，见 §9.6）。此阶段不追求 P2 的总目标。
 
 ### P2b 提交路径 `TokenBuffer`
 
@@ -521,23 +586,61 @@ clone-lexer 前瞻换成 `mark/ensure/restore`；`destructuring.rs` 的
 Oracle；`line_terminator_before` 与 span 保持不变；旧 clone-lexer 路径保留为
 test-only 对拍（差异测试，C.4）。
 
-验收：全量测试 + fixtures/C-oracles + focused test262；指标再降
-instr/KB ≥15%、cache-miss/KB ≥30%、时间 ≥15%；`parenthesized_parameter_tokens`
-不再出现 Vec 复制（代码审查 + 分配计数）。
+验收：全量测试 + fixtures/C-oracles + focused test262；指标按 §5 重校准表
+（相对 P1b：instr/KB −10%~−20%、cache-miss/KB −20%~−35%、时间 −10%~−15%，
+P2 checkpoint 后钉死）；`parenthesized_parameter_tokens` 不再出现 Vec 复制
+（代码审查 + 分配计数）；PR #30 兼容约定（§2.3）逐条检查。
 
-### P3 杂项收尾
+### P3 杂项收尾（决策规则制）
 
-- `SourceText` 深拷贝改 `Rc`/共享（`parser/entry.rs:281-283`）。
-- 数字字面量快路：无 `_` 且为小整数时直接 `i64/u64`，BigUint 仅大数
-  （`parser/literals.rs:409-462`）。
-- 小集合换 `SmallVec`/`ThinVec`（每函数 Vec 字段、break/continue 跳转列表、
-  闭包描述符），以分配计数与 RSS 决定取舍。
-- lexer 扫描快路：ASCII 分类表 + `memchr` 批量扫 trivia/标识符
-  （`lexer.rs:710` 的逐字符 UTF-8 解码、`skip_trivia`、`scan_punctuator`）。
-- 评估 `ensure_closure_variable` 的线性扫描（`resolution.rs`）与
-  `HashSet<(usize,u16)>` 等 verify 侧暂不动的热点是否受前端改动收益。
+P3 条目不再按“全做”执行：每项带触发指标/动作/否决条件，触发不成立则跳过并在
+checkpoint 记录。触发依据来自 P1b checkpoint（`docs/compile-benchmark.md`
+§9.6）与 P2 checkpoint。
 
-验收：全量 gate（含 test262 `--full` 或 receipt 更新流程）；终态指标见 §5。
+1. **`SourceText` 共享**（`parser/entry.rs:281-283`）：触发=深拷贝在分配探针中
+   可归因（占比 >1%）；动作=`Rc`/共享并跑字节一致性 gate；否决=与 API/生命周期
+   冲突或降幅 <1%。
+2. **数字字面量快路**：触发=数字解析在 instr/KB 中可归因；动作=无 `_` 小整数
+   直接 `i64/u64`，BigUint 仅大数（`parser/literals.rs:409-462`）；否决=分配
+   降幅 <1%。
+3. **小集合 `SmallVec`/`ThinVec`**（每函数 Vec 字段、break/continue 跳转列表、
+   闭包描述符）：按 §2.4 决策规则。
+4. **lexer 扫描快路（P3 主项）**：触发=P2 checkpoint 后 instr/KB 仍高于
+   §5 重校准目标；动作=ASCII 分类表 + 批量扫 trivia/标识符
+   （`lexer.rs:710` 的逐字符 UTF-8 解码、`skip_trivia`、`scan_punctuator`），
+   必做**可移植字节快路**，`memchr` 仅 native-only 可选（wasm 走标量/SWAR
+   替代）；否决=instr 降幅 <2% 或语义 gate 不稳。**不引入 SIMD 依赖**。
+5. **scratch 复用池**（parser/resolution 临时 Vec 按函数复用）：触发=分配探针
+   显示临时 Vec 占比 ≥5% 且 P2 checkpoint 后分配仍为瓶颈；动作=按阶段复用并
+   重测 peak live/RSS；否决=peak live 上升 >5% 或复杂度不可控。
+6. **`ensure_closure_variable` 线性扫描 / verify 侧热点**：本计划只做归因，
+   改动留给后端计划（§2.5 后置项）。
+
+验收：全量 gate（含 test262 `--full` 或 receipt 更新流程）；终态指标见 §5
+（已按 P1b 重校准）。
+
+### P4 候选（不承诺，按触发条件启动）
+
+P1b checkpoint 显示：名字字符串只占分配约 1/6，剩余大头在 IR/常量/绑定/字节码
+路径；cache-miss 收益已接近饱和（functions −71.2%）。若终态仍要接近 issue #32
+原始目标（分配 −90%、时间 −55%），需要以下候选，各自独立可回滚，且均不阻塞
+P2/P3 收尾：
+
+1. **去 token 历史**（架构级）：cover grammar + Tristate + checkpoint/rewind，
+   逐点消除历史读取（`statements.rs:846`、`arrow.rs:296-300`、directive 的
+   `tokens[start]`），最终删掉提交 token 缓冲（`NoTokensParserConfig` 路线，
+   §2.5 第 6 条）。触发=P2 完成后 RSS/cache-miss 仍是主要瓶颈且 P3 决策项无
+   更大收益；**与 P2b 不并行**；启动前需 PR #30 合并或完成标定对拍。
+2. **IR/常量侧分配削减**：对解析期 `IrOp`/常量/绑定/字节码路径做分配归因
+   （P1b 后占约 5/6），针对性改 Vec 预留/索引化/复用。触发=分配未达 §5 重校准
+   值且归因明确；动作=另立计划（可能触及 verify/publish）。
+3. **u32 Span**：当前 `Span` 为 4×usize；改 u32 需源大小上限约定。触发=span
+   复制在 instr/分配中可归因。
+4. **arena**：与 verify/publish 改造一起（§2.4）。
+5. **表驱动二元/一元循环**：仅当 P2 后 profiling 仍显示表达式阶梯开销显著
+   （§2.5 第 3 条）。
+
+启动任一候选前，在本节记录触发证据、验收指标与回滚点。
 
 ## 4. 语义红线与高风险清单
 
@@ -546,7 +649,8 @@ instr/KB ≥15%、cache-miss/KB ≥30%、时间 ≥15%；`parenthesized_paramete
 2. **Atom 顺序**：`ensure_string_constant` 调用顺序与 `IrConstant` 追加顺序
    逐点不变；`check-bc5-pinned-atoms` + fixtures 字节一致性守护。
 3. **错误文案与 span**：lexer/parser 诊断文本、`StringTooLong` 特判、
-   负向诊断 TSV 全覆盖；message 保持 `String` 不改 `'static`。
+   负向诊断 TSV 全覆盖；`LexError.message` 已在 P1a 改为 `&'static str`
+   （全部消息为字面量，见 §3 P1a 实施记录），文案本身不得变化。
 4. **模板语义**：`cooked: Option` 的 tagged/untagged 区别、首次 `invalid_escape`
    的 span/文案；两遍扫描事务性改为 validate sink 时不得消费闭合反引号/`${`。
 5. **ASI**：`line_terminator_before` 在每个 token 上必须与现行逐位一致，
@@ -560,6 +664,13 @@ instr/KB ≥15%、cache-miss/KB ≥30%、时间 ≥15%；`parenthesized_paramete
    `has_escape` 守卫，转义私有名同样要解码）。
 8. **测试直接构造**：`tests/parameters.rs:471-474`、`class/private.rs:323`、
    oracle 的 `Lexer::new + raw` 依赖，需同步适配且保持 `raw` 语义。
+9. **错误模型**：保持 fail-fast（`syntax_here` 直接返回 `Error`，parser 无
+   errors vec），不引入 oxc 式可恢复 diagnostics；冷路径工程（`#[cold]`）不得
+   改变错误时机与文案（对照 oxc 的做法仅借鉴工程形态）。
+10. **PR #30 栈守卫兼容**（§2.3）：P2b 不得改变提交 token 边界/采样时机与逐
+    产生式加权预算；PR #30 合并后需用其标定用例对拍深度。
+11. **不引入 Pratt**：表达式层若重构，只允许 oxc 式单循环 + 静态优先级表
+    （§2.5 第 3 条），且不得改变错误时机与 AST 形状。
 
 ## 5. 验收矩阵与目标
 
@@ -579,27 +690,42 @@ cargo test --locked --workspace --all-targets
 ./scripts/quickjs/test-quickjs-c-oracles.sh --validate
 ```
 
-阶段性目标（`functions-4194304`，相对基线 1789ms / 2.90M instr/KB / 17.1k miss/KB / 100.3 MB/源MB）：
+实测 checkpoint（`functions-4194304`，相对 P0 基线 1789ms / 2.90M instr/KB /
+17.1k miss/KB / 1,882 alloc/KB；完整表见 `docs/compile-benchmark.md`
+§9.5/§9.6）：
+
+| checkpoint | 时间 | instr/KB | cache-miss/KB | 分配次数 | alloc+realloc |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| P1a | −5.6% | −3.6% | −8.7% | −13.0% | −13.8% |
+| P1b | −21.1% | −9.6% | −71.2% | −27.7% | −27.4% |
+
+三语料范围（vs P0，§9.6）：时间 −14.7%~−21.1%、instr −4.9%~−9.6%、
+miss −32.9%~−71.2%、alloc −22.4%~−32.4%。
+
+原绝对目标表（P1a −15% 时间 … P3 −55%/−90%）基于“名字分配是主瓶颈”的假设，
+已被 P1b 实测证伪：名字字符串仅约 1/6 分配，剩余大头在 IR/常量/绑定/字节码。
+下表改为**相对上一 checkpoint** 的方向性重校准，P2 checkpoint 后按实测钉死：
 
 | 阶段 | 时间 | instr/KB | cache-miss/KB | 分配次数 |
 | --- | ---: | ---: | ---: | ---: |
-| P1a | −15% | −15% | −30% | −60% |
-| P1b | −35% | −30% | −60% | −85% |
-| P2 | −50% | −45% | −75% | −90% |
-| P3 | −55% | −50% | −80% | −90% |
+| P2a+P2b | −10%~−15% | −10%~−20% | −20%~−35% | −5%~−10% |
+| P3 | −8%~−12% | −10%~−20% | −10%~−20% | −5%~−15% |
+
+P1–P3 合计预期（functions，vs P0）：时间 −30%~−40%、instr −25%~−40%、
+miss −75%~−85%、alloc −30%~−50%。若要接近 issue #32 原始的 −90% 分配目标，
+需启动 P4 的 IR/常量侧削减（§3 P4 第 2 条）。
 
 P2 分 P2a（前瞻备忘）与 P2b（提交缓冲）两步，表中 P2 行为两步合并目标。
-
-真实 bundle 中位吞吐目标：从 4.79 MB/s 到 >7 MB/s（P2 后 >6 MB/s），并保持
-test262/QuickJS 差分全绿。目标值是方向性检查点，P0 基线出来后按实测校准；
-P1a 首个 checkpoint（分配探针 + perf）用于校准后续阶段的数字。
+真实 bundle 中位吞吐（基线 4.79 MB/s）：P1a/P1b 未重测矩阵，P2 checkpoint 时
+重测并按实测重定；`>7 MB/s` 不再作为 P3 承诺，视 P4/后端计划决定。语义
+gate（test262/QuickJS 差分）仍要求全绿。
 
 P1a checkpoint 实测（`docs/compile-benchmark.md` §9.5，HEAD `a5b651be`）：
 alloc 次数 −13.0%~−19.5%、alloc+realloc −13.8%~−21.7%、instr/KB
 −3.6%~−4.9%、cache-miss/KB −8.7%~−17.5%、task-clock −5.6%~−9.3%、RSS
-−15.7%~−21.2%。方向正确但低于表中方向性目标：4MB 语料的分配大头在
+−15.7%~−21.2%。方向正确但低于原方向性目标：4MB 语料的分配大头在
 parse 之后的 IR/常量/绑定路径，lexer 侧每 token 分配消除只覆盖一部分。
-后续阶段分配目标按“相对上一 checkpoint 再降”执行（P1b ≥70% 相对 P1a），
+后续阶段按“相对上一 checkpoint 再降”口径执行（绝对值以本表重校准值为准），
 instr/miss/时间目标保持“相对 P0 基线”方向；每阶段 checkpoint 后更新
 §9.5 对照。
 
@@ -609,7 +735,8 @@ alloc 次数相对 P1a −9.6%~−16.9%、instr/KB −0.9%~−6.2%、cache-miss/
 基线 alloc −22.4%~−32.4%、instr −4.9%~−9.6%、cache-miss −32.9%~−71.2%。
 仍低于 P1b 方向目标：分配大头在 IR/常量/绑定/字节码路径（名字字符串仅约
 1/6），per-NameTable `JsString` 缓存只再贡献约 1–4 个百分点；P2/P3 分配
-目标继续按“相对上一 checkpoint 再降”执行，P2 后若分配仍为瓶颈需重估。
+目标继续按“相对上一 checkpoint 再降”执行；P2 后若分配仍为瓶颈，按 §3 P4
+第 2 条启动 IR/常量侧归因，不再依赖 lexer/parser 侧削减。
 
 ## 6. 提交与分支
 
@@ -617,15 +744,19 @@ alloc 次数相对 P1a −9.6%~−16.9%、instr/KB −0.9%~−6.2%、cache-miss/
   `feat/lexer-parser-refactor`。
 - 提交粒度：P0 工具/基线 1–2 个；P1a 3–5 个（Copy 化 → 惰性解码 → 消费点 → 清 clone）；
   P1b 4–6 个（NameTable → IR 字段 → parser → resolution/lowering → 诊断/测试）；
-  P2a 1–2 个（前瞻备忘）+ P2b 3–5 个（缓冲核心 → 逐产生式迁移）；P3 2–4 个。
+  P2a 1–2 个（前瞻备忘）+ P2b 3–5 个（缓冲核心 → 逐产生式迁移）；P3 按决策
+  规则实际触发数（预计 2–4 个）。
+- P4 候选不进入本分支：启动前另立计划/分支，并在 §3 P4 记录触发证据。
 - 每个提交可编译、可跑 focused gate；每阶段结束跑全量 gate + 矩阵并更新
   `docs/compile-benchmark.md` 的指标表。
 
 ## 7. 交付物
 
 - 代码：上述阶段全部落地，`code`/API/VM 无行为变化。
-- 工具：`compile_alloc_probe`（分配计数）、更新后的矩阵/剖析口径。
-- 文档：本计划 + `docs/compile-benchmark.md` 指标更新 + issue #32 进度勾选。
+- 工具：`compile_alloc_probe`（分配计数）、更新后的矩阵/剖析口径；可选把
+  oxc parse 探针正式化进 `scripts/benchmark/probes/`（注意 MSRV 1.95）。
+- 文档：本计划（含附录 D 会话校准记录）+ `docs/compile-benchmark.md` 指标
+  更新 + issue #32 进度勾选。
 - 度量：每阶段一份基线对比（MB/s、instr/KB、miss/KB、RSS/源MB、分配次数）。
 
 ## 附录 A P1a 逐点执行清单
@@ -899,3 +1030,37 @@ struct LookaheadEntry<'a> {
   `control_flow/oracle_for_*.rs`、`templates/`、`regexp/`；`tests/syntax.rs:392`、
   `tests/async_functions.rs:746`、`tests/parameters.rs:398,426,465`、
   `lexer.rs:3066-3342`。
+
+## 附录 D 会话校准记录（P1a/P1b 后，2026-09-24）
+
+### D.1 外部天花板对照（oxc 0.140）
+
+- oxc parse-only（rustc 1.95，临时探针 `/tmp/opencode/oxc-probe`，与 V8 同场
+  交错）：functions 87.8 / expressions 66.1 / syntax-mixed 62.7 MB/s；
+  V8 parse-only 同场 24.3 MB/s（高负载时曾测 34.4，绝对值随负载漂移）。
+  口径注意：oxc 只到 AST，不含 resolution/lowering/字节码/verify。
+- oxc 热路径无 SIMD：字节分类表 + 32 字节标量批扫（`lexer/search.rs`），
+  `memchr` 只用于注释/JSX/trivia；三语料注释 ≈1/KB、regex 0。
+- 结论：SIMD 不是追平 oxc 的前提；本计划不引入 SIMD 依赖（§3 P3 第 4 条）。
+
+### D.2 测量方法（P1a/P1b checkpoint）
+
+- 探针原地重建复用 target 缓存（约 35s）；分配计数逐次完全一致，perf 在
+  高负载下用 P1a/P1b 交错 min-of-7；跨 checkpoint 只比较同场比值。
+- 基线二进制备份 `target/p0-baseline/`；checkpoint 探针目录 `target/p1a-*`、
+  `target/p1b-*`；构建身份（依赖钉版/源补丁哈希）见各自 `build.json`。
+- P1b 测量期间本机 load ≈4/16 核；P1a 为 3 次中位数，两者口径差异已在
+  §9.6 说明，故以同条件重测 P1a 的差值为准。
+
+### D.3 会话决策记录
+
+1. 不换 Pratt：JS 前端难点在 cover grammar/ASI/箭头，不在二元优先级；表达式层
+   若重构，采用 oxc 式“单循环 + 静态优先级表”（§2.5），后置且不承诺。
+2. SIMD 降级为非依赖：ASCII 字节快路必做，`memchr` 可选 native-only，SWAR 为
+   可移植替代。
+3. 保持 fail-fast 单错误模型：不引入 oxc 式可恢复 diagnostics（§4 第 9 条），
+   只借鉴冷路径工程。
+4. arena 不进入 P1–P3（§2.4）；P3 scratch 池按决策规则评估（§3 P3 第 5 条）。
+5. P2b 必须保持 PR #30 的栈守卫不变量（§2.3、§4 第 10 条）。
+6. 分配目标修正：P1b 实测显示名字字符串仅约 1/6，剩余大头在 IR/常量/绑定/
+   字节码；新增 P4 候选“IR/常量侧分配削减”（§3 P4 第 2 条）。
