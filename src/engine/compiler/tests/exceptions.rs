@@ -31,18 +31,28 @@ fn try_catch_lowering_keeps_parameter_and_body_scopes_distinct() {
         .find(|(_, scope)| scope.kind == ScopeKind::Block && scope.parent == Some(catch_scope))
         .map(|(index, _)| super::ScopeId(index))
         .unwrap();
-    let catch_binding = root.binding_in_scope(catch_scope, "e").unwrap();
+    let catch_binding = root
+        .binding_in_scope(catch_scope, tree.names.lookup("e").unwrap())
+        .unwrap();
     let BindingStorage::Local(catch_local) = catch_binding.storage else {
         panic!("catch parameter did not use local storage");
     };
     assert!(catch_binding.is_catch_parameter);
     assert_eq!(catch_binding.kind, BindingKind::Lexical { is_const: false });
-    assert!(root.binding_in_scope(catch_body_scope, "x").is_some());
-    assert!(root.binding_in_scope(catch_body_scope, "f").is_some());
+    assert!(
+        root.binding_in_scope(catch_body_scope, tree.names.lookup("x").unwrap())
+            .is_some()
+    );
+    assert!(
+        root.binding_in_scope(catch_body_scope, tree.names.lookup("f").unwrap())
+            .is_some()
+    );
     assert_eq!(
         tree.functions
             .iter()
-            .find(|function| function.function_name.as_deref() == Some("f"))
+            .find(|function| function
+                .function_name
+                .is_some_and(|id| tree.names.name(id) == "f"))
             .and_then(|function| function.parent)
             .map(|parent| parent.definition_scope),
         Some(catch_body_scope)
@@ -165,7 +175,7 @@ fn catch_binding_patterns_compile_with_ordinary_lexical_provenance() {
 
     for name in ["value", "fallback", "rest"] {
         let binding = root
-            .binding_in_scope(catch_scope, name)
+            .binding_in_scope(catch_scope, tree.names.lookup(name).unwrap())
             .unwrap_or_else(|| panic!("catch pattern lost binding {name}"));
         assert_eq!(binding.storage_scope, catch_scope, "{name}");
         assert_eq!(binding.declaration_scope, catch_scope, "{name}");
@@ -194,7 +204,7 @@ fn catch_binding_patterns_compile_with_ordinary_lexical_provenance() {
         .expect("simple catch binding lost its scope");
     assert!(
         simple_root
-            .binding_in_scope(simple_scope, "value")
+            .binding_in_scope(simple_scope, simple.names.lookup("value").unwrap())
             .expect("simple catch binding was not registered")
             .is_catch_parameter,
         "only a simple catch binding receives the Annex-B marker"

@@ -471,36 +471,38 @@ fn parameter_assignment_prescan_retains_quickjs_bits_at_the_depth_bound() {
     let mut lexer = Lexer::new(&source);
     let first = lexer.next_token().unwrap();
     let source_span = first.span;
+    let mut names = NameTable::new();
+    let root = FunctionBuilder::new(
+        None,
+        FunctionKind::Script,
+        FunctionSourceInfo {
+            span: source_span,
+            definition: SourceOffset::try_from_usize(0).unwrap(),
+            range: None,
+        },
+        FunctionIrOptions {
+            function_name: Some(names.intern("<scan-test>")),
+            private_name_binding: false,
+            class_constructor: false,
+            derived_class_constructor: false,
+            parameters: Vec::new(),
+            defined_argument_count: 0,
+            has_simple_parameter_list: true,
+            rest_parameter: None,
+            strict: false,
+            super_capabilities: SuperCapabilities::NONE,
+        },
+        &mut names,
+    )
+    .unwrap();
     let parser = Parser {
         lexer,
         tokens: vec![first],
         cursor: 0,
         current_function: 0,
         in_mode: InMode::Allow,
-        functions: vec![
-            FunctionBuilder::new(
-                None,
-                FunctionKind::Script,
-                FunctionSourceInfo {
-                    span: source_span,
-                    definition: SourceOffset::try_from_usize(0).unwrap(),
-                    range: None,
-                },
-                FunctionIrOptions {
-                    function_name: Some("<scan-test>".to_owned()),
-                    private_name_binding: false,
-                    class_constructor: false,
-                    derived_class_constructor: false,
-                    parameters: Vec::new(),
-                    defined_argument_count: 0,
-                    has_simple_parameter_list: true,
-                    rest_parameter: None,
-                    strict: false,
-                    super_capabilities: SuperCapabilities::NONE,
-                },
-            )
-            .unwrap(),
-        ],
+        functions: vec![root],
+        names,
         module: None,
         module_declaration_export: ModuleDeclarationExport::None,
         module_declaration_export_target: None,

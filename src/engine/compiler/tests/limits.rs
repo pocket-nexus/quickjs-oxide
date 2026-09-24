@@ -133,6 +133,7 @@ fn quickjs_template_stack_overflow_is_deferred_until_after_parsing() {
 #[test]
 fn quickjs_closure_slot_limit_is_65534_and_uses_internal_error() {
     let span = Span::new(Position::new(0, 1, 1), Position::new(0, 1, 1));
+    let mut names = NameTable::new();
     let mut function = FunctionIr::new(
         None,
         FunctionKind::Ordinary,
@@ -153,6 +154,7 @@ fn quickjs_closure_slot_limit_is_65534_and_uses_internal_error() {
             strict: false,
             super_capabilities: SuperCapabilities::NONE,
         },
+        &mut names,
     )
     .unwrap();
     function.closure_variables = (0..MAX_LOCAL_VARIABLES - 1)

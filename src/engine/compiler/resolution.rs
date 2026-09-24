@@ -11,6 +11,8 @@ use crate::engine::compiler::model::ir::{
     SpannedIrOp,
 };
 use crate::engine::compiler::model::scope::{ScopeId, ScopeKind};
+use crate::engine::compiler::names::NameId;
+use crate::engine::compiler::names::NameTable;
 use crate::engine::compiler::parser::diagnostics::source_span;
 use crate::engine::compiler::relocation::{insert_hoist_fragment, prepend_hoist_prefix};
 
@@ -128,25 +130,26 @@ pub(super) fn resolve_identifiers(tree: &mut FunctionTree) -> Result<(), Error> 
     // resolves the parent's ordinary identifiers. The entry event matters:
     // `get_closure_var` is first-slot-wins, so a descendant eval can establish
     // an ancestor relay before that ancestor's own bytecode is resolved.
+    let import_meta_name = tree
+        .names
+        .lookup(crate::engine::code::module::MODULE_IMPORT_META_BINDING_NAME);
     for event in function_resolution_events(tree)? {
         match event {
             FunctionResolutionEvent::Enter(function_id) => {
                 link_eval_environments(tree, function_id)?;
             }
             FunctionResolutionEvent::Resolve(function_id) => {
-                let unresolved = tree.functions[function_id]
-                    .ops
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(index, operation)| match &operation.op {
+                let mut unresolved = Vec::new();
+                for (index, operation) in tree.functions[function_id].ops.iter().enumerate() {
+                    match &operation.op {
                         IrOp::Identifier {
                             name,
                             span,
                             scope,
                             access,
-                        } => Some((
+                        } => unresolved.push((
                             index,
-                            name.clone(),
+                            *name,
                             *span,
                             *scope,
                             UnresolvedAccess::Identifier(*access),
@@ -156,16 +159,18 @@ pub(super) fn resolve_identifiers(tree: &mut FunctionTree) -> Result<(), Error> 
                             span,
                             scope,
                             access,
-                        } => Some((
+                        } => unresolved.push((
                             index,
-                            name.clone(),
+                            *name,
                             *span,
                             *scope,
                             UnresolvedAccess::IdentifierReference(*access),
                         )),
-                        IrOp::ImportMeta { span, scope } => Some((
+                        IrOp::ImportMeta { span, scope } => unresolved.push((
                             index,
-                            crate::engine::code::module::MODULE_IMPORT_META_BINDING_NAME.to_owned(),
+                            import_meta_name.ok_or_else(|| {
+                                Error::internal("import.meta binding name was not interned")
+                            })?,
                             *span,
                             *scope,
                             UnresolvedAccess::ImportMeta,
@@ -175,28 +180,28 @@ pub(super) fn resolve_identifiers(tree: &mut FunctionTree) -> Result<(), Error> 
                             span,
                             scope,
                             access,
-                        } => Some((
+                        } => unresolved.push((
                             index,
-                            name.clone(),
+                            *name,
                             *span,
                             *scope,
                             UnresolvedAccess::PrivateField(*access),
                         )),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>();
+                        _ => {}
+                    }
+                }
 
                 for (operation_index, name, span, scope, access) in unresolved {
                     let operation = match access {
                         UnresolvedAccess::Identifier(access) => {
-                            resolve_identifier(tree, function_id, scope, &name, span, access)?
+                            resolve_identifier(tree, function_id, scope, name, span, access)?
                         }
                         UnresolvedAccess::IdentifierReference(access) => {
                             resolve_identifier_reference(
                                 tree,
                                 function_id,
                                 scope,
-                                &name,
+                                name,
                                 span,
                                 access,
                             )?
@@ -207,7 +212,7 @@ pub(super) fn resolve_identifiers(tree: &mut FunctionTree) -> Result<(), Error> 
                                 tree,
                                 function_id,
                                 scope,
-                                &name,
+                                name,
                                 access,
                             )?
                         }
@@ -242,6 +247,18 @@ pub(super) fn resolve_identifiers(tree: &mut FunctionTree) -> Result<(), Error> 
 /// syntactic direct-eval site. Keeping this as a separate prepass is essential:
 /// children authored before the eval call must resolve through the same object.
 fn install_eval_variable_objects(tree: &mut FunctionTree) -> Result<(), Error> {
+    let eval_object_name = tree
+        .names
+        .lookup(EVAL_VARIABLE_OBJECT_LOCAL_NAME)
+        .ok_or_else(|| Error::internal("eval variable object name was not interned"))?;
+    let arg_eval_object_name = tree
+        .names
+        .lookup(ARG_EVAL_VARIABLE_OBJECT_LOCAL_NAME)
+        .ok_or_else(|| Error::internal("arg eval variable object name was not interned"))?;
+    let arguments_name = tree
+        .names
+        .lookup("arguments")
+        .ok_or_else(|| Error::internal("arguments name was not interned"))?;
     for function in &mut tree.functions {
         let has_direct_eval = matches!(
             function.kind,
@@ -272,16 +289,16 @@ fn install_eval_variable_objects(tree: &mut FunctionTree) -> Result<(), Error> {
         }
         function.eval_variable_object_local = Some(allocate_hidden_eval_object(
             function,
-            EVAL_VARIABLE_OBJECT_LOCAL_NAME,
+            eval_object_name,
             BindingKind::EvalVariableObject,
         )?);
         if function.parameter_scope.is_some() {
             function.arg_eval_variable_object_local = Some(allocate_hidden_eval_object(
                 function,
-                ARG_EVAL_VARIABLE_OBJECT_LOCAL_NAME,
+                arg_eval_object_name,
                 BindingKind::ArgEvalVariableObject,
             )?);
-            install_parameter_eval_arguments(function)?;
+            install_parameter_eval_arguments(function, arguments_name)?;
         }
     }
     Ok(())
@@ -289,7 +306,7 @@ fn install_eval_variable_objects(tree: &mut FunctionTree) -> Result<(), Error> {
 
 fn allocate_hidden_eval_object(
     function: &mut FunctionIr,
-    name: &'static str,
+    name: NameId,
     kind: BindingKind,
 ) -> Result<u16, Error> {
     if function.locals.len() >= MAX_LOCAL_VARIABLES {
@@ -300,11 +317,11 @@ fn allocate_hidden_eval_object(
     }
     let index = u16::try_from(function.locals.len())
         .map_err(|_| Error::new(ErrorKind::JsInternal, "too many local variables"))?;
-    function.locals.push(name.to_owned());
+    function.locals.push(name);
     function.add_binding(
         function.var_scope,
         function.var_scope,
-        name.to_owned(),
+        name,
         BindingStorage::Local(index),
         kind,
         None,
@@ -318,7 +335,10 @@ fn allocate_hidden_eval_object(
 /// alias. A named physical `arguments` parameter does not suppress the body
 /// object on this path; a BindingPattern body local is reused and later
 /// overwritten by the authenticated parameter copy.
-fn install_parameter_eval_arguments(function: &mut FunctionIr) -> Result<(), Error> {
+fn install_parameter_eval_arguments(
+    function: &mut FunctionIr,
+    arguments_name: NameId,
+) -> Result<(), Error> {
     if !matches!(function.kind, FunctionKind::Ordinary | FunctionKind::Method) {
         return Ok(());
     }
@@ -332,7 +352,7 @@ fn install_parameter_eval_arguments(function: &mut FunctionIr) -> Result<(), Err
             .rev()
             .filter_map(|binding| function.bindings.get(binding.0))
             .find_map(|binding| {
-                (binding.name == "arguments"
+                (binding.name == arguments_name
                     && binding.kind == BindingKind::Normal
                     && matches!(binding.storage, BindingStorage::Local(_)))
                 .then_some(binding.storage)
@@ -349,11 +369,11 @@ fn install_parameter_eval_arguments(function: &mut FunctionIr) -> Result<(), Err
                 }
                 let local = u16::try_from(function.locals.len())
                     .map_err(|_| Error::new(ErrorKind::JsInternal, "too many local variables"))?;
-                function.locals.push("arguments".to_owned());
+                function.locals.push(arguments_name);
                 function.add_binding(
                     function.var_scope,
                     function.var_scope,
-                    "arguments".to_owned(),
+                    arguments_name,
                     BindingStorage::Local(local),
                     BindingKind::Normal,
                     None,
@@ -367,7 +387,7 @@ fn install_parameter_eval_arguments(function: &mut FunctionIr) -> Result<(), Err
     if function.scopes[parameter_scope.0]
         .bindings
         .iter()
-        .any(|binding| function.bindings[binding.0].name == "arguments")
+        .any(|binding| function.bindings[binding.0].name == arguments_name)
     {
         return Ok(());
     }
@@ -379,11 +399,11 @@ fn install_parameter_eval_arguments(function: &mut FunctionIr) -> Result<(), Err
     }
     let local = u16::try_from(function.locals.len())
         .map_err(|_| Error::new(ErrorKind::JsInternal, "too many local variables"))?;
-    function.locals.push("arguments".to_owned());
+    function.locals.push(arguments_name);
     function.add_binding(
         parameter_scope,
         parameter_scope,
-        "arguments".to_owned(),
+        arguments_name,
         BindingStorage::Local(local),
         BindingKind::Lexical { is_const: false },
         None,
@@ -793,7 +813,7 @@ fn link_eval_environment(
                         storage,
                         kind: binding_kind,
                     },
-                    &name,
+                    name,
                     true,
                     true,
                 )?;
@@ -810,7 +830,7 @@ fn link_eval_environment(
                 (EvalBindingSource::Closure(index), resolved_kind)
             };
             bindings.push(EvalBinding {
-                name: JsString::try_from_utf8(&name)?,
+                name: JsString::try_from_utf8(tree.names.name(name))?,
                 source,
                 is_lexical: matches!(
                     resolved_kind,
@@ -879,7 +899,7 @@ fn link_eval_environment(
             let source = if consuming_function == 0 {
                 EvalBindingSource::Closure(external_index)
             } else {
-                let name = binding.name.to_utf8_lossy();
+                let name = tree.names.intern(&binding.name.to_utf8_lossy());
                 let (closure, relayed_kind) = capture_binding_path(
                     tree,
                     0,
@@ -888,7 +908,7 @@ fn link_eval_environment(
                         storage: BindingStorage::External(external_index),
                         kind: binding_kind,
                     },
-                    &name,
+                    name,
                     true,
                     false,
                 )?;
@@ -1023,7 +1043,7 @@ fn seed_global_declarations(tree: &mut FunctionTree) -> Result<(), Error> {
     for (declaration_index, (name, is_lexical, is_const, is_function)) in
         declarations.into_iter().enumerate()
     {
-        let name_index = ensure_string_constant(&mut tree.functions[0], &name)?;
+        let name_index = ensure_string_constant(&mut tree.functions[0], tree.names.name(name))?;
         let closure_index = push_closure_variable(
             &mut tree.functions[0],
             ClosureVariable {
@@ -1064,7 +1084,7 @@ fn seed_module_bindings(tree: &mut FunctionTree) -> Result<(), Error> {
     for (binding_index, (name, declaration, import, is_import_meta)) in
         bindings.into_iter().enumerate()
     {
-        let name_index = ensure_string_constant(&mut tree.functions[0], &name)?;
+        let name_index = ensure_string_constant(&mut tree.functions[0], tree.names.name(name))?;
         let (source, is_lexical, is_const, kind) = if is_import_meta {
             if declaration.is_some() || import.is_some() {
                 return Err(Error::internal(
@@ -1272,7 +1292,10 @@ fn install_module_declaration_hoists(tree: &mut FunctionTree) -> Result<(), Erro
 /// record is retained and writes `undefined`; this preserves QuickJS's
 /// observable overwrite behavior across repeated eval invocations.
 fn install_eval_declaration_hoists(tree: &mut FunctionTree) -> Result<(), Error> {
-    let Some(function) = tree.functions.first_mut() else {
+    let FunctionTree {
+        functions, names, ..
+    } = tree;
+    let Some(function) = functions.first_mut() else {
         return Err(Error::internal("compiler produced no root function"));
     };
     if function.eval_declarations_installed {
@@ -1297,8 +1320,8 @@ fn install_eval_declaration_hoists(tree: &mut FunctionTree) -> Result<(), Error>
             .saturating_mul(2)
             .saturating_add(usize::from(function.eval_redeclaration.is_some())),
     );
-    if let Some(name) = function.eval_redeclaration.clone() {
-        let name = ensure_string_constant(function, &name)?;
+    if let Some(name) = function.eval_redeclaration {
+        let name = ensure_string_constant(function, names.name(name))?;
         prefix.push(SpannedIrOp {
             op: IrOp::Bytecode(Instruction::ThrowRedeclaration(name)),
             pc_site: None,
@@ -1322,7 +1345,7 @@ fn install_eval_declaration_hoists(tree: &mut FunctionTree) -> Result<(), Error>
 
         let write = match declaration.target {
             EvalDeclarationTarget::Dynamic(source) => {
-                let name = ensure_string_constant(function, &declaration.name)?;
+                let name = ensure_string_constant(function, names.name(declaration.name))?;
                 Some(IrOp::Bytecode(Instruction::DefineEvalVariable {
                     source,
                     name,
@@ -1332,10 +1355,11 @@ fn install_eval_declaration_hoists(tree: &mut FunctionTree) -> Result<(), Error>
                 EvalDeclarationValue::Undefined => None,
                 EvalDeclarationValue::Function(_) => Some(closure_binding_operation(
                     function,
+                    names,
                     index,
                     kind,
                     IdentifierAccess::Put,
-                    &declaration.name,
+                    declaration.name,
                 )?),
             },
         };
@@ -1555,11 +1579,19 @@ pub(super) fn ordered_hoisted_functions(
     Ok(hoists)
 }
 
+/// Read back a name the parser prologue interned. Resolution never invents
+/// authored names, so a missing entry is an internal invariant violation.
+pub(super) fn lookup_interned_name(tree: &FunctionTree, name: &str) -> Result<NameId, Error> {
+    tree.names
+        .lookup(name)
+        .ok_or_else(|| Error::internal("compiler name was not interned by the parser"))
+}
+
 fn resolve_identifier(
     tree: &mut FunctionTree,
     function_id: FunctionId,
     use_scope: ScopeId,
-    name: &str,
+    name: NameId,
     span: Span,
     access: IdentifierAccess,
 ) -> Result<IrOp, Error> {
@@ -1578,16 +1610,24 @@ fn resolve_identifier(
             return Ok(IrOp::Bytecode(Instruction::PutVar(closure_index)));
         }
         if let BindingStorage::External(index) = binding.storage {
+            let FunctionTree {
+                functions, names, ..
+            } = tree;
             return closure_binding_operation(
-                &mut tree.functions[function_id],
+                &mut functions[function_id],
+                names,
                 index,
                 binding.kind,
                 IdentifierAccess::Put,
                 name,
             );
         }
+        let FunctionTree {
+            functions, names, ..
+        } = tree;
         return binding_instruction(
-            &mut tree.functions[function_id],
+            &mut functions[function_id],
+            names,
             binding,
             IdentifierAccess::Put,
             name,
@@ -1595,8 +1635,12 @@ fn resolve_identifier(
         .map(IrOp::Bytecode);
     }
     let path = resolve_identifier_path(tree, function_id, use_scope, name, span, access)?;
+    let FunctionTree {
+        functions, names, ..
+    } = tree;
     wrap_dynamic_identifier(
-        &mut tree.functions[function_id],
+        &mut functions[function_id],
+        names,
         name,
         access,
         path.sources,
@@ -1621,6 +1665,10 @@ fn resolve_import_meta(
                 .then_some(module::ModuleBindingId(index))
         })
         .ok_or_else(|| Error::internal("import.meta has no hidden module binding"))?;
+    let name = tree
+        .names
+        .lookup(crate::engine::code::module::MODULE_IMPORT_META_BINDING_NAME)
+        .ok_or_else(|| Error::internal("import.meta binding name was not interned"))?;
     resolved_binding_operation(
         tree,
         0,
@@ -1630,7 +1678,7 @@ fn resolve_import_meta(
             kind: BindingKind::Lexical { is_const: true },
         },
         IdentifierAccess::Get,
-        crate::engine::code::module::MODULE_IMPORT_META_BINDING_NAME,
+        name,
     )
 }
 
@@ -1645,7 +1693,7 @@ fn resolve_identifier_reference(
     tree: &mut FunctionTree,
     function_id: FunctionId,
     use_scope: ScopeId,
-    name: &str,
+    name: NameId,
     span: Span,
     access: IdentifierReferenceAccess,
 ) -> Result<IrOp, Error> {
@@ -1663,7 +1711,12 @@ fn resolve_identifier_reference(
     } else {
         (Vec::new(), path.sources)
     };
-    let name = ensure_string_constant(&mut tree.functions[function_id], name)?;
+    let name = {
+        let FunctionTree {
+            functions, names, ..
+        } = tree;
+        ensure_string_constant(&mut functions[function_id], names.name(name))?
+    };
     Ok(IrOp::DynamicIdentifierReference {
         name,
         access,
@@ -1712,12 +1765,12 @@ fn resolve_identifier_path(
     tree: &mut FunctionTree,
     consuming_function: FunctionId,
     use_scope: ScopeId,
-    name: &str,
+    name: NameId,
     span: Span,
     access: IdentifierAccess,
 ) -> Result<ResolvedIdentifierPath, Error> {
     let mut sources = Vec::new();
-    let pseudo = PseudoBinding::from_name(name);
+    let pseudo = PseudoBinding::from_name(tree.names.name(name));
     if pseudo.is_some()
         && !matches!(
             access,
@@ -1793,12 +1846,13 @@ fn resolve_identifier_path(
             }
 
             if let Some(binding) = with_binding {
+                let with_name = lookup_interned_name(tree, WITH_OBJECT_LOCAL_NAME)?;
                 push_dynamic_environment_source(
                     tree,
                     owner,
                     consuming_function,
                     binding,
-                    WITH_OBJECT_LOCAL_NAME,
+                    with_name,
                     &mut sources,
                 )?;
             }
@@ -1820,7 +1874,7 @@ fn resolve_identifier_path(
             // logically rooted before the function's own eval variable
             // object. A sloppy delete of implicit `arguments` is false
             // without materializing it.
-            if name == "arguments"
+            if tree.names.name(name) == "arguments"
                 && access == IdentifierAccess::Delete
                 && matches!(
                     tree.functions[owner].kind,
@@ -1942,7 +1996,7 @@ fn resolved_binding_operation(
     consuming_function: FunctionId,
     binding: ResolvedBinding,
     access: IdentifierAccess,
-    name: &str,
+    name: NameId,
 ) -> Result<IrOp, Error> {
     if binding.storage == BindingStorage::Global {
         return global_declaration_operation(tree, consuming_function, binding.kind, access, name);
@@ -1962,8 +2016,12 @@ fn resolved_binding_operation(
                         Some(module::ModuleDeclarationOrigin::Lexical { .. })
                     )
             });
+        let FunctionTree {
+            functions, names, ..
+        } = tree;
         return module_binding_operation(
-            &mut tree.functions[consuming_function],
+            &mut functions[consuming_function],
+            names,
             index,
             binding.kind,
             access,
@@ -1973,16 +2031,24 @@ fn resolved_binding_operation(
     }
     if defining_function == consuming_function {
         if let BindingStorage::External(index) = binding.storage {
+            let FunctionTree {
+                functions, names, ..
+            } = tree;
             return closure_binding_operation(
-                &mut tree.functions[consuming_function],
+                &mut functions[consuming_function],
+                names,
                 index,
                 binding.kind,
                 access,
                 name,
             );
         }
+        let FunctionTree {
+            functions, names, ..
+        } = tree;
         return binding_instruction(
-            &mut tree.functions[consuming_function],
+            &mut functions[consuming_function],
+            names,
             binding,
             access,
             name,
@@ -1998,8 +2064,12 @@ fn resolved_binding_operation(
         false,
         false,
     )?;
+    let FunctionTree {
+        functions, names, ..
+    } = tree;
     closure_binding_operation(
-        &mut tree.functions[consuming_function],
+        &mut functions[consuming_function],
+        names,
         closure_index,
         kind,
         access,
@@ -2048,10 +2118,11 @@ fn binding_storage_is_module_import_view(
 
 fn module_binding_operation(
     function: &mut FunctionIr,
+    names: &NameTable,
     index: u16,
     kind: BindingKind,
     access: IdentifierAccess,
-    name: &str,
+    name: NameId,
     import_lexical_collision: bool,
 ) -> Result<IrOp, Error> {
     if access == IdentifierAccess::Initialize {
@@ -2067,7 +2138,7 @@ fn module_binding_operation(
             )),
         };
     }
-    closure_binding_operation(function, index, kind, access, name)
+    closure_binding_operation(function, names, index, kind, access, name)
 }
 
 fn push_owned_eval_variable_sources(
@@ -2095,7 +2166,7 @@ fn push_owned_eval_variable_sources(
                 storage: BindingStorage::Local(index),
                 kind: BindingKind::EvalVariableObject,
             },
-            EVAL_VARIABLE_OBJECT_LOCAL_NAME,
+            lookup_interned_name(tree, EVAL_VARIABLE_OBJECT_LOCAL_NAME)?,
             sources,
         )?;
     }
@@ -2108,7 +2179,7 @@ fn push_owned_eval_variable_sources(
                 storage: BindingStorage::Local(index),
                 kind: BindingKind::ArgEvalVariableObject,
             },
-            ARG_EVAL_VARIABLE_OBJECT_LOCAL_NAME,
+            lookup_interned_name(tree, ARG_EVAL_VARIABLE_OBJECT_LOCAL_NAME)?,
             sources,
         )?;
     }
@@ -2120,7 +2191,7 @@ fn push_dynamic_environment_source(
     defining_function: FunctionId,
     consuming_function: FunctionId,
     binding: ResolvedBinding,
-    sentinel: &str,
+    sentinel: NameId,
     sources: &mut Vec<DynamicEnvironmentSource>,
 ) -> Result<(), Error> {
     let storage = if defining_function == consuming_function {
@@ -2182,7 +2253,7 @@ fn resolve_eval_external_chain(
     tree: &mut FunctionTree,
     defining_function: FunctionId,
     consuming_function: FunctionId,
-    name: &str,
+    name: NameId,
     sources: &mut Vec<DynamicEnvironmentSource>,
 ) -> Result<Option<ResolvedBinding>, Error> {
     let external = tree.functions[defining_function].external_bindings.clone();
@@ -2198,15 +2269,16 @@ fn resolve_eval_external_chain(
             let (kind, sentinel) = match binding.kind {
                 ClosureVariableKind::EvalVariableObject => (
                     BindingKind::EvalVariableObject,
-                    EVAL_VARIABLE_OBJECT_LOCAL_NAME,
+                    lookup_interned_name(tree, EVAL_VARIABLE_OBJECT_LOCAL_NAME)?,
                 ),
                 ClosureVariableKind::ArgEvalVariableObject => (
                     BindingKind::ArgEvalVariableObject,
-                    ARG_EVAL_VARIABLE_OBJECT_LOCAL_NAME,
+                    lookup_interned_name(tree, ARG_EVAL_VARIABLE_OBJECT_LOCAL_NAME)?,
                 ),
-                ClosureVariableKind::WithObject => {
-                    (BindingKind::WithObject, WITH_OBJECT_LOCAL_NAME)
-                }
+                ClosureVariableKind::WithObject => (
+                    BindingKind::WithObject,
+                    lookup_interned_name(tree, WITH_OBJECT_LOCAL_NAME)?,
+                ),
                 _ => unreachable!(),
             };
             push_dynamic_environment_source(
@@ -2222,7 +2294,7 @@ fn resolve_eval_external_chain(
             )?;
             continue;
         }
-        if binding.name.to_utf8_lossy() != name {
+        if binding.name.to_utf8_lossy() != tree.names.name(name) {
             continue;
         }
         let kind =
@@ -2238,7 +2310,8 @@ fn resolve_eval_external_chain(
 
 fn wrap_dynamic_identifier(
     function: &mut FunctionIr,
-    name: &str,
+    names: &NameTable,
+    name: NameId,
     access: IdentifierAccess,
     sources: Vec<DynamicEnvironmentSource>,
     fallback: IrOp,
@@ -2256,7 +2329,7 @@ fn wrap_dynamic_identifier(
             "declaration-only identifier access crossed a dynamic environment",
         ));
     }
-    let name = ensure_string_constant(function, name)?;
+    let name = ensure_string_constant(function, names.name(name))?;
     Ok(IrOp::DynamicIdentifier {
         name,
         access,
@@ -2270,7 +2343,7 @@ fn global_declaration_operation(
     consuming_function: FunctionId,
     kind: BindingKind,
     access: IdentifierAccess,
-    name: &str,
+    name: NameId,
 ) -> Result<IrOp, Error> {
     let binding_is_lexical = match kind {
         BindingKind::Normal => false,
@@ -2345,7 +2418,7 @@ fn global_declaration_operation(
 fn capture_global_declaration_path(
     tree: &mut FunctionTree,
     consuming_function: FunctionId,
-    name: &str,
+    name: NameId,
     is_lexical: bool,
 ) -> Result<u16, Error> {
     let mut path = Vec::new();
@@ -2374,7 +2447,12 @@ fn capture_global_declaration_path(
     let mut source = ClosureSource::ParentGlobal(root_index);
     let mut final_index = Some(root_index);
     for function_id in path.into_iter().skip(1) {
-        let name_index = ensure_string_constant(&mut tree.functions[function_id], name)?;
+        let name_index = {
+            let FunctionTree {
+                functions, names, ..
+            } = tree;
+            ensure_string_constant(&mut functions[function_id], names.name(name))?
+        };
         let descriptor = ClosureVariable {
             source,
             name: ClosureVariableName::Constant(name_index),
@@ -2395,7 +2473,7 @@ fn capture_global_declaration_path(
 fn capture_global_path(
     tree: &mut FunctionTree,
     consuming_function: FunctionId,
-    name: &str,
+    name: NameId,
 ) -> Result<u16, Error> {
     let mut path = Vec::new();
     let mut cursor = Some(consuming_function);
@@ -2410,7 +2488,12 @@ fn capture_global_path(
     let mut source = ClosureSource::Global;
     let mut final_index = None;
     for function_id in path {
-        let name_index = ensure_string_constant(&mut tree.functions[function_id], name)?;
+        let name_index = {
+            let FunctionTree {
+                functions, names, ..
+            } = tree;
+            ensure_string_constant(&mut functions[function_id], names.name(name))?
+        };
         let descriptor = ClosureVariable {
             source,
             name: ClosureVariableName::Constant(name_index),
@@ -2439,21 +2522,20 @@ pub(super) fn ensure_string_constant(function: &mut FunctionIr, name: &str) -> R
 fn find_or_create_parameter_special_binding(
     tree: &mut FunctionTree,
     function_id: FunctionId,
-    name: &str,
+    name: NameId,
     span: Span,
 ) -> Result<Option<ResolvedBinding>, Error> {
     let function = tree
         .functions
         .get(function_id)
         .ok_or_else(|| Error::internal("parameter binding owner is out of bounds"))?;
-    let arguments = name == "arguments"
+    let arguments = tree.names.name(name) == "arguments"
         && matches!(function.kind, FunctionKind::Ordinary | FunctionKind::Method)
         && !function
             .parameters
             .iter()
-            .any(|parameter| parameter.as_deref() == Some(name));
-    let private_name =
-        function.private_name_binding && function.function_name.as_deref() == Some(name);
+            .any(|parameter| *parameter == Some(name));
+    let private_name = function.private_name_binding && function.function_name == Some(name);
     if arguments {
         find_or_create_own_binding(tree, function_id, ScopeId(0), name, span)
     } else if private_name {
@@ -2470,14 +2552,14 @@ fn find_or_create_parameter_special_binding(
 fn find_or_create_private_function_name_binding(
     tree: &mut FunctionTree,
     function_id: FunctionId,
-    name: &str,
+    name: NameId,
     span: Span,
 ) -> Result<Option<ResolvedBinding>, Error> {
     let function = tree
         .functions
         .get(function_id)
         .ok_or_else(|| Error::internal("function-name binding owner is out of bounds"))?;
-    if !function.private_name_binding || function.function_name.as_deref() != Some(name) {
+    if !function.private_name_binding || function.function_name != Some(name) {
         return Ok(None);
     }
     if let Some(index) = function.function_name_local {
@@ -2517,16 +2599,9 @@ fn find_or_create_private_function_name_binding(
         .iter()
         .position(|binding| function.bindings[binding.0].name == name)
         .unwrap_or(function.scopes[root.0].bindings.len());
-    function.locals.push(name.to_owned());
+    function.locals.push(name);
     function.function_name_local = Some(index);
-    let binding = function.add_binding(
-        root,
-        root,
-        name.to_owned(),
-        BindingStorage::Local(index),
-        kind,
-        None,
-    );
+    let binding = function.add_binding(root, root, name, BindingStorage::Local(index), kind, None);
     let appended = function.scopes[root.0]
         .bindings
         .pop()
@@ -2548,9 +2623,10 @@ pub(super) fn find_or_create_own_binding(
     tree: &mut FunctionTree,
     function_id: FunctionId,
     start_scope: ScopeId,
-    name: &str,
+    name: NameId,
     span: Span,
 ) -> Result<Option<ResolvedBinding>, Error> {
+    let is_arguments = tree.names.name(name) == "arguments";
     let function = &tree.functions[function_id];
     if start_scope.0 >= function.scopes.len() {
         return Err(Error::internal("identifier use scope is out of bounds"));
@@ -2558,14 +2634,13 @@ pub(super) fn find_or_create_own_binding(
     if let Some(binding) = function.binding_from_scope(start_scope, name) {
         return Ok(Some(binding));
     }
-    if name == "arguments" && function.arguments_forbidden {
+    if is_arguments && function.arguments_forbidden {
         // QuickJS's parser rejects true IdentifierReferences earlier, but its
         // object-shorthand path deliberately falls through this synthetic
         // initializer frame and may capture an enclosing arguments binding.
         return Ok(None);
     }
-    if name == "arguments" && matches!(function.kind, FunctionKind::Ordinary | FunctionKind::Method)
-    {
+    if is_arguments && matches!(function.kind, FunctionKind::Ordinary | FunctionKind::Method) {
         let function = &mut tree.functions[function_id];
         if function.arguments_local.is_some() {
             return Err(Error::internal(
@@ -2580,12 +2655,12 @@ pub(super) fn find_or_create_own_binding(
         }
         let index = u16::try_from(function.locals.len())
             .map_err(|_| Error::new(ErrorKind::JsInternal, "too many local variables"))?;
-        function.locals.push(name.to_owned());
+        function.locals.push(name);
         function.arguments_local = Some(index);
         function.add_binding(
             function.var_scope,
             function.var_scope,
-            name.to_owned(),
+            name,
             BindingStorage::Local(index),
             BindingKind::Normal,
             None,
@@ -2600,9 +2675,10 @@ pub(super) fn find_or_create_own_binding(
 
 fn binding_instruction(
     function: &mut FunctionIr,
+    names: &NameTable,
     binding: ResolvedBinding,
     access: IdentifierAccess,
-    name: &str,
+    name: NameId,
 ) -> Result<Instruction, Error> {
     match (binding.storage, binding.kind, access) {
         (BindingStorage::Module(_), _, _) => Err(Error::internal(
@@ -2712,14 +2788,14 @@ fn binding_instruction(
             BindingKind::Lexical { is_const: true },
             IdentifierAccess::Put | IdentifierAccess::Set,
         ) => {
-            let name = ensure_string_constant(function, name)?;
+            let name = ensure_string_constant(function, names.name(name))?;
             Ok(Instruction::ThrowReadOnly(name))
         }
         (
             BindingStorage::Local(_),
             BindingKind::FunctionName { is_const },
             IdentifierAccess::Put | IdentifierAccess::Set,
-        ) => function_name_write_instruction(function, name, is_const, access),
+        ) => function_name_write_instruction(function, names, name, is_const, access),
         (_, _, IdentifierAccess::AnnexBPut) => Err(Error::internal(
             "Annex B write reached ordinary binding instruction selection",
         )),
@@ -2728,10 +2804,11 @@ fn binding_instruction(
 
 fn closure_binding_operation(
     function: &mut FunctionIr,
+    names: &NameTable,
     index: u16,
     kind: BindingKind,
     access: IdentifierAccess,
-    name: &str,
+    name: NameId,
 ) -> Result<IrOp, Error> {
     match (kind, access) {
         (
@@ -2785,11 +2862,12 @@ fn closure_binding_operation(
             BindingKind::Lexical { is_const: true },
             IdentifierAccess::Put | IdentifierAccess::Set,
         ) => {
-            let name = ensure_string_constant(function, name)?;
+            let name = ensure_string_constant(function, names.name(name))?;
             Ok(IrOp::Bytecode(Instruction::ThrowReadOnly(name)))
         }
         (BindingKind::FunctionName { is_const }, IdentifierAccess::Put | IdentifierAccess::Set) => {
-            function_name_write_instruction(function, name, is_const, access).map(IrOp::Bytecode)
+            function_name_write_instruction(function, names, name, is_const, access)
+                .map(IrOp::Bytecode)
         }
         (_, IdentifierAccess::AnnexBPut) => {
             Err(Error::internal("Annex B write crossed a function boundary"))
@@ -2799,12 +2877,13 @@ fn closure_binding_operation(
 
 fn function_name_write_instruction(
     function: &mut FunctionIr,
-    name: &str,
+    names: &NameTable,
+    name: NameId,
     is_const: bool,
     access: IdentifierAccess,
 ) -> Result<Instruction, Error> {
     if is_const {
-        let name = ensure_string_constant(function, name)?;
+        let name = ensure_string_constant(function, names.name(name))?;
         return Ok(Instruction::ThrowReadOnly(name));
     }
     Ok(match access {
@@ -2843,7 +2922,7 @@ pub(super) fn capture_binding_path(
     defining_function: FunctionId,
     consuming_function: FunctionId,
     binding: ResolvedBinding,
-    name: &str,
+    name: NameId,
     retain_name: bool,
     erase_function_name: bool,
 ) -> Result<(u16, BindingKind), Error> {
@@ -2910,7 +2989,7 @@ pub(super) fn capture_binding_path(
                     | BindingKind::PrivateSetter { .. }
                     | BindingKind::PrivateGetterSetter { .. }
             ) {
-            ClosureVariableName::Constant(ensure_string_constant(function, name)?)
+            ClosureVariableName::Constant(ensure_string_constant(function, tree.names.name(name))?)
         } else {
             ClosureVariableName::None
         };

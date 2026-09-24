@@ -261,6 +261,7 @@ pub(super) fn lower_unlinked_tree(
 
     let FunctionTree {
         functions: tree_functions,
+        names,
         source,
         filename,
         module: _,
@@ -337,8 +338,7 @@ pub(super) fn lower_unlinked_tree(
             .parameters
             .iter()
             .map(|name| {
-                name.as_deref()
-                    .map(JsString::try_from_utf8)
+                name.map(|id| JsString::try_from_utf8(names.name(id)))
                     .transpose()
                     .map(UnlinkedVariableDefinition::ordinary)
                     .map_err(Error::from)
@@ -367,7 +367,7 @@ pub(super) fn lower_unlinked_tree(
             {
                 None
             } else {
-                Some(JsString::try_from_utf8(&binding.name)?)
+                Some(JsString::try_from_utf8(names.name(binding.name))?)
             };
             *definition = match binding.kind {
                 BindingKind::Lexical { is_const } => {
@@ -608,8 +608,7 @@ pub(super) fn lower_unlinked_tree(
         };
         let func_name = function
             .function_name
-            .as_deref()
-            .map(JsString::try_from_utf8)
+            .map(|id| JsString::try_from_utf8(names.name(id)))
             .transpose()?;
         let debug = match debug_info {
             DebugInfoMode::Full | DebugInfoMode::StripSource => Some(build_unlinked_debug(
@@ -1429,6 +1428,8 @@ pub(in crate::engine::compiler) fn unlinked_primitive(
 
 #[cfg(test)]
 mod tests {
+    use crate::engine::compiler::names::NameTable;
+
     use super::*;
     use crate::engine::compiler::lexer::{Position, Span};
     use crate::engine::compiler::{
@@ -1513,6 +1514,8 @@ mod tests {
     fn captured_with_object_has_close_lifetime_without_lexical_tdz() {
         let make_function = |strict| {
             let span = Span::new(Position::new(0, 1, 1), Position::new(0, 1, 1));
+            let mut names = NameTable::new();
+            let with_object = names.intern(WITH_OBJECT_LOCAL_NAME);
             let mut function = FunctionIr::new(
                 None,
                 FunctionKind::Ordinary,
@@ -1533,6 +1536,7 @@ mod tests {
                     strict,
                     super_capabilities: SuperCapabilities::NONE,
                 },
+                &mut names,
             )
             .unwrap();
             let scope = ScopeId(function.scopes.len());
@@ -1543,27 +1547,28 @@ mod tests {
                 bindings: Vec::new(),
                 bindings_by_name: Default::default(),
             });
-            function.locals.push(WITH_OBJECT_LOCAL_NAME.to_owned());
+            function.locals.push(with_object);
             function.add_binding(
                 scope,
                 scope,
-                WITH_OBJECT_LOCAL_NAME.to_owned(),
+                with_object,
                 BindingStorage::Local(0),
                 BindingKind::WithObject,
                 None,
             );
-            (function, scope)
+            (function, scope, names)
         };
 
-        let (function, scope) = make_function(false);
+        let (function, scope, _) = make_function(false);
         let lifecycles = build_scope_lifecycles(&function, &[true]).unwrap();
         assert!(lifecycles[scope.0].tdz_locals.is_empty());
         assert!(lifecycles[scope.0].function_entries.is_empty());
         assert_eq!(lifecycles[scope.0].close_locals, [0]);
 
-        let (strict, _) = make_function(true);
+        let (strict, _, names) = make_function(true);
         let tree = FunctionTree {
             functions: vec![strict],
+            names,
             source: "".into(),
             filename: JsString::from_static("<strict-with-metadata>"),
             module: None,

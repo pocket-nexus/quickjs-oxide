@@ -120,7 +120,7 @@ impl<'source> Parser<'source> {
                 FunctionKind::Arrow | FunctionKind::Eval(EvalKind::Direct)
             ) {
                 self.emit_identifier(
-                    NEW_TARGET_LOCAL_NAME.to_owned(),
+                    self.pseudo_name(NEW_TARGET_LOCAL_NAME),
                     new_span,
                     IdentifierAccess::Get,
                 )?;
@@ -199,13 +199,13 @@ impl<'source> Parser<'source> {
             // mutate the derived constructor's [[Prototype]], but that mutation
             // affects only a later super() call.
             self.emit_identifier(
-                ACTIVE_FUNCTION_LOCAL_NAME.to_owned(),
+                self.pseudo_name(ACTIVE_FUNCTION_LOCAL_NAME),
                 super_span,
                 IdentifierAccess::Get,
             )?;
             self.emit_instruction(Instruction::GetSuper)?;
             self.emit_identifier(
-                NEW_TARGET_LOCAL_NAME.to_owned(),
+                self.pseudo_name(NEW_TARGET_LOCAL_NAME),
                 super_span,
                 IdentifierAccess::Get,
             )?;
@@ -225,12 +225,12 @@ impl<'source> Parser<'source> {
             }
             self.emit_instruction(Instruction::Dup)?;
             self.emit_identifier(
-                THIS_LOCAL_NAME.to_owned(),
+                self.pseudo_name(THIS_LOCAL_NAME),
                 super_span,
                 IdentifierAccess::InitializeDerivedThis,
             )?;
             self.emit_identifier(
-                ACTIVE_FUNCTION_LOCAL_NAME.to_owned(),
+                self.pseudo_name(ACTIVE_FUNCTION_LOCAL_NAME),
                 super_span,
                 IdentifierAccess::Get,
             )?;
@@ -256,12 +256,12 @@ impl<'source> Parser<'source> {
         }
 
         self.emit_identifier(
-            THIS_LOCAL_NAME.to_owned(),
+            self.pseudo_name(THIS_LOCAL_NAME),
             super_span,
             IdentifierAccess::Get,
         )?;
         self.emit_identifier(
-            HOME_OBJECT_LOCAL_NAME.to_owned(),
+            self.pseudo_name(HOME_OBJECT_LOCAL_NAME),
             super_span,
             IdentifierAccess::Get,
         )?;

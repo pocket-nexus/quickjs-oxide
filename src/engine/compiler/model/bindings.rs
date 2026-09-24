@@ -5,6 +5,7 @@ use crate::engine::code::bytecode::EvalVariableSource;
 use crate::engine::code::function::metadata::ClosureVariableKind;
 use crate::engine::compiler::lexer::Span;
 use crate::engine::compiler::module;
+use crate::engine::compiler::names::NameId;
 use crate::engine::compiler::{EVAL_RET_LOCAL_NAME, FINALLY_EVAL_RET_LOCAL_NAME};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -173,7 +174,7 @@ pub(in crate::engine::compiler) enum BindingStorage {
 
 #[derive(Debug)]
 pub(in crate::engine::compiler) struct IrBinding {
-    pub(in crate::engine::compiler) name: String,
+    pub(in crate::engine::compiler) name: NameId,
     pub(in crate::engine::compiler) storage_scope: ScopeId,
     /// Parse scope of the first declaration. QuickJS keeps this separately as
     /// the `scope_next` origin even for function-scoped `var` storage.
@@ -197,7 +198,7 @@ pub(in crate::engine::compiler) struct IrBinding {
 
 #[derive(Debug)]
 pub(in crate::engine::compiler) struct IrGlobalDeclaration {
-    pub(in crate::engine::compiler) name: String,
+    pub(in crate::engine::compiler) name: NameId,
     pub(in crate::engine::compiler) is_lexical: bool,
     pub(in crate::engine::compiler) is_const: bool,
     /// Child-function constant for a QuickJS
@@ -231,7 +232,7 @@ pub(in crate::engine::compiler) enum EvalDeclarationValue {
 
 #[derive(Clone, Debug)]
 pub(in crate::engine::compiler) struct IrEvalDeclaration {
-    pub(in crate::engine::compiler) name: String,
+    pub(in crate::engine::compiler) name: NameId,
     pub(in crate::engine::compiler) target: EvalDeclarationTarget,
     pub(in crate::engine::compiler) value: EvalDeclarationValue,
 }

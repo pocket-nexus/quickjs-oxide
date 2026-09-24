@@ -98,6 +98,11 @@ impl<'source> Parser<'source> {
         let parent = self.current_function;
         let child = self.functions.len();
         let definition_scope = self.current_ir().context.current_scope;
+        let initializer_name = if is_static {
+            self.names.intern("<class_static_init>")
+        } else {
+            self.names.intern("<class_fields_init>")
+        };
         self.functions.push(FunctionBuilder::new(
             Some(ParentLink {
                 function: parent,
@@ -110,11 +115,7 @@ impl<'source> Parser<'source> {
                 range: None,
             },
             FunctionIrOptions {
-                function_name: Some(if is_static {
-                    "<class_static_init>".to_owned()
-                } else {
-                    "<class_fields_init>".to_owned()
-                }),
+                function_name: Some(initializer_name),
                 private_name_binding: false,
                 class_constructor: false,
                 derived_class_constructor: false,
@@ -125,6 +126,7 @@ impl<'source> Parser<'source> {
                 strict: true,
                 super_capabilities: SuperCapabilities::PROPERTY,
             },
+            &mut self.names,
         )?);
         self.functions[child].class_initializer_kind = Some(if is_static {
             ClassInitializerKind::StaticElements
@@ -179,10 +181,11 @@ impl<'source> Parser<'source> {
                 *count = count
                     .checked_add(1)
                     .ok_or_else(|| Error::new(ErrorKind::JsInternal, "too many class fields"))?;
-                self.register_lexical_binding(&hidden, span, self.current().span, true, false)?;
+                let hidden = self.intern_name(&hidden);
+                self.register_lexical_binding(hidden, span, self.current().span, true, false)?;
                 // The canonical PropertyKey left by parse_class_property_key is
                 // consumed now, before any field initializer executes.
-                self.emit_identifier(hidden.clone(), span, IdentifierAccess::Initialize)?;
+                self.emit_identifier(hidden, span, IdentifierAccess::Initialize)?;
                 Some(hidden)
             }
             ClassPropertyKey::Private { .. } => {
@@ -192,8 +195,8 @@ impl<'source> Parser<'source> {
 
         let parent = self.enter_class_field_initializer(child);
         self.emit_instruction(Instruction::PushThis)?;
-        if let Some(hidden) = &computed_binding {
-            self.emit_identifier(hidden.clone(), span, IdentifierAccess::Get)?;
+        if let Some(hidden) = computed_binding {
+            self.emit_identifier(hidden, span, IdentifierAccess::Get)?;
         }
 
         if self.consume_punctuator(Punctuator::Equal)? {

@@ -46,6 +46,8 @@ use crate::engine::compiler::lexer::Token;
 use crate::engine::compiler::model::bindings::BindingId;
 use crate::engine::compiler::model::ir::FunctionId;
 use crate::engine::compiler::module;
+use crate::engine::compiler::names::NameId;
+use crate::engine::compiler::names::NameTable;
 use crate::engine::compiler::parser::builder::FunctionBuilder;
 use crate::source::SourceOffset;
 
@@ -101,7 +103,7 @@ pub(in crate::engine::compiler) enum MemberReference {
         site: SourceOffset,
     },
     Private {
-        name: String,
+        name: NameId,
         span: Span,
         scope: ScopeId,
         site: SourceOffset,
@@ -110,7 +112,7 @@ pub(in crate::engine::compiler) enum MemberReference {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::engine::compiler) struct IdentifierReference {
-    pub(in crate::engine::compiler) name: String,
+    pub(in crate::engine::compiler) name: NameId,
     pub(in crate::engine::compiler) span: Span,
     pub(in crate::engine::compiler) scope: ScopeId,
     pub(in crate::engine::compiler) object_environment: bool,
@@ -258,6 +260,9 @@ pub(in crate::engine::compiler) enum ModuleDeclarationExport {
 
 pub(in crate::engine::compiler) struct Parser<'source> {
     pub(in crate::engine::compiler) lexer: Lexer<'source>,
+    /// Sole name-interning authority. Every authored or synthetic compiler name
+    /// is interned here once; resolution/lowering only read it back.
+    pub(in crate::engine::compiler) names: NameTable,
     pub(in crate::engine::compiler) tokens: Vec<Token<'source>>,
     pub(in crate::engine::compiler) cursor: usize,
     pub(in crate::engine::compiler) current_function: FunctionId,

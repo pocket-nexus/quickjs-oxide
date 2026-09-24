@@ -20,6 +20,8 @@ use crate::engine::compiler::model::ir::IrOp;
 use crate::engine::compiler::model::ir::PrivateFieldAccess;
 use crate::engine::compiler::model::ir::function::FunctionTree;
 use crate::engine::compiler::model::scope::ScopeId;
+use crate::engine::compiler::names::NameId;
+use crate::engine::compiler::names::NameTable;
 use crate::engine::compiler::parser::context::InMode;
 use crate::engine::compiler::parser::context::Parser;
 use crate::engine::compiler::parser::diagnostics::lex_error;
@@ -29,24 +31,20 @@ use crate::engine::compiler::resolution::capture_binding_path;
 use crate::engine::compiler::resolution::ensure_string_constant;
 use crate::source::SourceOffset;
 
-pub(super) fn private_binding_name(name: &str) -> String {
-    let mut binding = String::with_capacity(name.len().saturating_add(1));
-    binding.push('#');
-    binding.push_str(name);
-    binding
-}
-
-pub(super) fn private_setter_binding_name(name: &str) -> String {
-    let mut binding = String::with_capacity(name.len().saturating_add(5));
-    binding.push_str(name);
+/// Intern the synthetic `#name<set>` binding key. The caller passes the
+/// already-interned `#name` key and this stays a separate NameId.
+pub(super) fn private_setter_binding_name(names: &mut NameTable, name: NameId) -> NameId {
+    let text = names.name(name);
+    let mut binding = String::with_capacity(text.len().saturating_add(5));
+    binding.push_str(text);
     binding.push_str("<set>");
-    binding
+    names.intern(&binding)
 }
 
 impl<'source> Parser<'source> {
     pub(super) fn emit_private_field_get(
         &mut self,
-        name: String,
+        name: NameId,
         span: Span,
         site: SourceOffset,
     ) -> Result<usize, Error> {
@@ -64,7 +62,7 @@ impl<'source> Parser<'source> {
 
     pub(super) fn emit_private_field_operation(
         &mut self,
-        name: String,
+        name: NameId,
         span: Span,
         scope: ScopeId,
         access: PrivateFieldAccess,
@@ -103,7 +101,7 @@ impl<'source> Parser<'source> {
         let TokenKind::PrivateIdentifier(identifier) = token.kind else {
             unreachable!("private-in probe changed the current token")
         };
-        let name = private_binding_name(&self.identifier_text(&identifier));
+        let name = self.intern_private_identifier(&identifier);
         let scope = self.current_ir().context.current_scope;
         self.advance()?;
         if !matches!(self.current().kind, TokenKind::Keyword(Keyword::In)) {
@@ -135,7 +133,7 @@ fn resolve_private_binding(
     tree: &mut FunctionTree,
     consuming_function: FunctionId,
     use_scope: ScopeId,
-    name: &str,
+    name: NameId,
 ) -> Result<Option<PrivateBindingResolution>, Error> {
     let mut owner = consuming_function;
     let mut scope = use_scope;
@@ -228,13 +226,13 @@ fn resolve_private_binding(
 fn private_readonly_instruction(
     tree: &mut FunctionTree,
     consuming_function: FunctionId,
-    name: &str,
+    name: NameId,
 ) -> Result<Instruction, Error> {
     let name = ensure_string_constant(
         tree.functions
             .get_mut(consuming_function)
             .ok_or_else(|| Error::internal("private-name consumer is out of bounds"))?,
-        name,
+        tree.names.name(name),
     )?;
     Ok(Instruction::ThrowReadOnly(name))
 }
@@ -243,7 +241,7 @@ pub(super) fn resolve_private_field_operation(
     tree: &mut FunctionTree,
     consuming_function: FunctionId,
     use_scope: ScopeId,
-    name: &str,
+    name: NameId,
     access: PrivateFieldAccess,
 ) -> Result<IrOp, Error> {
     let Some(primary) = resolve_private_binding(tree, consuming_function, use_scope, name)? else {
@@ -251,7 +249,7 @@ pub(super) fn resolve_private_field_operation(
         // explicitly emits no line information for this early error.
         return Err(syntax_atom_error_without_span(
             "undefined private field '",
-            name,
+            tree.names.name(name),
             "'",
         )?);
     };
@@ -282,10 +280,9 @@ pub(super) fn resolve_private_field_operation(
             BindingKind::PrivateSetter { .. } | BindingKind::PrivateGetterSetter { .. },
             PrivateFieldAccess::Put,
         ) => {
-            let setter_name = private_setter_binding_name(name);
-            let setter =
-                resolve_private_binding(tree, consuming_function, use_scope, &setter_name)?
-                    .ok_or_else(|| Error::internal("private setter binding is missing"))?;
+            let setter_name = private_setter_binding_name(&mut tree.names, name);
+            let setter = resolve_private_binding(tree, consuming_function, use_scope, setter_name)?
+                .ok_or_else(|| Error::internal("private setter binding is missing"))?;
             if !matches!(setter.kind, BindingKind::PrivateSetter { .. }) {
                 return Err(Error::internal(
                     "private setter binding has the wrong capability kind",
@@ -385,19 +382,21 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert!(bindings.iter().any(|binding| {
-            binding.name == "#instance"
+            tree.names.name(binding.name) == "#instance"
                 && binding.kind == BindingKind::PrivateField { is_static: false }
         }));
         assert!(bindings.iter().any(|binding| {
-            binding.name == "#static"
+            tree.names.name(binding.name) == "#static"
                 && binding.kind == BindingKind::PrivateField { is_static: true }
         }));
         assert!(bindings.iter().any(|binding| {
-            binding.name == "#later"
+            tree.names.name(binding.name) == "#later"
                 && binding.kind == BindingKind::PrivateField { is_static: false }
         }));
         assert!(bindings.iter().any(|binding| {
-            binding.name.starts_with("<computed_field>")
+            tree.names
+                .name(binding.name)
+                .starts_with("<computed_field>")
                 && binding.kind == BindingKind::Lexical { is_const: true }
         }));
         assert!(function.ops.iter().any(|operation| matches!(
@@ -406,7 +405,7 @@ mod tests {
                 name,
                 access: PrivateFieldAccess::In,
                 ..
-            } if name == "#later"
+            } if tree.names.name(*name) == "#later"
         )));
     }
 
@@ -557,11 +556,11 @@ mod tests {
             .map(|binding| &root.bindings[binding.0])
             .collect::<Vec<_>>();
         assert!(bindings.iter().any(|binding| {
-            binding.name == "#later"
+            tree.names.name(binding.name) == "#later"
                 && binding.kind == BindingKind::PrivateMethod { is_static: false }
         }));
         assert!(bindings.iter().any(|binding| {
-            binding.name == "#staticMethod"
+            tree.names.name(binding.name) == "#staticMethod"
                 && binding.kind == BindingKind::PrivateMethod { is_static: true }
         }));
 
@@ -637,11 +636,11 @@ mod tests {
             .map(|binding| &root.bindings[binding.0])
             .collect::<Vec<_>>();
         assert!(bindings.iter().any(|binding| {
-            binding.name == "#instance"
+            tree.names.name(binding.name) == "#instance"
                 && binding.kind == BindingKind::PrivateMethod { is_static: false }
         }));
         assert!(bindings.iter().any(|binding| {
-            binding.name == "#static"
+            tree.names.name(binding.name) == "#static"
                 && binding.kind == BindingKind::PrivateMethod { is_static: true }
         }));
 
@@ -750,11 +749,11 @@ mod tests {
             .map(|binding| &root.bindings[binding.0])
             .collect::<Vec<_>>();
         assert!(bindings.iter().any(|binding| {
-            binding.name == "#instance"
+            tree.names.name(binding.name) == "#instance"
                 && binding.kind == BindingKind::PrivateMethod { is_static: false }
         }));
         assert!(bindings.iter().any(|binding| {
-            binding.name == "#static"
+            tree.names.name(binding.name) == "#static"
                 && binding.kind == BindingKind::PrivateMethod { is_static: true }
         }));
         assert_eq!(
@@ -883,7 +882,7 @@ mod tests {
             .expect("class-private scope");
         assert!(scope.bindings.iter().any(|binding| {
             let binding = &root.bindings[binding.0];
-            binding.name == "#prototype"
+            static_prototype.names.name(binding.name) == "#prototype"
                 && binding.kind == BindingKind::PrivateMethod { is_static: true }
         }));
         assert_eq!(
@@ -915,7 +914,7 @@ mod tests {
                 .expect("class-private scope");
             assert!(scope.bindings.iter().any(|binding| {
                 let binding = &root.bindings[binding.0];
-                binding.name == "#method"
+                tree.names.name(binding.name) == "#method"
                     && binding.kind == BindingKind::PrivateMethod { is_static: false }
             }));
             assert_eq!(
@@ -1037,7 +1036,7 @@ mod tests {
             bindings
                 .iter()
                 .copied()
-                .find(|binding| binding.name == name)
+                .find(|binding| tree.names.name(binding.name) == name)
                 .unwrap_or_else(|| panic!("missing private binding {name}"))
         };
         assert_eq!(

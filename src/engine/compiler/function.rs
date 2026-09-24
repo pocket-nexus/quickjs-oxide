@@ -16,6 +16,7 @@ use crate::engine::compiler::model::ir::function::FunctionSourceInfo;
 use crate::engine::compiler::model::ir::function::ParentLink;
 use crate::engine::compiler::model::ir::function::SuperCapabilities;
 use crate::engine::compiler::model::ir::{FunctionId, IrConstant, IrOp, SpannedIrOp};
+use crate::engine::compiler::names::NameId;
 use crate::engine::compiler::parser::builder::FunctionBuilder;
 use crate::engine::compiler::parser::context::AnonymousFunctionDefinition;
 use crate::engine::compiler::parser::context::Parser;
@@ -25,7 +26,7 @@ use crate::source::SourceOffset;
 pub(super) struct ParsedFunctionDefinition {
     pub(super) constant: u32,
     pub(super) child: FunctionId,
-    pub(super) name: Option<(String, Span)>,
+    pub(super) name: Option<(NameId, Span)>,
 }
 
 pub(super) struct FunctionDefinitionHeader<'source> {
@@ -420,7 +421,7 @@ impl<'source> Parser<'source> {
         let parent_strict = self.functions[parent].strict;
         let function_name = function_name_token
             .as_ref()
-            .map(|(identifier, _)| self.identifier_text(identifier).into_owned());
+            .map(|(identifier, _)| self.intern_identifier(identifier));
         let child = self.functions.len();
         let parent_scope = self.functions[parent].context.current_scope;
         let super_capabilities = match options.kind {
@@ -461,6 +462,7 @@ impl<'source> Parser<'source> {
                 strict: parent_strict,
                 super_capabilities,
             },
+            &mut self.names,
         )?);
         self.functions[child].execution_kind = options.execution_kind;
         self.current_function = child;
@@ -563,7 +565,7 @@ impl<'source> Parser<'source> {
                     IdentifierContext::Argument,
                 )?;
                 parameter_tokens.push((identifier, token.span));
-                let parameter = self.identifier_text(&identifier).into_owned();
+                let parameter = self.intern_identifier(&identifier);
                 self.advance()?;
                 if is_rest {
                     self.register_rest_identifier_parameter(parameter, token.span)?;
@@ -656,7 +658,7 @@ impl<'source> Parser<'source> {
         }
         self.functions[child].strict = strict;
         if options.derived_class_constructor {
-            self.functions[child].allocate_derived_constructor_pseudo_bindings()?;
+            self.functions[child].allocate_derived_constructor_pseudo_bindings(&mut self.names)?;
         }
         if options.class_constructor {
             // Parameter parsing may replace the initial body scope with a
@@ -728,7 +730,7 @@ impl<'source> Parser<'source> {
             constant,
             child,
             name: function_name_token
-                .map(|(identifier, span)| (self.identifier_text(&identifier).into_owned(), span)),
+                .map(|(identifier, span)| (self.intern_identifier(&identifier), span)),
         })
     }
 }

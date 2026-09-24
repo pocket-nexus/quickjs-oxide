@@ -17,7 +17,6 @@ use crate::engine::compiler::model::ir::SpannedIrOp;
 use crate::engine::compiler::parser::builder::FunctionBuilder;
 use crate::engine::compiler::parser::context::Parser;
 use crate::engine::compiler::parser::diagnostics::source_offset;
-use crate::engine::compiler::private_reference;
 use crate::engine::value::JsString;
 use crate::engine::value::PrimitiveValue as Value;
 
@@ -96,8 +95,7 @@ impl<'source> Parser<'source> {
         let token = *self.current();
         let name = match token.kind {
             TokenKind::PrivateIdentifier(identifier) => {
-                let name =
-                    private_reference::private_binding_name(&self.identifier_text(&identifier));
+                let name = self.intern_private_identifier(&identifier);
                 self.advance()?;
                 let operation =
                     self.emit_private_field_get(name, token.span, source_offset(member_span)?)?;

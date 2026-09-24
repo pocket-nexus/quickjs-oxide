@@ -28,6 +28,7 @@ use crate::engine::compiler::model::ir::IrOp;
 use crate::engine::compiler::model::ir::function::FunctionKind;
 use crate::engine::compiler::model::scope::ScopeKind;
 use crate::engine::compiler::module;
+use crate::engine::compiler::names::NameId;
 use crate::engine::compiler::parser::context::Parser;
 use crate::engine::compiler::parser::context::PreparedScopedFunction;
 use crate::engine::compiler::parser::diagnostics::source_span;
@@ -35,7 +36,7 @@ use crate::engine::compiler::parser::diagnostics::source_span;
 impl<'source> Parser<'source> {
     pub(in crate::engine::compiler) fn register_var_binding(
         &mut self,
-        name: &str,
+        name: NameId,
         declaration_span: Span,
         conflict_span: Span,
     ) -> Result<(), Error> {
@@ -103,7 +104,7 @@ impl<'source> Parser<'source> {
             function.ir.add_binding(
                 function.ir.var_scope,
                 function.context.current_scope,
-                name.to_owned(),
+                name,
                 BindingStorage::Module(module_binding),
                 BindingKind::Normal,
                 Some(declaration_span),
@@ -112,17 +113,18 @@ impl<'source> Parser<'source> {
             return Ok(());
         }
         let function = &mut self.functions[self.current_function];
+        let arguments = self.names.lookup("arguments");
         let selects_arguments_object =
             matches!(function.kind, FunctionKind::Ordinary | FunctionKind::Method)
-                && name == "arguments"
+                && arguments == Some(name)
                 && !function
                     .parameters
                     .iter()
-                    .any(|parameter| parameter.as_deref() == Some("arguments"))
+                    .any(|parameter| *parameter == Some(name))
                 && !function
                     .parameter_pattern_bindings
                     .iter()
-                    .any(|binding| binding.name == "arguments");
+                    .any(|binding| binding.name == name);
         if let Some((binding_scope, binding)) =
             function.binding_id_from_scope(function.context.current_scope, name)
             && matches!(
@@ -143,7 +145,7 @@ impl<'source> Parser<'source> {
         }
         if matches!(function.kind, FunctionKind::Script) {
             function.global_declarations.push(IrGlobalDeclaration {
-                name: name.to_owned(),
+                name,
                 is_lexical: false,
                 is_const: false,
                 function_constant: None,
@@ -173,7 +175,7 @@ impl<'source> Parser<'source> {
             function.ir.add_binding(
                 function.ir.var_scope,
                 function.context.current_scope,
-                name.to_owned(),
+                name,
                 BindingStorage::Global,
                 BindingKind::Normal,
                 Some(declaration_span),
@@ -188,11 +190,11 @@ impl<'source> Parser<'source> {
         }
         let index = u16::try_from(function.locals.len())
             .map_err(|_| Error::new(ErrorKind::JsInternal, "too many local variables"))?;
-        function.locals.push(name.to_owned());
+        function.locals.push(name);
         function.ir.add_binding(
             function.ir.var_scope,
             function.context.current_scope,
-            name.to_owned(),
+            name,
             BindingStorage::Local(index),
             BindingKind::Normal,
             Some(declaration_span),
@@ -252,7 +254,7 @@ impl<'source> Parser<'source> {
 
     pub(in crate::engine::compiler) fn eval_dynamic_declaration_target(
         &mut self,
-        name: &str,
+        name: NameId,
         object: EvalVariableSource,
         _conflict_span: Span,
     ) -> Result<EvalDeclarationTarget, Error> {
@@ -277,14 +279,14 @@ impl<'source> Parser<'source> {
                 }
                 return Ok(EvalDeclarationTarget::Dynamic(object));
             }
-            if binding.name.to_utf8_lossy() != name {
+            if binding.name.to_utf8_lossy() != self.names.name(name) {
                 continue;
             }
             if binding.is_lexical
                 && !binding.is_catch_parameter
                 && self.current_ir().eval_redeclaration.is_none()
             {
-                self.current_ir_mut().eval_redeclaration = Some(name.to_owned());
+                self.current_ir_mut().eval_redeclaration = Some(name);
             }
             let kind =
                 binding_kind_from_closure_flags(binding.kind, binding.is_lexical, binding.is_const)
@@ -298,7 +300,7 @@ impl<'source> Parser<'source> {
 
     pub(in crate::engine::compiler) fn register_eval_var_binding(
         &mut self,
-        name: &str,
+        name: NameId,
         declaration_span: Span,
         conflict_span: Span,
     ) -> Result<(), Error> {
@@ -325,7 +327,7 @@ impl<'source> Parser<'source> {
                 self.current_ir_mut()
                     .eval_declarations
                     .push(IrEvalDeclaration {
-                        name: name.to_owned(),
+                        name,
                         target,
                         value: EvalDeclarationValue::Undefined,
                     });
@@ -354,11 +356,11 @@ impl<'source> Parser<'source> {
                 }
                 let index = u16::try_from(function.locals.len())
                     .map_err(|_| Error::new(ErrorKind::JsInternal, "too many local variables"))?;
-                function.locals.push(name.to_owned());
+                function.locals.push(name);
                 function.ir.add_binding(
                     function.ir.var_scope,
                     function.context.current_scope,
-                    name.to_owned(),
+                    name,
                     BindingStorage::Local(index),
                     BindingKind::Normal,
                     Some(declaration_span),
@@ -366,9 +368,9 @@ impl<'source> Parser<'source> {
                 Ok(())
             }
             EvalDeclarationMode::Global => {
-                let function = self.current_ir_mut();
+                let function = &mut self.functions[self.current_function];
                 function.global_declarations.push(IrGlobalDeclaration {
-                    name: name.to_owned(),
+                    name,
                     is_lexical: false,
                     is_const: false,
                     function_constant: None,
@@ -377,10 +379,10 @@ impl<'source> Parser<'source> {
                 let caller_lexical_conflict = function
                     .external_bindings
                     .iter()
-                    .find(|binding| binding.name.to_utf8_lossy() == name)
+                    .find(|binding| binding.name.to_utf8_lossy() == self.names.name(name))
                     .is_some_and(|binding| binding.is_lexical && !binding.is_catch_parameter);
                 if caller_lexical_conflict && function.eval_redeclaration.is_none() {
-                    function.eval_redeclaration = Some(name.to_owned());
+                    function.eval_redeclaration = Some(name);
                 }
                 let existing = function.scopes[function.ir.var_scope.0]
                     .bindings
@@ -395,7 +397,7 @@ impl<'source> Parser<'source> {
                     function.ir.add_binding(
                         function.ir.var_scope,
                         function.context.current_scope,
-                        name.to_owned(),
+                        name,
                         BindingStorage::Global,
                         BindingKind::Normal,
                         Some(declaration_span),
@@ -408,7 +410,7 @@ impl<'source> Parser<'source> {
 
     pub(in crate::engine::compiler) fn register_lexical_binding(
         &mut self,
-        name: &str,
+        name: NameId,
         declaration_span: Span,
         conflict_span: Span,
         is_const: bool,
@@ -475,7 +477,7 @@ impl<'source> Parser<'source> {
             function.ir.add_binding(
                 scope,
                 scope,
-                name.to_owned(),
+                name,
                 BindingStorage::Module(module_binding),
                 BindingKind::Lexical { is_const },
                 Some(declaration_span),
@@ -543,7 +545,7 @@ impl<'source> Parser<'source> {
                 );
             if masked_program_duplicate {
                 function.global_declarations.push(IrGlobalDeclaration {
-                    name: name.to_owned(),
+                    name: name,
                     is_lexical: true,
                     is_const,
                     function_constant: None,
@@ -634,7 +636,7 @@ impl<'source> Parser<'source> {
         }
         if is_global {
             function.global_declarations.push(IrGlobalDeclaration {
-                name: name.to_owned(),
+                name: name,
                 is_lexical: true,
                 is_const,
                 function_constant: None,
@@ -643,7 +645,7 @@ impl<'source> Parser<'source> {
             function.ir.add_binding(
                 scope,
                 scope,
-                name.to_owned(),
+                name,
                 BindingStorage::Global,
                 BindingKind::Lexical { is_const },
                 Some(declaration_span),
@@ -658,11 +660,11 @@ impl<'source> Parser<'source> {
         }
         let index = u16::try_from(function.locals.len())
             .map_err(|_| Error::new(ErrorKind::JsInternal, "too many local variables"))?;
-        function.locals.push(name.to_owned());
+        function.locals.push(name);
         function.ir.add_binding(
             scope,
             scope,
-            name.to_owned(),
+            name,
             BindingStorage::Local(index),
             BindingKind::Lexical { is_const },
             Some(declaration_span),
@@ -689,14 +691,14 @@ impl<'source> Parser<'source> {
         // `define_var` conflict check here, which permits a preceding Program
         // lexical with the same name.
         function.global_declarations.push(IrGlobalDeclaration {
-            name: name.clone(),
+            name,
             is_lexical: false,
             is_const: false,
             function_constant: Some(parsed.constant),
             closure_index: None,
         });
         if function
-            .binding_in_scope(function.ir.var_scope, &name)
+            .binding_in_scope(function.ir.var_scope, name)
             .is_none()
         {
             function.ir.add_binding(
@@ -726,7 +728,7 @@ impl<'source> Parser<'source> {
         let conflict_span = self.current().span;
         if self
             .current_ir()
-            .binding_id_in_scope(self.current_ir().body_scope, &name)
+            .binding_id_in_scope(self.current_ir().body_scope, name)
             .is_some_and(|binding| {
                 matches!(
                     self.current_ir().bindings[binding.0].kind,
@@ -742,9 +744,9 @@ impl<'source> Parser<'source> {
 
         match self.current_eval_declaration_mode()? {
             EvalDeclarationMode::Global => {
-                let function = self.current_ir_mut();
+                let function = &mut self.functions[self.current_function];
                 function.global_declarations.push(IrGlobalDeclaration {
-                    name: name.clone(),
+                    name,
                     is_lexical: false,
                     is_const: false,
                     function_constant: Some(parsed.constant),
@@ -753,10 +755,10 @@ impl<'source> Parser<'source> {
                 let caller_lexical_conflict = function
                     .external_bindings
                     .iter()
-                    .find(|binding| binding.name.to_utf8_lossy() == name)
+                    .find(|binding| binding.name.to_utf8_lossy() == self.names.name(name))
                     .is_some_and(|binding| binding.is_lexical && !binding.is_catch_parameter);
                 if caller_lexical_conflict && function.eval_redeclaration.is_none() {
-                    function.eval_redeclaration = Some(name.clone());
+                    function.eval_redeclaration = Some(name);
                 }
                 let has_global = function.scopes[function.ir.var_scope.0]
                     .bindings
@@ -778,7 +780,7 @@ impl<'source> Parser<'source> {
                 }
             }
             EvalDeclarationMode::Local => {
-                self.register_eval_var_binding(&name, declaration_span, conflict_span)?;
+                self.register_eval_var_binding(name, declaration_span, conflict_span)?;
                 let function = self.current_ir_mut();
                 let binding = function.scopes[function.ir.var_scope.0]
                     .bindings
@@ -807,7 +809,7 @@ impl<'source> Parser<'source> {
                 }
             }
             EvalDeclarationMode::Dynamic(object) => {
-                let target = self.eval_dynamic_declaration_target(&name, object, conflict_span)?;
+                let target = self.eval_dynamic_declaration_target(name, object, conflict_span)?;
                 self.current_ir_mut()
                     .eval_declarations
                     .push(IrEvalDeclaration {
@@ -836,11 +838,11 @@ impl<'source> Parser<'source> {
             ));
         }
         let conflict_span = self.current().span;
-        self.register_var_binding(&name, declaration_span, conflict_span)?;
+        self.register_var_binding(name, declaration_span, conflict_span)?;
 
         let function = &mut self.functions[self.current_function];
         let binding = function
-            .binding_id_in_scope(function.ir.var_scope, &name)
+            .binding_id_in_scope(function.ir.var_scope, name)
             .ok_or_else(|| Error::internal("function declaration binding was not registered"))?;
         let metadata = &function.bindings[binding.0];
         if metadata.kind != BindingKind::Normal
@@ -892,7 +894,7 @@ impl<'source> Parser<'source> {
         let (name, declaration_span) = header
             .name
             .as_ref()
-            .map(|(identifier, span)| (self.identifier_text(identifier).into_owned(), *span))
+            .map(|(identifier, span)| (self.intern_identifier(identifier), *span))
             .ok_or_else(|| Error::internal("required Program Annex B function lost its name"))?;
         let conflict_span = self.current().span;
 
@@ -909,7 +911,7 @@ impl<'source> Parser<'source> {
         };
         let conflicts_with_authored_global = {
             let function = self.current_ir();
-            if let Some(binding) = function.binding_id_in_scope(var_scope, &name) {
+            if let Some(binding) = function.binding_id_in_scope(var_scope, name) {
                 // The root binding retains the first ordinary declaration's
                 // scope. A prior nested/Annex declaration therefore masks a
                 // later Program lexical in QuickJS's first-global-record
@@ -917,7 +919,7 @@ impl<'source> Parser<'source> {
                 // conflicts here.
                 function.bindings[binding.0].declaration_scope == body_scope
             } else {
-                function.binding_id_in_scope(body_scope, &name).is_some()
+                function.binding_id_in_scope(body_scope, name).is_some()
             }
         };
         if conflicts_with_authored_global {
@@ -928,7 +930,7 @@ impl<'source> Parser<'source> {
         }
 
         let parsed = self.parse_function_definition_tail(header, false)?;
-        if parsed.name.as_ref().map(|(parsed, _)| parsed.as_str()) != Some(name.as_str()) {
+        if parsed.name.as_ref().map(|(parsed, _)| *parsed) != Some(name) {
             return Err(Error::internal(
                 "Program Annex B function header changed while parsing its child",
             ));
@@ -937,7 +939,7 @@ impl<'source> Parser<'source> {
         // parsed successfully. Deferred tree-wide identifier resolution still
         // lets the child capture the resulting recursive binding.
         let IrAnnexBinding::Static(binding) =
-            self.ensure_annex_b_binding(&name, declaration_span)?
+            self.ensure_annex_b_binding(name, declaration_span)?
         else {
             return Err(Error::internal(
                 "Program Annex B declaration targeted dynamic eval storage",
@@ -947,7 +949,7 @@ impl<'source> Parser<'source> {
         let authored_closure = self.emit(IrOp::MakeClosure(parsed.constant))?;
         self.emit_instruction(Instruction::Dup)?;
         self.emit_identifier_inherited(
-            name.clone(),
+            name,
             declaration_span,
             var_scope,
             IdentifierAccess::AnnexBPut,
@@ -973,19 +975,19 @@ impl<'source> Parser<'source> {
         let (name, declaration_span) = header
             .name
             .as_ref()
-            .map(|(identifier, span)| (self.identifier_text(identifier).into_owned(), *span))
+            .map(|(identifier, span)| (self.intern_identifier(identifier), *span))
             .ok_or_else(|| Error::internal("required scoped function lost its name"))?;
         let non_ordinary = header.execution_kind != BytecodeFunctionKind::Normal;
-        let prepared = self.prepare_scoped_function(&name, declaration_span, non_ordinary)?;
+        let prepared = self.prepare_scoped_function(name, declaration_span, non_ordinary)?;
         let parsed = self.parse_function_definition_tail(header, false)?;
-        if parsed.name.as_ref().map(|(parsed, _)| parsed.as_str()) != Some(name.as_str()) {
+        if parsed.name.as_ref().map(|(parsed, _)| *parsed) != Some(name) {
             return Err(Error::internal(
                 "scoped function header changed while parsing its child",
             ));
         }
 
         let annex_binding = if prepared.create_annex_binding {
-            Some(self.ensure_annex_b_binding(&name, declaration_span)?)
+            Some(self.ensure_annex_b_binding(name, declaration_span)?)
         } else {
             None
         };
@@ -1014,7 +1016,7 @@ impl<'source> Parser<'source> {
 
     pub(in crate::engine::compiler) fn prepare_scoped_function(
         &mut self,
-        name: &str,
+        name: NameId,
         declaration_span: Span,
         lexical_only: bool,
     ) -> Result<PreparedScopedFunction, Error> {
@@ -1051,21 +1053,21 @@ impl<'source> Parser<'source> {
 
     pub(in crate::engine::compiler) fn scoped_function_is_annex_b_eligible(
         &self,
-        name: &str,
+        name: NameId,
     ) -> bool {
         let function = self.current_ir();
         if function.strict {
             return false;
         }
         if (matches!(function.kind, FunctionKind::Ordinary | FunctionKind::Method)
-            && name == "arguments")
+            && self.names.lookup("arguments") == Some(name))
             || (matches!(
                 function.kind,
                 FunctionKind::Ordinary | FunctionKind::Method | FunctionKind::Arrow
             ) && function
                 .parameter_names
                 .iter()
-                .any(|parameter| parameter == name))
+                .any(|parameter| *parameter == name))
         {
             return false;
         }
@@ -1114,7 +1116,7 @@ impl<'source> Parser<'source> {
 
     pub(in crate::engine::compiler) fn register_scoped_function_binding(
         &mut self,
-        name: &str,
+        name: NameId,
         declaration_span: Span,
         conflict_span: Span,
         lexical_only: bool,
@@ -1140,11 +1142,11 @@ impl<'source> Parser<'source> {
             }
             let index = u16::try_from(function.locals.len())
                 .map_err(|_| Error::new(ErrorKind::JsInternal, "too many local variables"))?;
-            function.locals.push(name.to_owned());
+            function.locals.push(name);
             let binding = function.ir.add_binding(
                 scope,
                 scope,
-                name.to_owned(),
+                name,
                 BindingStorage::Local(index),
                 BindingKind::Lexical { is_const: false },
                 Some(declaration_span),
@@ -1166,7 +1168,7 @@ impl<'source> Parser<'source> {
 
     pub(in crate::engine::compiler) fn ensure_annex_b_binding(
         &mut self,
-        name: &str,
+        name: NameId,
         declaration_span: Span,
     ) -> Result<IrAnnexBinding, Error> {
         let eval_mode = if matches!(self.current_ir().kind, FunctionKind::Eval(_)) {
@@ -1180,7 +1182,7 @@ impl<'source> Parser<'source> {
             self.current_ir_mut()
                 .eval_declarations
                 .push(IrEvalDeclaration {
-                    name: name.to_owned(),
+                    name,
                     target,
                     value: EvalDeclarationValue::Undefined,
                 });
@@ -1203,7 +1205,7 @@ impl<'source> Parser<'source> {
             };
         }
 
-        let function = self.current_ir_mut();
+        let function = &mut self.functions[self.current_function];
         let root = function.ir.var_scope;
         let global = matches!(function.kind, FunctionKind::Script)
             || eval_mode == Some(EvalDeclarationMode::Global);
@@ -1211,15 +1213,15 @@ impl<'source> Parser<'source> {
             && function
                 .external_bindings
                 .iter()
-                .find(|binding| binding.name.to_utf8_lossy() == name)
+                .find(|binding| binding.name.to_utf8_lossy() == self.names.name(name))
                 .is_some_and(|binding| binding.is_lexical && !binding.is_catch_parameter)
             && function.eval_redeclaration.is_none()
         {
-            function.eval_redeclaration = Some(name.to_owned());
+            function.eval_redeclaration = Some(name);
         }
         if global {
             function.global_declarations.push(IrGlobalDeclaration {
-                name: name.to_owned(),
+                name,
                 is_lexical: false,
                 is_const: false,
                 function_constant: None,
@@ -1274,13 +1276,13 @@ impl<'source> Parser<'source> {
             }
             let index = u16::try_from(function.locals.len())
                 .map_err(|_| Error::new(ErrorKind::JsInternal, "too many local variables"))?;
-            function.locals.push(name.to_owned());
+            function.locals.push(name);
             BindingStorage::Local(index)
         };
         let binding = function.ir.add_binding(
             root,
             root,
-            name.to_owned(),
+            name,
             storage,
             BindingKind::Normal,
             Some(declaration_span),

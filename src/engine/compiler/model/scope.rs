@@ -1,6 +1,7 @@
 //! Lexical scope identities and declaration-order indexes shared by compilation stages.
 
 use super::bindings::BindingId;
+use crate::engine::compiler::names::NameId;
 use std::collections::HashMap;
 
 /// Function-local lexical scope identity. QuickJS carries the corresponding
@@ -44,11 +45,11 @@ pub(in crate::engine::compiler) struct IrScope {
     pub(in crate::engine::compiler) bindings: Vec<BindingId>,
     /// Last binding in declaration order for each name. The ordered list remains
     /// authoritative for validation, lowering and observable declaration order.
-    pub(in crate::engine::compiler) bindings_by_name: HashMap<String, BindingId>,
+    pub(in crate::engine::compiler) bindings_by_name: HashMap<NameId, BindingId>,
 }
 
 impl IrScope {
-    pub(in crate::engine::compiler) fn binding_named(&self, name: &str) -> Option<BindingId> {
-        self.bindings_by_name.get(name).copied()
+    pub(in crate::engine::compiler) fn binding_named(&self, name: NameId) -> Option<BindingId> {
+        self.bindings_by_name.get(&name).copied()
     }
 }

@@ -19,6 +19,7 @@ use crate::engine::compiler::model::ir::function::FunctionSourceInfo;
 use crate::engine::compiler::model::ir::function::FunctionTree;
 use crate::engine::compiler::model::ir::function::SuperCapabilities;
 use crate::engine::compiler::module;
+use crate::engine::compiler::names::NameTable;
 use crate::engine::compiler::parser::builder::FunctionBuilder;
 use crate::engine::compiler::parser::context::InMode;
 use crate::engine::compiler::parser::context::ModuleDeclarationExport;
@@ -204,8 +205,54 @@ impl<'source> Parser<'source> {
         };
         let first_token = lexer.next_token().map_err(lex_error)?;
         let source_span = first_token.span;
+        // Resolution and lowering read these names back through `lookup`, so
+        // the parser pre-interns them before any authored name can appear.
+        let mut names = NameTable::new();
+        for synthetic in [
+            crate::engine::compiler::EVAL_RET_LOCAL_NAME,
+            crate::engine::compiler::FINALLY_EVAL_RET_LOCAL_NAME,
+            crate::engine::compiler::EVAL_VARIABLE_OBJECT_LOCAL_NAME,
+            crate::engine::compiler::ARG_EVAL_VARIABLE_OBJECT_LOCAL_NAME,
+            crate::engine::compiler::WITH_OBJECT_LOCAL_NAME,
+            "arguments",
+            crate::engine::compiler::pseudo_binding::THIS_LOCAL_NAME,
+            crate::engine::compiler::pseudo_binding::NEW_TARGET_LOCAL_NAME,
+            crate::engine::compiler::pseudo_binding::HOME_OBJECT_LOCAL_NAME,
+            crate::engine::compiler::pseudo_binding::ACTIVE_FUNCTION_LOCAL_NAME,
+        ] {
+            names.intern(synthetic);
+        }
+        if is_module {
+            names.intern(crate::engine::code::module::MODULE_IMPORT_META_BINDING_NAME);
+            names.intern(crate::engine::code::module::MODULE_DEFAULT_BINDING_NAME);
+        }
+        let function_name = (!is_module).then(|| names.intern("<eval>"));
+        let root_function = FunctionBuilder::new(
+            None,
+            root_kind,
+            FunctionSourceInfo {
+                span: source_span,
+                definition: SourceOffset::try_from_usize(0)
+                    .map_err(|error| Error::internal(error.to_string()))?,
+                range: None,
+            },
+            FunctionIrOptions {
+                function_name,
+                private_name_binding: false,
+                class_constructor: false,
+                derived_class_constructor: false,
+                parameters: Vec::new(),
+                defined_argument_count: 0,
+                has_simple_parameter_list: true,
+                rest_parameter: None,
+                strict: inherited_strict,
+                super_capabilities,
+            },
+            &mut names,
+        )?;
         let mut parser = Self {
             lexer,
+            names,
             tokens: vec![first_token],
             cursor: 0,
             current_function: 0,
@@ -215,28 +262,7 @@ impl<'source> Parser<'source> {
             module: is_module.then(module::IrModule::default),
             module_declaration_export: ModuleDeclarationExport::None,
             module_declaration_export_target: None,
-            functions: vec![FunctionBuilder::new(
-                None,
-                root_kind,
-                FunctionSourceInfo {
-                    span: source_span,
-                    definition: SourceOffset::try_from_usize(0)
-                        .map_err(|error| Error::internal(error.to_string()))?,
-                    range: None,
-                },
-                FunctionIrOptions {
-                    function_name: (!is_module).then(|| "<eval>".to_owned()),
-                    private_name_binding: false,
-                    class_constructor: false,
-                    derived_class_constructor: false,
-                    parameters: Vec::new(),
-                    defined_argument_count: 0,
-                    has_simple_parameter_list: true,
-                    rest_parameter: None,
-                    strict: inherited_strict,
-                    super_capabilities,
-                },
-            )?],
+            functions: vec![root_function],
         };
         if is_module {
             // QuickJS compiles every module root as an async function. The
@@ -254,6 +280,7 @@ impl<'source> Parser<'source> {
                 external_bindings,
                 caller_profile,
                 inherited_strict,
+                &mut parser.names,
             )?;
         }
         let strict =
@@ -278,6 +305,7 @@ impl<'source> Parser<'source> {
                 .into_iter()
                 .map(FunctionBuilder::finish)
                 .collect::<Result<_, _>>()?,
+            names: parser.names,
             source: source_text
                 .cloned()
                 .unwrap_or_else(|| SourceText::from_utf8(source)),
@@ -308,6 +336,7 @@ pub(in crate::engine::compiler) fn install_eval_external_bindings(
     bindings: Box<[EvalRootBinding<JsString>]>,
     caller_profile: EvalCallerProfile,
     caller_strict: bool,
+    names: &mut NameTable,
 ) -> Result<(), Error> {
     let FunctionKind::Eval(kind) = function.kind else {
         return Err(Error::internal(
@@ -435,6 +464,7 @@ pub(in crate::engine::compiler) fn install_eval_external_bindings(
         }
         let name = String::from_utf16(&binding.name.utf16_units().collect::<Vec<_>>())
             .map_err(|_| Error::internal("eval caller binding name is not well formed"))?;
+        let name = names.intern(&name);
         let kind =
             binding_kind_from_closure_flags(binding.kind, binding.is_lexical, binding.is_const)
                 .ok_or_else(|| Error::internal("eval caller binding flags are inconsistent"))?;

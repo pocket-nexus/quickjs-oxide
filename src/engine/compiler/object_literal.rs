@@ -264,11 +264,8 @@ impl<'source> Parser<'source> {
                         self.current_ir().strict,
                         IdentifierContext::Reference,
                     )?;
-                    self.emit_identifier(
-                        self.identifier_text(&identifier).into_owned(),
-                        token.span,
-                        IdentifierAccess::Get,
-                    )?;
+                    let name = self.intern_identifier(&identifier);
+                    self.emit_identifier(name, token.span, IdentifierAccess::Get)?;
                     let key_constant =
                         self.add_constant(IrConstant::Primitive(Value::String(key)))?;
                     self.emit_instruction(Instruction::DefineField(key_constant))?;

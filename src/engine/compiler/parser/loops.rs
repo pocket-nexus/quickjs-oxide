@@ -520,16 +520,16 @@ impl<'source> Parser<'source> {
                     source_span(token.span),
                 ));
             }
-            let name = self.identifier_text(&identifier).into_owned();
+            let name = self.intern_identifier(&identifier);
             let strict = self.current_ir().strict;
             self.advance()?;
-            if strict && matches!(name.as_str(), "eval" | "arguments") {
+            if strict && matches!(self.names.name(name), "eval" | "arguments") {
                 return Err(Error::syntax(
                     "invalid variable name in strict mode",
                     source_span(self.current().span),
                 ));
             }
-            self.register_lexical_binding(&name, token.span, self.current().span, is_const, false)?;
+            self.register_lexical_binding(name, token.span, self.current().span, is_const, false)?;
             self.emit_identifier_at(
                 name,
                 token.span,
@@ -573,17 +573,17 @@ impl<'source> Parser<'source> {
                 IdentifierContext::Variable,
             )?;
             let strict = self.current_ir().strict;
-            let name = self.identifier_text(&identifier).into_owned();
+            let name = self.intern_identifier(&identifier);
             self.advance()?;
-            if strict && matches!(name.as_str(), "eval" | "arguments") {
+            if strict && matches!(self.names.name(name), "eval" | "arguments") {
                 return Err(Error::syntax(
                     "invalid variable name in strict mode",
                     source_span(self.current().span),
                 ));
             }
-            self.register_var_binding(&name, token.span, self.current().span)?;
+            self.register_var_binding(name, token.span, self.current().span)?;
             let initializer = IdentifierReference {
-                name: name.clone(),
+                name,
                 span: token.span,
                 scope: self.current_ir().context.current_scope,
                 object_environment: false,

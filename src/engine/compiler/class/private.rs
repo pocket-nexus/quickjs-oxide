@@ -18,6 +18,7 @@ use crate::engine::compiler::model::bindings::BindingStorage;
 use crate::engine::compiler::model::ir::IrConstant;
 use crate::engine::compiler::model::ir::PrivateFieldAccess;
 use crate::engine::compiler::model::scope::ScopeKind;
+use crate::engine::compiler::names::NameId;
 use crate::engine::compiler::parser::context::Parser;
 use crate::engine::compiler::parser::diagnostics::source_offset;
 use crate::engine::compiler::parser::diagnostics::source_span;
@@ -31,7 +32,7 @@ use crate::engine::code::bytecode::DefineMethodKind;
 impl<'source> Parser<'source> {
     fn register_private_binding(
         &mut self,
-        name: &str,
+        name: NameId,
         span: Span,
         kind: BindingKind,
     ) -> Result<u16, Error> {
@@ -58,11 +59,11 @@ impl<'source> Parser<'source> {
         }
         let local = u16::try_from(function.locals.len())
             .map_err(|_| Error::new(ErrorKind::JsInternal, "too many local variables"))?;
-        function.locals.push(name.to_owned());
+        function.locals.push(name);
         function.add_binding(
             scope,
             scope,
-            name.to_owned(),
+            name,
             BindingStorage::Local(local),
             kind,
             Some(span),
@@ -76,7 +77,7 @@ impl<'source> Parser<'source> {
     /// only after the complete parameter list and body have been accepted.
     fn register_private_accessor_primary(
         &mut self,
-        name: &str,
+        name: NameId,
         span: Span,
         is_static: bool,
         method_kind: DefineMethodKind,
@@ -144,27 +145,27 @@ impl<'source> Parser<'source> {
 
     fn register_private_setter_storage(
         &mut self,
-        name: &str,
+        name: NameId,
         span: Span,
         is_static: bool,
     ) -> Result<u16, Error> {
-        let setter_name = private_reference::private_setter_binding_name(name);
-        self.register_private_binding(&setter_name, span, BindingKind::PrivateSetter { is_static })
+        let setter_name = private_reference::private_setter_binding_name(&mut self.names, name);
+        self.register_private_binding(setter_name, span, BindingKind::PrivateSetter { is_static })
     }
 
     pub(super) fn parse_private_class_field(
         &mut self,
         elements: &mut ClassElementState,
         is_static: bool,
-        name: String,
+        name: NameId,
         span: Span,
     ) -> Result<(), Error> {
-        if name == "#constructor" {
+        if self.names.name(name) == "#constructor" {
             return Err(self.syntax_here("invalid method name"));
         }
 
         let local =
-            self.register_private_binding(&name, span, BindingKind::PrivateField { is_static })?;
+            self.register_private_binding(name, span, BindingKind::PrivateField { is_static })?;
         // Unlike a normal lexical initializer, this opcode allocates and stores
         // the private Atom without ever constructing a public Symbol Value.
         self.emit_instruction_at(
@@ -184,14 +185,13 @@ impl<'source> Parser<'source> {
         }
 
         if let Some(definition) = self.take_anonymous_function_definition() {
-            let name_constant = self.add_constant(IrConstant::Primitive(Value::String(
-                JsString::try_from_utf8(&name)?,
-            )))?;
+            let js_name = JsString::try_from_utf8(self.names.name(name))?;
+            let name_constant = self.add_constant(IrConstant::Primitive(Value::String(js_name)))?;
             self.emit_anonymous_set_name(definition, Instruction::SetName(name_constant))?;
         }
         let scope = self.current_ir().context.current_scope;
         self.emit_private_field_operation(
-            name.clone(),
+            name,
             span,
             scope,
             PrivateFieldAccess::Define,
@@ -212,12 +212,12 @@ impl<'source> Parser<'source> {
         &mut self,
         elements: &mut ClassElementState,
         is_static: bool,
-        name: String,
+        name: NameId,
         span: Span,
         function_span: Span,
         flavor: ClassMethodFlavor,
     ) -> Result<(), Error> {
-        if name == "#constructor" {
+        if self.names.name(name) == "#constructor" {
             return Err(self.syntax_here("invalid method name"));
         }
 
@@ -239,7 +239,7 @@ impl<'source> Parser<'source> {
         self.functions[method].needs_home_object = true;
 
         let local =
-            self.register_private_binding(&name, span, BindingKind::PrivateMethod { is_static })?;
+            self.register_private_binding(name, span, BindingKind::PrivateMethod { is_static })?;
         let initializer = self.ensure_class_initializer(elements, is_static, span)?;
         self.functions[initializer].class_private_brand = true;
 
@@ -263,12 +263,12 @@ impl<'source> Parser<'source> {
         &mut self,
         elements: &mut ClassElementState,
         is_static: bool,
-        name: String,
+        name: NameId,
         span: Span,
         function_span: Span,
         method_kind: DefineMethodKind,
     ) -> Result<(), Error> {
-        if name == "#constructor" {
+        if self.names.name(name) == "#constructor" {
             return Err(self.syntax_here("invalid method name"));
         }
         if method_kind == DefineMethodKind::Method {
@@ -277,15 +277,14 @@ impl<'source> Parser<'source> {
             ));
         }
 
-        let primary =
-            self.register_private_accessor_primary(&name, span, is_static, method_kind)?;
+        let primary = self.register_private_accessor_primary(name, span, is_static, method_kind)?;
         let accessor = self.parse_object_method_definition(function_span, method_kind)?;
         // Brand checks recover the private side's HomeObject from the callable
         // even when the body itself never evaluates `super`.
         self.functions[accessor].needs_home_object = true;
 
         let local = if method_kind == DefineMethodKind::Setter {
-            self.register_private_setter_storage(&name, span, is_static)?
+            self.register_private_setter_storage(name, span, is_static)?
         } else {
             primary
         };
@@ -311,6 +310,7 @@ mod tests {
     use crate::engine::compiler::model::ir::function::FunctionSourceInfo;
     use crate::engine::compiler::model::ir::function::SuperCapabilities;
 
+    use crate::engine::compiler::names::NameTable;
     use crate::engine::compiler::parser::builder::FunctionBuilder;
     use crate::engine::compiler::parser::context::InMode;
     use crate::engine::compiler::parser::context::ModuleDeclarationExport;
@@ -323,6 +323,7 @@ mod tests {
         let mut lexer = Lexer::new(source);
         let first_token = lexer.next_token().unwrap();
         let source_span = first_token.span;
+        let mut names = NameTable::new();
         let root = FunctionBuilder::new(
             None,
             FunctionKind::Script,
@@ -332,7 +333,7 @@ mod tests {
                 range: None,
             },
             FunctionIrOptions {
-                function_name: Some("<private-accessor-order-test>".to_owned()),
+                function_name: Some(names.intern("<private-accessor-order-test>")),
                 private_name_binding: false,
                 class_constructor: false,
                 derived_class_constructor: false,
@@ -343,6 +344,7 @@ mod tests {
                 strict: true,
                 super_capabilities: SuperCapabilities::NONE,
             },
+            &mut names,
         )
         .unwrap();
         let mut parser = Parser {
@@ -352,6 +354,7 @@ mod tests {
             current_function: 0,
             in_mode: InMode::Allow,
             functions: vec![root],
+            names,
             module: None,
             module_declaration_export: ModuleDeclarationExport::None,
             module_declaration_export_target: None,
@@ -365,17 +368,19 @@ mod tests {
     #[test]
     fn malformed_setter_does_not_reserve_synthetic_storage_before_body_parse() {
         let mut parser = private_accessor_parser("(...rest) {}");
+        let padding = parser.names.intern("<padding>");
         parser.functions[0]
             .locals
-            .resize(MAX_LOCAL_VARIABLES - 1, "<padding>".to_owned());
+            .resize(MAX_LOCAL_VARIABLES - 1, padding);
         let span = parser.current().span;
         let mut elements = ClassElementState::default();
 
+        let value = parser.names.intern("#value");
         let error = parser
             .parse_private_class_accessor(
                 &mut elements,
                 false,
-                "#value".to_owned(),
+                value,
                 span,
                 span,
                 DefineMethodKind::Setter,
@@ -389,12 +394,15 @@ mod tests {
         let root = &parser.functions[0];
         assert_eq!(root.locals.len(), MAX_LOCAL_VARIABLES);
         assert!(
-            root.binding_id_in_scope(root.context.current_scope, "#value")
+            root.binding_id_in_scope(root.context.current_scope, value)
                 .is_some()
         );
         assert!(
-            root.binding_id_in_scope(root.context.current_scope, "#value<set>")
-                .is_none()
+            root.binding_id_in_scope(
+                root.context.current_scope,
+                parser.names.intern("#value<set>")
+            )
+            .is_none()
         );
     }
 }

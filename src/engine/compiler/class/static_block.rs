@@ -33,6 +33,7 @@ impl<'source> Parser<'source> {
         let aggregate = self.ensure_class_initializer(elements, true, span)?;
         let child = self.functions.len();
         let definition_scope = self.functions[aggregate].context.current_scope;
+        let block_name = self.names.intern("<class_static_block>");
         self.functions.push(FunctionBuilder::new(
             Some(ParentLink {
                 function: aggregate,
@@ -45,7 +46,7 @@ impl<'source> Parser<'source> {
                 range: None,
             },
             FunctionIrOptions {
-                function_name: Some("<class_static_block>".to_owned()),
+                function_name: Some(block_name),
                 private_name_binding: false,
                 class_constructor: false,
                 derived_class_constructor: false,
@@ -56,6 +57,7 @@ impl<'source> Parser<'source> {
                 strict: true,
                 super_capabilities: SuperCapabilities::PROPERTY,
             },
+            &mut self.names,
         )?);
         self.functions[child].class_initializer_kind = Some(ClassInitializerKind::StaticBlock);
         self.functions[child].arguments_forbidden = true;
