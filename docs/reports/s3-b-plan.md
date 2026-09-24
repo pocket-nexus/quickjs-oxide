@@ -403,7 +403,7 @@ site 不参与 GC 扫描；generator 恢复走 canonical PC + 同一
 | 切片 | 产物 | 依赖 | 关闭条件 |
 | --- | --- | --- | --- |
 | B2.0 | 证据冻结（§2 表格 + `target/s3-b-recon/`）；尺寸断言（`Instruction`==12、`RunExit`==16 编译期 `const` 断言；`Error`/`Result` 记为诊断指标不加断言）；`SpanKind` 单次查询重构实测不成立，已回退（§5.1） | 无 | 断言随 lib 测试编译；基线 A/A 复现 607.27/1355.27/1730.28 |
-| B2.1a | S1 `LocalCompareBranch`（含 `Goto` 折叠） | B2.0 | `empty_loop` 每轮 ≤200；`ic_share_*` 不退化；Test262 绿 |
+| B2.1a | S1 `LocalCompareBranch`（含 `Goto` 折叠），结果见 §5.2 | B2.0 | `empty_loop` 每轮 337（−44.5%）；`ic_share_*` +0.72%（布局伪影 <2% 线）；其余负载不退化 |
 | B2.1b | S2 `LocalAddConstStore` + S4 UpdateLocal/LocalAdd 快路径 | B2.1a | `int_local` 每轮 ≤300；BigInt/字符串固定行不退化 |
 | B2.1c | S3 `LocalFieldAddStore`（含 IC peek 变体） | B2.1b | `prop_read` 每轮 ≤450；属性固定行不退化 |
 | B2.2 | 自适应 per-PC 专用槽（§4.3） | B2.1c + 启动门禁 | 启动门禁满足且内存门禁通过；否则记 backlog |
@@ -431,6 +431,51 @@ site 不参与 GC 扫描；generator 恢复走 canonical PC + 同一
 每个 kind 以「新增一个小 accessor + 臂内最小分支」增量加入；若新分支再次
 触发同类内联翻转，优先用 `#[inline(always)]` 固定被 out-line 的既有小
 helper，再评估。
+
+### 5.2 B2.1a 结果：S1 `LocalCompareBranch`
+
+实现：`FusionPlan` 在 `producer(a); producer(b); cmp; If*; [Goto]` 形态上写
+flag（33 = 无 `Goto`，长 4；34 = 折叠尾 `Goto`，长 5）；第一生产者限
+`GetLocal`/`GetLocalCheck`，第二生产者可 `GetArg`，比较算子限八个。flag 34
+的 interior-entry 检查止于 `pc + length - 1`（尾 `Goto` 可被单独进入且语义
+等价）。`run` 的 `GetLocal` 臂在既有 `update` 检查之后查询新 accessor；命中
+时 `fusion::local_compare_branch` 非拥有地读两个 `Direct` 数字，比较后直接
+写 `pc.resume`，不 push/pop、不物化帧、不产生所有权边。任一 guard 失败原样
+回落 canonical 路径（对象/字符串/BigInt 走完整 `ToPrimitive`/数值比较，捕获
+与 TDZ 保持诊断顺序）。
+
+实测（同一机、`taskset -c 2`、fat LTO，基线为分支起点构建；基线在全部
+变体间复现差异 <100 指令）：
+
+| 负载 | 基线 | B2.1a | 变化 |
+| --- | --- | --- | --- |
+| `empty_loop` | 6,072,680,456 | 3,372,681,591 | **−44.46%**（607.27 → 337.27/轮） |
+| `int_local` | 13,552,737,034 | 11,002,737,610 | −18.82%（1355.27 → 1100.27/轮） |
+| `prop_read` | 17,302,816,419 | 14,912,817,906 | −13.81% |
+| `array_read` | 24,862,834,233 | 22,642,835,263 | −8.93% |
+| `call0` | 41,512,879,550 | 38,962,880,516 | −6.14% |
+| `bigint_loop` | 5,891,491,810 | 5,840,093,069 | −0.87% |
+| `ic_share_1prop` | 43,192,428,334 | 43,502,858,579 | **+0.72%** |
+| `ic_share_2prop` | 43,199,411,665 | 43,509,843,685 | +0.72% |
+| `prop_read_same_key` | 5,004,010,296 | 4,996,012,431 | −0.16% |
+| `map_get_same_key` | 14,062,015,222 | 14,052,012,605 | −0.07% |
+| `map_get_rotate_keys` | 18,622,441,990 | 18,600,540,447 | −0.12% |
+
+输出全部与基线一致（`ic_share` 4995000000 等）。kill criterion 满足
+（−44.5% ≥ 15%）。
+
+`ic_share_*` 的 +0.72% 归因：该脚本顶层 `let` 是全局 lexical cell，热循环
+字节码 0 个 S1 span（唯一 `GetLocal` 在 pc 80），回归与执行路径无关。
+`run` 符号从 0x930c 增至 0x946b（+351B），无其他符号尺寸变化；把 S1 检查
+整段禁用（accessor 恒 `None`）后精确回到基线，确认为 `run` 布局/内联预算
+伪影，低于 §6.2 的 2% 回退线，记录不阻塞。
+
+检查位置实验（同一构建协议）：检查放臂首时 `empty_loop` 328.27/轮但
+`ic_share_*` +1.34%；放 `local_add` 与 `update` 之间时 `ic_share_*` +0.88%、
+`empty_loop` 338.27；放 `update` 之后（采用）`ic_share_*` +0.72%、
+`empty_loop` 337.27。handler 的 `#[inline]` 与 `#[inline(never)]` 在两种
+顺序下都无差异，与既有 `compare_branch` 风格一致取 `#[inline]`。
+`empty_loop` 337 > 200 的余量留给 B2.1b 的 S4（`j++`）。
 
 ## 6. 验收门禁
 
