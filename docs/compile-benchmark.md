@@ -405,3 +405,40 @@ done
 python3 -c "import resource,subprocess,sys; subprocess.run(sys.argv[1:],check=True,stdout=subprocess.DEVNULL); \
   print(resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss, 'KB')" PROBE FILE
 ```
+
+### 9.5 P1a checkpoint（HEAD `a5b651be`，2026-09-24）
+
+P1a（`970a11be`→`ba593f9e`→`f29dd568`→`a5b651be`：Token Copy、惰性 cooked、
+清 token clone、数字去 `replace`）相对 §9.1/§9.2 基线的首个 checkpoint。
+度量口径与 §9.1/§9.2 相同；本机 perf 7.2.6 已无 `-u`，改用等价
+`--all-user`。探针构建目录：`target/p1a-alloc-probe`（分配/RSS）、
+`target/p1a-compile-probe`（perf），均用
+`build_compile_probe.py --repo .` 从当前 HEAD 构建。
+
+分配（4MB 档，计数逐次完全一致）：
+
+| 语料 | alloc 次数 | vs 基线 | alloc+realloc 次数 | vs 基线 | 分配字节 | vs 基线 | peak live | vs 基线 | max RSS | vs 基线 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| functions | 6,709,972 | −13.0% | 7,451,101 | −13.8% | 913.7 MB | −7.9% | 408.2 MB | −13.2% | 387,316 KB | −15.7% |
+| expressions | 3,265,546 | −19.5% | 3,480,553 | −21.7% | 733.4 MB | −14.5% | 409.2 MB | −22.7% | 286,996 KB | −21.2% |
+| syntax-mixed | 7,243,460 | −14.2% | 7,860,641 | −14.8% | 1,310.8 MB | −9.1% | 570.5 MB | −17.5% | 434,452 KB | −16.2% |
+
+perf（4MB 扣 64KB tiny 档，3 次中位数）：
+
+| 语料 | instr/KB | vs 基线 | cycles/KB | vs 基线 | cache-ref/KB | vs 基线 | cache-miss/KB | vs 基线 | task-clock/KB | vs 基线 | IPC |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| functions | 2,792,483 | −3.6% | 1,677,396 | −7.7% | 116,291 | −5.9% | 16,029 | −8.7% | 0.411 ms | −5.6% | 1.66 |
+| expressions | 1,763,907 | −4.9% | 883,483 | −10.4% | 44,733 | −12.0% | 1,896 | −16.7% | 0.228 ms | −9.3% | 2.00 |
+| syntax-mixed | 2,598,929 | −4.0% | 1,665,298 | −9.3% | 75,641 | −9.3% | 5,662 | −17.5% | 0.426 ms | −7.7% | 1.56 |
+
+结论与校准：
+
+1. P1a 全部指标方向正确，但低于计划 §5 的方向性目标（−60% 分配、−15%
+   instr/时间、−30% miss）。原因是 4MB 语料的分配/指令大头在 parse 之后的
+   IR/常量/绑定/字节码路径，lexer 每 token 的分配消除只覆盖一部分；
+   `functions` 每源 KB 仍有约 1.3k alloc+realloc 次。
+2. 因此后续阶段按实测校准：P1b/P2/P3 的分配目标用“相对上一 checkpoint 再降”
+   口径执行（计划已写 P1b ≥70% 相对 P1a），绝对百分比在每阶段 checkpoint
+   后更新本节；instr/miss/时间目标保持“相对 P0 基线”方向。
+3. 复现：`build_compile_probe.py` 生成上述两个探针目录后，按 §9.4 命令跑
+   4MB + 64KB（perf 将 `-u` 换为 `--all-user`），alloc/RSS 直接跑探针。
