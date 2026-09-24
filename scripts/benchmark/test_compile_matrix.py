@@ -28,6 +28,8 @@ class CompileMatrixTests(unittest.TestCase):
         self.assertEqual(classify("v24.21.0\n"), "node")
         with self.assertRaises(ValueError):
             classify("qjs 2026-06-04\n")
+        with self.assertRaises(ValueError):
+            classify("oxide-compile-alloc-probe 1\n")
 
     def test_node_commands_use_eager_and_parse_only_flags(self):
         compile_command = engine_command("node", Path("/usr/bin/node"), "compile", Path("/tmp/a.js"))
