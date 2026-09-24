@@ -63,6 +63,7 @@ Neither is a general untrusted-bytecode loader or Feature Parity claim.
 - [Primitive VM: final architecture and results](docs/primitive-vm.md)
 - [Profiling and external benchmarks](docs/profiling.md)
 - [Compiler front-end baseline and profiling](docs/compile-benchmark.md)
+- [Lexer/parser front-end refactor plan](docs/lexer-parser-refactor.md)
 - [Pinned Test262 baseline and metric definitions](docs/test262.md)
 - [Parity acceptance contract](docs/parity.md)
 - [Playground build and trust boundary](docs/playground.md)
