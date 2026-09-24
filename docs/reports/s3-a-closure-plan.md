@@ -541,4 +541,7 @@ annotate 归因留 A4 可选复核。`bigint256` cycles 持平。限制：shippe
   `s3-a-plan.md` §8.13（提交 `c1805e9d`）。
 - 实施结果记入 `s3-a-plan.md` 新增 §8.14 或
   `s3-full-rerun-results.md` 后续轮次；A4 决策矩阵引用本计划结论。
+- A4 决策已完成：[A4/D/B 决策报告](s3-a4-d-b-decision.md)（保留 16B、
+  D 优先、B 重设计后置）；后续 D 按
+  [阶段 D 实施计划](s3-d-plan.md) 执行。
 - B 的重新设计独立立项，不继承本计划。

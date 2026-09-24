@@ -71,13 +71,18 @@
      （`src/engine/heap/object_records.rs:461-484`），每个对象至少一次独立分配；
    - 属性键 16B：`Atom { raw, generation, table_id }`（`src/engine/atom/mod.rs:52-57`），
      相等比较逐 16B（shape ≤8 项线性扫描全命中）；
-   - atom 字符串表用 SipHash（`atom/mod.rs:280-294`），且 `JsString` 不缓存
-     hash，每次 probe 全串重算（`src/engine/value/primitive.rs:1249-1256`）；
+   - （2026-09-24 更正）atom 字符串表已用 FxHash（`atom/mod.rs:367`），
+     `JsString` 已缓存未加盐 `content_hash`（`value/primitive.rs:142/935`）；
+     剩余哈希税是 `get_or_create_shape` 每次构造 `Box<[ShapeEntry]>` 并用
+     std `RandomState` 哈希（`heap/runtime/mod.rs:288-325`），以及
+     Map 字符串键刻意用随机化 SipHash 重算全文
+     （`value/collection_key.rs:95`）；
    - 任一 prototype 被写即 bump 堆全局 `property_layout_epoch`
-     （`src/engine/heap/object_storage.rs:10-18`），**全堆 depth>0 的 IC 条目
-     集体失效**——V8 用 per-prototype validity cell，粒度天差地别；
-   - shape 迁移存 runtime 全局嵌套 HashMap、键是 24B `ShapeEntry`
-     （`runtime/mod.rs:112-113`）；
+     （`src/engine/heap/object_storage.rs:10-18`），机制上会使全堆 depth>0
+     的 IC 条目失效；但 2026-09-24 微负载对照（`proto_mutate` vs
+     `unrelated_mutate` 指令数相同）未测到成本，收益需真实负载证据；
+   - （2026-09-24 更正）`ShapeEntry` 已 8B（`object/shape.rs:82-87`）；
+     shape 迁移仍是 runtime 全局嵌套 HashMap（`runtime/mod.rs:119-123`）；
    - 派发循环每步付 bounds-checked fetch + `checked_add` + `Result` 管道
      （`src/engine/vm/run.rs:316-328`），指令是 ~16B/条的 198-variant enum
      （`code/bytecode.rs:123`）。
@@ -97,7 +102,7 @@
 | **A4** | 8B 值表示决策点：索引 NaN-box spike + 验收矩阵，不达标停在 16B | 无 | 视裁决（值流量密集路径上限 ~1.5–2×） | §1.1–1.3、§4.3 |
 | **C** | 派发与栈流量：TOS/accumulator 缓存、扩展静态超指令、可选 fn-pointer threading（2026-09-23 负结果关闭并回退） | 无 | 实测无净收益 | [负结果](s3-c-negative-result.md) |
 | **B** | quickening + 可变执行 IR（QuickJS 没有）；首批实现已随 C 回退，须重新设计独立立项 | 无 | +10–25%（历史估计） | 附录 A.1–A.3 |
-| **D** | 数据导向堆：typed arena、内联槽、validity cell、atom/string 便宜化 | 无 | +10–30%（对象/数组密集） | §1.6 |
+| **D** | 数据导向堆：shape 一致性/免分配、typed arena、槽瘦身/内联、Map 记录与键哈希；D5 validity cell 条件启动 | 无 | 内存 4–12× → ~2–3×；对象/数组密集 +10–30% | [实施计划](s3-d-plan.md) |
 | **F** | 受审计 unsafe 保留席位：仅在测量点名后逐点引入 | 受审计 | 视点名位置 | §8 |
 
 不采纳：寄存器式 VM 全面重写、nightly `become`、copy-and-patch /
@@ -308,26 +313,25 @@ String/BigInt 堆化两个阶段，原子瘦身提前至 A0-a），保留仅供�
   索引为准，QuickOp 侧维护映射；
 - 冻结向量是最强兜底；每个 quickened opcode 需配 guard-fail 单测。
 
-## 6. D：数据导向堆布局（与 A 复利）
+## 6. D：数据导向堆布局（2026-09-24 重订）
 
-按收益密度排序，各项独立成 PR：
+本节的旧草图已过时（`JsString` 已缓存 hash、atom 表已 FxHash、`ShapeEntry`
+已 8B、D5 收益缺证据），完整实施计划见
+[阶段 D 实施计划](s3-d-plan.md)。切片与顺序：
 
-1. **Typed arenas**：440B 统一 `ArenaSlot` 拆 per-kind arena（Object / VarRef /
-   Shape / Context / FunctionBytecode 各自 `Vec` + 各自 free list）。句柄格式
-   不变，trusted 访问器平移。VarRef/Shape 槽从 440B 降到几十 B；局部性与
-   RSS 一起改善。
-2. **对象内联属性槽**：`slots` 改 SmallVec 模式（前 2–4 槽内联，溢出再堆
-   分配），消灭每个对象一次独立分配。
-3. **Per-prototype validity cell 取代全局 `property_layout_epoch`**：
-   `used_as_prototype` 对象各自携带 epoch/cell；IC 条目记录具体 cell。
-   现状是任一 proto 写全堆杀 depth>0 IC，原型链密集负载（deltablue /
-   richards 类）白丢缓存。
-4. **atom / string 便宜化**：`StringRepr` 头部缓存 hash；atom 字符串表
-   SipHash → FxHash（`src/engine/hash.rs` 已有）；shape 迁移改 per-shape 小
-   Vec（1–2 项内联）替代 runtime 全局嵌套 HashMap。
-5. **S2.1 快速释放单独立项**：A 落地后重新评估「任何借用都 defer」的
-   契约松弛（`src/engine/heap/slot_ownership.rs:208` 测试钉死），不作为
-   性能 PR 的附带改动。
+1. **D1 shape 缓存一致性 + 查找免分配**（新，最高优先）：修复多属性对象
+   字面量/连续 define 的每对象私有 shape（10k 个 `{x:1,y:2}` → 10167 个
+   shape；IC 读 +15.4% 指令而 QuickJS 0%）；`get_or_create_shape` 查找路径
+   免 `Box<[ShapeEntry]>` 分配、去 std `RandomState` SipHash。
+2. **D2 typed arenas**：440B 统一 `ArenaSlot` 拆 per-kind arena；叶节点槽
+   440B → ~24B；分段增长消除 `Vec` 翻倍峰值。
+3. **D3 对象/属性存储**：`PropertySlot` 32B → 24B（拉伸 16B）；前 2 槽内联
+   消灭每对象一次 `Vec` 分配（现容量浪费 2×）；属性写事务快路径。
+4. **D4 Map/Set 记录与索引**：`CollectionRecords` 的 HashMap+BTreeSet 改
+   稠密记录数组；字符串键 64-bit 随机种子哈希缓存（per-runtime 种子）。
+5. **D5（条件）per-prototype validity cell**：本轮 `proto_mutate` 与
+   `unrelated_mutate` 指令数相同（1,178.74M），收益缺证据；仅在真实原型链
+   负载满足启动门禁时另立 spike。
 
 ## 7. C：派发与栈流量——收割，不重写
 
@@ -460,12 +464,14 @@ codec 自测门禁（`status.md:319-320`）、修订 `status.md:3` 的 "unsafe-f
 
 ## 11. 路线、预期与验证门禁
 
-### 路线（2026-09-23 修订；C 关闭、B 回退后重排）
+### 路线（2026-09-24 修订；A4 已裁决、C 关闭、B 回退后重排）
 
 **E（已完成）→ 残余批（T1 所有权事务 + T2 帧槽 32B→16B + 字符串簇归因）→
-A4 决策点 → D**。B 须按负结果重新设计并独立立项，C 已关闭回退，二者都
-不在活动路线内。每阶段独立可回退，严禁跨阶段混合提交。S4（RC →
-tracing GC）不在此路线内，按 §10.6 双门禁另行决策。
+A4 决策点（已完成：保留 16B，见
+[A4/D/B 决策报告](s3-a4-d-b-decision.md)）→ D（计划见
+[阶段 D 实施计划](s3-d-plan.md)）**。B 须按负结果重新设计并独立立项，
+C 已关闭回退，二者都不在活动路线内。每阶段独立可回退，严禁跨阶段混合
+提交。S4（RC → tracing GC）不在此路线内，按 §10.6 双门禁另行决策。
 
 支撑顺序的实测规律（E 已完成并冻结同协议基线，见
 [全量重测结果](s3-full-rerun-results.md)）：
@@ -507,8 +513,11 @@ tracing GC）不在此路线内，按 §10.6 双门禁另行决策。
 5. **B：quickening**：把已验证的 borrowed fast path 模式经特化 opcode
    系统化；首批实现已随 C 回退（[负结果](s3-c-negative-result.md) §4），
    不在活动路线内，后续须重新设计并独立立项。
-6. **D：数据导向堆**：BigInt/String 叶子紧凑 arena（收 440B 槽跨步的
-   分配局部性）、atom/string 便宜化（收 map-string）；与 B 按测量交替。
+6. **D：数据导向堆**（2026-09-24 重订）：按
+   [阶段 D 实施计划](s3-d-plan.md) 执行——D1 shape 缓存一致性 + 查找免
+   分配 → D2 typed arenas（叶节点 440B → ~24B）→ D3 槽瘦身/内联槽/写
+   快路径 → D4 Map/Set 记录与键哈希 → D5（条件）。A4 已按决策报告
+   §4.1 保留 16B，不再作为 D 的前置；B 与 D 不混合提交。
 
 bigint256 当前回退以 E 同协议重测为准（m0/pre-A 墙钟 1.21×、用户态指令
 1.32×，见 [全量重测结果](s3-full-rerun-results.md) §4.6；指令列 2026-09-23

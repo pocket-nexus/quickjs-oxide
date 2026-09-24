@@ -11,7 +11,7 @@ CGU=1、无 PGO、无 profiling；历史无 LTO 结果不得与新系列混算�
 - **S1**：可信快路（trusted fast path）——已实现
 - **S2**：可信路径收尾 + 快速释放——部分实现（S2.2；S2.1/S2.3 因契约冲突撤销）
 - **S3 及之后**：横向设计比较（见文末「横向设计比较」）→ S3 已定稿为
-  `docs/reports/performance-architecture.md`（值表示句柄化【16B 已实施，8B NaN-box 为决策点】+ quickening + 数据导向堆，无 JIT、默认无 unsafe；推进顺序见其 §11 路线 2026-09-22 定稿）
+  `docs/reports/performance-architecture.md`（值表示句柄化【16B 已实施，8B NaN-box 已按 [A4/D/B 决策报告](s3-a4-d-b-decision.md) 裁决保留 16B】+ quickening【须重新立项】+ 数据导向堆【见 [阶段 D 实施计划](s3-d-plan.md)】，无 JIT、默认无 unsafe；推进顺序见 architecture §11 路线 2026-09-24 修订）
 
 ---
 

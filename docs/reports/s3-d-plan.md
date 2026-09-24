@@ -1,0 +1,390 @@
+# 阶段 D 实施计划：数据导向堆与形状/键存储（2026-09-24）
+
+> 状态：计划完成，待确认后按切片实施。基线为 `feat/pr27-a4`
+> （= PR27 tip，T1/T2 已收口），裁决依据见
+> [A4/D/B 决策报告](s3-a4-d-b-decision.md)。本计划取代
+> `performance-architecture.md` §6 的旧 D 草图（旧草图含过时事实，
+> 见 §2）。测量二进制为 post-T2 发布构建 `c4f1c433…`，对照为 pinned
+> QuickJS 2026-06-04（`d0f8966b…`）。
+
+## 1. 目标
+
+D 的总目标是**在不改变值表示（保留 16B `RawValue`/`JsValue`）与信任模型的
+前提下，消除堆布局、形状缓存与键哈希的常数级浪费**，把对象/字符串/Map 的
+RSS 从对 QuickJS 的 4–12× 压到 ~2–3×，并降低属性/索引/Map 路径的指令数。
+
+本计划同时回答上一轮遗留问题：旧 §6 只有 5 条方向性草图，且部分前提已
+被代码演进推翻；本轮基于最新代码与实测重新定义切片、实现点、不变量与
+验收。
+
+**D 明确不做**（防止边界蔓延）：
+
+- 不改 8B 值表示（A4 已数据裁决保留 16B，见决策报告 §4.1）。
+- 不重写解释器派发（归 B，须重新立项；D4 也不纳入 native 调用编组链）。
+- 不改 `unsafe_code = forbid`（`Cargo.toml` workspace lints）；内联存储
+  不得引入 `unsafe`。
+- 不新增依赖为默认路线（当前依赖仅 `num-bigint`/`num-traits`，
+  `Cargo.toml:13-15`）；确需 smallvec 类容器时单独决策。
+
+## 2. 相对旧 §6 的修订
+
+旧 §6（`performance-architecture.md:311-330`）与 §1.6 的以下前提已过时，
+本计划按当前树修正：
+
+| 旧表述 | 当前事实 |
+| --- | --- |
+| `JsString` 不缓存 hash，每次 probe 全串重算 | 已缓存未加盐 `content_hash`（`value/primitive.rs:142/935`，`Hash for JsString` 在 `primitive.rs:2125-2129`） |
+| atom 字符串表用 SipHash | 已用 `FxBuildHasher`（`atom/mod.rs:367`） |
+| shape 迁移键是 24B `ShapeEntry` | `ShapeEntry` 已 8B，有尺寸断言（`object/shape.rs:82-87`） |
+| D 的第 5 项是 S2.1 快速释放单独立项 | 本轮实测未支持其为独立高收益项，移除；D5 改为条件项 |
+
+**本轮新增的关键事实**（改变了切片优先级，详见 §3.2/§3.3）：
+
+1. 多属性对象字面量/连续 define 的**每对象私有 shape** 缺陷：10k 个
+   `{x:1,y:2}` 产生 10167 个 shape（1 属性为 168），释放对象后回落到
+   167。根因在 in-place append 与 `shape_cache` canonical 条目的一致性。
+2. `get_or_create_shape` 的缓存命中路径**每次分配 `Box<[ShapeEntry]>` 并
+   用 std `RandomState`（SipHash）哈希**，在多个固定负载里占 3–13% 自时间。
+3. 值/槽尺寸实测（临时探针，`cargo test --lib`，已移除）：
+   `ArenaSlot` 440、`NodeData` 392、`SlotState` 408、`ObjectData` 224、
+   `ObjectPayload` 160、`PropertySlot` 32、`AutoInitProperty` 32、
+   `Shape` 88、`ShapeFingerprint` 32、`CollectionRecords` 152、
+   `MapRecord` 32、`CollectionIndex` 72、`JsString` 8、`JsBigInt` 16。
+4. D5 的反证：`proto_mutate` 与 `unrelated_mutate` 微负载指令数完全相同
+   （1,178.74M vs 1,178.74M），当前测量不到「全堆 epoch 失效」的成本；
+   D5 降级为条件项。
+
+## 3. 证据基线
+
+### 3.1 差距与内存（决策报告，2026-09-24）
+
+- 指令差：prop_write 24.59×、array_write 19.55×、array_read 13.90×、
+  typed_array_read 12.30×、arguments_read 11.60×、map-int 10.38×、
+  empty_loop 6.71×、locals 8.27×；`prop_write` 670 vs 27 insn/写。
+- RSS（1M 项 `ru_maxrss`）：objects 623.4 vs 126.6 MiB（4.93×）、
+  arrays 608.1 vs 149.9（4.06×）、strings 581.5 vs 49.4（11.77×）、
+  maps 796.9 vs 107.7（7.40×）。
+- 归因：`run::run` 自时间 50–88%；prop_write = ownership 29% +
+  property 24% + slots 24% + interp 19%；map-int 的 native 编组链
+  ≈25%、属性读机制 ≈10%、哈希 ≈7%。
+
+### 3.2 新增实测：shape 私有化与哈希（本轮）
+
+**shape 私有化**（dev profiling 构建 `-d` 计数 + 发布二进制 `perf stat`）：
+
+| 用例 | shapes（10k 对象） | 备注 |
+| --- | ---: | --- |
+| `a.push({x:1})` | 168 | 共享 |
+| `a.push({x:1,y:2})` | 10167 | 每对象一个私有 shape |
+| `a.push({x:1,y:2,z:3})` | 10167 | 同上（只多 1 个/对象） |
+| `a=null` 后 | 167 | 私有 shape 随对象释放 |
+
+读写微负载（各 10M 次 `a[j].x`，oxide `c4f1c433` vs QuickJS）：
+
+| 微负载 | oxide insn | QuickJS insn |
+| --- | ---: | ---: |
+| `ic_share_1prop`（对象 1 属性） | 43.642B | 3.499B |
+| `ic_share_2prop`（对象 2 属性） | 50.338B（**+15.4%**） | 3.499B（**0%**） |
+
+即：QuickJS 的 IC 不受属性个数影响；我们的 2 属性对象因每对象私有 shape
+使 IC 无法特化。证据文件：`target/a4db-decision/micro/ic_share_{1,2}prop.js`。
+
+**SipHash / shape 缓存**（`target/a4db-decision/profiles/oxide/*.data`
+符号自时间）：
+
+| 负载 | SipHash write | `hash_one` | `get_or_create_shape` |
+| --- | ---: | ---: | ---: |
+| arguments_read | 13.4% | 2.3% | 1.4% |
+| prop_clone | 8.9% | 2.7% | – |
+| prop_create | 4.1% | 1.0% | – |
+| prop_delete | 3.5% | 2.2% | – |
+| map-string | 3.4% | 3.0% | – |
+| map-int | 1.3% | 3.2% | – |
+
+**cache-references**（同批 `stats.json`，oxide vs QuickJS）：map-int
+1.394B vs 1.07M（1300×）、map-string 624.8M vs 1.13M（553×）、
+prop-delete 376.4M vs 3.90M（96×）、arguments_read 86.0M vs 0.32M（265×）、
+prop_create 58.6M vs 0.27M（218×）。说明 Map/属性路径的内存流量结构不同，
+不只是指令数。
+
+### 3.3 新增实测：profiling 记账（dev `--profile-json`）
+
+10k 个 `{x:1,y:"s"+i}` 的记账快照：
+
+- `arena_slots`：30545 槽 × 440B = 13.44MB used / 14.42MB capacity
+  （其中 ~10k 是私有 shape 槽）；
+- `property_slots`：20890 槽 × 32B = 668KB used / 1.33MB capacity
+  （**2× 容量浪费**，来自每对象独立 `Vec` 翻倍）；
+- `objects` 10170、`shapes` 10167、`string_nodes` 10141。
+
+该记账（`heap/profiling.rs:86-221`、`api/profiling.rs` `MemorySnapshot`）
+可直接作为 D 的逐片验收工具。
+
+## 4. 切片与实现计划
+
+顺序：**D1 → D2 → D3 → D4 →（D5 条件启动）**。每片独立提交、独立
+A/B、独立回退；D1 与 D2 文件面基本不重叠，可并行改代码但测量必须串行。
+
+### D1 shape 缓存一致性 + 查找免分配（最高优先）
+
+**目标**：修复多属性对象私有 shape；把 shape 查找路径的分配与 SipHash
+清零；shape 相关 cache-references 明显下降。
+
+**证据**：§3.2。影响面 = prop_read/prop_write/prop_create/prop_clone/
+arguments_read/map-* 的公共前置路径。
+
+**实施点**：
+
+1. **D1a 一致性修复**（独立最小提交）：
+   - `store_selected_property_slot` 的 in-place 条件
+     （`object/storage.rs:588-601`）与 `MIN_UNIQUE_SHAPE_APPEND_ENTRIES`
+     （`object/properties.rs:36-38`）联动：in-place append 只有在目标
+     shape **不是** `shape_cache` 的 canonical 条目时才允许；否则改走
+     `append_transition`（`heap/runtime/mod.rs:328-360`）。
+   - 或等价地，在 `append_unique_layout_inner`
+     （`object/properties.rs:67-120`，已正确 unlink fingerprint）里当
+     `owned_cache_entry == true` 时拒绝 in-place，返回可回退信号。
+   - 该 shape 的指纹一致性不变量新增 debug 断言：`shape_cache` 中
+     `fingerprint → shape` 成立时，`shape.entries()` 必须等于
+     fingerprint.entries。
+2. **D1b 查找路径免分配 + 哈希**：
+   - `ShapeFingerprint`（`object/operations.rs:17-20`）不再作为 HashMap
+     键直接持有 `Box<[ShapeEntry]>`；改为在 `Shape` 上缓存
+     `fingerprint_hash: u64`（对 `prototype + entries` 做 FxHash），
+     `shape_cache` 改 `HashMap<u64, Vec<ShapeId>>`（碰撞时逐项比较
+     entries），或至少给现有 `HashMap<ShapeFingerprint, …>` 换
+     `FxBuildHasher` 作为过渡。
+   - `shape_transitions`（`heap/runtime/mod.rs:121`）由
+     `HashMap<ShapeId, HashMap<ShapeEntry, ShapeId>>` 改为 per-shape
+     `Vec<(ShapeEntry, ShapeId)>`（实测典型 1–4 项）或 `FxBuildHasher`。
+   - `shape_cache`/`shape_fingerprints`/`shape_transition_parents` 全部
+     换 `FxBuildHasher`（`heap/runtime/mod.rs:119-123`）。
+3. **D1c（可选，D1a 后评估）**：对象字面量一次性建形（lowering 传完整
+   entries，等价 QuickJS `JS_NewObjectFromShape`），彻底消除中间 shape；
+   仅在 D1a/D1b 后仍有可测成本时启动。
+
+**不变量**：shape 缓存条目只在 shape 的 entries/prototype 未被原地修改
+时有效；transition 命中仍须 `heap.shape(target).is_ok()` 校验（保持现有
+弱引用语义）；错误路径的 fingerprint/cache 回滚语义不变
+（`object/properties.rs:108-118` 与 `object/storage.rs:641-691` 测试）。
+
+**验收**：
+- 回归微负载（新增到 `target/a4db-decision/micro/`）：
+  `{x:1,y:2}`×10k 存活时 shapes ≤ 200；`a=null` 后 ≤ 200；
+  `ic_share_2prop` insn / `ic_share_1prop` insn ≤ 1.02（当前 1.154）。
+- 固定行不回退：arguments_read、prop_clone、prop_create、prop_delete
+  指令下降；SipHash/`hash_one` 符号占比在对应 profile 中消失或 <0.5%。
+- `cargo test --locked --workspace --all-targets` 全绿；Test262 冻结向量
+  零回归（口径见 §6）。
+
+**回退**：D1a 单独可回退（恢复 in-place 条件）；D1b 与 D1c 独立提交。
+
+### D2 typed arenas（per-kind 槽存储）
+
+**目标**：把 440B 统一 `ArenaSlot` 拆为 per-kind arena，叶节点槽从
+440B 降到 ~24B；消除 `Vec` 翻倍峰值。
+
+**证据**：§3.3（10k 对象仅 arena 就 13.4MB）；`ArenaSlot` 440B 断言
+（`heap/edges.rs:151`）；strings RSS 11.77×。
+
+**实施点**：
+
+1. `Heap.slots: Vec<ArenaSlot>`（`heap/mod.rs:262-265`）拆为
+   `objects/shapes/var_refs/contexts/functions/strings/bigints` 各自
+   `Vec` + 各自 free list；`ArenaSlot` 的 `weak_prev/weak_next` 只保留
+   在 object arena（weak 链仅对象用，`heap/gc.rs:889-1003`）。
+2. `RawId::index()` 仍为全局槽索引（`identity.rs`，12B 保持），访问器按
+   kind 分发到对应 arena；`validate_slot_identity`
+   （`heap/object_storage.rs:2202-2228`）、`live_node(_fast/_mut)`、
+   `reserve_vacant`、`publish`、`abort_initializing`
+   （`heap/arena.rs:78-205`）平移。
+3. 叶节点：`allocate_string_leaf`/`allocate_bigint_leaf`
+   （`heap/arena.rs:126-152`）槽只存 `generation + strong + JsString/
+   JsBigInt`；`StringRepr` 仍为 `Rc` 外部载荷（不改值/共享语义）。
+4. 分段增长：arena 用 chunk（如 64k 槽）或 `reserve_exact` 策略，避免
+   `Vec` 翻倍造成的 ru_maxrss 峰值（当前 1M 槽峰值可到 used 的 ~1.5×）。
+5. 配套：`counts()`（`heap/arena.rs:49-76`）、`memory_categories`
+   （`heap/profiling.rs:86-221`）按 kind 出数；`ArenaStorage` 每 arena
+   独立 trace（`heap/profiling.rs:9-77`）。
+
+**不变量**：generational identity 语义不变（槽复用必换 generation）；
+zero_queue 仍存 `RawId` 且跨 kind 保序；weak 链仅对象；teardown 时所有
+arena 归零；profiling 记账不重复计数。
+
+**验收**：
+- 新增尺寸断言：object 槽 ≤ 256B、shape 槽 ≤ 128B、leaf 槽 ≤ 32B
+  （在 `heap/tests/` 或 `edges.rs` 同址）。
+- RSS：objects/arrays/strings/maps 1M 行相对 E 基线下降 ≥ 35%（目标
+  objects ≤ 380 MiB、strings ≤ 250 MiB）；`arena_slots`
+  capacity/used ≤ 1.1。
+- 固定行不回退 >2%；GC/弱引用/teardown 测试全绿
+  （`heap/tests/weak_collections.rs`、`release_cleanup_tests.rs`、
+  `heap/tests/storage.rs`）。
+
+**回退**：per-kind 拆分是机械改造，按 kind 分批提交（先 leaf + shape，
+再 object/其余），每批可独立回退。
+
+### D3 对象/属性存储：槽瘦身 + 内联槽 + 写快路径
+
+**目标**：`PropertySlot` 32B→24B（拉伸目标 16B）；消灭每对象一次
+`Vec` 分配与 2× 容量浪费；降低 prop_write 的 ownership 事务占比。
+
+**证据**：`PropertySlot` 32B、`AutoInitProperty` 32B、`property_slots`
+容量 2×（§3.3）；prop_write 670 vs 27 insn/写，ownership 29%。
+
+**实施点**：
+
+1. **D3a 槽瘦身**：`AutoInitProperty`（`heap/object_records.rs:23-…`）
+   的 `NativeBuiltin { name: &'static str, length, min_readable_args }`
+   改由 `NativeFunctionId` 派生（name/length 可从目标注册表取回），
+   payload 收进 16B；`PropertySlot::AutoInit` 仍 32B 前先 box
+   （`AutoInit(Box<AutoInitProperty>)`）作为最小步骤，目标
+   `size_of::<PropertySlot>() == 24`。
+2. **D3b 内联槽**：`ObjectData.slots: Vec<PropertySlot>`
+   （`heap/object_records.rs:466-484`）改为无 unsafe 的
+   `Slots { inline: [PropertySlot; 2], len: u8, spilled: Option<Vec<…>> }`
+   或等价结构；未用尾槽用占位值 + `len` 门控，所有读写经
+   `as_slice()`，`validate_object_layout` 校验 `slots.len() ==
+   shape.entries().len()` 语义不变。
+   - 若 `PropertySlot` 已到 24B，2 内联 = 48B，`ObjectData` 约 240B；
+     0/1/2 属性对象零堆分配。
+   - 16B 拉伸项：让 `Option<ObjectId>` 借 `generation` 非零得到 niche，
+     使 accessor 与 `Data` 同为 16B；作为独立 spike，不阻塞主线。
+3. **D3c 写事务快路径**：`replace_property_slot_with_status`
+   （`heap/object_storage.rs:728-779`）对「旧值 immediate、新值
+   immediate、receiver 非最后 owner」的组合跳过
+   `retain_edges_transactionally`/`property_slot_edges`/readiness 预检
+   （沿用 `try_property_ic_write_scalar`（`object/ordinary_storage/ic.rs:407-470`）
+   已有证明模式），并给出「证明与提交之间无可回调」的论证。
+4. 配套：`memory_categories` 的 `property_slots` 计入内联容量；
+   `ObjectData` 克隆/替换路径（`replace_object_layout`）适配。
+
+**不变量**：`ObjectData.slots` 与 shape entries 平行且等长；所有
+edge/atom 释放路径仍覆盖内联与溢出两种形态；`PropertySlot` 尺寸变化
+不影响 `slot_matches_storage` 语义；写快路径只在无回调、非最后 owner
+时启用（否则回退旧事务）。
+
+**验收**：prop_write insn/写下降 ≥ 25%（目标 ≤ 500，QuickJS 27 不作
+本阶段可达目标）；prop_read/prop_create/prop_clone 不回退；
+objects 1M RSS 再降 ≥ 20%；`property_slots` capacity/used ≤ 1.1。
+
+**回退**：D3a/D3b/D3c 三个独立提交。
+
+### D4 Map/Set 记录与索引
+
+**目标**：Map/Set 记录存储从「HashMap + BTreeSet 每记录两棵节点」改为
+稠密记录数组；字符串键哈希不再每次全串 SipHash；`CollectionsState` 等
+辅助表去 SipHash。
+
+**证据**：`CollectionRecords` 152B/实例 + 每记录 HashMap 节点 +
+BTreeSet 节点；map-int cache-references 1300×、map-string 553×；
+map-string SipHash 6.4%（含 `hash_one`）；map_get 同键微负载 7.29×。
+
+**实施点**：
+
+1. `CollectionRecords`（`heap/collection_records.rs:15-26`）：以
+   `next_id` 单调 id 为键的稠密 `Vec`（`Option<MapRecord>` + 空闲链）+
+   `order: Vec<usize>`/双向链维护插入序；删除为 O(1) 并保持迭代顺序
+   （与 QuickJS 记录数组一致）。`MapRecord` 32B 不变（D2 后随 arena）。
+2. `CollectionIndex`（`heap/collection_index.rs:20-30`）：
+   - 字符串键：在 `StringRepr` 缓存 **64-bit 每运行时随机种子哈希**
+     （进程/运行时级 `RandomState` 一次性种子，懒计算），替代每次
+     `hash_code_units` 全文 SipHash；`buckets` 已是 identity hasher。
+     - 安全口径：随机种子不可预测，抗 hash-flooding 性质保留；不再
+       逐 Map 独立种子（与 V8/QuickJS 的 per-runtime 种子同级），
+       在计划验收中显式记录该信任模型收敛。
+   - 保留/放大现有 per-index memo（`STRING_HASH_CACHE_SIZE = 8`）作为
+     过渡措施，正式方案为上述缓存。
+   - BigInt 键维持现状（未测到热点），如后续测量需要按同法缓存。
+3. `CollectionsState.maps/sets: HashMap<ObjectId, HashSet<usize>>`
+   （`heap/collections.rs:20-21`）与 `WeakCollectionRecords` 改
+   `FxBuildHasher`。
+4. **明确不做**：native 调用编组链（map-int ≈25%）归 B 重新立项；
+   D4 只改记录/索引/哈希。
+
+**不变量**：Map/Set 插入顺序、`forEach` 期间删除可见性、迭代器失效
+语义与 QuickJS 对齐（现有 `ActiveCollectionRecordGuard` 语义不变）；
+字符串键哈希种子变更不得影响可观察行为。
+
+**验收**：map-int/map-string/map_delete 指令下降 ≥ 10%；Map 1M RSS
+下降 ≥ 25%；Map/Set/WeakMap Test262 全绿；字符串键 SipHash 符号占比
+<0.5%。
+
+**回退**：记录存储与哈希缓存两个独立提交。
+
+### D5 per-prototype validity cell（条件项，需先补证据）
+
+**降级理由**：本轮 `proto_mutate`（每 1024 次读写一次 `P.prototype`）
+与 `unrelated_mutate`（写无关原型）指令数完全相同
+（1,178.74M vs 1,178.74M），`property_ic.hit` 200196、`miss` 3；当前
+微负载测量不到「任一 proto 写全堆杀 depth>0 IC」的成本。旧 §6 的收益
+主张缺证据。
+
+**启动门禁（两者同时满足）**：
+1. 在真实原型链负载（deltablue/richards 类）中，depth>0 的 IC 命中占
+   属性读 ≥ 30%，且 proto 写频率足以造成反复重特化；
+2. 有同协议 A/B 证据表明重特化成本 ≥ 3% 指令或 ≥ 2% wall。
+
+**若启动**：`Location.prototype_epoch`（`object/property_ic.rs:10-20`）
+改为 per-prototype cell（槽索引 + generation + 值），
+`invalidate_property_layout`（`heap/object_storage.rs:14-18`）只 bump
+具体原型；IC 条目记录链上 cell 的校验值。实现前须单独写 spike 计划。
+
+## 5. 排程
+
+1. **D1a**（最小一致性修复）→ 独立提交 + 微负载/Test262 验证。
+2. **D1b**（查找免分配/哈希）→ 独立提交。
+3. **D2**（typed arenas）→ 按 kind 分批（leaf+shape 先行）提交。
+4. **D3a → D3b → D3c** 独立提交；16B 拉伸 spike 可并行但不上默认路径。
+5. **D4** 记录存储 → 字符串哈希缓存，独立提交。
+6. **D5** 仅在门禁满足时另立 spike；否则记入 backlog。
+7. D1 与 D2 可并行改码；所有测量串行（`taskset -c 2`）。
+
+## 6. 验收门禁
+
+- **构建/正确性**：`cargo fmt --check`、`cargo check --all-targets`
+  零警告、`cargo test --locked --workspace --all-targets` 全绿；
+  阶段收尾跑 Test262 冻结向量零回归（对照口径：
+  pass=79982 / eligible=80032 / total=102037，或按当轮冻结 receipt）
+  与 `python3 scripts/checks/check-source-layout.py`。
+- **基准**：双协议（LTO off + CGU16 与 fat LTO + CGU=1）配对轮换，
+  **instructions 为主信号**，3 次中位；固定行 = bigint32/64/256、
+  scaling（map-int/map-string/typed-index/prop-delete）、V8、
+  fixed 字符串簇、`a=a` 微负载，以及本轮新增
+  `ic_share_1prop/2prop`。
+- **内存**：`ru_maxrss`（3 次中位）+ profiling 记账
+  （`cargo build -p quickjs-oxide-cli --features profiling`，`-d -T
+  --profile-json`）；每片记录 `arena_slots`/`property_slots`/
+  `string_nodes` 的 used/capacity。
+- **尺寸断言**：每片更新/新增 `size_of` 断言（`edges.rs:151` 同址）。
+- **不回退**：prop_read/prop_write、Map 构造/insert、A 既有收益、
+  E 基线固定行不得劣化 >2%（超出需与 A/A 噪声对照后判定）。
+- **每项独立提交、可单独回退；不得跨片混合提交。**
+
+## 7. 风险
+
+- **D1a 语义风险**：in-place append 条件收紧可能让部分高频 define 走
+  过渡路径变慢。缓解：以 `prop_create`/`prop_clone` 指令数为门禁，
+  若回退则保留 canonical 判断但允许非 canonical 独占 shape 原地追加。
+- **D2 触及 GC 核心**：weak 链、zero_queue、retire、teardown 断言集中
+  在 `heap/gc.rs`；缓解为分批（先 leaf/shape）、保留 `RawId` 布局、
+  debug 全量校验、GC/弱引用/teardown 测试必跑。
+- **D3 改变布局校验**：`validate_object_layout` 与所有
+  `PropertySlot` 匹配点（含 release/atom 收集）需同步；内联占位值
+  绝不能泄漏到任何语义路径。
+- **D4 顺序语义**：插入序、`forEach` 删除可见性、迭代器失效必须与
+  QuickJS 对齐；以 Test262 Map/Set 全绿 + 现有 `ActiveCollectionRecord`
+  测试为门禁。
+- **哈希信任模型收敛**（D4）：字符串键从 per-Map 随机种子改为
+  per-runtime 随机种子，需在提交信息与文档显式记录；不得退化为
+  可预测种子。
+
+## 8. 证据路径
+
+- 决策与实测：`docs/reports/s3-a4-d-b-decision.md`、
+  `target/a4db-decision/{stats.json,mem-results.json,profiles/}`
+- 本轮新增：`target/a4db-decision/micro/ic_share_{1,2}prop.js`、
+  `target/a4db-decision/ic/{no,unrelated,proto}_mutate.js`；
+  dev profiling 记账命令见 §6
+- 旧 D 草图：`docs/reports/performance-architecture.md` §6（本计划取代）
+- 尺寸探针口径：临时 `cargo test --lib` 探针（本轮已移除，结论见 §2/§3.3）
