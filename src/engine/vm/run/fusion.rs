@@ -8,26 +8,6 @@ pub(super) fn update_local(
     index: u16,
     update: UpdateLocal,
 ) -> Result<bool, Error> {
-    // S4: a direct numeric binding updates inside the scalar domain, so the
-    // transaction cannot release an owner, allocate or fail.
-    if let Some(previous) = slots.immediate_local(index)
-        && (update.discard || slots.has_operand_room())
-    {
-        let next = previous.update(update.increment);
-        slots.store_number_local(index, next);
-        if !update.discard {
-            slots.push_number(if update.postfix { previous } else { next });
-        }
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(if update.discard {
-            "fusion.UpdateLocalDiscard"
-        } else if update.postfix {
-            "fusion.UpdateLocalPostfix"
-        } else {
-            "fusion.UpdateLocalPrefix"
-        });
-        return Ok(true);
-    }
     if !slots.update_number_local(index, |previous| {
         let next = previous.update(update.increment);
         let result = (!update.discard).then_some(if update.postfix { previous } else { next });
