@@ -271,14 +271,17 @@ dev-support/test262/current.conf --check`、真实 bundle 编译矩阵
   缓冲主导）。
 - 验收：verify 提交时间 −18.0%（目标 −10%）、alloc 次数 −23.7%
   （目标 −20%）、alloc 字节 −13.6%（目标 −13.9%，边际差）；publish 时间
-  −29.7%（目标 −25%）、verify+publish 时间 −56.4%（目标 −40%）、
-  verify+publish alloc 次数 −24.8%（目标 −40%，未达：publish 剩余成本是
-  atom 驻留与堆节点注册）、realloc 字节 −9.3%（目标 −5%）。
+  −29.7%（目标 −25%）、publish 阶段 alloc 次数 −16.8%（目标 −25%，未达：
+  剩余成本是 atom 驻留与堆节点注册）、verify+publish 时间 −56.4%
+  （目标 −40%）、verify+publish 阶段 alloc 次数 −54.6%（目标 −40%，阶段
+  插桩口径，见 §9.12）、realloc 字节 −9.3%（目标 −5%）。
 - test262：P3 与 walk 各跑一次 `--full`（12 workers，102,037 variants），
-  除首行 engine 哈希外 TSV/JSONL 逐字节一致；里程碑 `full_passes=79982`
-  的 +28 差额是 P1a 既有漂移，未 promote。fixtures 13/13。
+  除首行 engine 哈希外 TSV/JSONL 逐字节一致；里程碑已在阶段收尾 promote
+  （`7784ba12` 对齐 coverage contract + `4712f679` promote，
+  `--check`/`--focused`/`--full` 全绿：pass=80010 / eligible=80060）。
+  fixtures 13/13。
 - §2.3 中 `prepare_private_binding_publication` 的独立扫描已由
   `PrivateBindingScanner` 合并进定义 interning；必要 `Vec→Box`/`Vec→Rc`
   拷贝按计划保留，heap 记录类型未动。
-- 未完成项：issue #32 进度未更新（本环境无仓库写权限）；publish 阶段的
-  独立分配计数未重建（P3 时代临时插桩补丁不在仓库）。
+- 收尾（2026-09-25）：issue #32 已更新进度评论；publish 阶段独立分配计数
+  已用临时阶段插桩重建并单列于 §9.12；test262 里程碑 promote 完成。

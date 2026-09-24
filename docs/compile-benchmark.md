@@ -1025,9 +1025,24 @@ verify 提交同时把 publish 从 281.83ms 降到 223.41ms：P3 的 publish 计
 | 窗口内 compile | 1226.8ms | 972.5ms | 937.1ms | −23.6% |
 
 peak live 未变：高水位由 parser/token 与 FunctionBuilder 的大块缓冲决定
-（§9.11.4），不属于本次简化范围。publish 阶段的独立分配计数未单列：P3 的
-临时分配阶段插桩补丁不在仓库中，本次只重建了总量探针；总量已覆盖 flatten
-的 43.0MB 大块、`FlattenFrame` 3.7 万次与定义重收集。
+（§9.11.4），不属于本次简化范围。
+
+阶段分配计数（临时阶段插桩：`PhaseTimer` 边界读取全局分配计数；profiling
+构建，`functions-4194304` 单次；探针与补丁不入库）：
+
+| 阶段 alloc 次数 | P3 | HEAD | 变化 |
+| --- | ---: | ---: | ---: |
+| parse | 1,186,527 | 1,186,527 | 0% |
+| resolution | 734,284 | 734,284 | 0% |
+| lowering | 1,264,271 | 1,264,271 | 0% |
+| verify | 1,148,920 | 0 | −100% |
+| publish | 1,376,777 | 1,145,626 | −16.8% |
+| verify+publish | 2,525,697 | 1,145,626 | −54.6% |
+
+该构建的窗口总量为 P3 5,710,792 / HEAD 4,330,720，阶段之和与总量一致
+（差 ≤11）；比非 profiling 总量探针多出的约 13.6 万次是 profiling 计数
+自身开销，两种口径不可混用。publish 阶段剩余的 1,145,626 次分配是定义/
+闭包名 atom 驻留与堆节点注册，未纳入本次范围。
 
 验收对照（计划 §4）：
 
@@ -1037,18 +1052,20 @@ peak live 未变：高水位由 parser/token 与 FunctionBuilder 的大块缓冲
 | verify 提交 alloc 次数 | ≥ −20% | −23.7% |
 | verify 提交 alloc 字节 | ≥ −13.9% | −13.6% |
 | publish 阶段时间 | ≥ −25% | −29.7% |
+| publish 阶段 alloc 次数 | ≥ −25% | −16.8% |
 | verify+publish 时间 | ≥ −40% | −56.4% |
-| verify+publish alloc 次数 | ≥ −40% | −24.8% |
+| verify+publish alloc 次数 | ≥ −40% | −54.6% |
 | realloc 字节 | ≥ −5% | −9.3% |
 
-未达两项为边际偏差：alloc 字节差 0.3pp（噪声量级），verify+publish 的
-alloc 次数目标假设 publish 阶段有 ≥ −25% 分配削减，但单遍化主要削减的是
-大块与中间层，publish 剩余成本是定义/闭包名 atom 驻留与堆节点注册，未纳入
-本次范围。test262 语义中性：P3 与 walk 各跑一次 `--full`
-（12 workers，102,037 variants），除首行 metadata 的 engine 哈希外 TSV 与
-JSONL 逐字节一致（pass=80010、fail=3552、unsupported=3502、
-skipped=18475）；pinned milestone 的 `full_passes=79982` 差额 +28 是 P1a
-已记录的既有漂移，本阶段不 promote 里程碑。fixtures 13/13 稳定。
+未达两项：verify alloc 字节差 0.3pp（边际）；publish 阶段 alloc 次数
+−16.8%（目标 −25%），单遍化主要削减的是大块与中间层，publish 剩余成本
+是 atom 驻留与堆节点注册。总量口径下的 −24.8% 覆盖了未参与本次简化的
+parse/resolution/lowering 常数项，不能作为 publish 验收量。test262 语义
+中性：P3 与 walk 各跑一次 `--full`（12 workers，102,037 variants），除首行
+metadata 的 engine 哈希外 TSV 与 JSONL 逐字节一致（pass=80010、
+fail=3552、unsupported=3502、skipped=18475）；该 +28 漂移已在阶段收尾
+随 `4712f679` promote 为新的 pinned 向量（pass=80010/eligible=80060）。
+fixtures 13/13 稳定。
 
 复现：`cargo build --release -p quickjs-oxide-cli --features profiling --bin
 qjs` + `qjs -d`；分配探针见 §9.11.5 的第一条命令（`compile_alloc_probe.rs`）；
