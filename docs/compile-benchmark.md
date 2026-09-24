@@ -600,3 +600,119 @@ perf record -F 999 --call-graph dwarf -o target/perf-p1b-functions.data -- bash 
      target/compile-corpus/functions-4194304.js >/dev/null; done'
 perf report -i target/perf-p1b-functions.data --stdio --no-children
 ```
+
+### 9.8 P2 checkpoint（P2a `7f8fc101` + P2b commit-path reuse，2026-09-24）
+
+P2a（`7f8fc101`：`LookaheadCache` 备忘 17 处 clone-lexer 探针）与 P2b
+（commit-path reuse：提交扫描直接消费探针已备忘的 token；原计划的 `TokenBuffer`
+全量改造按实测取消，见 `docs/lexer-parser-refactor.md` §3 P2b）相对 §9.6 P1b 的
+checkpoint。度量口径与 §9.6 相同（P1b/P2a/P2b 三探针交错各 7 次取最小值，
+4MB 扣 64KB tiny 档；task-clock 粒度 10ms，约 ±0.7% 噪声）。探针目录：
+`target/p1b-*`、`target/p2a-*`、`target/p2b-final-*`。
+
+命中数据（4MB 档，profiling 探针 stderr；提交复用=提交路径消费的探针备忘项；
+`max_entries` 是缓存活跃条目峰值，上限 8192）：
+
+| 语料 | 探针命中 | 探针未命中 | 命中率 | 提交复用（P2b） | max_entries |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| functions | 292,314 | 533,644 | 35.4% | 421,476 | 24 |
+| expressions | 245,017 | 649,709 | 27.4% | 388,173 | 31 |
+| syntax-mixed | 325,916 | 767,837 | 29.8% | 555,162 | 25 |
+
+perf（4MB 扣 64KB tiny 档，三探针交错 7 次最小值）：
+
+| 语料 | 指标 | P1b | P2a（vs P1b） | P2b（vs P1b） |
+| --- | --- | ---: | ---: | ---: |
+| functions | instr/KB | 2,621,754 | 2,597,486（−0.9%） | 2,488,994（−5.1%） |
+| | cycles/KB | 1,394,373 | 1,348,550（−3.3%） | 1,324,844（−5.0%） |
+| | cache-ref/KB | 84,328 | 86,184（+2.2%） | 85,441（+1.3%） |
+| | cache-miss/KB | 5,107 | 5,112（+0.1%） | 5,117（+0.2%） |
+| | task-clock/KB | 0.335 ms | 0.328 ms（−2.1%） | 0.321 ms（−4.0%） |
+| | IPC | 1.88 | 1.93 | 1.88 |
+| expressions | instr/KB | 1,751,097 | 1,748,105（−0.2%） | 1,657,049（−5.4%） |
+| | cycles/KB | 821,956 | 796,958（−3.0%） | 771,238（−6.2%） |
+| | cache-ref/KB | 40,764 | 42,478（+4.2%） | 42,149（+3.4%） |
+| | cache-miss/KB | 1,482 | 1,476（−0.4%） | 1,454（−1.9%） |
+| | task-clock/KB | 0.209 ms | 0.203 ms（−2.9%） | 0.197 ms（−5.9%） |
+| | IPC | 2.13 | 2.19 | 2.15 |
+| syntax-mixed | instr/KB | 2,585,892 | 2,582,731（−0.1%） | 2,453,895（−5.1%） |
+| | cycles/KB | 1,517,328 | 1,497,006（−1.3%） | 1,420,726（−6.4%） |
+| | cache-ref/KB | 70,395 | 72,558（+3.1%） | 71,212（+1.2%） |
+| | cache-miss/KB | 4,691 | 4,687（−0.1%） | 4,631（−1.3%） |
+| | task-clock/KB | 0.383 ms | 0.381 ms（−0.5%） | 0.361 ms（−5.8%） |
+| | IPC | 1.70 | 1.73 | 1.73 |
+
+分配（4MB 档，计数逐次完全一致；P2 相对 P1b 的差就是缓存 `Vec` 本身）：
+
+| 语料 | P1b alloc | P2b alloc | 差值 | P1b 分配字节 | P2b 分配字节 | peak live 差值 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| functions | 5,574,821 | 5,574,827 | +6 | 793.4 MB | 793.4 MB | +16,384 B |
+| expressions | 2,745,314 | 2,745,320 | +6 | 650.0 MB | 650.0 MB | +16,384 B |
+| syntax-mixed | 6,548,538 | 6,548,544 | +6 | 1,180.0 MB | 1,180.0 MB | +16,384 B |
+
+相对 P0 基线（§9.1/§9.2，P2b）：alloc 次数 functions −27.7%、
+expressions −32.4%、syntax-mixed −22.4%（与 P1b 持平）；instr/KB
+−14.1%/−10.7%/−9.4%；cache-miss/KB −70.9%/−36.1%/−32.6%；task-clock
+−26.2%/−21.5%/−21.9%。
+
+#### 9.8.1 test262 `--full`（语义中立验证）
+
+P2 全量报告 `target/test262-full.tsv`（engine hash `6e6e2003…`，2026-09-24）
+与 P1b 报告（`5dbb43ca…`）除首行 hash 外**逐字节一致**：body sha256 均为
+`971cc666…`，summary 行一致（pass=80010、fail-parse=7、fail-runtime=43、
+unsupported-negative-provenance=2534 等，102,037 variants）。runner 的
+line-count/checksum/diagnostic-contract/metadata/classified-vector 检查全部
+通过；已知 +28 runnable 漂移（80060 vs 里程碑 80032）为 P1a/P1b 既有问题，
+与本次改动无关。
+
+#### 9.8.2 真实 bundle 矩阵与病态用例
+
+`scripts/benchmark/compile_matrix.py --corpus target/compile-bundles --metric
+compile --repeat 5`，P1b/P2b 探针同场交错（每 case 5 次取中位）：
+
+| 引擎 | 中位吞吐 | 范围 | 每 case 比值（P1b/P2b） |
+| --- | ---: | ---: | ---: |
+| P1b | 5.461 MB/s | 4.838–11.706 | — |
+| P2b | 5.953 MB/s | 5.026–12.396 | 中位 1.080（几何均值 1.070，52/67 case 更快） |
+
+真实 bundle（67 个多小文件，约 34KB）上 P2 收益（中位吞吐 +9.0%）大于 4MB
+生成语料（task-clock −4.0%~−5.9%）：小文件上探针/提交重扫在总时间中占比更高。
+
+病态用例 `test/staging/sm/String/string-upper-lower-mapping.js`（3.2 MB 数组
+字面量）用非 profiling 探针复测：P1b 360–378ms（3 次），P2b 355–361ms；修复
+后与 P1b 持平（缓存缺陷中间态为 272s）。
+
+结论与校准：
+
+1. **P2a 单独收益很小**（instr −0.1%~−0.9%、cycles −1.3%~−3.3%、task-clock 在
+   10ms 粒度噪声内）：探针重扫在总成本中占比小（命中率 27–35%，每 4MB 省
+   25–33 万次扫描），计划 §3 P2a 预期的“分配次数下降”被实测否决——token 扫描
+   本身几乎不分配，P2a 分配中性（缓存自身 +4 次/+4 KB）。
+2. **提交路径复用是 P2 的主要收益来源**：再省 39–56 万次重扫（=探针已扫、提交
+   重扫的全部浪费），相对 P1b 贡献 instr −4.2%~−5.2%、cycles −1.8%~−5.1%、
+   task-clock −2.1%~−5.3%（与 P2a 合计见表），分配中性、cache-miss 基本持平。
+   它与探针共用同一纯记忆化缓存，`tokens`/`cursor`/`relex*`/`set_future*` 语义
+   不变（见 §C.1 不变量），因此不改变提交 token 边界与 PR #30 的栈守卫采样时机。
+3. **缓存结构修复（本 checkpoint 发现）**：探针 `array_assignment_pattern_ahead`
+   会把整个 `[...]` 扫到匹配的 `]`，在巨型数组字面量上会备忘数十万 token；
+   原 `invalidate_before` 用 `Vec::drain(..k)` 从头部逐条删除，每次 advance
+   搬移整个活跃区，退化为 O(n²)：test262
+   `test/staging/sm/String/string-upper-lower-mapping.js`（3.2 MB 数组字面量，
+   约 39 万 token）从 P1b 的 376ms 恶化到 272s（>700×）。修复=活跃条目上限
+   8192 条 + `base` 偏移摊销压缩（`base >= 64` 且不小于活跃数时一次性 drain），
+   失效摊销 O(1)；该文件回到 355–361ms（非 profiling 探针，与 P1b 持平），
+   三个基准语料的命中/条目峰值不变（24/31/25 条），语义 gate 全绿。
+4. **原 P2b `TokenBuffer` 全量改造取消**：commit-path reuse 已把可归因的重扫浪费
+   全部吃掉；剩余空间（探针未命中之间的重叠、`parenthesized_parameter_tokens`
+   的 Vec 复制）远小于其 15 条不变量 + 逐产生式迁移的回归风险。
+   `parenthesized_parameter_tokens` 去复制降级为 P3 触发项（触发=分配探针可
+   归因 >1%）。因此 P2 未达 §5 原“P2a+P2b”方向目标（instr −10%~−20%、miss
+   −20%~−35%、分配 −5%~−10%），按 §5 校准规则改以本表为 P3 的起点。
+
+复现命令：按 §9.4 构建三组探针（`--output target/{p1b,p2a,p2b-final}-compile-probe`
+与 `...-alloc-probe`，分配探针加 `--probe scripts/benchmark/probes/compile_alloc_probe.rs
+--name oxide-compile-alloc-probe`；profiling 命中计数加 `--profiling`），
+perf 用三探针交错 min-of-7，alloc/RSS 直接跑探针。test262 全量用
+`target/run-test262-full.sh`（清空 `GIT_*` 环境变量），bundle 矩阵用
+`scripts/benchmark/compile_matrix.py` 并传两个 `--engine`。
+
