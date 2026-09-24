@@ -716,3 +716,76 @@ perf 用三探针交错 min-of-7，alloc/RSS 直接跑探针。test262 全量用
 `target/run-test262-full.sh`（清空 `GIT_*` 环境变量），bundle 矩阵用
 `scripts/benchmark/compile_matrix.py` 并传两个 `--engine`。
 
+### 9.9 P3 lexer 字节快路（2026-09-24）
+
+改动（`src/engine/compiler/lexer.rs`）：词法扫描全面改走可移植的 ASCII 字节快
+路径，非 ASCII 与转义仍走原逐标量慢路径（语义不变）：
+
+- `peek_char`/`bump_char`：ASCII 直接读字节，跳过 UTF-8 解码与
+  `quickjs_column_delta`（原实现每字符做 slice 取字节 + filter 计数）；
+  例外是 `INVALID_BYTE_CARRIER`（0x7F）——它在 carrier 里是 ASCII，但可能代表
+  原始 continuation 字节（列增量为 0），仍走慢路径（回归测试
+  `raw_script_error_columns_scan_authored_comment_bytes` 覆盖）。
+- `skip_trivia`/`skip_to_line_end`：按首字节分派，批量跳过空白与行注释体，
+  用字节比较替代 `starts_with`（消除 `scan_punctuator`→`starts_with` 的
+  memcmp 归因）。
+- `scan_identifier_with_value`：用字节表批量消费 ASCII 标识符 run；注入
+  string limit 的报错位置按“第一个超限字符”精确对齐逐字符路径。
+- `scan_punctuator`：首字节 `match` 分派替代 55 项线性 `starts_with` 表，
+  `?.` 的非数字前瞻用字节判断。
+
+perf（4MB 扣 64KB tiny 档，P1b/P2b/P3 三探针交错 min-of-7）：
+
+| 语料 | 指标 | P2b | P3（vs P2b） | P3（vs P1b） |
+| --- | --- | ---: | ---: | ---: |
+| functions | instr/KB | 2,489,067 | 2,225,524（−10.6%） | −15.1% |
+| | cycles/KB | 1,329,333 | 1,249,775（−6.0%） | −10.5% |
+| | task-clock/KB | 0.328 ms | 0.311 ms（−5.1%） | −9.7% |
+| | cache-miss/KB | 5,068 | 5,102（+0.7%） | +3.2% |
+| expressions | instr/KB | 1,657,093 | 1,333,937（−19.5%） | −23.8% |
+| | cycles/KB | 769,071 | 656,311（−14.7%） | −19.2% |
+| | task-clock/KB | 0.199 ms | 0.175 ms（−12.0%） | −16.5% |
+| | cache-miss/KB | 1,454 | 1,456（+0.2%） | +0.8% |
+| syntax-mixed | instr/KB | 2,454,067 | 2,144,125（−12.6%） | −17.1% |
+| | cycles/KB | 1,428,572 | 1,308,482（−8.4%） | −12.6% |
+| | task-clock/KB | 0.378 ms | 0.351 ms（−7.2%） | −10.8% |
+| | cache-miss/KB | 4,665 | 4,642（−0.5%） | −0.0% |
+
+探针内计时（`compile_ns`，5 次 min）：functions 1.231s→1.130s（−8.2%）、
+expressions 0.770s→0.678s（−12.0%）；64KB 档 instr/KB −15.2%/−20.2%/−15.2%
+（同一方向，排除大文件效应）。相对 P0 累计（P2b×P3 相乘）：task-clock
+−29.9%/−30.9%/−27.5%、instr −23.2%/−28.1%/−20.8%、cache-miss
+−70.7%/−36.0%/−32.9%、分配不变（−27.7%/−32.4%/−22.4%）。
+
+真实 bundle（67 case，P2b/P3 交错 5 次）：中位吞吐 5.874→6.547 MB/s
+（**+11.5%**），每 case 比值中位 1.122（几何均值 1.121，64/67 更快）；相对 P0
+基线 4.79 MB/s 累计 **+36.7%**。
+
+分配（4MB）：三个语料的 alloc/realloc/dealloc/bytes/peak 与 P2b **逐位相同**
+（快路径零分配）。
+
+语义：全量 test262 报告与 P1b 逐字节一致（body sha `971cc666…`，102,037
+variants）；oracle 912、fixtures 13/13、unsupported_diagnostics 6、lib 2270
+全绿。
+
+flat profile（expressions 4MB，self time）：`next_token_with_goal` 4.08%→3.94%
+（占比因总量下降 −19.5% 而几乎持平，绝对成本约 −22%）、`bump_char`
+1.72%→<0.5%、`scan_punctuator` 1.49%→<0.5%、`scan_identifier_with_value`
+1.19%→0.89%；libc 桶仍是最大项（malloc/free 与 memcpy），归因不变。
+
+结论与校准：
+
+1. **P3 首项（lexer 字节快路）已超 §5 目标**：time −5.1%~−12.0%（目标
+   −3%~−6%）、instr −10.6%~−19.5%（目标 −5%~−10%）；miss ≈0（目标
+   −5%~−10%）、alloc 0（目标 0~−5%）——与 P2 一致，miss/alloc 大头不在
+   lexer，转 P4 触发项。
+2. 收益主要来自三点：消除逐字符 `quickjs_column_delta`/UTF-8 解码、消除
+   `skip_trivia`/`scan_punctuator` 的 `starts_with` 调用与 memcmp、标识符批量
+   扫描（expressions 语料标识符/标点最密，收益最大 −19.5%）。
+3. 剩余 P3 项按触发规则重判：数字字面量快路（flat profile 未见
+   `scan_number` ≥0.5%，触发不成立，跳过）；`SourceText` 共享（需分配归因，
+   分配总量未变且深拷贝未见归因，暂缓）；SmallVec/ThinVec 按 §2.4 决策规则
+   在 P4 分配归因后决定。
+
+复现命令：同 §9.8；lexer 探针为 `target/p3-lexer-{compile,alloc}-probe`，
+perf 目录 `target/p3-perf/`，矩阵 `target/p3-matrix-bundles/`。

@@ -650,6 +650,20 @@ checkpoint 记录。触发依据来自 P1b checkpoint（`docs/compile-benchmark.
 验收：全量 gate（含 test262 `--full` 或 receipt 更新流程）；终态指标见 §5
 （已按 P1b 重校准）。
 
+**实施记录（2026-09-24，P3 主项第 4 条）**：lexer 字节快路已落地
+（`peek_char`/`bump_char` 的 ASCII 快路径、`skip_trivia`/`skip_to_line_end`
+首字节分派与批量空白/注释体、`scan_identifier_with_value` 的字节表批量
+run、`scan_punctuator` 首字节 `match` 替代 55 项线性 `starts_with` 表；
+非 ASCII/转义/`INVALID_BYTE_CARRIER` 保持慢路径）。结果（§9.9）：相对 P2b
+instr −10.6%~−19.5%、cycles −6.0%~−14.7%、task-clock −5.1%~−12.0%、
+`compile_ns` −8.2%/−12.0%、真实 bundle 中位 +11.5%（64/67 case 更快）、
+相对 P0 累计吞吐 +36.7%；分配逐位不变；全量 test262 与 P1b 逐字节一致。
+**已超 §5 P3 目标**（time −3%~−6%、instr −5%~−10%）；miss/alloc 仍 ≈0，
+按规则转 P4。触发重判：第 2 条（数字字面量）flat profile 未见
+`scan_number` 热点，跳过；第 1 条（`SourceText` 共享）与第 3 条
+（SmallVec）需分配归因，暂缓至 P4 分配归因；第 5 条（scratch 池）待
+P4 触发。
+
 ### P4 候选（不承诺，按触发条件启动）
 
 P1b checkpoint 显示：名字字符串只占分配约 1/6，剩余大头在 IR/常量/绑定/字节码
@@ -736,6 +750,7 @@ cargo test --locked --workspace --all-targets
 | P1a | −5.6% | −3.6% | −8.7% | −13.0% | −13.8% |
 | P1b | −21.1% | −9.6% | −71.2% | −27.7% | −27.4% |
 | P2 (P2a+P2b) | −26.2% | −14.1% | −70.9% | −27.7% | −27.4% |
+| P3 (lexer 字节快路) | −29.9% | −23.2% | −70.7% | −27.7% | −27.4% |
 
 三语料范围（vs P0，§9.6）：时间 −14.7%~−21.1%、instr −4.9%~−9.6%、
 miss −32.9%~−71.2%、alloc −22.4%~−32.4%。
@@ -750,20 +765,26 @@ miss −32.9%~−71.2%、alloc −22.4%~−32.4%。
 | P2a+P2b（原目标） | −10%~−15% | −10%~−20% | −20%~−35% | −5%~−10% |
 | P2a+P2b（实测，§9.8） | −4.0%~−5.9% | −5.1%~−5.4% | ≈0（−1.9%~+0.2%） | ≈0（+6 次） |
 | P3（P2 后重校准） | −3%~−6% | −5%~−10% | −5%~−10% | −0%~−5% |
+| P3 lexer 快路（实测，§9.9） | −5.1%~−12.0% | −10.6%~−19.5% | ≈0 | 0 |
 
 P2 实测未达原合并目标：instr/时间约达一半，cache-miss 基本持平（重扫不是
 miss 的主要来源），分配中性。P2 后 functions vs P0 为时间 −26.2%、
-instr −14.1%、miss −70.9%、alloc −27.7%；P3 的 lexer 快路仍按 instr/时间方向
-执行，miss/分配大头已确认在 verify/publish 与 IR/常量侧，转入 P4 触发条件
+instr −14.1%、miss −70.9%、alloc −27.7%。P3 lexer 字节快路（§9.9）超过
+重校准目标：相对 P2b 时间 −5.1%~−12.0%、instr −10.6%~−19.5%、miss/alloc
+≈0；P3 后 functions vs P0 为时间 −29.9%、instr −23.2%、miss −70.7%、
+alloc −27.7%，真实 bundle 中位吞吐 6.55 MB/s（相对 P0 +36.7%）。
+miss/分配大头已确认在 verify/publish 与 IR/常量侧，转入 P4 触发条件
 （§3 P4 第 2 条）。若要接近 issue #32 原始的 −90% 分配目标，需启动 P4 的
 IR/常量侧削减。
 
 P2 分 P2a（前瞻备忘）与 P2b 两步；P2b 已按实测从 `TokenBuffer` 全量改造降级为
 commit-path reuse（§3 P2b）。真实 bundle 中位吞吐（compile-only，基线
 4.79 MB/s）：P1b 复测 5.50 MB/s（Boa 5.00，§9.7）；P2 checkpoint 同场交错
-复测 P1b 5.46 / P2b 5.95 MB/s（+9.0%，52/67 case 更快，§9.8.2）。`>7 MB/s`
-继续不作为 P3 硬承诺，视 P4/后端计划决定。语义 gate（test262/QuickJS 差分）
-仍要求全绿：P2 全量 test262 报告与 P1b 逐字节一致（§9.8.1）。
+复测 P1b 5.46 / P2b 5.95 MB/s（+9.0%，52/67 case 更快，§9.8.2）；P3 lexer
+字节快路再测 P2b 5.87 / P3 6.55 MB/s（+11.5%，64/67 case 更快，§9.9），相对
+P0 累计 +36.7%。`>7 MB/s` 继续不作为硬承诺，视 P4/后端计划决定。语义 gate
+（test262/QuickJS 差分）仍要求全绿：P2 与 P3 全量 test262 报告均与 P1b
+逐字节一致（§9.8.1、§9.9）。
 
 P1a checkpoint 实测（`docs/compile-benchmark.md` §9.5，HEAD `a5b651be`）：
 alloc 次数 −13.0%~−19.5%、alloc+realloc −13.8%~−21.7%、instr/KB
@@ -1156,3 +1177,23 @@ test-only 差异测试。
 6. 测量口径：P1b/P2a/P2b 三探针交错 min-of-7；命中/提交复用/条目峰值计数由
    `lookahead_probe_counters()`（`feature = "profiling"`）输出，生产构建编译
    为空；探针目录 `target/p2b-final-*`，原始 CSV `target/p2b-final-perf/`。
+
+### D.5 P3 lexer 快路后校准（2026-09-24）
+
+1. P3 主项（lexer 字节快路）实测（§9.9，vs P2b）：instr
+   −10.6%~−19.5%、cycles −6.0%~−14.7%、task-clock −5.1%~−12.0%、
+   `compile_ns` −8.2%/−12.0%、真实 bundle 中位 +11.5%（64/67 case）、
+   分配逐位不变、cache-miss ≈0。**超过 §5 P3 重校准目标**（time −3%~−6%、
+   instr −5%~−10%）。
+2. 收益来源：消除逐字符 UTF-8 解码与 `quickjs_column_delta`、消除
+   `skip_trivia`/`scan_punctuator` 的 `starts_with`/memcmp、标识符批量扫描。
+   expressions（标识符/标点最密）收益最大（instr −19.5%）。
+3. 触发重判（§3 P3）：数字字面量快路跳过（`scan_number` 未进 flat profile
+   ≥0.5%）；`SourceText` 共享与 SmallVec 暂缓（需 P4 分配归因）；
+   scratch 复用池待 P4 触发。
+4. 下一阶段（P4 候选，§3 P4）：miss/分配大头在 verify/publish 与
+   IR/常量/绑定/字节码侧（`verify_parts_with_visits` 9.6%、
+   `enqueue_fallthrough` 5.2%、`validate_scope_graph` 4.2%，
+   expressions 4MB），按触发条件启动 IR/常量侧分配归因；
+   `ensure_closure_variable` 3.0%（functions）与
+   `QuickJsSourceCursor::locate` 1.6%~2.3% 为独立候选。
