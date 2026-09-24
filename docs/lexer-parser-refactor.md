@@ -4,7 +4,8 @@
 [issue #32](https://github.com/pocket-nexus/quickjs-oxide/issues/32) 的 P1/P2/P3 前端部分。
 目标是以可度量的方式消除前端（lexer → parser → resolution → lowering 名字流）
 的堆分配与重复扫描，把 `functions` 密集语料上的指令数、cache miss、RSS 和编译
-时间拉下来。**本计划不含 verify/publish/VM 的改动**（另立计划）。
+时间拉下来。**本计划不含 verify/publish/VM 的改动**（另立计划，见
+`docs/verify-publication-plan.md`）。
 
 P1a/P1b 已完成（实施记录与提交见 §3），§5 目标表与 P2/P3 条目已按 P1b
 checkpoint 实测重校准；外部对照（oxc）与测量方法见附录 D。
@@ -700,6 +701,10 @@ P2/P3 收尾：
    一致 + fixtures 字节一致 + §5 gate 全绿。
    **回滚点**：按“scratch 复用 → 单次分配 → 容量预留 → Cow/NameId → 表转换”
    分组，每组一个可独立回滚提交；真实 bundle 中性即回滚该组。
+   **2026-09-24 决策**：本项的 verify/publish 部分由
+   `docs/verify-publication-plan.md` 承接——删除 verify 阶段、删除 BC5 读取
+   路径、publication 单遍化，验收指标在该计划 §4 重定义；IR/常量侧剩余项
+   仍按本条继续评估。
 3. **u32 Span / 坐标计算**：当前 `Span` 为 4×usize；改 u32 需源大小上限约定。
    触发已部分成立（§9.9：P3 `QuickJsSourceCursor::locate` 自时间 1.64%，P1b 1.9%，
    附录 D：1.6%~2.3% 为独立候选；line/col 计算随 span 使用增长）；动作=先做
