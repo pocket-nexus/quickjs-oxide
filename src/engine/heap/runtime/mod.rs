@@ -366,49 +366,36 @@ impl RuntimeState {
         Ok(shape)
     }
 
-    /// Append-only edges borrow both shapes; collection/mutation unlinks them.
-    pub(crate) fn append_transition(
-        &mut self,
+    /// Canonical successor of `parent` extended with `entry`, if one is alive.
+    ///
+    /// Checks the weak transition edge first, then the canonical cache. A
+    /// stale weak target is skipped and rebuilt by the caller.
+    pub(crate) fn canonical_successor(
+        &self,
         parent: ShapeId,
         entry: ShapeEntry,
-    ) -> Result<ShapeId, RuntimeError> {
+    ) -> Option<ShapeId> {
         if let Some(&target) = self
             .shape_transitions
             .get(&parent)
             .and_then(|edges| edges.get(&entry))
+            && self.heap.shape(target).is_ok()
         {
-            if self.heap.shape(target).is_ok() {
-                self.heap.retain_shape(target)?;
-                return Ok(target);
-            }
-            // A weak target may have entered zero-queue before its cleanup was
-            // delivered to the runtime. Never revive a stale location blindly.
-            self.unlink_shape_transitions(target);
+            return Some(target);
         }
-        let (prototype, hash, parent_len, mut entries) = {
-            let source = self.heap.shape(parent)?;
-            (
-                source.prototype(),
-                shape::extend_fingerprint_hash(source.fingerprint_hash(), &entry),
-                source.entries().len(),
-                source.entries().to_vec(),
-            )
-        };
-        let target = match self.cached_shape_matching(hash, |shape| {
+        let source = self.heap.shape(parent).ok()?;
+        let prototype = source.prototype();
+        let hash = shape::extend_fingerprint_hash(source.fingerprint_hash(), &entry);
+        let parent_len = source.entries().len();
+        self.cached_shape_matching(hash, |shape| {
             shape.prototype() == prototype
                 && shape.entries().len() == parent_len + 1
-                && shape.entries()[..parent_len] == entries[..]
+                && shape.entries()[..parent_len] == *source.entries()
                 && shape.entries()[parent_len] == entry
-        }) {
-            Some(target) => {
-                self.heap.retain_shape(target)?;
-                target
-            }
-            None => {
-                entries.push(entry);
-                self.get_or_create_shape(prototype, &entries)?
-            }
-        };
+        })
+    }
+
+    fn record_transition(&mut self, parent: ShapeId, entry: ShapeEntry, target: ShapeId) {
         self.shape_transitions
             .entry(parent)
             .or_default()
@@ -417,6 +404,26 @@ impl RuntimeState {
             .entry(target)
             .or_default()
             .push((parent, entry));
+    }
+
+    /// Append-only edges borrow both shapes; collection/mutation unlinks them.
+    pub(crate) fn append_transition(
+        &mut self,
+        parent: ShapeId,
+        entry: ShapeEntry,
+    ) -> Result<ShapeId, RuntimeError> {
+        if let Some(target) = self.canonical_successor(parent, entry) {
+            self.heap.retain_shape(target)?;
+            self.record_transition(parent, entry, target);
+            return Ok(target);
+        }
+        let (prototype, mut entries) = {
+            let source = self.heap.shape(parent)?;
+            (source.prototype(), source.entries().to_vec())
+        };
+        entries.push(entry);
+        let target = self.get_or_create_shape(prototype, &entries)?;
+        self.record_transition(parent, entry, target);
         Ok(target)
     }
 

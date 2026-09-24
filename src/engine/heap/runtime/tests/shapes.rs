@@ -20,6 +20,35 @@ fn finalized_shapes_unlink_exact_weak_cache_entries() {
 }
 
 #[test]
+fn canonical_intermediate_shape_survives_a_later_unique_append() {
+    let runtime = Runtime::new();
+    let x = runtime.intern_property_key("intermediate-x").unwrap();
+    let y = runtime.intern_property_key("intermediate-y").unwrap();
+    let first = runtime.new_object(None).unwrap();
+    assert!(set_property(&runtime, &first, &x, Value::Int(1)).unwrap());
+    assert!(set_property(&runtime, &first, &y, Value::Int(2)).unwrap());
+    let first_shape = runtime
+        .0
+        .state
+        .borrow()
+        .heap
+        .object(first.object_id())
+        .unwrap()
+        .shape;
+
+    let second = runtime.new_object(None).unwrap();
+    assert!(set_property(&runtime, &second, &x, Value::Int(3)).unwrap());
+    assert!(set_property(&runtime, &second, &y, Value::Int(4)).unwrap());
+    let state = runtime.0.state.borrow();
+    assert_eq!(
+        state.heap.object(second.object_id()).unwrap().shape,
+        first_shape,
+        "literal-built objects must converge on one canonical two-property shape"
+    );
+    assert_eq!(state.heap.shape(first_shape).unwrap().entries().len(), 2);
+}
+
+#[test]
 fn unique_shape_append_never_mutates_a_shared_shape() {
     let runtime = Runtime::new();
     let first = runtime.new_object(None).unwrap();
@@ -57,12 +86,20 @@ fn unique_shape_append_never_mutates_a_shared_shape() {
         .unwrap()
         .shape;
     assert_ne!(unique_shape, shared_shape);
+    assert!(
+        runtime.0.state.borrow().shape_is_canonical(unique_shape),
+        "the successor of a shared shape enters the canonical cache"
+    );
     assert!(set_property(&runtime, &first, &c, Value::Int(4)).unwrap());
     let state = runtime.0.state.borrow();
     assert_eq!(
         state.heap.object(first.object_id()).unwrap().shape,
         unique_shape,
         "the second unique addition should append to the existing shape"
+    );
+    assert!(
+        state.shape_is_canonical(unique_shape),
+        "the in-place append relinks the mutated shape under its successor"
     );
     assert_eq!(
         state.heap.object(second.object_id()).unwrap().shape,
@@ -99,7 +136,6 @@ fn unique_shape_append_never_mutates_a_shared_shape() {
             .collect::<Vec<_>>(),
         unique_atoms
     );
-    assert!(!state.shape_hashes.contains_key(&unique_shape));
 }
 
 #[test]

@@ -585,9 +585,22 @@ impl RuntimeState {
                 };
             }
         }
+        // An exclusively owned layout may append in place only when no
+        // canonical successor already exists; otherwise the successor (and the
+        // sharing it enables) would be stranded by an equivalent duplicate.
         if existing.is_none()
             && (dictionary || shape_len >= properties::MIN_UNIQUE_SHAPE_APPEND_ENTRIES)
             && state.heap.shape_strong_count(shape_id)? == 1
+            && (dictionary
+                || state
+                    .canonical_successor(
+                        shape_id,
+                        ShapeEntry {
+                            atom: AtomIdx::from_raw(atom.raw()),
+                            flags,
+                        },
+                    )
+                    .is_none())
         {
             return state.append_selected_unique_layout(
                 SelectedMissingAppend {

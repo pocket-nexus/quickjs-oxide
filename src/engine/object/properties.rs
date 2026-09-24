@@ -25,7 +25,7 @@ use crate::engine::object::operations::{
 use crate::engine::object::property::{
     PropertyDefinitionError, validate_and_apply_property_descriptor,
 };
-use crate::engine::object::shape::{PropertyFlags, ShapeEntry};
+use crate::engine::object::shape::{PropertyFlags, ShapeEntry, extend_fingerprint_hash};
 use crate::engine::object::{
     CallableRef, CompleteOrdinaryPropertyDescriptor, DescriptorField, ObjectRef,
     OrdinaryPropertyDescriptor, PropertyKey,
@@ -106,6 +106,16 @@ impl RuntimeState {
             self.release_atoms(retained_slot_atoms)?;
             self.atoms.release(atom)?;
             return Err(error.into());
+        }
+        // Relink the mutated layout under its successor fingerprint, mirroring
+        // QuickJS's in-place hashed-shape update, so later objects converge on
+        // this shape instead of rebuilding an equivalent private one.
+        if let Some(hash) = previous_hash {
+            let entry = ShapeEntry {
+                atom: AtomIdx::from_raw(atom.raw()),
+                flags,
+            };
+            self.insert_shape_cache(shape, extend_fingerprint_hash(hash, &entry));
         }
         Ok(())
     }
