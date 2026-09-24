@@ -9,8 +9,11 @@
 //! position first and only rescans on a miss.
 //!
 //! Scanning is a pure function of `(source, offset, goal, context)`, so a cache
-//! entry never becomes semantically wrong. Invalidation only bounds memory and
-//! drops regions the parser has already committed past.
+//! entry never becomes semantically wrong. The committed path consults the same
+//! cache before scanning, so a token a probe already scanned is not lexed
+//! twice. Invalidation only bounds memory and drops regions the parser has
+//! already committed past; the cache is capped and front-compacts so a probe
+//! that scans an arbitrarily long region cannot make parsing quadratic.
 
 use crate::engine::compiler::lexer::LexContext;
 use crate::engine::compiler::lexer::LexError;
@@ -19,9 +22,20 @@ use crate::engine::compiler::lexer::LexicalGoal;
 use crate::engine::compiler::lexer::Token;
 use crate::engine::compiler::parser::context::Parser;
 
+/// Upper bound on memoized entries. A probe that scans a giant region (say a
+/// whole array literal looking for its initializer) stops caching past this
+/// point and the commit path falls back to scanning, which bounds memory and
+/// keeps front invalidation cheap.
+const MAX_ENTRIES: usize = 8 * 1024;
+/// Compact the invalidated prefix once it is at least this large and no
+/// smaller than the live region, keeping `invalidate_before` amortized O(1).
+const COMPACT_MIN_PREFIX: usize = 64;
+
 #[derive(Default)]
 pub(in crate::engine::compiler) struct LookaheadCache<'source> {
     entries: Vec<LookaheadEntry<'source>>,
+    /// `entries[..base]` are invalidated and await compaction.
+    base: usize,
 }
 
 struct LookaheadEntry<'source> {
@@ -32,12 +46,17 @@ struct LookaheadEntry<'source> {
 }
 
 impl<'source> LookaheadCache<'source> {
+    fn active(&self) -> &[LookaheadEntry<'source>] {
+        &self.entries[self.base..]
+    }
+
     fn peek(&self, start: usize, goal: LexicalGoal, context: LexContext) -> Option<Token<'source>> {
         let key = (start, goal, context);
-        self.entries
+        let index = self
+            .active()
             .binary_search_by(|entry| (entry.start, entry.goal, entry.context).cmp(&key))
-            .ok()
-            .map(|index| self.entries[index].token)
+            .ok()?;
+        Some(self.active()[index].token)
     }
 
     fn insert(
@@ -47,12 +66,15 @@ impl<'source> LookaheadCache<'source> {
         context: LexContext,
         token: Token<'source>,
     ) {
+        if self.active().len() >= MAX_ENTRIES {
+            return;
+        }
         let key = (start, goal, context);
         let index = self
-            .entries
+            .active()
             .partition_point(|entry| (entry.start, entry.goal, entry.context) < key);
         self.entries.insert(
-            index,
+            self.base + index,
             LookaheadEntry {
                 start,
                 goal,
@@ -65,15 +87,23 @@ impl<'source> LookaheadCache<'source> {
     /// Drops entries that start at or after `start`, used when a goal or
     /// context change makes that whole suffix stale.
     fn invalidate_from(&mut self, start: usize) {
-        let kept = self.entries.partition_point(|entry| entry.start < start);
-        self.entries.truncate(kept);
+        let kept = self.active().partition_point(|entry| entry.start < start);
+        self.entries.truncate(self.base + kept);
     }
 
     /// Drops entries that start before `start`, keeping only the region the
     /// parser has not committed past.
     fn invalidate_before(&mut self, start: usize) {
-        let dropped = self.entries.partition_point(|entry| entry.start < start);
-        self.entries.drain(..dropped);
+        self.base += self.active().partition_point(|entry| entry.start < start);
+        if self.base >= COMPACT_MIN_PREFIX && self.base >= self.entries.len() - self.base {
+            self.entries.drain(..self.base);
+            self.base = 0;
+        }
+    }
+
+    #[cfg(any(test, feature = "profiling"))]
+    fn len(&self) -> usize {
+        self.entries.len() - self.base
     }
 }
 
@@ -97,6 +127,8 @@ impl<'source> Parser<'source> {
         self.lookahead
             .borrow_mut()
             .insert(start, goal, context, token);
+        #[cfg(feature = "profiling")]
+        counters::record_entries(self.lookahead.borrow().len());
         Ok(token)
     }
 
@@ -141,7 +173,7 @@ impl<'source> Parser<'source> {
 
     #[cfg(test)]
     pub(in crate::engine::compiler) fn lookahead_entry_count(&self) -> usize {
-        self.lookahead.borrow().entries.len()
+        self.lookahead.borrow().len()
     }
 
     #[cfg(test)]
@@ -168,6 +200,7 @@ pub(crate) mod counters {
     static HITS: AtomicU64 = AtomicU64::new(0);
     static MISSES: AtomicU64 = AtomicU64::new(0);
     static COMMIT_HITS: AtomicU64 = AtomicU64::new(0);
+    static MAX_ENTRIES: AtomicU64 = AtomicU64::new(0);
 
     pub(in crate::engine::compiler) fn record(hit: bool) {
         let counter = if hit { &HITS } else { &MISSES };
@@ -178,11 +211,16 @@ pub(crate) mod counters {
         COMMIT_HITS.fetch_add(1, Ordering::Relaxed);
     }
 
-    pub(crate) fn snapshot() -> (u64, u64, u64) {
+    pub(in crate::engine::compiler) fn record_entries(len: usize) {
+        MAX_ENTRIES.fetch_max(len as u64, Ordering::Relaxed);
+    }
+
+    pub(crate) fn snapshot() -> (u64, u64, u64, u64) {
         (
             HITS.load(Ordering::Relaxed),
             MISSES.load(Ordering::Relaxed),
             COMMIT_HITS.load(Ordering::Relaxed),
+            MAX_ENTRIES.load(Ordering::Relaxed),
         )
     }
 }
@@ -242,7 +280,7 @@ mod tests {
             gamma,
         );
         cache.invalidate_before(beta.span.start.byte_offset);
-        assert_eq!(cache.entries.len(), 2);
+        assert_eq!(cache.len(), 2);
         assert_eq!(
             cache.peek(alpha.span.start.byte_offset, LexicalGoal::Div, context),
             None
@@ -269,5 +307,31 @@ mod tests {
         );
         assert_eq!(cache.entries[0].start, alpha.span.start.byte_offset);
         assert_eq!(cache.entries[1].start, beta.span.start.byte_offset);
+    }
+
+    #[test]
+    fn cache_bounds_entries_and_compacts_the_invalidated_prefix() {
+        let mut lexer = Lexer::new("alpha beta gamma");
+        let beta = lexer.next_token().unwrap();
+        let context = LexContext::default();
+
+        let mut cache = LookaheadCache::default();
+        for offset in 0..MAX_ENTRIES + 10 {
+            cache.insert(1_000_000 + offset, LexicalGoal::Div, context, beta);
+        }
+        assert_eq!(cache.len(), MAX_ENTRIES);
+
+        let mut cache = LookaheadCache::default();
+        for offset in 0..2 * COMPACT_MIN_PREFIX {
+            cache.insert(offset, LexicalGoal::Div, context, beta);
+        }
+        cache.invalidate_before(COMPACT_MIN_PREFIX);
+        assert_eq!(cache.base, 0);
+        assert_eq!(cache.len(), COMPACT_MIN_PREFIX);
+        assert_eq!(cache.peek(0, LexicalGoal::Div, context), None);
+        assert_eq!(
+            cache.peek(COMPACT_MIN_PREFIX, LexicalGoal::Div, context),
+            Some(beta)
+        );
     }
 }
