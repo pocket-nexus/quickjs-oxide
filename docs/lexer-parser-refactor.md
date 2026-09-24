@@ -676,15 +676,42 @@ P2/P3 收尾：
    `tokens[start]`），最终删掉提交 token 缓冲（`NoTokensParserConfig` 路线，
    §2.5 第 6 条）。触发=P2 完成后 RSS/cache-miss 仍是主要瓶颈且 P3 决策项无
    更大收益；**与 P2b 不并行**；启动前需 PR #30 合并或完成标定对拍。
+   新增证据（§9.11.4）：提交 token 缓冲 `tokens.rs:615` 扩容是单点最大
+   realloc 来源（4MB：functions 234.9MB、expressions/syntax 各 469.7MB），
+   峰值容量 117–224MB；该候选同时消掉这块内存与拷贝。
 2. **IR/常量侧分配削减**：对解析期 `IrOp`/常量/绑定/字节码路径做分配归因
    （P1b 后占约 5/6），针对性改 Vec 预留/索引化/复用。触发=分配未达 §5 重校准
    值且归因明确；动作=另立计划（可能触及 verify/publish）。P1b 证据（§9.7）：
    分配相对 P0 降 27.7% 后 libc 自时间仍 27.4%、`code/verify/publish` 20.1%，
    并可见 `JsString::content_hash` 1.1%、`Utf16Units` drop 1.2% 等转换/哈希项。
+   **触发证据（§9.11，P3 树实测）**：functions-4MB 5.14M 次/413.5MB 分配、
+   0.70M 次/849.8MB realloc，137.6 次/函数、4.2 次/指令；阶段（次数/字节）
+   publish 25.3%/28.7%、lowering 21.9%/35.2%、verify 20.7%/13.9%、
+   parse 18.6%/14.3%、resolution 13.4%/7.9%。站点 Top（采样 ±1%）：
+   `validate_scope_graph` 每函数校验 Vec 36.0 万；JsString 构造 79.3 万；
+   verify 状态/worklist/depths 42.8 万；`setter_storage_base` 27.4 万；
+   parser `ops.push` realloc 13.4 万；parse 文本 `to_owned` 26.9 万；
+   `parse_digits` BigUint 8.9 万（expressions 28.1 万）；bytecode_validation
+   24.0 万；publish `Vec→Box` 18.7 万；`lower_ops` 11.2 万；FunctionIr
+   绑定/常量 17.0 万；resolution 10.8 万。
+   **验收指标（4MB 对 P3）**：alloc 次数 ≥ −30%、alloc 字节 ≥ −25%、
+   realloc 字节 ≥ −25%；verify+publish 阶段时间合计 ≥ −15%；真实 bundle 中位
+   速度 ≥ +5%（逐 case 分布 + `066-all` 单列）；全量 test262 报告 body 逐字节
+   一致 + fixtures 字节一致 + §5 gate 全绿。
+   **回滚点**：按“scratch 复用 → 单次分配 → 容量预留 → Cow/NameId → 表转换”
+   分组，每组一个可独立回滚提交；真实 bundle 中性即回滚该组。
 3. **u32 Span / 坐标计算**：当前 `Span` 为 4×usize；改 u32 需源大小上限约定。
-   触发已部分成立（§9.7）：`QuickJsSourceCursor::locate` 自时间 1.9%，line/col
-   计算随 span 使用增长；动作=先做 line/col 惰性化或缓存，再评估 u32 Span。
-4. **arena**：与 verify/publish 改造一起（§2.4）。
+   触发已部分成立（§9.9：P3 `QuickJsSourceCursor::locate` 自时间 1.64%，P1b 1.9%，
+   附录 D：1.6%~2.3% 为独立候选；line/col 计算随 span 使用增长）；动作=先做
+   line/col 惰性化或按行缓存，再评估
+   u32 Span。**验收**：locate 自时间 ≤0.5%、4MB 时间 ≥ −1.5% 且 instr 同步；
+   **回滚点**=单提交，无收益即回滚。
+4. **arena**：与 verify/publish 改造一起（§2.4）。新证据（§9.11.1/9.11.4）：
+   resolution 边界 IR Vec 容量 216.2MB（4MB 源）；≥8KB 大块仅 393 次却占
+   alloc 字节 16%、realloc 字节 66%，集中在 token 缓冲（`tokens.rs:615`，
+   224MB 容量）、FunctionBuilder 列表、heap arena、flatten、`CompactVisits`
+   exceptional 状态。大块与 P4-2 的小分配分开处理；P4-2 落地后再评估
+   chunked ops/arena。
 5. **表驱动二元/一元循环**：仅当 P2 后 profiling 仍显示表达式阶梯开销显著
    （§2.5 第 3 条）。
 6. **closure 描述符查找**：`ensure_closure_variable`（resolution.rs）线性扫描

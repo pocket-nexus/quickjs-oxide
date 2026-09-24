@@ -854,3 +854,131 @@ functions/syntax +67.6MB、expressions +33.8MB；另有 map 表 alloc_bytes
 + 临时诊断计数，计数源码未保留），perf 目录 `target/p4-perf/`（脚本
 `target/p4-perf.sh`、汇总 `target/p4-summarize.py`），矩阵
 `target/p4-matrix-bundles/`。
+
+### 9.11 P4-2 预研：分配归因（P3 树 `23b918e7`，2026-09-24）
+
+`docs/lexer-parser-refactor.md` §3 P4 第 2 条（IR/常量/绑定/字节码侧分配削减）
+的触发证据与归因方法。按 §6 不改产品代码：临时插桩与采样工具全部在
+`target/p4-attr/`，产品树已回滚。
+
+方法（三路互证）：
+
+1. **阶段精确计数**：临时给 `profiling` 加 `AllocationObserver`
+   （`fn() -> (u64, u64)`，探针注册）并让 `PhaseTimer` 在边界快照，计数分配器
+   探针 `target/p4-alloc-phase-probe` 输出每阶段 alloc 次数/字节（临时补丁
+   `target/p4-attr/temp-instrumentation.patch`，已回滚）。分配计数逐次完全一致。
+2. **站点采样**：`LD_PRELOAD` 分配拦截器 `target/p4-attr/malloc_trace.c`
+   每 32 次分配记录一次 backtrace，离线用 `addr2line -f -C -i` 符号化到
+   file:line（`target/p4-attr/symbolize.py`；带 debug info 的探针
+   `target/p4-debug-probe`）。**调用次数**为均匀采样（±1%）；
+   **字节列受重尾影响（9.11.4），本文不单独引用**。
+3. **大块精确**：同一拦截器 `TRACE_EVERY=1 TRACE_MIN=8192`，≥8KB 分配全量
+   记录（无采样偏差）。
+
+#### 9.11.1 阶段分布（4MB 档，精确）
+
+分配次数（括号为占该语料）：
+
+| 阶段 | functions | expressions | syntax-mixed |
+| --- | ---: | ---: | ---: |
+| parse | 958,636（18.6%） | 1,161,827（43.1%） | 1,469,479（23.4%） |
+| resolution | 690,041（13.4%） | 267,089（9.9%） | 560,726（8.9%） |
+| lowering | 1,128,485（21.9%） | 459,772（17.0%） | 1,400,356（22.3%） |
+| verify | 1,063,930（20.7%） | 300,141（11.1%） | 1,284,398（20.4%） |
+| publish | 1,301,897（25.3%） | 509,399（18.9%） | 1,577,208（25.1%） |
+| 合计 | 5,143,001 | 2,698,240 | 6,292,179 |
+
+分配字节（alloc，不含 realloc）：
+
+| 阶段 | functions | expressions | syntax-mixed |
+| --- | ---: | ---: | ---: |
+| parse | 59.1MB（14.3%） | 51.8MB（20.7%） | 136.0MB（19.4%） |
+| resolution | 32.5MB（7.9%） | 11.8MB（4.7%） | 25.5MB（3.6%） |
+| lowering | 145.7MB（35.2%） | 91.5MB（36.6%） | 221.2MB（31.5%） |
+| verify | 57.3MB（13.9%） | 28.8MB（11.5%） | 125.2MB（17.8%） |
+| publish | 118.9MB（28.7%） | 66.1MB（26.4%） | 194.3MB（27.7%） |
+| 合计 | 413.5MB | 250.0MB | 702.3MB |
+
+阶段时间占比（同探针 inclusive，与 §9.9 结构一致）：functions
+27.8/16.1/17.6/15.0/23.6，expressions 40.8/9.7/18.8/11.7/19.0，
+syntax-mixed 28.1/8.5/20.2/17.2/26.0（parse/resolution/lowering/verify/
+publish）。
+
+#### 9.11.2 规模与斜率（4MB）
+
+| 语料 | lowered 函数 | 指令 | alloc 次数 | alloc/函数 | alloc/指令 | realloc 次数 | realloc 字节 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| functions | 37,390 | 1,233,839 | 5,143,001 | 137.6 | 4.2 | 700,361 | 849.8MB |
+| expressions | 22,025 | 988,329 | 2,698,240 | 122.5 | 2.7 | 204,013 | 878.7MB |
+| syntax-mixed | 38,669 | 1,436,242 | 6,292,179 | 162.7 | 4.4 | 615,439 | 1,090.9MB |
+
+64KB 档斜率与 4MB 一致（functions 137.6 → 139.6、expressions 122.5 → 124.1、
+syntax-mixed 162.7 → 164.6 次/函数），说明分配以函数/条目为单位的常数项为主、
+无显著固定开销。realloc 字节与 alloc 同量级，是“容量增长”的第二成本；其中
+大块占绝对多数（9.11.4）。
+
+#### 9.11.3 站点 Top（functions-4MB，采样×32，±1%；仅调用次数）
+
+| 次数 alloc+realloc | 站点（file:line） | 说明 |
+| ---: | --- | --- |
+| 360,320 | `scope_validation::validate_scope_graph`（scope_validation.rs:827/1129/1590-1593/1913/1995-1997） | 每函数 5–7 个 `vec![false/0; len]` 校验缓冲 |
+| 345,408 + 243,360 + 204,896 | `JsString::from_validated_utf16`（primitive.rs:997 collect、999 Rc）/`try_from_utf16_with_limit`（950） | 每个字符串 2–3 次分配 |
+| 190,496 + 83,232 | `verify::private_elements::setter_storage_base`（private_elements.rs:41） | 每私有 setter 2 个 collect + `to_vec` |
+| 133,600（全 realloc） | parser `ops.push`（builder.rs:287） | 每函数 IR ops 扩容（大块见表 9.11.4） |
+| 124,384 / 96,416 / 107,424 / 99,808 | verify：`worklist`（bytecode.rs:959）/`next_*` 克隆（989-991）/`VerificationState::clone`（1520）/`CompactVisits::depths`（1548） | 每函数/每次验证状态分配 |
+| 114,752 + 54,912 + 60,672 + 38,720 | parse 文本拷贝：expressions.rs:124（NamedEvaluation 标识符 `to_owned`）、expressions.rs:1096（字段名）、tokens.rs:457（label + lexer clone）、arrow.rs:333（for-head 分隔符 `vec!`） | P1b 后残留的 owned 文本 |
+| 89,216（expressions 280,608） | `parse_digits`（literals.rs:461） | 非十进制字面量走 `BigUint::parse_bytes` |
+| 104,352 + 72,448 + 63,136 | `bytecode_validation`：explicit parameter layout、derived constructor（193 `with_capacity(4)`、228 `HashSet` collect） | 每构造函数校验 |
+| 91,328 | `gc::function_bytecode_edges`（gc.rs:1833） | 每函数 GC 边表 |
+| 71,104 | `lowering::build_unlinked_debug`（lowering.rs） | 每函数 debug 切片 |
+| 70,688 | `Heap::allocate_function_bytecode`（allocation.rs:657） | 每函数 HashMap + 注册 |
+| 111,904 | `lower_ops`（lowering.rs:1101 offsets、1171/1172 code/pc_sites） | 每函数 3 个 Vec |
+| 116,032 | `FunctionIr::add_binding`（function.rs:571 bindings、576 map） | 每条绑定 2 次 |
+| 53,536 | `FunctionIr::append_constant`（function.rs:544） | 每常量 |
+| 187,136 | publish `Vec→Box` 转换（runtime.rs:234/242/244/248） | 每函数 ~7 个 `into_boxed_slice`/`into` |
+| 50,784（+31MB） | `resolution::resolve_identifiers` unresolved 列表扩容（resolution.rs:150） | 预分配 |
+| 37,344 | `FlattenFrame::new`（runtime.rs:457） | 每函数 constants Vec |
+
+跨语料差异：expressions 的 parse 占比最高（43.1%），`parse_digits`（28.1 万）
+与 `regexp_case_change_mask`（2,753 次 ≥8KB）更突出；syntax-mixed 的 verify
+状态克隆与 `CompactVisits` 更重。
+
+#### 9.11.4 大块分配（≥8KB，精确）
+
+| 语料 | ≥8KB 次数 | alloc 字节（占自身） | realloc 字节（占自身） |
+| --- | ---: | ---: | ---: |
+| functions | 393（0.008%） | 67.5MB（16.1%） | 572.5MB（66.0%） |
+| expressions | 3,066（0.11%） | 116.8MB（45.7%） | 812.5MB（91.9%） |
+| syntax-mixed | 409（0.007%） | 306.3MB（43.3%） | 929.3MB（83.9%） |
+
+大块站点（按字节）：`parser/tokens.rs:615`（提交 token 缓冲扩容；functions
+234.9MB、expressions/syntax 各 469.7MB，峰值容量 117–224MB）、
+`function.rs:442`（FunctionBuilder 列表，58–100MB）、`Heap::reserve`
+（arena.rs:85，57.7MB）、`flatten_unlinked_tree`（bytecode_publish.rs:159，
+43.0MB）、`CompactVisits` exceptional 状态（bytecode.rs:1597，syntax-mixed
+167MB）、`verify/children.rs:439`（18.9MB）、`class/fields.rs:106`（14.8MB）、
+`gc::finish_node`（14.7MB）、`regexp_case_change_mask`（expressions 2,753 次
+×8KB）。token 缓冲与 FunctionBuilder 列表属 P4-1/表增长范畴，与 P4-2 的
+“海量小分配”分开处理。
+
+#### 9.11.5 复现
+
+```sh
+# 阶段计数（临时插桩）：target/p4-attr/temp-instrumentation.patch
+python3 scripts/benchmark/build_compile_probe.py --repo . --profiling \
+  --output target/p4-alloc-phase-probe --probe target/p4-alloc-phase-probe.rs \
+  --name oxide-compile-alloc-phase-probe
+target/p4-alloc-phase-probe/target/release/oxide-compile-alloc-phase-probe FILE
+
+# 站点采样（debug info 探针 + 拦截器）
+CARGO_PROFILE_RELEASE_DEBUG=1 CARGO_PROFILE_RELEASE_STRIP=none \
+  python3 scripts/benchmark/build_compile_probe.py --repo . \
+  --output target/p4-debug-probe --name oxide-compile-debug-probe
+gcc -shared -fPIC -O2 -o target/p4-attr/malloc_trace.so target/p4-attr/malloc_trace.c -ldl
+TRACE_OUT=target/p4-attr/samples.bin LD_PRELOAD=target/p4-attr/malloc_trace.so \
+  target/p4-debug-probe/target/release/oxide-compile-debug-probe FILE
+python3 target/p4-attr/symbolize.py target/p4-attr/samples.bin \
+  target/p4-debug-probe/target/release/oxide-compile-debug-probe --top 35
+
+# 大块精确：TRACE_EVERY=1 TRACE_MIN=8192（同一拦截器）
+```
