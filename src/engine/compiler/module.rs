@@ -297,7 +297,7 @@ impl<'source> Parser<'source> {
         } else if parse_secondary_clause && self.is_punctuator(Punctuator::LeftBrace) {
             self.expect_punctuator(Punctuator::LeftBrace)?;
             while !self.is_punctuator(Punctuator::RightBrace) {
-                let imported_token = self.current().clone();
+                let imported_token = *self.current();
                 let import_name = self.module_export_name()?;
                 let (local_name, local_span) = if self.is_contextual_keyword("as") {
                     self.advance()?;
@@ -409,11 +409,11 @@ impl<'source> Parser<'source> {
     }
 
     fn parse_module_specifier(&mut self) -> Result<ModuleRequest, Error> {
-        let token = self.current().clone();
-        let TokenKind::String(literal) = token.kind else {
+        let token = *self.current();
+        let TokenKind::String(_) = token.kind else {
             return Err(self.syntax_here("string expected"));
         };
-        let specifier = JsString::try_from_utf16(literal.value.utf16)?;
+        let specifier = self.decode_string_literal(token.span)?;
         self.advance()?;
         Ok(ModuleRequest {
             specifier,
@@ -434,9 +434,9 @@ impl<'source> Parser<'source> {
         self.expect_punctuator(Punctuator::LeftBrace)?;
         let mut attributes = Vec::new();
         while !self.is_punctuator(Punctuator::RightBrace) {
-            let key_token = self.current().clone();
+            let key_token = *self.current();
             let key = match key_token.kind {
-                TokenKind::String(literal) => JsString::try_from_utf16(literal.value.utf16)?,
+                TokenKind::String(_) => self.decode_string_literal(key_token.span)?,
                 TokenKind::Identifier(identifier) => {
                     JsString::try_from_utf8(&self.identifier_text(&identifier))?
                 }
@@ -446,8 +446,8 @@ impl<'source> Parser<'source> {
             self.advance()?;
             self.expect_punctuator(Punctuator::Colon)?;
 
-            let value_token = self.current().clone();
-            let TokenKind::String(literal) = value_token.kind else {
+            let value_token = *self.current();
+            let TokenKind::String(_) = value_token.kind else {
                 // `js_parse_with_clause` intentionally reports a non-string
                 // value at the beginning of its key, not at the value token.
                 return Err(Error::syntax("string expected", source_span(key_token.span)).into());
@@ -462,7 +462,7 @@ impl<'source> Parser<'source> {
             }
             attributes.push(ModuleImportAttribute {
                 key,
-                value: JsString::try_from_utf16(literal.value.utf16)?,
+                value: self.decode_string_literal(value_token.span)?,
             });
             self.advance()?;
             if !self.consume_punctuator(Punctuator::Comma)? {
@@ -476,7 +476,7 @@ impl<'source> Parser<'source> {
     }
 
     fn module_binding_identifier(&mut self) -> Result<(String, Span), Error> {
-        let token = self.current().clone();
+        let token = *self.current();
         let TokenKind::Identifier(identifier) = token.kind else {
             return Err(self.syntax_here("identifier expected"));
         };
@@ -699,7 +699,7 @@ impl<'source> Parser<'source> {
     }
 
     fn module_identifier_name(&mut self) -> Result<(String, Span), Error> {
-        let token = self.current().clone();
+        let token = *self.current();
         let name = match token.kind {
             TokenKind::Identifier(identifier) => self.identifier_text(&identifier).into_owned(),
             TokenKind::Keyword(keyword) => keyword.as_str().to_owned(),
@@ -710,13 +710,14 @@ impl<'source> Parser<'source> {
     }
 
     fn module_export_name(&mut self) -> Result<JsString, Error> {
-        let token = self.current().clone();
+        let token = *self.current();
         let name = match token.kind {
-            TokenKind::String(literal) => {
-                String::from_utf16(&literal.value.utf16).map_err(|_| {
+            TokenKind::String(_) => {
+                let name = self.decode_string_literal(token.span)?;
+                String::from_utf16(&name.utf16_units().collect::<Vec<_>>()).map_err(|_| {
                     Error::syntax("contains unpaired surrogate", source_span(token.span))
                 })?;
-                JsString::try_from_utf16(literal.value.utf16)?
+                name
             }
             TokenKind::Identifier(identifier) => {
                 JsString::try_from_utf8(&self.identifier_text(&identifier))?

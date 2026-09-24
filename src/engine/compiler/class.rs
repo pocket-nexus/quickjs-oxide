@@ -77,7 +77,7 @@ impl<'source> Parser<'source> {
     /// method keys, so a placeholder closure operand is emitted first and
     /// patched after the body reveals an explicit or default constructor.
     fn parse_class(&mut self, expression: bool) -> Result<(), Error> {
-        let class_token = self.current().clone();
+        let class_token = *self.current();
         let class_start = source_offset(class_token.span)?;
         let outer_strict = self.current_ir().strict;
 
@@ -92,7 +92,7 @@ impl<'source> Parser<'source> {
         self.relex_current_with_strict(true)?;
         self.advance()?;
 
-        let name = if let TokenKind::Identifier(identifier) = self.current().kind.clone() {
+        let name = if let TokenKind::Identifier(identifier) = self.current().kind {
             let span = self.current().span;
             // Pinned QuickJS checks only reserved-identifier status for a
             // ClassBinding, even though it parses the surrounding definition
@@ -451,7 +451,7 @@ impl<'source> Parser<'source> {
     }
 
     fn parse_class_property_key(&mut self) -> Result<ClassPropertyKey, Error> {
-        let token = self.current().clone();
+        let token = *self.current();
         let value = match token.kind {
             TokenKind::Identifier(identifier) => {
                 self.advance()?;
@@ -469,7 +469,7 @@ impl<'source> Parser<'source> {
                     ));
                 }
                 self.advance()?;
-                JsString::try_from_utf16(string.value.utf16)?
+                self.decode_string_literal(token.span)?
             }
             TokenKind::Number(number) => {
                 if matches!(

@@ -99,7 +99,7 @@ impl<'source> Parser<'source> {
             return Ok(false);
         }
 
-        let token = self.current().clone();
+        let token = *self.current();
         let TokenKind::PrivateIdentifier(identifier) = token.kind else {
             unreachable!("private-in probe changed the current token")
         };

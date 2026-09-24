@@ -93,7 +93,7 @@ impl<'source> Parser<'source> {
             return Ok(());
         }
 
-        let token = self.current().clone();
+        let token = *self.current();
         let name = match token.kind {
             TokenKind::PrivateIdentifier(identifier) => {
                 let name =

@@ -47,7 +47,7 @@ fn string_too_long_lex_error_maps_to_js_internal() {
     let error = lex_error(LexError {
         kind: LexErrorKind::StringTooLong,
         span: Span::new(position, position),
-        message: "string too long".to_owned(),
+        message: "string too long",
     });
 
     assert_eq!(error.kind(), ErrorKind::JsInternal);

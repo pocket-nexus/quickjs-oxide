@@ -339,16 +339,10 @@ pub enum NumberKind {
     LegacyDecimal,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct NumberLiteral<'a> {
     pub raw: &'a str,
     pub kind: NumberKind,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Quote {
-    Single,
-    Double,
 }
 
 /// JavaScript string contents in their native UTF-16 code-unit form.
@@ -414,11 +408,30 @@ impl StringSink for Utf16Sink {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Validation-only sink used by the hot lexing path: it enforces the same
+/// length limit as `Utf16Sink` without materializing the value.
+struct ValidateSink {
+    len: usize,
+    limit: usize,
+}
+
+impl ValidateSink {
+    fn new(limit: usize) -> Self {
+        Self { len: 0, limit }
+    }
+}
+
+impl StringSink for ValidateSink {
+    fn push_code_unit(&mut self, _unit: u16) -> Result<(), JsStringError> {
+        RuntimeJsString::checked_length_with_limit(self.len, 1, self.limit)?;
+        self.len += 1;
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StringLiteral<'a> {
     pub raw: &'a str,
-    pub value: JsString,
-    pub quote: Quote,
     pub has_escape: bool,
     pub has_legacy_octal_escape: bool,
 }
@@ -431,27 +444,24 @@ pub enum TemplatePartKind {
     Tail,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TemplateEscapeError {
-    pub message: String,
+    pub message: &'static str,
     pub span: Span,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TemplatePart<'a> {
     /// Source between delimiters, before escape processing.
     pub raw: &'a str,
-    /// ECMAScript template raw value, including backslashes and with CR or
-    /// CRLF normalized to LF.
-    pub raw_value: JsString,
-    /// None is intentional: tagged templates observe undefined cooked text
-    /// for a malformed escape, while untagged templates must reject it.
-    pub cooked: Option<JsString>,
+    /// A malformed escape keeps tagged templates observing an undefined
+    /// cooked text while untagged templates reject it; the cooked value is
+    /// re-derived from the source on demand.
     pub invalid_escape: Option<TemplateEscapeError>,
     pub kind: TemplatePartKind,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RegExpLiteral<'a> {
     pub raw: &'a str,
     pub pattern: &'a str,
@@ -469,7 +479,7 @@ pub struct Identifier<'a> {
     pub escaped_reserved_word: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TokenKind<'a> {
     Identifier(Identifier<'a>),
     PrivateIdentifier(Identifier<'a>),
@@ -486,7 +496,7 @@ pub enum TokenKind<'a> {
     Eof,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Token<'a> {
     pub kind: TokenKind<'a>,
     pub span: Span,
@@ -511,11 +521,11 @@ pub enum LexErrorKind {
     StringTooLong,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LexError {
     pub kind: LexErrorKind,
     pub span: Span,
-    pub message: String,
+    pub message: &'static str,
 }
 
 impl fmt::Display for LexError {
@@ -792,20 +802,15 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn error_from(
-        &self,
-        start: Position,
-        kind: LexErrorKind,
-        message: impl Into<String>,
-    ) -> LexError {
+    fn error_from(&self, start: Position, kind: LexErrorKind, message: &'static str) -> LexError {
         LexError {
             kind,
             span: Span::new(start, self.current_position()),
-            message: message.into(),
+            message,
         }
     }
 
-    fn error_here(&self, kind: LexErrorKind, message: impl Into<String>) -> LexError {
+    fn error_here(&self, kind: LexErrorKind, message: &'static str) -> LexError {
         let start = self.current_position();
         let mut end = start;
         if let Some(ch) = self.peek_char() {
@@ -827,7 +832,7 @@ impl<'a> Lexer<'a> {
         LexError {
             kind,
             span: Span::new(start, end),
-            message: message.into(),
+            message,
         }
     }
 
@@ -1111,6 +1116,58 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// Re-derives a committed string literal's cooked value. The lexer clone
+    /// keeps `source_text` and `string_limit`, so lone surrogate carriers and
+    /// the injected test limit behave exactly like the original scan.
+    pub fn decode_string_literal(&self, start: Position) -> Result<JsString, LexError> {
+        let mut lexer = self.clone();
+        lexer.seek(start);
+        let mut value = Utf16Sink::new(lexer.string_limit);
+        lexer.scan_string_with_sink(&mut value)?;
+        Ok(value.into_js_string())
+    }
+
+    /// Re-derives a committed template part's raw value. `start` is the token
+    /// span start, i.e. the backtick for the head or the closing `}` for a
+    /// continuation.
+    pub fn decode_template_raw_value(
+        &self,
+        start: Position,
+        initial: bool,
+    ) -> Result<JsString, LexError> {
+        let mut lexer = self.clone();
+        lexer.seek(start);
+        if !initial {
+            lexer.bump_char();
+        }
+        let mut raw_value = Utf16Sink::new(lexer.string_limit);
+        let mut no_cooked: Option<ValidateSink> = None;
+        lexer.scan_template_with_sinks(initial, false, &mut raw_value, &mut no_cooked)?;
+        Ok(raw_value.into_js_string())
+    }
+
+    /// Re-derives a committed template part's cooked value. Callers must check
+    /// `invalid_escape` first: a malformed escape has no cooked text.
+    pub fn decode_template_cooked_value(
+        &self,
+        start: Position,
+        initial: bool,
+    ) -> Result<JsString, LexError> {
+        let mut lexer = self.clone();
+        lexer.seek(start);
+        if !initial {
+            lexer.bump_char();
+        }
+        let mut raw_value = ValidateSink::new(lexer.string_limit);
+        let mut cooked = Some(Utf16Sink::new(lexer.string_limit));
+        let token = lexer.scan_template_with_sinks(initial, false, &mut raw_value, &mut cooked)?;
+        let TokenKind::Template(part) = token.kind else {
+            unreachable!("template scan must return a template token");
+        };
+        debug_assert!(part.invalid_escape.is_none());
+        Ok(cooked.expect("cooked sink present").into_js_string())
+    }
+
     /// Recomputes the position of a trusted source offset by replaying the
     /// scanner's own advancement rules. Only used by the cold decode path.
     fn position_at(&self, byte_offset: usize) -> Position {
@@ -1369,15 +1426,18 @@ impl<'a> Lexer<'a> {
     }
 
     fn scan_string(&mut self) -> Result<TokenKind<'a>, LexError> {
+        let mut value = ValidateSink::new(self.string_limit);
+        let literal = self.scan_string_with_sink(&mut value)?;
+        Ok(TokenKind::String(literal))
+    }
+
+    fn scan_string_with_sink(
+        &mut self,
+        value: &mut impl StringSink,
+    ) -> Result<StringLiteral<'a>, LexError> {
         let start = self.current_position();
         let raw_start = self.offset;
         let separator = self.bump_char().expect("called at quote");
-        let quote = if separator == '\'' {
-            Quote::Single
-        } else {
-            Quote::Double
-        };
-        let mut value = Utf16Sink::new(self.string_limit);
         let mut has_escape = false;
         let mut has_legacy_octal_escape = false;
 
@@ -1398,13 +1458,11 @@ impl<'a> Lexer<'a> {
             };
             if ch == separator {
                 self.bump_char();
-                return Ok(TokenKind::String(StringLiteral {
+                return Ok(StringLiteral {
                     raw: &self.source[raw_start..self.offset],
-                    value: value.into_js_string(),
-                    quote,
                     has_escape,
                     has_legacy_octal_escape,
-                }));
+                });
             }
             if matches!(ch, '\r' | '\n') {
                 // Pinned QuickJS reaches its `invalid_char` label and reports
@@ -1686,6 +1744,18 @@ impl<'a> Lexer<'a> {
         initial: bool,
         line_terminator_before: bool,
     ) -> Result<Token<'a>, LexError> {
+        let mut raw_value = ValidateSink::new(self.string_limit);
+        let mut cooked = Some(ValidateSink::new(self.string_limit));
+        self.scan_template_with_sinks(initial, line_terminator_before, &mut raw_value, &mut cooked)
+    }
+
+    fn scan_template_with_sinks(
+        &mut self,
+        initial: bool,
+        line_terminator_before: bool,
+        raw_value: &mut impl StringSink,
+        cooked: &mut Option<impl StringSink>,
+    ) -> Result<Token<'a>, LexError> {
         let start = if initial {
             self.current_position()
         } else {
@@ -1710,8 +1780,6 @@ impl<'a> Lexer<'a> {
             self.bump_char();
         }
         let raw_start = self.offset;
-        let mut raw_value = Utf16Sink::new(self.string_limit);
-        let mut cooked = Some(Utf16Sink::new(self.string_limit));
         let mut invalid_escape = None;
 
         loop {
@@ -1737,8 +1805,6 @@ impl<'a> Lexer<'a> {
                 return Ok(Token {
                     kind: TokenKind::Template(TemplatePart {
                         raw: &self.source[raw_start..raw_end],
-                        raw_value: raw_value.into_js_string(),
-                        cooked: cooked.map(Utf16Sink::into_js_string),
                         invalid_escape,
                         kind,
                     }),
@@ -1759,8 +1825,6 @@ impl<'a> Lexer<'a> {
                 return Ok(Token {
                     kind: TokenKind::Template(TemplatePart {
                         raw: &self.source[raw_start..raw_end],
-                        raw_value: raw_value.into_js_string(),
-                        cooked: cooked.map(Utf16Sink::into_js_string),
                         invalid_escape,
                         kind,
                     }),
@@ -1782,7 +1846,7 @@ impl<'a> Lexer<'a> {
                     && error.kind == LexErrorKind::UnexpectedCharacter
                     && error.message == "invalid UTF-8 sequence"
                 {
-                    return Err(error.clone());
+                    return Err(*error);
                 }
                 if escape.is_ok() {
                     *self = cooked_cursor;
@@ -1790,7 +1854,7 @@ impl<'a> Lexer<'a> {
                     self.bump_char();
                     self.bump_char();
                 }
-                self.append_template_raw_source(&mut raw_value, escape_start..self.offset)
+                self.append_template_raw_source(raw_value, escape_start..self.offset)
                     .map_err(|_| self.string_too_long(start))?;
                 match escape {
                     Ok(escape) => {
@@ -1807,7 +1871,7 @@ impl<'a> Lexer<'a> {
                                 span: error.span,
                             });
                         }
-                        cooked = None;
+                        *cooked = None;
                     }
                 }
                 continue;
@@ -1851,7 +1915,7 @@ impl<'a> Lexer<'a> {
         let units = self
             .semantic_utf16_units(range)
             .expect("template raw range is a trusted source slice");
-        append_template_raw_units(value, units)
+        append_template_raw_units(&mut *value, units)
     }
 
     fn scan_regexp(
@@ -2744,27 +2808,38 @@ mod tests {
     #[test]
     fn decodes_string_escapes_without_losing_lone_surrogates() {
         let source = r#""a\n\x42\u{43}\uD800" '\141\8\0'"#;
-        let tokens = Lexer::new(source).tokenize().unwrap();
-        let TokenKind::String(first) = &tokens[0].kind else {
+        let lexer = Lexer::new(source);
+        let tokens = lexer.clone().tokenize().unwrap();
+        let TokenKind::String(_) = &tokens[0].kind else {
             panic!("expected string");
         };
-        assert_eq!(first.value.utf16, vec![0x61, 0x0a, 0x42, 0x43, 0xd800]);
-        assert!(first.value.to_string().is_err());
+        let first = lexer.decode_string_literal(tokens[0].span.start).unwrap();
+        assert_eq!(first.utf16, vec![0x61, 0x0a, 0x42, 0x43, 0xd800]);
+        assert!(first.to_string().is_err());
 
         let TokenKind::String(second) = &tokens[1].kind else {
             panic!("expected string");
         };
-        assert_eq!(second.value.utf16, vec![0x61, 0x38, 0]);
+        let second_value = lexer.decode_string_literal(tokens[1].span.start).unwrap();
+        assert_eq!(second_value.utf16, vec![0x61, 0x38, 0]);
         assert!(second.has_legacy_octal_escape);
     }
 
     #[test]
     fn handles_string_line_continuations_and_strict_escape_errors() {
-        let token = Lexer::new("\"a\\\r\nb\"").next_token().unwrap();
-        let TokenKind::String(string) = token.kind else {
+        let lexer = Lexer::new("\"a\\\r\nb\"");
+        let token = lexer.clone().next_token().unwrap();
+        let TokenKind::String(_) = token.kind else {
             panic!("expected string");
         };
-        assert_eq!(string.value.to_string().unwrap(), "ab");
+        assert_eq!(
+            lexer
+                .decode_string_literal(token.span.start)
+                .unwrap()
+                .to_string()
+                .unwrap(),
+            "ab"
+        );
         assert_eq!(token.span.end.line, 2);
 
         let options = LexerOptions {
@@ -2781,11 +2856,18 @@ mod tests {
                 .kind,
             LexErrorKind::InvalidEscape
         );
-        let zero = Lexer::with_options(r"'\0'", options).next_token().unwrap();
-        let TokenKind::String(zero) = zero.kind else {
+        let zero_lexer = Lexer::with_options(r"'\0'", options);
+        let zero = zero_lexer.clone().next_token().unwrap();
+        let TokenKind::String(_) = zero.kind else {
             panic!("expected string");
         };
-        assert_eq!(zero.value.utf16, vec![0]);
+        assert_eq!(
+            zero_lexer
+                .decode_string_literal(zero.span.start)
+                .unwrap()
+                .utf16,
+            vec![0]
+        );
     }
 
     #[test]
@@ -2878,13 +2960,18 @@ mod tests {
             u16::from(b'\''),
         ])
         .unwrap();
-        let string = Lexer::with_source_text(&string_source, LexerOptions::default())
-            .next_token()
-            .unwrap();
-        let TokenKind::String(string) = string.kind else {
+        let string_lexer = Lexer::with_source_text(&string_source, LexerOptions::default());
+        let string = string_lexer.clone().next_token().unwrap();
+        let TokenKind::String(_) = string.kind else {
             panic!("expected reversible String token");
         };
-        assert_eq!(string.value.utf16, [0xd800, 0xe000, 0xdfff]);
+        assert_eq!(
+            string_lexer
+                .decode_string_literal(string.span.start)
+                .unwrap()
+                .utf16,
+            [0xd800, 0xe000, 0xdfff]
+        );
 
         let template_source = SourceText::try_from_utf16([
             u16::from(b'`'),
@@ -2894,14 +2981,25 @@ mod tests {
             u16::from(b'`'),
         ])
         .unwrap();
-        let template = Lexer::with_source_text(&template_source, LexerOptions::default())
-            .next_token()
-            .unwrap();
-        let TokenKind::Template(template) = template.kind else {
+        let template_lexer = Lexer::with_source_text(&template_source, LexerOptions::default());
+        let template = template_lexer.clone().next_token().unwrap();
+        let TokenKind::Template(_) = template.kind else {
             panic!("expected reversible Template token");
         };
-        assert_eq!(template.raw_value.utf16, [0xd800, 0x5c, 0xdfff]);
-        assert_eq!(template.cooked.unwrap().utf16, [0xd800, 0xdfff]);
+        assert_eq!(
+            template_lexer
+                .decode_template_raw_value(template.span.start, true)
+                .unwrap()
+                .utf16,
+            [0xd800, 0x5c, 0xdfff]
+        );
+        assert_eq!(
+            template_lexer
+                .decode_template_cooked_value(template.span.start, true)
+                .unwrap()
+                .utf16,
+            [0xd800, 0xdfff]
+        );
 
         let regexp_source = SourceText::try_from_utf16([
             u16::from(b'/'),
@@ -3114,13 +3212,15 @@ mod tests {
     #[test]
     fn genuine_del_and_pua_are_not_raw_source_markers() {
         let source = SourceText::try_from_raw_bytes("'\u{7f}\u{e000}'".as_bytes()).unwrap();
-        let token = Lexer::with_source_text(&source, LexerOptions::default())
-            .next_token()
-            .unwrap();
-        let TokenKind::String(string) = token.kind else {
+        let lexer = Lexer::with_source_text(&source, LexerOptions::default());
+        let token = lexer.clone().next_token().unwrap();
+        let TokenKind::String(_) = token.kind else {
             panic!("expected string containing genuine DEL and PUA");
         };
-        assert_eq!(string.value.utf16, [0x7f, 0xe000]);
+        assert_eq!(
+            lexer.decode_string_literal(token.span.start).unwrap().utf16,
+            [0x7f, 0xe000]
+        );
     }
 
     #[test]
@@ -3130,13 +3230,20 @@ mod tests {
             TEMPLATE_QUOTE, '$', TEMPLATE_QUOTE
         );
         let mut lexer = Lexer::new(&source);
-        let head = lexer.next_token().unwrap();
-        let TokenKind::Template(head) = head.kind else {
+        let head_token = lexer.next_token().unwrap();
+        let TokenKind::Template(head) = head_token.kind else {
             panic!("expected template head");
         };
         assert_eq!(head.kind, TemplatePartKind::Head);
         assert_eq!(head.raw, "head");
-        assert_eq!(head.cooked.unwrap().to_string().unwrap(), "head");
+        assert_eq!(
+            lexer
+                .decode_template_cooked_value(head_token.span.start, true)
+                .unwrap()
+                .to_string()
+                .unwrap(),
+            "head"
+        );
 
         assert!(matches!(
             lexer.next_token().unwrap().kind,
@@ -3147,15 +3254,22 @@ mod tests {
             TokenKind::Punctuator(Punctuator::RightBrace)
         ));
 
-        let tail = lexer
+        let tail_token = lexer
             .next_token_with_goal(LexicalGoal::TemplateContinuation)
             .unwrap();
-        let TokenKind::Template(tail) = tail.kind else {
+        let TokenKind::Template(tail) = tail_token.kind else {
             panic!("expected template tail");
         };
         assert_eq!(tail.kind, TemplatePartKind::Tail);
         assert_eq!(tail.raw, "tail");
-        assert_eq!(tail.cooked.unwrap().to_string().unwrap(), "tail");
+        assert_eq!(
+            lexer
+                .decode_template_cooked_value(tail_token.span.start, false)
+                .unwrap()
+                .to_string()
+                .unwrap(),
+            "tail"
+        );
 
         let error = Lexer::new("tail")
             .next_token_with_goal(LexicalGoal::TemplateContinuation)
@@ -3166,12 +3280,12 @@ mod tests {
     #[test]
     fn template_invalid_escape_is_preserved_for_tagged_semantics() {
         let source = format!("{TEMPLATE_QUOTE}bad\\8{TEMPLATE_QUOTE}");
-        let token = Lexer::new(&source).next_token().unwrap();
+        let lexer = Lexer::new(&source);
+        let token = lexer.clone().next_token().unwrap();
         let TokenKind::Template(part) = token.kind else {
             panic!("expected template");
         };
         assert_eq!(part.kind, TemplatePartKind::NoSubstitution);
-        assert!(part.cooked.is_none());
         let invalid = part.invalid_escape.expect("invalid escape metadata");
         assert_eq!(
             invalid.message,
@@ -3187,18 +3301,25 @@ mod tests {
         };
         assert_eq!(part.kind, TemplatePartKind::NoSubstitution);
         assert_eq!(part.raw, "\\x");
-        assert!(part.cooked.is_none());
+        assert!(part.invalid_escape.is_some());
         assert_eq!(part.invalid_escape.unwrap().span.start.column, 2);
 
         let mut lexer = Lexer::new("`\\x${value}`");
-        let head = lexer.next_token().unwrap();
-        let TokenKind::Template(head) = head.kind else {
+        let head_token = lexer.next_token().unwrap();
+        let TokenKind::Template(head) = head_token.kind else {
             panic!("expected template head");
         };
         assert_eq!(head.kind, TemplatePartKind::Head);
         assert_eq!(head.raw, "\\x");
-        assert_eq!(head.raw_value.to_string().unwrap(), "\\x");
-        assert!(head.cooked.is_none());
+        assert_eq!(
+            lexer
+                .decode_template_raw_value(head_token.span.start, true)
+                .unwrap()
+                .to_string()
+                .unwrap(),
+            "\\x"
+        );
+        assert!(head.invalid_escape.is_some());
 
         assert!(matches!(
             lexer.next_token().unwrap().kind,
@@ -3227,40 +3348,63 @@ mod tests {
         ));
         lexer.next_token().unwrap();
         lexer.next_token().unwrap();
-        let tail = lexer
+        let tail_token = lexer
             .next_token_with_goal(LexicalGoal::TemplateContinuation)
             .unwrap();
-        let TokenKind::Template(tail) = tail.kind else {
+        let TokenKind::Template(tail) = tail_token.kind else {
             panic!("expected malformed template tail");
         };
         assert_eq!(tail.kind, TemplatePartKind::Tail);
         assert_eq!(tail.raw, "tail\\x");
-        assert_eq!(tail.raw_value.to_string().unwrap(), "tail\\x");
-        assert!(tail.cooked.is_none());
+        assert_eq!(
+            lexer
+                .decode_template_raw_value(tail_token.span.start, false)
+                .unwrap()
+                .to_string()
+                .unwrap(),
+            "tail\\x"
+        );
+        assert!(tail.invalid_escape.is_some());
     }
 
     #[test]
     fn template_raw_value_normalizes_only_physical_crlf() {
         let source = format!("{TEMPLATE_QUOTE}a\r\n\\nb{TEMPLATE_QUOTE}");
-        let token = Lexer::new(&source).next_token().unwrap();
+        let lexer = Lexer::new(&source);
+        let token = lexer.clone().next_token().unwrap();
         let TokenKind::Template(part) = token.kind else {
             panic!("expected template");
         };
         assert_eq!(part.raw, "a\r\n\\nb");
-        assert_eq!(part.raw_value.to_string().unwrap(), "a\n\\nb");
-        assert_eq!(part.cooked.unwrap().to_string().unwrap(), "a\n\nb");
+        assert_eq!(
+            lexer
+                .decode_template_raw_value(token.span.start, true)
+                .unwrap()
+                .to_string()
+                .unwrap(),
+            "a\n\\nb"
+        );
+        assert_eq!(
+            lexer
+                .decode_template_cooked_value(token.span.start, true)
+                .unwrap()
+                .to_string()
+                .unwrap(),
+            "a\n\nb"
+        );
     }
 
     #[test]
     fn string_limit_counts_utf16_and_preserves_lexer_error_order() {
-        let token = Lexer::new("'abc'")
-            .with_string_limit(3)
-            .next_token()
-            .unwrap();
-        let TokenKind::String(value) = token.kind else {
+        let lexer = Lexer::new("'abc'").with_string_limit(3);
+        let token = lexer.clone().next_token().unwrap();
+        let TokenKind::String(_) = token.kind else {
             panic!("expected String token");
         };
-        assert_eq!(value.value.utf16, [0x61, 0x62, 0x63]);
+        assert_eq!(
+            lexer.decode_string_literal(token.span.start).unwrap().utf16,
+            [0x61, 0x62, 0x63]
+        );
 
         for source in [
             "'abc'",
@@ -3323,15 +3467,26 @@ mod tests {
 
     #[test]
     fn template_raw_and_cooked_values_share_the_checked_limit() {
-        let token = Lexer::new("`\\u{1F600}`")
-            .with_string_limit(9)
-            .next_token()
-            .unwrap();
-        let TokenKind::Template(part) = token.kind else {
+        let lexer = Lexer::new("`\\u{1F600}`").with_string_limit(9);
+        let token = lexer.clone().next_token().unwrap();
+        let TokenKind::Template(_) = token.kind else {
             panic!("expected Template token");
         };
-        assert_eq!(part.raw_value.utf16.len(), 9);
-        assert_eq!(part.cooked.unwrap().utf16, [0xd83d, 0xde00]);
+        assert_eq!(
+            lexer
+                .decode_template_raw_value(token.span.start, true)
+                .unwrap()
+                .utf16
+                .len(),
+            9
+        );
+        assert_eq!(
+            lexer
+                .decode_template_cooked_value(token.span.start, true)
+                .unwrap()
+                .utf16,
+            [0xd83d, 0xde00]
+        );
 
         let raw_overflow = Lexer::new("`\\u{1F600}`")
             .with_string_limit(8)
