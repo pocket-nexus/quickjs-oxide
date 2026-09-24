@@ -592,6 +592,25 @@ fn lookahead_probe_cache_drops_the_invalidated_context_window() {
 }
 
 #[test]
+fn lookahead_cache_serves_the_commit_path() {
+    use crate::engine::compiler::lexer::LexContext;
+    use crate::engine::compiler::lexer::LexicalGoal;
+    use crate::engine::compiler::lexer::Token;
+    use crate::engine::compiler::lexer::TokenKind;
+
+    let mut parser = lookahead_test_parser("alpha beta");
+    let sentinel = Token {
+        kind: TokenKind::RawAscii(b'@'),
+        span: parser.current().span,
+        line_terminator_before: false,
+    };
+    let start = parser.current().span.end.byte_offset;
+    parser.lookahead_insert(start, LexicalGoal::Div, LexContext::default(), sentinel);
+    parser.advance_with_goal(LexicalGoal::Div).unwrap();
+    assert_eq!(parser.current().kind, TokenKind::RawAscii(b'@'));
+}
+
+#[test]
 fn parameter_expression_binding_patterns_publish_the_quickjs_argument_scope_abi() {
     let script = compile_unlinked_script(
         "(function(left,[a,b=left],{c},right=a+b+c){return left+a+b+c+right})",

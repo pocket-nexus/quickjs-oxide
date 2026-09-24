@@ -27,13 +27,15 @@ use crate::engine::heap::HeapCounts;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-/// Parser lookahead probe-cache hits and misses since process start.
+/// Parser lookahead probe-cache counters since process start:
+/// `(probe_hits, probe_misses, commit_hits)`.
 ///
-/// Instrumented builds only; the public compile probe prints these to attribute
-/// rescan savings between checkpoints.
+/// `commit_hits` counts committed tokens served from a probe's memoized scan
+/// instead of rescanning. Instrumented builds only; the public compile probe
+/// prints these to attribute rescan savings between checkpoints.
 #[cfg(feature = "profiling")]
 #[must_use]
-pub fn lookahead_probe_counters() -> (u64, u64) {
+pub fn lookahead_probe_counters() -> (u64, u64, u64) {
     crate::engine::compiler::lookahead_probe_counters()
 }
 
