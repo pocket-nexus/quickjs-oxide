@@ -603,7 +603,15 @@ impl<'source> Parser<'source> {
         goal: LexicalGoal,
     ) -> Result<(), Error> {
         while self.tokens.len() <= index {
-            let token = self.lexer.next_token_with_goal(goal).map_err(lex_error)?;
+            let start = self.lexer.current_position().byte_offset;
+            let context = self.lexer.context();
+            let token = match self.take_lookahead(start, goal, context) {
+                Some(token) => {
+                    self.lexer.seek(token.span.end);
+                    token
+                }
+                None => self.lexer.next_token_with_goal(goal).map_err(lex_error)?,
+            };
             self.tokens.push(token);
         }
         Ok(())

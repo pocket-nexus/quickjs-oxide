@@ -122,9 +122,39 @@ impl<'source> Parser<'source> {
         self.lookahead.borrow_mut().invalidate_from(start);
     }
 
+    /// A commit-path scan consumes a token a probe already memoized. Scanning
+    /// is a pure function of the key, so the committed token is byte-identical
+    /// to a fresh scan; the lexer is repositioned by the caller.
+    pub(in crate::engine::compiler) fn take_lookahead(
+        &self,
+        start: usize,
+        goal: LexicalGoal,
+        context: LexContext,
+    ) -> Option<Token<'source>> {
+        let token = self.lookahead.borrow().peek(start, goal, context);
+        #[cfg(feature = "profiling")]
+        if token.is_some() {
+            counters::record_commit_hit();
+        }
+        token
+    }
+
     #[cfg(test)]
     pub(in crate::engine::compiler) fn lookahead_entry_count(&self) -> usize {
         self.lookahead.borrow().entries.len()
+    }
+
+    #[cfg(test)]
+    pub(in crate::engine::compiler) fn lookahead_insert(
+        &self,
+        start: usize,
+        goal: LexicalGoal,
+        context: LexContext,
+        token: Token<'source>,
+    ) {
+        self.lookahead
+            .borrow_mut()
+            .insert(start, goal, context, token);
     }
 }
 
@@ -137,14 +167,23 @@ pub(crate) mod counters {
 
     static HITS: AtomicU64 = AtomicU64::new(0);
     static MISSES: AtomicU64 = AtomicU64::new(0);
+    static COMMIT_HITS: AtomicU64 = AtomicU64::new(0);
 
     pub(in crate::engine::compiler) fn record(hit: bool) {
         let counter = if hit { &HITS } else { &MISSES };
         counter.fetch_add(1, Ordering::Relaxed);
     }
 
-    pub(crate) fn snapshot() -> (u64, u64) {
-        (HITS.load(Ordering::Relaxed), MISSES.load(Ordering::Relaxed))
+    pub(in crate::engine::compiler) fn record_commit_hit() {
+        COMMIT_HITS.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn snapshot() -> (u64, u64, u64) {
+        (
+            HITS.load(Ordering::Relaxed),
+            MISSES.load(Ordering::Relaxed),
+            COMMIT_HITS.load(Ordering::Relaxed),
+        )
     }
 }
 
