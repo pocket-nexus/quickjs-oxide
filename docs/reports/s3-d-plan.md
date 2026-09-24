@@ -644,8 +644,8 @@ unsupported-negative-provenance 2562→2534（+28 行即 `00bb387f` 的 14 条
 `docs/status.md`/`docs/test262.md` 指标块由
 `scripts/test262/current-test262-metrics.mjs --write-docs` 同步。
 
-**下一步**：B 重新立项（自改写专用字节码，先写 spike/设计文档，见
-[性能架构](performance-architecture.md) §11）。
+**下一步**：B 重新立项（2026-09-24 定稿为守卫式专用执行跨度，见
+[S3-B 实施计划](s3-b-plan.md)（待裁决）；机制与切片见该文 §4–§5）。
 
 ### D5 per-prototype validity cell（条件项，需先补证据）
 
