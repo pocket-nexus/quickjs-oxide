@@ -389,11 +389,41 @@ A.5 move/绑定点、A.6 token 复制、A.7 标志规则、A.8 测试适配）�
 
 验收：
 
-- `cargo test --workspace --all-targets`、clippy 4 组、fmt、doc；
+- `cargo test --workspace --all-targets`、clippy 5 组（CI 命令）、fmt、doc；
 - lexer/parser 相关测试 + oracle lexical + `test-quickjs-fixtures --validate`；
 - `audit-negative-diagnostics`、focused test262；
 - 指标：`functions-4194304` 分配次数下降 ≥60%（分配探针），
   instr/KB 下降 ≥15%，cache-miss/KB 下降 ≥30%，时间下降 ≥15%。
+
+实施记录（P1a 完成，HEAD `a5b651be`）：
+
+- 提交：`970a11be`（C1：`StringSink`/`Utf16Sink`，字符串/模板累积走 sink）、
+  `ba593f9e`（C2：`Identifier` 惰性解码 + Parser `identifier_text`/
+  `identical_name`/`is_unescaped_name`）、`f29dd568`（C3：
+  `StringLiteral`/`TemplatePart` 只存 raw+标志、`ValidateSink`、Parser
+  `decode_string_literal`/`decode_template_raw_value`/`decode_template_cooked`、
+  `Token`/`TokenKind`/`LexError` Copy、清 38 处 token clone）、
+  `a5b651be`（C4：数字去 `replace` 分配，仅含 `_` 时 `Cow::Owned`）。
+- 偏差：`LexError.message` 由 `String` 改 `&'static str`（全部消息为字面量，
+  唯一外部构造是 `tests/scopes.rs`；`TemplateEscapeError.message` 直接取用）；
+  Parser `decode_*` 以 token `Span` 为参数（避免 `position_at` 回放造成
+  O(n²) 解码）；`ValidateSink` 在 C3 引入（C1 先只删 eager 值，避免
+  dead_code）；`decode_template_cooked` 先查 `invalid_escape` 再解码，语义
+  等价于旧 `cooked=None`。
+- 验收：全量 Rust 测试（2283 lib + 全 target）、doc、CI 5 组 clippy、fmt、
+  oracle 全量 912 passed（`QJS_ORACLE` 指向 qjs 二进制绝对路径）、
+  `check-rust-only.sh`、`check-source-layout.py`、bc5 pinned atoms/opcodes、
+  fixtures/c-oracles `--validate`。
+- test262 全量对照：`--full`（12 workers，需清空 `GIT_*` 调用者环境）在当前
+  HEAD 与父提交 `0e59f836`（`git worktree` 控制组）各跑一次，
+  102,037 variants 的结果向量除首行 metadata 的 engine 哈希外逐行完全一致
+  （pass=80010、fail-parse=7、fail-runtime=43、unsupported=3,502、
+  skipped=18,475），证明 P1a 语义中立。pinned milestone（`full_summary`）
+  比两者多 2,562 个 `unsupported-negative-provenance`，即 28 个用例在父提交
+  就已成为 pass——是里程碑提升以来的既有漂移，与本次重构无关；因此本阶段
+  不 promote 里程碑（focused replay 仍因 stale 被拒），promotion 留到分支
+  合并/阶段收尾时一次性完成。
+- 指标：见 §5 校准段与 `docs/compile-benchmark.md` §9.5。
 
 ### P1b `NameId` 驻留（IR/resolution/bindings/lowering）
 
@@ -531,6 +561,15 @@ P2 分 P2a（前瞻备忘）与 P2b（提交缓冲）两步，表中 P2 行为�
 真实 bundle 中位吞吐目标：从 4.79 MB/s 到 >7 MB/s（P2 后 >6 MB/s），并保持
 test262/QuickJS 差分全绿。目标值是方向性检查点，P0 基线出来后按实测校准；
 P1a 首个 checkpoint（分配探针 + perf）用于校准后续阶段的数字。
+
+P1a checkpoint 实测（`docs/compile-benchmark.md` §9.5，HEAD `a5b651be`）：
+alloc 次数 −13.0%~−19.5%、alloc+realloc −13.8%~−21.7%、instr/KB
+−3.6%~−4.9%、cache-miss/KB −8.7%~−17.5%、task-clock −5.6%~−9.3%、RSS
+−15.7%~−21.2%。方向正确但低于表中方向性目标：4MB 语料的分配大头在
+parse 之后的 IR/常量/绑定路径，lexer 侧每 token 分配消除只覆盖一部分。
+后续阶段分配目标按“相对上一 checkpoint 再降”执行（P1b ≥70% 相对 P1a），
+instr/miss/时间目标保持“相对 P0 基线”方向；每阶段 checkpoint 后更新
+§9.5 对照。
 
 ## 6. 提交与分支
 
