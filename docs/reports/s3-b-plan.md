@@ -404,14 +404,15 @@ site 不参与 GC 扫描；generator 恢复走 canonical PC + 同一
 | --- | --- | --- | --- |
 | B2.0 | 证据冻结（§2 表格 + `target/s3-b-recon/`）；尺寸断言（`Instruction`==12、`RunExit`==16 编译期 `const` 断言；`Error`/`Result` 记为诊断指标不加断言）；`SpanKind` 单次查询重构实测不成立，已回退（§5.1） | 无 | 断言随 lib 测试编译；基线 A/A 复现 607.27/1355.27/1730.28 |
 | B2.1a | S1 `LocalCompareBranch`（含 `Goto` 折叠），结果见 §5.2 | B2.0 | `empty_loop` 每轮 337（−44.5%）；`ic_share_*` +0.72%（布局伪影 <2% 线）；其余负载不退化 |
-| B2.1b | S2 `LocalAddConstStore` + S4 UpdateLocal/LocalAdd 快路径，结果见 §5.3 | B2.1a | `int_local` 每轮 460（片内 −58.2%，累计 −66.0%；≤300 未达，留 B2.2 评估）；BigInt 固定行片内 +1.16%/+1.04%/+0.64%（<2% 线） |
-| B2.1c | S3 `LocalFieldAddStore`（含 IC peek 变体） | B2.1b | `prop_read` 每轮 ≤450；属性固定行不退化 |
-| B2.2 | 自适应 per-PC 专用槽（§4.3） | B2.1c + 启动门禁 | 启动门禁满足且内存门禁通过；否则记 backlog |
+| B2.1b | S2 `LocalAddConstStore` + S4 UpdateLocal/LocalAdd 快路径（S4 更新快路径经 A/B 单独回退，见 §5.3） | B2.1a | `int_local` 每轮 457（片内 −58.4%，累计 −66.3%；≤300 未达，留 B2.2 评估）；BigInt 固定行片内 +1.09%/+0.97%/+0.60%（<2% 线） |
+| B2.1c | S3 `LocalFieldAddStore`（含 IC peek 变体），结果见 §5.4 | B2.1b | `prop_read` 每轮 752（片内 −50.6%，累计 −56.5%；≤450 未达，缺口见 §5.5）；属性固定行片内 <2% |
+| B2.2 | 自适应 per-PC 专用槽（§4.3）；启动门禁判定见 §5.5 | B2.1c + 启动门禁 | 启动门禁**已满足**（§5.5）；实现后内存门禁 + 完整 A/B 通过则保留，否则记 backlog |
 | B2.3 | native 编组链 spike（独立文档） | B2.1 冻结 | 给出定向方案与预估，不在本轮改代码 |
 | B2.4 | 阶段文档收尾 + 默认路径裁决 | 全部 | 文档与 receipt 入库 |
 
 排程：B2.0 → B2.1a → 裁决点（kill criterion）→ B2.1b/c → B2.2 门禁评估
-→ B2.3 设计。所有测量串行（`taskset -c 2`），编码可并行。
+（已满足，§5.5）→ B2.2 实现与 B2.3 spike 并行 → B2.4 默认路径裁决（含
+Test262 全量复核）。所有测量串行（`taskset -c 2`），编码可并行。
 
 ### 5.1 B2.0 负结果：`SpanKind` 单次查询重构不成立
 
@@ -593,6 +594,31 @@ peek 只读 `PropertyReadCache::read` 的借用值，遵守 §3.2 第 5 条的�
 的逐片协议判定（三片均 <2%），累计偏差记入 B2.4 默认路径 A/B 与
 Test262 之后统一裁决；若 B2.4 仍不达标，再按 kind 做有证据的回退
 （S1/S2/S3），而不是继续布局彩票。
+
+### 5.5 B2.2 启动门禁判定（已满足）
+
+条件 1（≥30% 下降 + 固定行门禁）：满足——`int_local` −66.3%、
+`prop_read` −56.5%、`empty_loop` −42.2%（累计 vs base）；固定行按 §6.2
+逐片协议接受（三片片内均 <2%）。
+
+条件 2（残留 ≥3% 可归因缺口）：满足。对 H1 形态重建
+`CARGO_PROFILE_RELEASE_DEBUG=1` 二进制（`target/s3-b-recon/bin/qjs-h1-debug`）
+并 `perf record -F 3997`（`target/s3-b-recon/perf-int_local-h1.data`、
+`perf-prop_read-h1.data`），`perf report --no-children` 按 cycles 占比：
+
+| 负载（每轮指令） | `run` | outlined 融合 handler | 其他 |
+| --- | --- | --- | --- |
+| `int_local`（456） | 74.13% | `local_compare_branch` 12.38% + `update_local` 9.51% + `numeric_local_add` 3.17% = **25.06%** | — |
+| `prop_read`（752） | 38.38% | `numeric_local_field_add` 34.41% + `update_local` 5.54% + `local_compare_branch` 5.30% = **45.25%** | `PropertyReadCache::read` 10.61%、`immediate_local` 5.08% |
+
+这些占比全部是「canonical 侧每轮重复评估 guard/准入」：S3 handler 内
+`immediate_object_local` + `property_ic_peek_number`（`linked_field_atom` +
+borrow + shape 重验）每次执行，S1/S2/update 的 outlined 调用每轮各一次。
+即静态跨度无法覆盖的动态形态（不同 local/属性/类型复用同一 PC）正是
+§4.3 per-PC 槽的目标；缺口远超 3%。
+
+判定：B2.2 进入实现（`oxide_specialize` 默认关闭），B2.4 默认路径裁决
+按三方 A/B：base / B2.1 / B2.1+B2.2。
 
 ## 6. 验收门禁
 
