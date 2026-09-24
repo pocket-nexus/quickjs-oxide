@@ -71,10 +71,10 @@ impl Runtime {
                 pending_exception: None,
                 pending_jobs: VecDeque::new(),
                 debug_info_mode: DebugInfoMode::Full,
-                shape_cache: HashMap::new(),
-                shape_fingerprints: HashMap::new(),
-                shape_transitions: HashMap::new(),
-                shape_transition_parents: HashMap::new(),
+                shape_cache: HashMap::default(),
+                shape_hashes: HashMap::default(),
+                shape_transitions: HashMap::default(),
+                shape_transition_parents: HashMap::default(),
                 well_known_symbols,
                 proxy_trap_reads: std::array::from_fn(|_| {
                     crate::engine::object::property_ic::PropertyReadCache::default()

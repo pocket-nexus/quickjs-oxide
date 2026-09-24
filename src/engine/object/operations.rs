@@ -1,7 +1,7 @@
 use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::heap::{ObjectId, RawValue, VarRefId};
 use crate::engine::object::property::{CompletePropertyDescriptor, PropertyDescriptor};
-use crate::engine::object::shape::{PropertyFlags, ShapeEntry};
+use crate::engine::object::shape::PropertyFlags;
 use crate::engine::object::{
     CallableRef, CompleteOrdinaryPropertyDescriptor, ObjectRef, OrdinaryPropertyDescriptor,
 };
@@ -11,12 +11,6 @@ pub(crate) enum RawStringProperty {
     Missing,
     String(JsString),
     Other,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct ShapeFingerprint {
-    pub(crate) prototype: Option<ObjectId>,
-    pub(crate) entries: Box<[ShapeEntry]>,
 }
 
 pub(crate) enum PropertySnapshot {

@@ -89,13 +89,7 @@ impl RuntimeState {
         };
 
         self.unlink_shape_transitions(shape);
-        let unlinked = self.shape_fingerprints.remove(&shape).map(|fingerprint| {
-            let owned_cache_entry = self.shape_cache.get(&fingerprint) == Some(&shape);
-            if owned_cache_entry {
-                self.shape_cache.remove(&fingerprint);
-            }
-            (fingerprint, owned_cache_entry)
-        });
+        let previous_hash = self.remove_shape_cache(shape);
         let result = match selected {
             Some(selected) => {
                 self.heap
@@ -106,11 +100,8 @@ impl RuntimeState {
                 .append_unique_object_property(object, atom, flags, replacement),
         };
         if let Err(error) = result {
-            if let Some((fingerprint, owned_cache_entry)) = unlinked {
-                if owned_cache_entry {
-                    self.shape_cache.insert(fingerprint.clone(), shape);
-                }
-                self.shape_fingerprints.insert(shape, fingerprint);
+            if let Some(hash) = previous_hash {
+                self.insert_shape_cache(shape, hash);
             }
             self.release_atoms(retained_slot_atoms)?;
             self.atoms.release(atom)?;

@@ -665,7 +665,7 @@ mod selected_append_tests {
                 .is_none()
         );
         let before_atoms = state.atoms.resolve(key.atom()).unwrap().ref_count;
-        let fingerprint = state.shape_fingerprints.get(&shape).unwrap().clone();
+        assert!(state.shape_is_canonical(shape));
         let selected = SelectedMissingAppend {
             object: owner.object_id(),
             shape,
@@ -685,7 +685,6 @@ mod selected_append_tests {
             before_atoms
         );
         assert!(state.heap.shape(shape).unwrap().entries().is_empty());
-        assert_eq!(state.shape_fingerprints.get(&shape), Some(&fingerprint));
-        assert_eq!(state.shape_cache.get(&fingerprint), Some(&shape));
+        assert!(state.shape_is_canonical(shape));
     }
 }

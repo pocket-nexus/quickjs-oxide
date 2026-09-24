@@ -12,11 +12,11 @@ fn finalized_shapes_unlink_exact_weak_cache_entries() {
         assert!(set_property(&runtime, &object, &key, Value::Int(index)).unwrap());
         objects.push(object);
     }
-    assert!(runtime.0.state.borrow().shape_cache.len() >= objects.len());
+    assert!(runtime.0.state.borrow().shape_hashes.len() >= objects.len());
     drop(objects);
     let state = runtime.0.state.borrow();
     assert!(state.shape_cache.is_empty());
-    assert!(state.shape_fingerprints.is_empty());
+    assert!(state.shape_hashes.is_empty());
 }
 
 #[test]
@@ -99,7 +99,7 @@ fn unique_shape_append_never_mutates_a_shared_shape() {
             .collect::<Vec<_>>(),
         unique_atoms
     );
-    assert!(!state.shape_fingerprints.contains_key(&unique_shape));
+    assert!(!state.shape_hashes.contains_key(&unique_shape));
 }
 
 #[test]
@@ -187,12 +187,7 @@ fn failed_unique_shape_append_restores_cache_and_atom_ownership() {
     let shape = state.heap.object(owner.object_id()).unwrap().shape;
     assert_eq!(state.heap.shape_strong_count(shape), Ok(1));
     let before_ref_count = state.atoms.resolve(atom).unwrap().ref_count;
-    let fingerprint = state
-        .shape_fingerprints
-        .get(&shape)
-        .expect("the untouched empty shape should still be cached")
-        .clone();
-    assert_eq!(state.shape_cache.get(&fingerprint), Some(&shape));
+    assert!(state.shape_is_canonical(shape));
 
     assert!(matches!(
         state.append_unique_layout(
@@ -209,8 +204,7 @@ fn failed_unique_shape_append_restores_cache_and_atom_ownership() {
         "a rejected append must roll back the shape's tentative atom root"
     );
     assert!(state.heap.shape(shape).unwrap().entries().is_empty());
-    assert_eq!(state.shape_fingerprints.get(&shape), Some(&fingerprint));
-    assert_eq!(state.shape_cache.get(&fingerprint), Some(&shape));
+    assert!(state.shape_is_canonical(shape));
 }
 
 #[test]

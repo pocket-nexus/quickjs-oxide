@@ -18,10 +18,38 @@
 
 use super::dictionary_order::DictionaryOrder;
 use crate::engine::atom::{Atom, AtomError, AtomIdx, AtomTable, PropertyKeyKind};
+use crate::engine::hash::FxHasher;
 use crate::engine::heap::ObjectId;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
+use std::hash::{Hash, Hasher};
+
+fn initial_fingerprint_hash(prototype: Option<ObjectId>) -> u64 {
+    let mut hasher = FxHasher::default();
+    prototype.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Extend a fingerprint hash with one appended entry. The fold matches
+/// [`compute_fingerprint_hash`], so a successor hash costs O(1) from its parent.
+pub(crate) fn extend_fingerprint_hash(hash: u64, entry: &ShapeEntry) -> u64 {
+    let mut hasher = FxHasher::default();
+    hash.hash(&mut hasher);
+    entry.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// FxHash fingerprint of a shape's `prototype + entries`, used as the
+/// alloc-free canonical-cache key. Collisions are resolved by comparing the
+/// actual layouts.
+pub(crate) fn compute_fingerprint_hash(prototype: Option<ObjectId>, entries: &[ShapeEntry]) -> u64 {
+    entries
+        .iter()
+        .fold(initial_fingerprint_hash(prototype), |hash, entry| {
+            extend_fingerprint_hash(hash, entry)
+        })
+}
 
 /// The representation used by the object's property-payload slot.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -129,6 +157,8 @@ pub struct Shape {
     layout_revision: u64,
     prototype: Option<ObjectId>,
     entries: Vec<ShapeEntry>,
+    /// FxHash of `prototype + entries`, maintained incrementally by append.
+    fingerprint_hash: u64,
     lookup: HashMap<AtomIdx, u32, crate::engine::hash::FxBuildHasher>,
     /// Present only for dynamic layouts; shared shapes pay one optional pointer.
     dictionary_order: Option<Box<DictionaryOrder>>,
@@ -184,10 +214,12 @@ impl Shape {
             }
         }
 
+        let fingerprint_hash = compute_fingerprint_hash(prototype, &ordered);
         Ok(Self {
             layout_revision: 0,
             prototype,
             entries: ordered,
+            fingerprint_hash,
             lookup,
             dictionary_order: None,
         })
@@ -197,6 +229,12 @@ impl Shape {
     #[must_use]
     pub const fn prototype(&self) -> Option<ObjectId> {
         self.prototype
+    }
+
+    /// FxHash of `prototype + entries`, valid for the shape's current layout.
+    #[must_use]
+    pub(crate) const fn fingerprint_hash(&self) -> u64 {
+        self.fingerprint_hash
     }
 
     /// Return property metadata in physical payload-slot order.
@@ -369,10 +407,12 @@ impl Shape {
         .map_err(|_| ShapeError::PropertyIndexOverflow)?;
         let mut entries = self.entries.to_vec();
         entries[index].flags = flags;
+        let fingerprint_hash = compute_fingerprint_hash(self.prototype, &entries);
         Ok(Self {
             layout_revision: 0,
             prototype: self.prototype,
             entries,
+            fingerprint_hash,
             lookup: self.lookup.clone(),
             dictionary_order: self.dictionary_order.clone(),
         })

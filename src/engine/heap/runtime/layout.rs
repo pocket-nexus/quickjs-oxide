@@ -71,6 +71,6 @@ mod tests {
             before_symbol
         );
         assert!(state.shape_cache.is_empty());
-        assert!(state.shape_fingerprints.is_empty());
+        assert!(state.shape_hashes.is_empty());
     }
 }
