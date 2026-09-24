@@ -2,11 +2,12 @@
 //!
 //! Records alone own keys, values and GC edges. Record IDs are never reused,
 //! even after clear, so paused cursors need no deleted slots or observer leases.
-//! The ordered tree contains only live IDs; key and record lookup are average
-//! O(1), while insertion, deletion and finding the next live ID are O(log size).
-//! Heap collection transactions retain/release edges around these pure mutations.
-
-use std::collections::{BTreeSet, HashMap, btree_set};
+//! Records live in a dense slot array; a separate live index stays sorted by
+//! ID (IDs are monotonic, so this is insertion order) and marks deletions with
+//! a tombstone until the next geometric compaction.
+//! Key lookup is average O(1); ID lookup, insertion, deletion and finding the
+//! next live ID are O(log size). Heap collection transactions retain/release
+//! edges around these pure mutations.
 
 use super::collection_index::CollectionIndex;
 use super::{Heap, HeapError, RawValue};
@@ -17,22 +18,48 @@ pub struct MapRecord {
     pub value: RawValue,
 }
 
+impl MapRecord {
+    fn vacant() -> Self {
+        Self {
+            key: RawValue::Undefined,
+            value: RawValue::Undefined,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct Slot {
+    record: MapRecord,
+    hash: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct LiveEntry {
+    id: usize,
+    slot: u32,
+}
+
+const DEAD: u32 = u32::MAX;
+
 #[derive(Clone, Debug, Default)]
 pub struct CollectionRecords {
-    entries: HashMap<usize, (MapRecord, u64)>,
-    order: BTreeSet<usize>,
+    slots: Vec<Slot>,
+    /// Live and tombstoned entries, strictly ordered by `id`; entry count
+    /// always matches `slots.len()`.
+    live: Vec<LiveEntry>,
+    live_len: usize,
     key_index: CollectionIndex,
     next_id: usize,
 }
 
 impl CollectionRecords {
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.live_len
     }
 
     #[cfg(test)]
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.live_len == 0
     }
 
     /// Exclusive upper bound of issued IDs, independent of current live size.
@@ -40,33 +67,54 @@ impl CollectionRecords {
         self.next_id
     }
 
+    fn live_entry(&self, id: usize) -> Option<&LiveEntry> {
+        let position = self.live.binary_search_by_key(&id, |entry| entry.id).ok()?;
+        let entry = &self.live[position];
+        (entry.slot != DEAD).then_some(entry)
+    }
+
     pub fn get(&self, id: usize) -> Option<&MapRecord> {
-        self.entries.get(&id).map(|entry| &entry.0)
+        let entry = self.live_entry(id)?;
+        Some(&self.slots[entry.slot as usize].record)
     }
 
     #[cfg(test)]
     pub(super) fn get_mut(&mut self, id: usize) -> Option<&mut MapRecord> {
-        self.entries.get_mut(&id).map(|entry| &mut entry.0)
+        let entry = *self.live_entry(id)?;
+        Some(&mut self.slots[entry.slot as usize].record)
     }
 
     /// Value replacement cannot invalidate either key or insertion indexes.
     pub(super) fn replace_value(&mut self, id: usize, value: RawValue) -> Option<RawValue> {
-        self.entries
-            .get_mut(&id)
-            .map(|record| std::mem::replace(&mut record.0.value, value))
+        let entry = *self.live_entry(id)?;
+        Some(std::mem::replace(
+            &mut self.slots[entry.slot as usize].record.value,
+            value,
+        ))
+    }
+
+    fn live_entries(&self) -> LiveEntries<'_> {
+        LiveEntries {
+            live: &self.live,
+            front: 0,
+            back: self.live.len(),
+            remaining: self.live_len,
+        }
     }
 
     pub fn ids(&self) -> impl DoubleEndedIterator<Item = usize> + ExactSizeIterator + '_ {
-        self.order.iter().copied()
+        self.live_entries().map(|entry| entry.id)
     }
 
     pub fn iter(&self) -> impl DoubleEndedIterator<Item = &MapRecord> + ExactSizeIterator {
-        self.order.iter().map(|id| &self.entries[id].0)
+        self.live_entries()
+            .map(|entry| &self.slots[entry.slot as usize].record)
     }
 
     pub fn next_at_or_after(&self, cursor: usize) -> Option<(usize, &MapRecord)> {
-        let &id = self.order.range(cursor..).next()?;
-        Some((id, &self.entries[&id].0))
+        let start = self.live.partition_point(|entry| entry.id < cursor);
+        let entry = self.live[start..].iter().find(|entry| entry.slot != DEAD)?;
+        Some((entry.id, &self.slots[entry.slot as usize].record))
     }
 
     pub(super) fn find(&self, heap: &Heap, key: &RawValue) -> Option<usize> {
@@ -111,47 +159,91 @@ impl CollectionRecords {
             .checked_add(1)
             .expect("collection insertion was preflighted");
         self.key_index.insert_hashed(hash, id);
-        assert!(
-            self.entries.insert(id, (record, hash)).is_none(),
-            "collection record ID was reused"
-        );
-        assert!(self.order.insert(id), "collection ordered ID was reused");
+        let slot = u32::try_from(self.slots.len()).expect("collection slots fit u32");
+        self.slots.push(Slot { record, hash });
+        self.live.push(LiveEntry { id, slot });
+        self.live_len += 1;
         id
     }
 
     pub(super) fn remove(&mut self, id: usize) -> Option<MapRecord> {
-        let (record, hash) = self.entries.remove(&id)?;
+        let position = self.live.binary_search_by_key(&id, |entry| entry.id).ok()?;
+        let entry = self.live[position];
+        if entry.slot == DEAD {
+            return None;
+        }
+        let slot = entry.slot;
+        let hash = self.slots[slot as usize].hash;
+        let record = std::mem::replace(&mut self.slots[slot as usize].record, MapRecord::vacant());
         self.key_index.remove_hashed(hash, id);
-        assert!(
-            self.order.remove(&id),
-            "live collection record has no ordered ID"
-        );
-        // Geometric shrinking bounds retained table capacity during churn,
-        // without a rebuild for each deletion. The tree releases removed nodes.
-        let size = self.entries.len();
-        if self.entries.capacity() > size.saturating_mul(4).saturating_add(64) {
-            self.entries
-                .shrink_to(size.saturating_mul(2).saturating_add(32));
+        self.live[position].slot = DEAD;
+        self.live_len -= 1;
+        // Geometric compaction bounds retained slots and tombstones during
+        // churn; the O(live) rebuild is amortized by the 4x growth threshold.
+        if self.slots.len() > self.live_len.saturating_mul(4).saturating_add(64) {
+            self.compact();
         }
         Some(record)
+    }
+
+    fn compact(&mut self) {
+        let mut slots = Vec::with_capacity(self.live_len);
+        for entry in &mut self.live {
+            if entry.slot == DEAD {
+                continue;
+            }
+            let old = entry.slot as usize;
+            entry.slot = u32::try_from(slots.len()).expect("collection slots fit u32");
+            slots.push(std::mem::replace(
+                &mut self.slots[old],
+                Slot {
+                    record: MapRecord::vacant(),
+                    hash: 0,
+                },
+            ));
+        }
+        self.slots = slots;
+        self.live.retain(|entry| entry.slot != DEAD);
     }
 
     /// Transfer all live records in insertion order, preserving the ID clock.
     pub(super) fn take_all(&mut self) -> CollectionRecordsIntoIter {
         self.key_index.clear();
+        let slots = std::mem::take(&mut self.slots);
+        let live = std::mem::take(&mut self.live);
+        let remaining = self.live_len;
+        self.live_len = 0;
         CollectionRecordsIntoIter {
-            entries: std::mem::take(&mut self.entries),
-            order: std::mem::take(&mut self.order).into_iter(),
+            slots,
+            live,
+            front: 0,
+            remaining,
         }
     }
 
     pub(super) fn validate(&self, heap: &Heap) -> Result<(), HeapError> {
-        if self.entries.len() != self.order.len()
-            || self
-                .order
-                .iter()
-                .any(|id| *id >= self.next_id || !self.entries.contains_key(id))
-        {
+        let mut occupied = vec![false; self.slots.len()];
+        let mut previous = None;
+        for entry in &self.live {
+            if entry.id >= self.next_id || previous.is_some_and(|previous| previous >= entry.id) {
+                return Err(HeapError::Invariant(
+                    "collection record IDs are not strictly ordered",
+                ));
+            }
+            previous = Some(entry.id);
+            if entry.slot == DEAD {
+                continue;
+            }
+            let slot = entry.slot as usize;
+            if slot >= self.slots.len() || occupied[slot] {
+                return Err(HeapError::Invariant(
+                    "collection record slots do not match live storage",
+                ));
+            }
+            occupied[slot] = true;
+        }
+        let live_slots = occupied.iter().filter(|occupied| **occupied).count();
+        if live_slots != self.live_len || self.live.len() != self.slots.len() {
             return Err(HeapError::Invariant(
                 "collection record IDs do not match live storage",
             ));
@@ -160,27 +252,77 @@ impl CollectionRecords {
     }
 }
 
+struct LiveEntries<'a> {
+    live: &'a [LiveEntry],
+    front: usize,
+    back: usize,
+    remaining: usize,
+}
+
+impl<'a> Iterator for LiveEntries<'a> {
+    type Item = &'a LiveEntry;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.front < self.back {
+            let entry = &self.live[self.front];
+            self.front += 1;
+            if entry.slot != DEAD {
+                self.remaining -= 1;
+                return Some(entry);
+            }
+        }
+        None
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.remaining, Some(self.remaining))
+    }
+}
+
+impl DoubleEndedIterator for LiveEntries<'_> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        while self.back > self.front {
+            self.back -= 1;
+            let entry = &self.live[self.back];
+            if entry.slot != DEAD {
+                self.remaining -= 1;
+                return Some(entry);
+            }
+        }
+        None
+    }
+}
+
+impl ExactSizeIterator for LiveEntries<'_> {}
+
 /// Ordered ownership transfer for clear; no record snapshot.
 pub struct CollectionRecordsIntoIter {
-    entries: HashMap<usize, (MapRecord, u64)>,
-    order: btree_set::IntoIter<usize>,
+    slots: Vec<Slot>,
+    live: Vec<LiveEntry>,
+    front: usize,
+    remaining: usize,
 }
 
 impl Iterator for CollectionRecordsIntoIter {
     type Item = MapRecord;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let id = self.order.next()?;
-        Some(
-            self.entries
-                .remove(&id)
-                .expect("ordered collection record exists")
-                .0,
-        )
+        while self.front < self.live.len() {
+            let entry = self.live[self.front];
+            self.front += 1;
+            if entry.slot != DEAD {
+                self.remaining -= 1;
+                return Some(std::mem::replace(
+                    &mut self.slots[entry.slot as usize].record,
+                    MapRecord::vacant(),
+                ));
+            }
+        }
+        None
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.order.size_hint()
+        (self.remaining, Some(self.remaining))
     }
 }
 
@@ -210,16 +352,17 @@ mod tests {
             }
             let (buckets, candidates) = records.key_index.retained_capacities();
             assert_eq!(records.len(), 1);
-            assert_eq!(records.order.len(), 1);
-            assert!(records.entries.capacity() <= 68);
+            assert!(records.live.len() <= records.len().saturating_mul(4).saturating_add(64));
+            assert!(records.slots.capacity() <= 68);
             assert!(buckets <= 68);
             assert!(candidates <= 68);
             println!(
-                "peak={peak} live=1 record_capacity={} bucket_capacity={buckets} candidate_capacity={candidates}",
-                records.entries.capacity()
+                "peak={peak} live=1 slot_capacity={} bucket_capacity={buckets} candidate_capacity={candidates}",
+                records.slots.capacity()
             );
             assert_eq!(records.take_all().count(), 1);
-            assert_eq!(records.entries.capacity(), 0);
+            assert_eq!(records.slots.capacity(), 0);
+            assert_eq!(records.live.capacity(), 0);
             assert_eq!(records.key_index.retained_capacities(), (0, 0));
             assert_eq!(records.insert(&heap, record(1, 2)), peak);
         }
