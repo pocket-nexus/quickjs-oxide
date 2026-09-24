@@ -504,7 +504,7 @@ impl<'source> Parser<'source> {
                     is_const,
                 );
             }
-            let token = self.current().clone();
+            let token = *self.current();
             let TokenKind::Identifier(identifier) = token.kind else {
                 return Err(self.syntax_here("variable name expected"));
             };
@@ -562,7 +562,7 @@ impl<'source> Parser<'source> {
                     false,
                 );
             }
-            let token = self.current().clone();
+            let token = *self.current();
             let TokenKind::Identifier(identifier) = token.kind else {
                 return Err(self.syntax_here("variable name expected"));
             };

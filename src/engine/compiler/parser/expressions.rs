@@ -1081,7 +1081,7 @@ impl<'source> Parser<'source> {
         if self.is_punctuator(Punctuator::Dot) {
             let member_span = self.current().span;
             self.advance()?;
-            let token = self.current().clone();
+            let token = *self.current();
             let name = match token.kind {
                 TokenKind::PrivateIdentifier(identifier) => {
                     let name =

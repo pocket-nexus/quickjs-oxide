@@ -98,7 +98,7 @@ impl<'source> Parser<'source> {
         let new_span = self.current().span;
         self.advance()?;
         if self.consume_punctuator(Punctuator::Dot)? {
-            let token = self.current().clone();
+            let token = *self.current();
             let TokenKind::Identifier(identifier) = token.kind else {
                 return Err(self.syntax_here("expecting target"));
             };
@@ -270,7 +270,7 @@ impl<'source> Parser<'source> {
         let member_span = self.current().span;
         if self.is_punctuator(Punctuator::Dot) {
             self.advance()?;
-            let token = self.current().clone();
+            let token = *self.current();
             let name = match token.kind {
                 TokenKind::PrivateIdentifier(_) => {
                     return Err(Error::syntax(

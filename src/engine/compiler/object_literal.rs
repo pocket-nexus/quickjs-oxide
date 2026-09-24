@@ -92,7 +92,7 @@ impl<'source> Parser<'source> {
                     self.emit_instruction(Instruction::Drop)?;
                 }
             } else {
-                let token = self.current().clone();
+                let token = *self.current();
                 let mut shorthand = None;
                 let mut method_prefix = None;
                 let key = match token.kind {
@@ -124,7 +124,7 @@ impl<'source> Parser<'source> {
                             ));
                         }
                         self.advance()?;
-                        JsString::try_from_utf16(string.value.utf16)?
+                        self.decode_string_literal(token.span)?
                     }
                     TokenKind::Number(number) => {
                         if self.current_ir().strict
@@ -292,7 +292,7 @@ impl<'source> Parser<'source> {
     /// evaluates and canonicalizes a computed key before creating the accessor
     /// closure, so the typed stack retains that key until DefineMethodComputed.
     fn parse_object_method_property_name(&mut self) -> Result<ObjectMethodPropertyKey, Error> {
-        let token = self.current().clone();
+        let token = *self.current();
         let key = match token.kind {
             TokenKind::Identifier(identifier) => {
                 self.advance()?;
@@ -310,7 +310,7 @@ impl<'source> Parser<'source> {
                     ));
                 }
                 self.advance()?;
-                JsString::try_from_utf16(string.value.utf16)?
+                self.decode_string_literal(token.span)?
             }
             TokenKind::Number(number) => {
                 if self.current_ir().strict

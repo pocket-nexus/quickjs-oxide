@@ -31,23 +31,23 @@ impl<'source> Parser<'source> {
         let mut depth = 0_usize;
 
         loop {
-            let token = self.current().clone();
+            let token = *self.current();
             let TokenKind::Template(part) = token.kind else {
                 return Err(Error::internal(
                     "template parser lost its continuation token",
                 ));
             };
             let kind = part.kind;
-            let invalid_span = part.invalid_escape.as_ref().map(|error| error.span);
-            let Some(cooked) = part.cooked else {
+            let invalid_span = part.invalid_escape.map(|error| error.span);
+            let Some(cooked) = self.decode_template_cooked(&part, token.span)? else {
                 return Err(Error::syntax(
                     "malformed escape sequence in string literal",
                     source_span(invalid_span.unwrap_or(token.span)),
                 ));
             };
 
-            if !cooked.utf16.is_empty() || depth == 0 {
-                self.emit_atom_string(JsString::try_from_utf16(cooked.utf16)?)?;
+            if !cooked.is_empty() || depth == 0 {
+                self.emit_atom_string(cooked)?;
                 if depth == 0 {
                     if kind == TemplatePartKind::NoSubstitution {
                         self.advance()?;
@@ -126,18 +126,15 @@ impl<'source> Parser<'source> {
         let mut argument_count = 1_usize;
 
         loop {
-            let token = self.current().clone();
+            let token = *self.current();
             let TokenKind::Template(part) = token.kind else {
                 return Err(Error::internal(
                     "tagged template parser lost its continuation token",
                 ));
             };
             let kind = part.kind;
-            let cooked = part
-                .cooked
-                .map(|value| JsString::try_from_utf16(value.utf16))
-                .transpose()?;
-            let raw = JsString::try_from_utf16(part.raw_value.utf16)?;
+            let cooked = self.decode_template_cooked(&part, token.span)?;
+            let raw = self.decode_template_raw_value(&part, token.span)?;
             self.append_template_site_part(constant, cooked, raw)?;
 
             if matches!(

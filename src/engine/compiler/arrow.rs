@@ -132,7 +132,7 @@ impl<'source> Parser<'source> {
 
         match head {
             ArrowHead::Identifier => {
-                let token = self.current().clone();
+                let token = *self.current();
                 let TokenKind::Identifier(identifier) = token.kind else {
                     return Err(Error::internal(
                         "identifier arrow lookahead lost its parameter token",
@@ -200,7 +200,7 @@ impl<'source> Parser<'source> {
                             }
                             continue;
                         }
-                        let token = self.current().clone();
+                        let token = *self.current();
                         let TokenKind::Identifier(identifier) = token.kind else {
                             return Err(self.syntax_here("missing formal parameter"));
                         };

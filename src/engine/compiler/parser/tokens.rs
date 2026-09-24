@@ -10,6 +10,8 @@ use crate::engine::compiler::lexer::Keyword;
 use crate::engine::compiler::lexer::LexContext;
 use crate::engine::compiler::lexer::LexicalGoal;
 use crate::engine::compiler::lexer::Punctuator;
+use crate::engine::compiler::lexer::Span;
+use crate::engine::compiler::lexer::TemplatePart;
 use crate::engine::compiler::lexer::TemplatePartKind;
 use crate::engine::compiler::lexer::Token;
 use crate::engine::compiler::lexer::TokenKind;
@@ -20,6 +22,7 @@ use crate::engine::compiler::parser::context::ForIterationKind;
 use crate::engine::compiler::parser::context::Parser;
 use crate::engine::compiler::parser::diagnostics::lex_error;
 use crate::engine::compiler::pseudo_binding::NEW_TARGET_LOCAL_NAME;
+use crate::engine::value::JsString;
 
 use crate::engine::compiler::parser::diagnostics::source_span;
 
@@ -82,6 +85,50 @@ impl<'source> Parser<'source> {
         expected: &str,
     ) -> bool {
         !identifier.has_escape && identifier.raw == expected
+    }
+
+    /// Cooked value of a committed string literal, re-derived through a lexer
+    /// clone so `source_text` carriers and the injected string limit survive.
+    pub(in crate::engine::compiler) fn decode_string_literal(
+        &self,
+        span: Span,
+    ) -> Result<JsString, Error> {
+        let value = self
+            .lexer
+            .decode_string_literal(span.start)
+            .map_err(lex_error)?;
+        Ok(JsString::try_from_utf16(value.utf16)?)
+    }
+
+    /// Raw value of a committed template part, re-derived through a lexer clone
+    /// so `source_text` carriers and the injected string limit survive.
+    pub(in crate::engine::compiler) fn decode_template_raw_value(
+        &self,
+        part: &TemplatePart<'source>,
+        span: Span,
+    ) -> Result<JsString, Error> {
+        let value = self
+            .lexer
+            .decode_template_raw_value(span.start, template_part_is_initial(part.kind))
+            .map_err(lex_error)?;
+        Ok(JsString::try_from_utf16(value.utf16)?)
+    }
+
+    /// Cooked value of a committed template part. `None` mirrors the retired
+    /// `TemplatePart.cooked`: a malformed escape has no cooked text.
+    pub(in crate::engine::compiler) fn decode_template_cooked(
+        &self,
+        part: &TemplatePart<'source>,
+        span: Span,
+    ) -> Result<Option<JsString>, Error> {
+        if part.invalid_escape.is_some() {
+            return Ok(None);
+        }
+        let value = self
+            .lexer
+            .decode_template_cooked_value(span.start, template_part_is_initial(part.kind))
+            .map_err(lex_error)?;
+        Ok(Some(JsString::try_from_utf16(value.utf16)?))
     }
 
     /// `of` is a QuickJS pseudo-keyword: escapes prevent it from acting as
@@ -560,7 +607,6 @@ impl<'source> Parser<'source> {
         start: usize,
         inherited_strict: bool,
     ) -> Result<bool, Error> {
-        let use_strict = "use strict".encode_utf16().collect::<Vec<_>>();
         let position = self.tokens[start].span.start;
         let mut lexer = self.lexer.clone();
         lexer.seek(position);
@@ -573,7 +619,7 @@ impl<'source> Parser<'source> {
         loop {
             let candidate = match &token.kind {
                 TokenKind::String(literal) => {
-                    !literal.has_escape && literal.value.utf16 == use_strict
+                    !literal.has_escape && literal.raw[1..literal.raw.len() - 1] == *"use strict"
                 }
                 _ => return Ok(found_strict),
             };
@@ -611,6 +657,13 @@ impl<'source> Parser<'source> {
     ) -> Error {
         Error::unsupported(message, source_span(self.current().span))
     }
+}
+
+fn template_part_is_initial(kind: TemplatePartKind) -> bool {
+    matches!(
+        kind,
+        TemplatePartKind::NoSubstitution | TemplatePartKind::Head
+    )
 }
 
 pub(in crate::engine::compiler) fn quickjs_directive_asi_token(kind: &TokenKind<'_>) -> bool {

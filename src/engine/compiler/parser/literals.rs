@@ -44,7 +44,7 @@ impl<'source> Parser<'source> {
         ) {
             self.relex_current_with_goal(LexicalGoal::RegExp)?;
         }
-        let token = self.current().clone();
+        let token = *self.current();
         self.anonymous_function_definition = None;
         match token.kind {
             TokenKind::Keyword(Keyword::Null) => {
@@ -101,7 +101,7 @@ impl<'source> Parser<'source> {
                     ));
                 }
                 self.advance()?;
-                self.emit_atom_string(JsString::try_from_utf16(string.value.utf16)?)?;
+                self.emit_atom_string(self.decode_string_literal(token.span)?)?;
             }
             TokenKind::Punctuator(Punctuator::LeftParen) => {
                 self.advance()?;

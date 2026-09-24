@@ -559,7 +559,7 @@ impl<'source> Parser<'source> {
                 } else if self.is_punctuator(Punctuator::LeftBracket) {
                     self.parse_catch_array_binding_pattern()?;
                 } else {
-                    let token = self.current().clone();
+                    let token = *self.current();
                     let TokenKind::Identifier(identifier) = token.kind else {
                         return Err(self.syntax_here("identifier expected"));
                     };
@@ -808,7 +808,7 @@ impl<'source> Parser<'source> {
             } else if self.is_punctuator(Punctuator::LeftBrace) {
                 self.parse_object_binding_declaration(ForAssignmentDeclaration::Lexical, is_const)?;
             } else {
-                let token = self.current().clone();
+                let token = *self.current();
                 let TokenKind::Identifier(identifier) = token.kind else {
                     return Err(self.syntax_here("variable name expected"));
                 };
@@ -899,7 +899,7 @@ impl<'source> Parser<'source> {
             } else if self.is_punctuator(Punctuator::LeftBrace) {
                 self.parse_object_binding_declaration(ForAssignmentDeclaration::Var, false)?;
             } else {
-                let token = self.current().clone();
+                let token = *self.current();
                 let TokenKind::Identifier(identifier) = token.kind else {
                     return Err(self.syntax_here("variable name expected"));
                 };

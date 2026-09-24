@@ -671,7 +671,7 @@ impl<'source> Parser<'source> {
             if root_close {
                 return Some(tokens);
             }
-            tokens.push(token.clone());
+            tokens.push(token);
 
             match &token.kind {
                 TokenKind::Punctuator(Punctuator::LeftParen) => {
@@ -1655,7 +1655,7 @@ impl<'source> Parser<'source> {
                 continue;
             }
 
-            let token = self.current().clone();
+            let token = *self.current();
             let TokenKind::Identifier(identifier) = token.kind else {
                 if is_rest
                     && matches!(
@@ -1939,8 +1939,8 @@ impl<'source> Parser<'source> {
     fn parse_object_binding_property_name(
         &mut self,
     ) -> Result<ObjectBindingPropertyKey<'source>, Error> {
-        let token = self.current().clone();
-        match token.kind.clone() {
+        let token = *self.current();
+        match token.kind {
             TokenKind::Identifier(identifier) => {
                 let key = JsString::try_from_utf8(&self.identifier_text(&identifier))?;
                 self.advance()?;
@@ -1975,7 +1975,7 @@ impl<'source> Parser<'source> {
                 }
                 self.advance()?;
                 Ok(ObjectBindingPropertyKey::Fixed {
-                    key: JsString::try_from_utf16(string.value.utf16)?,
+                    key: self.decode_string_literal(token.span)?,
                     token,
                     shorthand: None,
                 })
@@ -2084,8 +2084,8 @@ impl<'source> Parser<'source> {
         let (token, identifier) = if let Some(binding) = shorthand {
             binding
         } else {
-            let token = self.current().clone();
-            let TokenKind::Identifier(identifier) = token.kind.clone() else {
+            let token = *self.current();
+            let TokenKind::Identifier(identifier) = token.kind else {
                 return Err(Error::syntax(
                     "invalid destructuring target",
                     source_span(token.span),
@@ -2234,8 +2234,8 @@ impl<'source> Parser<'source> {
     ) -> Result<(), Error> {
         let rest_span = self.current().span;
         self.advance()?;
-        let token = self.current().clone();
-        let TokenKind::Identifier(identifier) = token.kind.clone() else {
+        let token = *self.current();
+        let TokenKind::Identifier(identifier) = token.kind else {
             return Err(Error::syntax(
                 "invalid destructuring target",
                 source_span(token.span),
