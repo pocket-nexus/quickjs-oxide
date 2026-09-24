@@ -22,7 +22,9 @@ checkpoint 实测重校准；外部对照（oxc）与测量方法见附录 D。
 4. `functions-4194304` 上：指令/KB、cache-miss/KB、RSS/源MB、编译时间相对
    基线（2.90M/KB、17.1k/KB、100.3MB/MB、1789ms）逐阶段下降；终态吞吐按
    P2 checkpoint 重测后重定（原“翻倍/向 QuickJS 靠拢”目标已按 P1b 实测
-   重校准，见 §5；oxc parse-only 天花板见附录 D）。
+   重校准，见 §5；oxc parse-only 天花板见附录 D）。外部追赶参照：P1b 后
+   真实 bundle compile-only 中位 5.50 MB/s 已略快于 Boa（5.00），生成语料
+   中位 3.41 vs Boa 5.23（`docs/compile-benchmark.md` §9.7）。
 
 参考对照：oxc 0.140 parse-only 实测 62.7–87.8 MB/s（同场 V8 parse-only
 24.3 MB/s，口径只到 AST），其热路径无 SIMD（附录 D.1）。
@@ -610,11 +612,14 @@ checkpoint 记录。触发依据来自 P1b checkpoint（`docs/compile-benchmark.
    （`lexer.rs:710` 的逐字符 UTF-8 解码、`skip_trivia`、`scan_punctuator`），
    必做**可移植字节快路**，`memchr` 仅 native-only 可选（wasm 走标量/SWAR
    替代）；否决=instr 降幅 <2% 或语义 gate 不稳。**不引入 SIMD 依赖**。
+   P1b 基线（§9.7）：lexer 自时间 7.0%（functions）/13.1%（expressions），
+   expressions 档 lexer 仍是最大前端桶，触发判断以此为参照。
 5. **scratch 复用池**（parser/resolution 临时 Vec 按函数复用）：触发=分配探针
    显示临时 Vec 占比 ≥5% 且 P2 checkpoint 后分配仍为瓶颈；动作=按阶段复用并
    重测 peak live/RSS；否决=peak live 上升 >5% 或复杂度不可控。
 6. **`ensure_closure_variable` 线性扫描 / verify 侧热点**：本计划只做归因，
-   改动留给后端计划（§2.5 后置项）。
+   改动留给后端计划（§2.5 后置项）；P1b 已把前者量化（2.5% 自时间，
+   §9.7），转入 §3 P4 候选 6。
 
 验收：全量 gate（含 test262 `--full` 或 receipt 更新流程）；终态指标见 §5
 （已按 P1b 重校准）。
@@ -633,12 +638,18 @@ P2/P3 收尾：
    更大收益；**与 P2b 不并行**；启动前需 PR #30 合并或完成标定对拍。
 2. **IR/常量侧分配削减**：对解析期 `IrOp`/常量/绑定/字节码路径做分配归因
    （P1b 后占约 5/6），针对性改 Vec 预留/索引化/复用。触发=分配未达 §5 重校准
-   值且归因明确；动作=另立计划（可能触及 verify/publish）。
-3. **u32 Span**：当前 `Span` 为 4×usize；改 u32 需源大小上限约定。触发=span
-   复制在 instr/分配中可归因。
+   值且归因明确；动作=另立计划（可能触及 verify/publish）。P1b 证据（§9.7）：
+   分配相对 P0 降 27.7% 后 libc 自时间仍 27.4%、`code/verify/publish` 20.1%，
+   并可见 `JsString::content_hash` 1.1%、`Utf16Units` drop 1.2% 等转换/哈希项。
+3. **u32 Span / 坐标计算**：当前 `Span` 为 4×usize；改 u32 需源大小上限约定。
+   触发已部分成立（§9.7）：`QuickJsSourceCursor::locate` 自时间 1.9%，line/col
+   计算随 span 使用增长；动作=先做 line/col 惰性化或缓存，再评估 u32 Span。
 4. **arena**：与 verify/publish 改造一起（§2.4）。
 5. **表驱动二元/一元循环**：仅当 P2 后 profiling 仍显示表达式阶梯开销显著
    （§2.5 第 3 条）。
+6. **closure 描述符查找**：`ensure_closure_variable`（resolution.rs）线性扫描
+   2.5% 自时间（§9.7，functions 4MB）；触发=P2 后仍 ≥2%；动作=索引化/哈希，
+   或按函数缓存最近命中；可与第 2 条合并做。
 
 启动任一候选前，在本节记录触发证据、验收指标与回滚点。
 
@@ -716,9 +727,9 @@ miss −75%~−85%、alloc −30%~−50%。若要接近 issue #32 原始的 −9
 需启动 P4 的 IR/常量侧削减（§3 P4 第 2 条）。
 
 P2 分 P2a（前瞻备忘）与 P2b（提交缓冲）两步，表中 P2 行为两步合并目标。
-真实 bundle 中位吞吐（基线 4.79 MB/s）：P1a/P1b 未重测矩阵，P2 checkpoint 时
-重测并按实测重定；`>7 MB/s` 不再作为 P3 承诺，视 P4/后端计划决定。语义
-gate（test262/QuickJS 差分）仍要求全绿。
+真实 bundle 中位吞吐（compile-only，基线 4.79 MB/s）：P1b 复测 5.50 MB/s
+（Boa 5.00，§9.7），P2 checkpoint 时再测并按实测重定；`>7 MB/s` 不再作为
+P3 承诺，视 P4/后端计划决定。语义 gate（test262/QuickJS 差分）仍要求全绿。
 
 P1a checkpoint 实测（`docs/compile-benchmark.md` §9.5，HEAD `a5b651be`）：
 alloc 次数 −13.0%~−19.5%、alloc+realloc −13.8%~−21.7%、instr/KB
@@ -737,6 +748,20 @@ alloc 次数相对 P1a −9.6%~−16.9%、instr/KB −0.9%~−6.2%、cache-miss/
 1/6），per-NameTable `JsString` 缓存只再贡献约 1–4 个百分点；P2/P3 分配
 目标继续按“相对上一 checkpoint 再降”执行；P2 后若分配仍为瓶颈，按 §3 P4
 第 2 条启动 IR/常量侧归因，不再依赖 lexer/parser 侧削减。
+
+P1b 外部对照与结构复测（`docs/compile-benchmark.md` §9.7，HEAD `bd3eb461`）：
+
+- compile-only 矩阵：真实 bundle 中位 5.50 vs Boa 5.00 MB/s（P0 时 Boa 快
+  1.07×，现 Oxide 反超 ~10%）；生成语料中位 3.41 vs 5.23（Boa 1.34×，
+  P0 1.70×），其中 functions 仍落后 1.5–1.6×、expressions 持平/略快、
+  syntax-mixed-4194304 Oxide 快 1.62×。**P2/P3 的主要追赶对象是
+  functions 压力档**。
+- 4MB 结构：阶段占比 parse 34%/resolution 15%/lowering 16%/verify 13%/
+  publish 21%（verify+publish 仍 34–39%）；flat 自时间 libc 27.4%、
+  code/verify/publish 20.1%、lexer 7.0%、parser 6.8%、resolution 6.3%、
+  scope_validation 3.2%、source/coordinates 2.1%、lowering 1.6%，与 P0
+  结构一致——P2/P3 的相对目标不变，但剩余大头（verify/publish、IR/常量、
+  坐标计算、closure 描述符）只能在 P4/后端计划里解决。
 
 ## 6. 提交与分支
 

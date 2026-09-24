@@ -143,6 +143,9 @@ V8 parse-only 比 Boa 快 2.9–5.0×。Oxide 与 QuickJS 没有公开的 parse-
 
 ### 6.2 函数级拆分（release + debug info，perf，512KB × 15 次）
 
+> 本节为 P0 基线；P1b 后 4MB 复测见 §9.7（结构未变：libc 27.4%、
+> code/verify/publish 20.1%、lexer 7.0%、parser 6.8%）。
+
 flat profile（self time 百分比）：
 
 | 桶 | functions | syntax-mixed | expressions |
@@ -492,3 +495,108 @@ syntax-mixed −22.4%；instr/KB −9.6%/−6.0%/−4.9%；cache-miss/KB
 4. 复现：`build_compile_probe.py` 生成上述两个探针目录后，按 §9.4 命令跑
    4MB + 64KB（perf 将 `-u` 换为 `--all-user`）；高负载环境下 perf 用
    P1a/P1b 交错 min-of-7，alloc/RSS 直接跑探针。
+
+### 9.7 P1b 外部对照与结构复测（HEAD `bd3eb461`，2026-09-24）
+
+P1b checkpoint 后补测两块：与 Boa 的 **compile-only** 对照（`compile_matrix.py
+--metric compile`，不含 runtime/Context 构建与源码 I/O）与当前前端结构复测
+（profiling 探针 + perf flat profile）。测量期间本机 load 4–13/16，矩阵按引擎
+轮转交错、每 case 每引擎 5 次取中位数，比值可用、绝对值不跨 campaign 比。
+探针：oxide=`target/p1b-compile-probe/target/release/oxide-compile-probe`
+（P1b 源码构建）、boa=`target/compile-probes/boa/target/release/boa-compile-probe`
+（Boa 0.22.0，与 §5 同一探针）。
+
+#### 9.7.1 生成语料 compile-only（4MB/512KB/64KB）
+
+| case | oxide MB/s | Boa MB/s | Boa/oxide |
+| --- | ---: | ---: | ---: |
+| expressions-4194304 | 5.135 | 4.089 | 0.796 |
+| expressions-524288 | 5.412 | 5.227 | 0.966 |
+| expressions-65536 | 5.567 | 6.597 | 1.185 |
+| functions-4194304 | 3.126 | 4.717 | 1.509 |
+| functions-524288 | 3.408 | 5.494 | 1.612 |
+| functions-65536 | 4.094 | 6.719 | 1.641 |
+| syntax-mixed-4194304 | 2.657 | 1.643 | 0.618 |
+| syntax-mixed-524288 | 2.965 | 3.983 | 1.343 |
+| syntax-mixed-65536 | 3.259 | 5.594 | 1.717 |
+| **中位** | **3.408** | **5.227** | **1.343**（0.618–1.717） |
+
+#### 9.7.2 真实 bundle compile-only（67 case，25KB–459KB）
+
+| 引擎 | 中位吞吐 | 范围 | Boa/oxide 中位比值（范围） |
+| --- | ---: | ---: | ---: |
+| Oxide (P1b) | 5.495 MB/s | 4.837–12.184 | — |
+| Boa | 5.001 MB/s | 4.581–10.622 | 0.9225（0.554–1.271） |
+
+对照 §5.1 基线（oxide 4.79 / Boa 5.12 / Boa 快 1.07×）：P1a+P1b 后
+**真实 bundle 上 Oxide 已反超 Boa 约 10%**；生成语料中位差距从 1.70× 收窄到
+1.34×，但 `functions` 档仍落后 1.5–1.6×，是压力语料上的主要缺口。
+`expressions` 已持平或略快（4MB 档 Oxide 快 1.26×）；`syntax-mixed-4194304`
+Oxide 快 1.62×（Boa 在该 case 超线性退化到 1.64 MB/s，与 QuickJS 的
+`get_line_col_cached` 退化性质不同但同样不宜外推）。
+
+#### 9.7.3 4MB 阶段占比（profiling 探针，inclusive，百分比=占各阶段之和）
+
+| 阶段 | functions | expressions | syntax-mixed | P0 §6.1 512KB（functions） |
+| --- | ---: | ---: | ---: | ---: |
+| parse（含 lexer） | 34.0% | 50.1% | 34.9% | 40% |
+| resolution | 14.6% | 8.1% | 7.7% | 14% |
+| lowering | 16.0% | 15.7% | 17.9% | 16% |
+| verify | 13.4% | 9.6% | 15.6% | 12% |
+| publish | 21.2% | 15.6% | 23.0% | 18% |
+| fusion + relocation | 0.7% | 1.0% | 0.9% | — |
+
+P1a 把 functions 的 parse 占比从 40% 压到 34%，但 **verify+publish 仍占
+34–39%**、lowering 16–18%——这三块是 P1–P3 的显式非目标，也是总收益的
+结构上限。
+
+#### 9.7.4 flat profile（perf，自时间，4MB×10 次）
+
+| 桶 | functions | expressions | P0 §6.2 functions |
+| --- | ---: | ---: | ---: |
+| libc（malloc/free/memcmp 等） | 27.4 | 26.5 | 27.6 |
+| code/verify/publish | 20.1 | 20.9 | 18.7（code 10.1 + verify 8.6） |
+| Rust std/容器 | 9.1 | 4.8 | 8.4 |
+| lexer | 7.0 | 13.1 | 7.8 |
+| parser | 6.8 | 10.4 | 4.1 |
+| resolution | 6.3 | 3.8 | 4.3 |
+| value/string | 5.0 | 2.3 | 4.8 |
+| scope_validation | 3.2 | 3.5 | 2.9 |
+| source/coordinates | 2.1 | 3.4 | —（未单列） |
+| lowering | 1.6 | 2.0 | 2.6 |
+| other（未归类符号） | 9.1 | 7.8 | 3.0 |
+
+单符号热点（functions）：`verify_parts_with_visits` 6.0%、`validate_scope_graph`
+3.2%、`enqueue_fallthrough` 3.1%、`Lexer::next_token_with_goal` 2.9%、
+`ensure_closure_variable`（线性扫描）2.5%、`QuickJsSourceCursor::locate` 1.9%、
+`Instruction::operand_contract` 1.7%、`ensure_annex_b_binding` 1.4%、
+`JsString::content_hash` 1.1%、`Utf16Units` drop 1.2%。
+
+结论：P1 只动了 lexer/token（自时间 ~7%）与名字流（分配约 1/6），
+**libc 27%、verify+publish 20%、IR/常量/绑定/字节码与坐标计算等大头未动**，
+所以总收益有限（相对 P0：时间 −21.1%、instr −9.6%、alloc −27.7%、
+cache-miss −71.2%）。名字驻留的真实收益在局部性（cache-miss）而非指令数；
+`JsString::content_hash`/`ensure_closure_variable`/`QuickJsSourceCursor::locate`
+是 P1b 后新可见的候选项（见 `docs/lexer-parser-refactor.md` §3 P4）。
+
+#### 9.7.5 复现命令
+
+```sh
+python3 scripts/benchmark/compile_matrix.py --corpus target/compile-corpus \
+  --metric compile \
+  --engine oxide=target/p1b-compile-probe/target/release/oxide-compile-probe \
+  --engine boa=target/compile-probes/boa/target/release/boa-compile-probe \
+  --repeat 5 --output target/p1b-matrix-generated
+# 真实 bundle：--corpus target/compile-bundles --output target/p1b-matrix-bundles
+
+# 阶段占比（profiling 构建）
+python3 scripts/benchmark/build_compile_probe.py --repo . --profiling \
+  --output target/p1b-profile-probe
+target/p1b-profile-probe/target/release/oxide-compile-probe FILE  # 阶段 JSON 到 stderr
+
+# flat profile
+perf record -F 999 --call-graph dwarf -o target/perf-p1b-functions.data -- bash -c \
+  'for i in $(seq 10); do target/p1b-compile-probe/target/release/oxide-compile-probe \
+     target/compile-corpus/functions-4194304.js >/dev/null; done'
+perf report -i target/perf-p1b-functions.data --stdio --no-children
+```
