@@ -631,17 +631,18 @@ Test262 全量复跑与阶段 A 状态逐项一致（无 D 引入的行级变化
 `python3 scripts/checks/check-source-layout.py` 通过（698 个 reachable
 Rust 文件）。
 
-**挂账（未完成）**：Test262 基线晋升。现状：`current.conf` 的
-`engine_semantics_source` 仍为 `022e7b48`，其覆盖契约是旧路径
-（`scripts/prepare-test262.sh`/`scripts/test-test262.sh` + `src`），而
-门禁工作区指纹已改为 `scripts/test262/*` + `verify-report.cjs` + 6 棵树
-（`adapters,apps,conformance,examples,src,tests`），二者集合不同，
-`--focused` 按设计拒绝。晋升需要同步修改：门禁脚本硬编码覆盖契约、
-`current.conf` 的 `engine_semantics_source/files/trees/sha256`、focused
-receipt 首行身份与哈希、`full_*` 汇总，以及 `docs/status.md` 指标块
-（可由 `scripts/test262/current-test262-metrics.mjs --write-docs` 生成）；
-且新契约必须落成一个提交，`engine_semantics_source` 才能指向它。此项
-留待独立提交处理，不与 D 混合。
+**Test262 基线晋升（2026-09-24 完成）**：原挂账已解决。先对齐覆盖契约
+（`0e72387f`：门禁硬编码契约、`current.conf` 的 `engine_semantics_files/
+trees` 与工作区指纹统一为 7 文件 + 6 棵树 `adapters,apps,conformance,
+examples,src,tests`），再晋升基线（`f69e545c`）：
+`engine_semantics_source=0e72387f`、`engine_semantics_sha256=1ce1d4f2…`；
+全量 pass 79982→80010、eligible/runnable 80032→80060、
+unsupported-negative-provenance 2562→2534（+28 行即 `00bb387f` 的 14 条
+契约 ×2 变体，与阶段 A 逐行核对一致）；focused 保持 6844/6844，仅首行
+身份刷新。`--check`、`--focused`（字节一致重放）、`--full`（80010 pass /
+80060 eligible / 102037 total）全部认证通过；`README.md`/
+`docs/status.md`/`docs/test262.md` 指标块由
+`scripts/test262/current-test262-metrics.mjs --write-docs` 同步。
 
 **下一步**：B 重新立项（自改写专用字节码，先写 spike/设计文档，见
 [性能架构](performance-architecture.md) §11）。

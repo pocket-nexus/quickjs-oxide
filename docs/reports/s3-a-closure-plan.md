@@ -413,6 +413,9 @@ per-runtime 表下帧不可能持有外来句柄，该收敛符合 §2 边界原
 契约改进未随附 promotion），且任何源码演进都会改变工作区指纹（T1/T2 亦然）；
 `--focused` 按设计拒绝过旧源码，未跑。基线 promotion（重跑 full → 派生
 focused → 更新 `current.conf`/`docs/status.md`）留作独立事项。
+**2026-09-24 后续**：该独立事项已完成——覆盖契约对齐（`0e72387f`）+
+基线晋升（`f69e545c`），`--check`/`--focused`/`--full` 全部认证通过，
+详见 [阶段 D 实施计划](s3-d-plan.md) §4 D 收尾记录。
 `python3 scripts/checks/check-source-layout.py` 通过（698 个 reachable
 Rust 文件）。证据：`target/s3-a-t2-test262-197162f5/`（full.log、TSV/JSONL、
 status.json）。
