@@ -14,6 +14,7 @@ use crate::engine::code::module::ModuleImportAttribute;
 use crate::engine::compiler::ModuleCompileFailure;
 use crate::engine::compiler::ModuleImportAttributeChecker;
 use crate::engine::compiler::lexer::Keyword;
+use crate::engine::compiler::lexer::LexicalGoal;
 use crate::engine::compiler::lexer::Punctuator;
 use crate::engine::compiler::lexer::Span;
 use crate::engine::compiler::lexer::TokenKind;
@@ -215,7 +216,9 @@ impl<'source> Parser<'source> {
     fn static_import_declaration_ahead(&self) -> Result<bool, Error> {
         let mut lexer = self.lexer.clone();
         lexer.seek(self.current().span.end);
-        let next = lexer.next_token().map_err(lex_error)?;
+        let next = self
+            .probe_token(&mut lexer, LexicalGoal::Div)
+            .map_err(lex_error)?;
         Ok(!matches!(
             next.kind,
             TokenKind::Punctuator(Punctuator::LeftParen | Punctuator::Dot)

@@ -642,7 +642,7 @@ impl<'source> Parser<'source> {
         let mut lexer = self.lexer.clone();
         lexer.seek(self.current().span.start);
         if !matches!(
-            lexer.next_token().ok()?.kind,
+            self.probe_token(&mut lexer, LexicalGoal::Div).ok()?.kind,
             TokenKind::Punctuator(Punctuator::LeftParen)
         ) {
             return None;
@@ -655,7 +655,7 @@ impl<'source> Parser<'source> {
         loop {
             let requested_goal = goal;
             goal = LexicalGoal::Div;
-            let mut token = lexer.next_token_with_goal(requested_goal).ok()?;
+            let mut token = self.probe_token(&mut lexer, requested_goal).ok()?;
             if requested_goal == LexicalGoal::Div
                 && regexp_allowed
                 && matches!(
@@ -664,7 +664,7 @@ impl<'source> Parser<'source> {
                 )
             {
                 lexer.seek(token.span.start);
-                token = lexer.next_token_with_goal(LexicalGoal::RegExp).ok()?;
+                token = self.probe_token(&mut lexer, LexicalGoal::RegExp).ok()?;
             }
 
             let root_close = matches!(token.kind, TokenKind::Punctuator(Punctuator::RightParen))
@@ -763,7 +763,7 @@ impl<'source> Parser<'source> {
         loop {
             let requested_goal = goal;
             goal = LexicalGoal::Div;
-            let Ok(mut token) = lexer.next_token_with_goal(requested_goal) else {
+            let Ok(mut token) = self.probe_token(&mut lexer, requested_goal) else {
                 return None;
             };
             if requested_goal == LexicalGoal::Div
@@ -774,7 +774,7 @@ impl<'source> Parser<'source> {
                 )
             {
                 lexer.seek(token.span.start);
-                let Ok(regexp) = lexer.next_token_with_goal(LexicalGoal::RegExp) else {
+                let Ok(regexp) = self.probe_token(&mut lexer, LexicalGoal::RegExp) else {
                     return None;
                 };
                 token = regexp;
@@ -816,7 +816,7 @@ impl<'source> Parser<'source> {
                     }
                     if root == ForHeadDelimiter::Parenthesis && delimiters.is_empty() {
                         return Some(BindingPatternScan {
-                            following: lexer.next_token().ok()?,
+                            following: self.probe_token(&mut lexer, LexicalGoal::Div).ok()?,
                             has_object_rest,
                             has_assignment,
                         });
@@ -828,7 +828,7 @@ impl<'source> Parser<'source> {
                     }
                     if root == ForHeadDelimiter::Bracket && delimiters.is_empty() {
                         return Some(BindingPatternScan {
-                            following: lexer.next_token().ok()?,
+                            following: self.probe_token(&mut lexer, LexicalGoal::Div).ok()?,
                             has_object_rest,
                             has_assignment,
                         });
@@ -845,7 +845,7 @@ impl<'source> Parser<'source> {
                     }
                     if root == ForHeadDelimiter::Brace && delimiters.is_empty() {
                         return Some(BindingPatternScan {
-                            following: lexer.next_token().ok()?,
+                            following: self.probe_token(&mut lexer, LexicalGoal::Div).ok()?,
                             has_object_rest,
                             has_assignment,
                         });

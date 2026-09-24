@@ -10,6 +10,7 @@ use super::function::ParsedFunctionDefinition;
 use crate::engine::api::error::Error;
 use crate::engine::code::bytecode::Instruction;
 use crate::engine::compiler::lexer::Keyword;
+use crate::engine::compiler::lexer::LexicalGoal;
 use crate::engine::compiler::lexer::NumberKind;
 use crate::engine::compiler::lexer::Punctuator;
 use crate::engine::compiler::lexer::Span;
@@ -559,7 +560,8 @@ impl<'source> Parser<'source> {
     fn class_token_after_current(&self) -> Result<Token<'source>, Error> {
         let mut lexer = self.lexer.clone();
         lexer.seek(self.current().span.end);
-        lexer.next_token().map_err(lex_error)
+        self.probe_token(&mut lexer, LexicalGoal::Div)
+            .map_err(lex_error)
     }
 
     fn synthesize_base_class_constructor(

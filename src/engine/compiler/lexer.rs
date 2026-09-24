@@ -64,7 +64,7 @@ impl Span {
 }
 
 /// Context which changes whether QuickJS treats a word as a keyword.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LexContext {
     pub strict: bool,
     pub module: bool,
@@ -81,7 +81,7 @@ pub struct LexerOptions {
 }
 
 /// The lexical grammar requested by the parser for the next token.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LexicalGoal {
     /// A slash is a division punctuator. This is the iterator default.
     #[default]

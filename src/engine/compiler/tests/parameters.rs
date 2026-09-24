@@ -508,6 +508,7 @@ fn parameter_assignment_prescan_retains_quickjs_bits_at_the_depth_bound() {
         module_declaration_export_target: None,
         anonymous_function_definition: None,
         pending_unsupported: None,
+        lookahead: Default::default(),
     };
 
     assert_eq!(parser.parenthesized_parameter_has_assignment(), Some(true));
@@ -518,6 +519,76 @@ fn parameter_assignment_prescan_retains_quickjs_bits_at_the_depth_bound() {
             bound_name_count: Some(2),
         })
     );
+}
+
+fn lookahead_test_parser(source: &str) -> Parser<'_> {
+    let mut lexer = Lexer::new(source);
+    let first = lexer.next_token().unwrap();
+    let source_span = first.span;
+    let mut names = NameTable::new();
+    let root = FunctionBuilder::new(
+        None,
+        FunctionKind::Script,
+        FunctionSourceInfo {
+            span: source_span,
+            definition: SourceOffset::try_from_usize(0).unwrap(),
+            range: None,
+        },
+        FunctionIrOptions {
+            function_name: Some(names.intern("<lookahead-test>")),
+            private_name_binding: false,
+            class_constructor: false,
+            derived_class_constructor: false,
+            parameters: Vec::new(),
+            defined_argument_count: 0,
+            has_simple_parameter_list: true,
+            rest_parameter: None,
+            strict: false,
+            super_capabilities: SuperCapabilities::NONE,
+        },
+        &mut names,
+    )
+    .unwrap();
+    Parser {
+        lexer,
+        tokens: vec![first],
+        cursor: 0,
+        current_function: 0,
+        in_mode: InMode::Allow,
+        functions: vec![root],
+        names,
+        module: None,
+        module_declaration_export: ModuleDeclarationExport::None,
+        module_declaration_export_target: None,
+        anonymous_function_definition: None,
+        pending_unsupported: None,
+        lookahead: Default::default(),
+    }
+}
+
+#[test]
+fn lookahead_probe_cache_reuses_parameter_scans() {
+    let parser = lookahead_test_parser("(a = 1, b = 2)");
+    let first = parser.parenthesized_parameter_scan();
+    let entries = parser.lookahead_entry_count();
+    assert!(entries > 0);
+    assert_eq!(first, parser.parenthesized_parameter_scan());
+    assert_eq!(parser.lookahead_entry_count(), entries);
+}
+
+#[test]
+fn lookahead_probe_cache_drops_the_invalidated_context_window() {
+    use crate::engine::compiler::lexer::LexContext;
+
+    let mut parser = lookahead_test_parser("(a = 1, b = 2)");
+    assert!(parser.parenthesized_parameter_scan().is_some());
+    let entries = parser.lookahead_entry_count();
+    assert!(entries > 1);
+    parser.set_future_lex_context(LexContext {
+        async_function: true,
+        ..LexContext::default()
+    });
+    assert!(parser.lookahead_entry_count() < entries);
 }
 
 #[test]

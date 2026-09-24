@@ -42,5 +42,7 @@ fn main() {
                 phase.attempts, phase.inclusive_ns, phase.exclusive_ns
             );
         }
+        let (hits, misses) = quickjs_oxide::engine::api::profiling::lookahead_probe_counters();
+        eprintln!("{{\"lookahead_cache\":{{\"hits\":{hits},\"misses\":{misses}}}}}");
     }
 }

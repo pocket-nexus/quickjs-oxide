@@ -360,6 +360,7 @@ mod tests {
             module_declaration_export_target: None,
             anonymous_function_definition: None,
             pending_unsupported: None,
+            lookahead: Default::default(),
         };
         parser.push_scope(ScopeKind::ClassPrivate);
         parser

@@ -259,6 +259,7 @@ impl<'source> Parser<'source> {
             in_mode: InMode::Allow,
             anonymous_function_definition: None,
             pending_unsupported: None,
+            lookahead: Default::default(),
             module: is_module.then(module::IrModule::default),
             module_declaration_export: ModuleDeclarationExport::None,
             module_declaration_export_target: None,

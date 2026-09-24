@@ -1,7 +1,10 @@
 //! Temporary state discarded when a function builder finishes.
 
+use std::cell::RefCell;
+
 use crate::engine::compiler::model::scope::ScopeId;
 use crate::engine::compiler::optional_chain::FinalizedOptionalChain;
+use crate::engine::compiler::parser::lookahead::LookaheadCache;
 
 #[derive(Debug)]
 pub(in crate::engine::compiler) struct FunctionParseContext {
@@ -280,6 +283,10 @@ pub(in crate::engine::compiler) struct Parser<'source> {
     /// engine frontier. The parser keeps going so later grammar and early
     /// errors retain QuickJS priority over the implementation diagnostic.
     pub(in crate::engine::compiler) pending_unsupported: Option<Error>,
+    /// Memoized clone-lexer probe scans (`lookahead.rs`). Interior mutability
+    /// keeps every probe `&self`; entries are pure `(offset, goal, context)`
+    /// memoizations and only need memory-bounding invalidation.
+    pub(in crate::engine::compiler) lookahead: RefCell<LookaheadCache<'source>>,
 }
 
 pub(in crate::engine::compiler) enum RootCompileContext {
