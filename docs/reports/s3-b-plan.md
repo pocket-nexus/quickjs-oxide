@@ -515,7 +515,17 @@ flag（33 = 无 `Goto`，长 4；34 = 折叠尾 `Goto`，长 5）；第一生产
 在本结构下反而更差（`empty_loop` +14.5%），已回退为 `#[inline]`。
 
 验收判断：`int_local` ≤300 未达（460.27）；缺口来自不能在 B2.1 静态跨度
-内消除的三项——S1 条件调用、S4 更新调用、每轮 4 个派发入口。BigInt 固定
+内消除的三项——S1 条件调用、S4 更新调用、每轮 4 个派发入口。
+
+**最终形态复核（commit `2fa370a7`）**：S4 的 UpdateLocal 前置快路径与既有
+`update_number_local`（同为 Direct+Number、无 owner 的标量事务）等价，
+多出的 guard 层实测略亏，已撤销并删除 `push_number`/`has_operand_room`/
+`push_number_current`；S4 保留 `numeric_local_add` 内的数字对写回。撤销后
+全部行小幅改善：`int_local` 457.27/轮（−58.44%）、`empty_loop` 352.27
+（+4.45%）、`prop_read` +2.08%、`ic_share` +0.48%、BigInt 固定行
++1.09%/+0.97%/+0.60%。小目标 ≥30% 与 kill criterion 结论不变。
+
+BigInt 固定
 行片内均 <2%（符合 §6.2 的逐片比较协议），但累计 +2.9%/+2.6%/+1.7% 已
 超过 2% 线，主要来自 B2.1a 的 `run` 布局漂移（片内 +1.71%/+1.54%/+0.99%）。
 该缺口记入 B2.1c/B2.4 的默认路径裁决：若 B2.1c 无法回收，需要一次专门的
