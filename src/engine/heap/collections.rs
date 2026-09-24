@@ -10,6 +10,8 @@ use super::{
 };
 use std::collections::{HashMap, HashSet};
 
+use crate::engine::hash::FxBuildHasher;
+
 /// Printer-only snapshot of Map/Set records retained by live iterators.
 ///
 /// The heap arena is intentionally scanned once for both collection classes.
@@ -17,16 +19,16 @@ use std::collections::{HashMap, HashSet};
 /// reuse the result for every nested Map and Set it renders.
 #[derive(Debug, Default)]
 pub(crate) struct CollectionIteratorCurrentIndices {
-    maps: HashMap<ObjectId, HashSet<usize>>,
-    sets: HashMap<ObjectId, HashSet<usize>>,
+    maps: HashMap<ObjectId, HashSet<usize, FxBuildHasher>, FxBuildHasher>,
+    sets: HashMap<ObjectId, HashSet<usize, FxBuildHasher>, FxBuildHasher>,
 }
 
 impl CollectionIteratorCurrentIndices {
-    pub(crate) fn map(&self, source: ObjectId) -> Option<&HashSet<usize>> {
+    pub(crate) fn map(&self, source: ObjectId) -> Option<&HashSet<usize, FxBuildHasher>> {
         self.maps.get(&source)
     }
 
-    pub(crate) fn set(&self, source: ObjectId) -> Option<&HashSet<usize>> {
+    pub(crate) fn set(&self, source: ObjectId) -> Option<&HashSet<usize, FxBuildHasher>> {
         self.sets.get(&source)
     }
 }
@@ -61,7 +63,7 @@ struct WeakCollectionRecord<V> {
 /// the same identity appends a fresh record at the tail.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WeakCollectionRecords<V> {
-    entries: HashMap<WeakCollectionKey, WeakCollectionRecord<V>>,
+    entries: HashMap<WeakCollectionKey, WeakCollectionRecord<V>, FxBuildHasher>,
     pub(super) head: Option<WeakCollectionKey>,
     pub(super) tail: Option<WeakCollectionKey>,
 }
@@ -76,7 +78,7 @@ impl<V> WeakCollectionRecords<V> {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            entries: HashMap::new(),
+            entries: HashMap::default(),
             head: None,
             tail: None,
         }

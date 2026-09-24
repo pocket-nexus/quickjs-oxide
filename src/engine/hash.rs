@@ -1,8 +1,15 @@
 //! Cheap hashers for validated runtime identities and already-hashed bucket keys.
 use std::hash::{BuildHasherDefault, Hasher};
+use std::sync::OnceLock;
 
 #[derive(Default)]
 pub(crate) struct FxHasher(u64);
+impl FxHasher {
+    /// Start from an explicit seed so callers can randomize the stream.
+    pub(crate) fn with_seed(seed: u64) -> Self {
+        Self(seed)
+    }
+}
 impl Hasher for FxHasher {
     fn finish(&self) -> u64 {
         self.0
@@ -36,6 +43,20 @@ impl Hasher for FxHasher {
     }
 }
 pub(crate) type FxBuildHasher = BuildHasherDefault<FxHasher>;
+
+/// One process-level random seed for collection key hashes. Per-collection
+/// seeds would make equal content hash differently across maps; a single
+/// unpredictable seed keeps hash-flooding resistance at the V8/QuickJS
+/// per-runtime-seed level.
+pub(crate) fn collection_hash_seed() -> u64 {
+    static SEED: OnceLock<u64> = OnceLock::new();
+    *SEED.get_or_init(|| {
+        use std::hash::BuildHasher;
+        std::collections::hash_map::RandomState::new()
+            .build_hasher()
+            .finish()
+    })
+}
 
 #[derive(Default)]
 pub(crate) struct IdentityHasher(u64);

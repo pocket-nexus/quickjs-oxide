@@ -97,9 +97,12 @@ impl CollectionIndex {
     fn hash_uncached(&self, heap: &Heap, key: &RawValue) -> u64 {
         #[cfg(test)]
         self.hash_computations.set(self.hash_computations.get() + 1);
-        let mut hasher = self.key_hasher.build_hasher();
-        collection_key::hash(heap, key, &mut hasher);
-        hasher.finish()
+        let RawValue::String(id) = key else {
+            let mut hasher = self.key_hasher.build_hasher();
+            collection_key::hash(heap, key, &mut hasher);
+            return hasher.finish();
+        };
+        collection_key::string_hash(heap, *id)
     }
 
     pub(super) fn find(

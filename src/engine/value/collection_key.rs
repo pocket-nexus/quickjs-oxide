@@ -29,6 +29,17 @@ fn bigint_content(heap: &Heap, id: BigIntId) -> &crate::engine::value::bigint::J
         .expect("a live collection key resolves its bigint node")
 }
 
+/// Content hash for a live string key. A process-seeded cheap mixer replaces
+/// the per-index SipHash stream, so bucket selection never streams the full
+/// key through a cryptographic hasher. The per-index memo still covers
+/// repeated lookups of the same node.
+pub(crate) fn string_hash(heap: &Heap, id: StringId) -> u64 {
+    let mut hasher =
+        crate::engine::hash::FxHasher::with_seed(crate::engine::hash::collection_hash_seed());
+    string_content(heap, id).hash_code_units(&mut hasher);
+    hasher.finish()
+}
+
 pub(crate) fn same_value_zero(heap: &Heap, left: &RawValue, right: &RawValue) -> bool {
     if let (Some(left), Some(right)) = (number(left), number(right)) {
         return left == right || (left.is_nan() && right.is_nan());
