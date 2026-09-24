@@ -30,9 +30,7 @@ impl Heap {
             NodeData::Shape(_)
             | NodeData::VarRef(_)
             | NodeData::Context(_)
-            | NodeData::FunctionBytecode(_)
-            | NodeData::String(_)
-            | NodeData::BigInt(_) => Err(HeapError::Invariant(
+            | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
                 "typed object lookup reached another node payload",
             )),
         }
@@ -122,9 +120,7 @@ impl Heap {
             NodeData::Object(_)
             | NodeData::VarRef(_)
             | NodeData::Context(_)
-            | NodeData::FunctionBytecode(_)
-            | NodeData::String(_)
-            | NodeData::BigInt(_) => Err(HeapError::Invariant(
+            | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
                 "typed shape lookup reached another node payload",
             )),
         }
@@ -151,9 +147,7 @@ impl Heap {
             NodeData::Object(_)
             | NodeData::VarRef(_)
             | NodeData::Context(_)
-            | NodeData::FunctionBytecode(_)
-            | NodeData::String(_)
-            | NodeData::BigInt(_) => Err(HeapError::Invariant(
+            | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
                 "typed mutable shape lookup reached another node payload",
             )),
         }
@@ -166,9 +160,7 @@ impl Heap {
             NodeData::Object(_)
             | NodeData::Shape(_)
             | NodeData::VarRef(_)
-            | NodeData::FunctionBytecode(_)
-            | NodeData::String(_)
-            | NodeData::BigInt(_) => Err(HeapError::Invariant(
+            | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
                 "typed context lookup reached another node payload",
             )),
         }
@@ -2203,6 +2195,9 @@ impl Heap {
         &self,
         id: RawId,
     ) -> Result<usize, HeapError> {
+        // A leaf handle can never alias a shared slot successfully: shared
+        // payload kinds never report `String`/`BigInt`, so the kind check
+        // below rejects it. No separate leaf test is needed on this hot path.
         let index = id.index() as usize;
         let slot = self.slots.get(index).ok_or(HeapError::Stale {
             index: id.index(),

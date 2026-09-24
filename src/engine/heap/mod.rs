@@ -175,6 +175,14 @@ impl RawId {
             Self::BigInt(id) => id.generation,
         }
     }
+
+    /// True for handles served by the dedicated leaf arena.
+    ///
+    /// Leaves own no outgoing edges and can never join a cycle, so they live
+    /// outside the object/shape arena and its weak-link machinery.
+    pub(in crate::engine::heap) const fn is_leaf(self) -> bool {
+        matches!(self, Self::String(_) | Self::BigInt(_))
+    }
 }
 
 // Realm payloads are cold and boxed so every arena slot stays compact.
@@ -184,8 +192,6 @@ enum NodeData {
     VarRef(VarRefData),
     Context(Box<ContextData>),
     FunctionBytecode(FunctionBytecodeData),
-    String(JsString),
-    BigInt(JsBigInt),
 }
 
 impl NodeData {
@@ -196,8 +202,6 @@ impl NodeData {
             Self::VarRef(_) => HeapNodeKind::VarRef,
             Self::Context(_) => HeapNodeKind::Context,
             Self::FunctionBytecode(_) => HeapNodeKind::FunctionBytecode,
-            Self::String(_) => HeapNodeKind::String,
-            Self::BigInt(_) => HeapNodeKind::BigInt,
         }
     }
 
@@ -208,10 +212,6 @@ impl NodeData {
             Self::VarRef(var_ref) => var_ref_edges(var_ref),
             Self::Context(context) => context_edges(context).into(),
             Self::FunctionBytecode(bytecode) => function_bytecode_edges(bytecode).into(),
-            // String and BigInt payloads keep their resource ownership inside
-            // the `Rc` payload (rope children stay in the rope tree) and own no
-            // heap edges, so cascade-only cycle handling holds trivially.
-            Self::String(_) | Self::BigInt(_) => Edges::new(),
         }
     }
 }
@@ -255,6 +255,51 @@ struct ArenaSlot {
     weak_next: Option<ObjectId>,
 }
 
+/// Payload of one leaf arena slot.
+///
+/// `Vacant` slots sit on the leaf free list. `Retired` marks a
+/// generation-saturated slot that is never reused. A payload with `strong == 0`
+/// is on the zero queue; the payload is detached before reclamation.
+enum LeafValue {
+    Vacant,
+    Retired,
+    String(JsString),
+    BigInt(JsBigInt),
+}
+
+impl LeafValue {
+    const fn kind(&self) -> Option<HeapNodeKind> {
+        match self {
+            Self::String(_) => Some(HeapNodeKind::String),
+            Self::BigInt(_) => Some(HeapNodeKind::BigInt),
+            Self::Vacant | Self::Retired => None,
+        }
+    }
+}
+
+/// One string/BigInt arena slot.
+///
+/// Leaves own no outgoing heap edges and never carry weak links, so the slot
+/// holds only its generation, strong count and payload. This keeps a live
+/// string slot at 32 bytes instead of the 440-byte object/shape slot.
+struct LeafSlot {
+    generation: u32,
+    strong: Cell<u32>,
+    value: LeafValue,
+}
+
+impl LeafSlot {
+    /// A payload with a nonzero count is live; a zero count puts it on the
+    /// zero queue until the next drain detaches the payload.
+    const fn is_live(&self) -> bool {
+        self.value.kind().is_some() && self.strong.get() != 0
+    }
+
+    const fn is_zero_queued(&self) -> bool {
+        self.value.kind().is_some() && self.strong.get() == 0
+    }
+}
+
 /// Runtime-local object and shape arena.
 ///
 /// A `Heap` is deliberately not internally synchronized.  The enclosing
@@ -264,8 +309,13 @@ pub struct Heap {
     #[cfg(not(feature = "profiling"))]
     slots: Vec<ArenaSlot>,
     #[cfg(feature = "profiling")]
-    slots: profiling::ArenaStorage,
+    slots: profiling::ArenaStorage<ArenaSlot>,
     free: Vec<u32>,
+    #[cfg(not(feature = "profiling"))]
+    leaf_slots: Vec<LeafSlot>,
+    #[cfg(feature = "profiling")]
+    leaf_slots: profiling::ArenaStorage<LeafSlot>,
+    leaf_free: Vec<u32>,
     zero_queue: VecDeque<RawId>,
     weak_head: Option<ObjectId>,
     weak_tail: Option<ObjectId>,
@@ -273,6 +323,8 @@ pub struct Heap {
     /// [`Heap::debug_leak_report`]; empty and absent in release builds.
     #[cfg(debug_assertions)]
     alloc_sites: Vec<Option<gc::AllocSite>>,
+    #[cfg(debug_assertions)]
+    leaf_alloc_sites: Vec<Option<gc::AllocSite>>,
 }
 
 impl Default for Heap {

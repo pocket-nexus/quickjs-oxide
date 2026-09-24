@@ -26,6 +26,27 @@ fn multiset_difference_preserves_left_order_and_occurrence_counts() {
     );
 }
 
+#[test]
+fn leaf_arena_keeps_leaf_slots_compact_and_out_of_the_shared_arena() {
+    let mut heap = Heap::new();
+    assert!(size_of::<LeafSlot>() <= 32);
+    let string = heap.allocate_string(JsString::from_static("leaf")).unwrap();
+    let bigint = heap.allocate_bigint(JsBigInt::one()).unwrap();
+    let counts = heap.counts();
+    assert_eq!(counts.string_nodes, 1);
+    assert_eq!(counts.bigint_nodes, 1);
+    assert_eq!(counts.live, 2);
+    assert!(heap.slots.is_empty());
+    assert_eq!(heap.leaf_slots.len(), 2);
+    assert!(heap.live_node(RawId::String(string)).is_err());
+    assert!(heap.validate_slot_identity(RawId::BigInt(bigint)).is_err());
+    assert_eq!(heap.string(string).unwrap().to_utf8_lossy(), "leaf");
+    assert_eq!(heap.release_string(string).unwrap().finalized_strings, 1);
+    assert_eq!(heap.release_bigint(bigint).unwrap().finalized_bigints, 1);
+    assert_eq!(heap.counts().live, 0);
+    assert_eq!(heap.leaf_free.len(), 2);
+}
+
 fn empty_shape(heap: &mut Heap) -> ShapeId {
     heap.allocate_shape(Shape::new(None, []).unwrap()).unwrap()
 }

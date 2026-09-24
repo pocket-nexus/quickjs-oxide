@@ -1,6 +1,7 @@
 # 阶段 D 实施计划：数据导向堆与形状/键存储（2026-09-24）
 
-> 状态：计划完成，待确认后按切片实施。基线为 `feat/pr27-a4`
+> 状态：实施中。D1a/D1b 已提交（`84654cc8`/`98bd54c3`）；D2 leaf
+> 批次已落地（见 §4 D2 实施记录），shape/object 批次待做。基线为 `feat/pr27-a4`
 > （= PR27 tip，T1/T2 已收口），裁决依据见
 > [A4/D/B 决策报告](s3-a4-d-b-decision.md)。本计划取代
 > `performance-architecture.md` §6 的旧 D 草图（旧草图含过时事实，
@@ -263,6 +264,43 @@ arena 归零；profiling 记账不重复计数。
 
 **回退**：per-kind 拆分是机械改造，按 kind 分批提交（先 leaf + shape，
 再 object/其余），每批可独立回退。
+
+**D2 实施记录（leaf 批次，2026-09-24）**：
+
+- 与计划的差异：本批不立即把统一 `Vec<ArenaSlot>` 拆成 chunked
+  per-kind arena，而是先把叶节点（String/BigInt）移出统一槽表，落到
+  独立的紧凑 `Vec<LeafSlot>` + free list，并从 `NodeData` 删除
+  `String`/`BigInt` 变体；object/shape/var_ref/context/function 仍共用
+  原 440B `ArenaSlot` 表，待 shape 批次与 object/其余批次继续拆分。
+- `LeafSlot { generation: u32, strong: Cell<u32>, value: LeafValue }`
+  = 32B（`LeafValue { Vacant, Retired, String(JsString), BigInt(JsBigInt) }`；
+  折叠状态：`strong == 0` 即 zero-queued，generation 饱和 → `Retired`）。
+  `RawId` 12B 布局与跨 kind 序号语义不变。
+- 分发：`RawId::is_leaf()` 在 retain/release/validate/counts/is_live/
+  profiling 等入口分流；typed 包装器（`retain_object`/`retain_string`…）
+  直连单态体，通用入口仅服务边表等宽路径；热小函数补
+  `#[inline(always)]`（retain/release/preflight/publish/reserve 等），
+  消除分发引入的 out-of-line 回归。
+- GC：叶边不参与 trial/可达性标记；叶不入 weak 链、不做 anchor/zombie；
+  `try_release_leaf_reference`/`retire_validated_leaf`/
+  `release_leaf_raw_no_drain`/`reclaim_leaf_vacant`/`finish_leaf` 覆盖叶的
+  zero_queue 全路径；`slot_leaf_release_readiness` 以 `leaf_free` 容量为准。
+- profiling：`ArenaStorage<T>` 泛型化，`AllocationTrace::record(
+  allocation_id, old, new)`；shared arena = id 1、leaf arena = id 2；
+  `memory_categories` 增 `leaf_arena_slots`/`leaf_arena_free_indices`。
+- 实测（vs D1a `84654cc8`，同机串行 `taskset -c 2`，5 样本中位）：
+  - 固定行指令：prop_read −0.24%、prop_write −1.36%、prop_create −0.74%、
+    prop_clone −0.16%、prop_delete −0.62%、arguments_read +0.92%
+    （门禁 ≤2% ✓）。
+  - RSS（1M 行）：strings.js 581.3 → 177.3 MiB（−69.5%，门禁 ≤250 ✓）、
+    maps.js 797.0 → 401.7 MiB（−49.6%）；objects/arrays/smallstrings 不变
+    （其槽仍在统一 arena，待后续批次）。strings.js wall 1.287 → 0.926s。
+- 验证：lib 2317 通过；workspace `--all-targets` 全绿；release 零警告；
+  `--features profiling` 仅剩基线既有失败
+  `engine::vm::driver::tests::private_field_initialization_uses_fresh_identity_in_published_frames`。
+- 新增测试：`heap/tests.rs` 的
+  `leaf_arena_keeps_leaf_slots_compact_and_out_of_the_shared_arena`
+  （LeafSlot ≤32B、统一槽表不因叶增长、typed lookup 报错、释放回 free）。
 
 ### D3 对象/属性存储：槽瘦身 + 内联槽 + 写快路径
 

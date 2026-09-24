@@ -155,7 +155,12 @@ impl AllocationTrace {
         self.0.borrow_mut().runtime_id = id;
     }
 
-    pub(crate) fn record(&self, old_capacity_bytes: usize, capacity_bytes: usize) {
+    pub(crate) fn record(
+        &self,
+        allocation_id: u64,
+        old_capacity_bytes: usize,
+        capacity_bytes: usize,
+    ) {
         if old_capacity_bytes == capacity_bytes {
             return;
         }
@@ -167,7 +172,7 @@ impl AllocationTrace {
         }
         let event = AllocationEvent {
             sequence: state.sequence,
-            allocation_id: 1,
+            allocation_id,
             kind: if old_capacity_bytes == 0 {
                 AllocationEventKind::Allocate
             } else if capacity_bytes == 0 {
@@ -270,13 +275,19 @@ mod tests {
             final_trace.events.last().unwrap().kind,
             AllocationEventKind::Free
         );
-        let mut capacity = 0;
+        let mut capacities = std::collections::HashMap::new();
         for (index, event) in final_trace.events.iter().enumerate() {
             assert_eq!(event.sequence, index as u64 + 1);
-            assert_eq!(event.old_capacity_bytes, capacity);
-            capacity = event.capacity_bytes;
+            assert_eq!(
+                event.old_capacity_bytes,
+                capacities.get(&event.allocation_id).copied().unwrap_or(0)
+            );
+            capacities.insert(event.allocation_id, event.capacity_bytes);
         }
-        assert_eq!(capacity, 0);
+        assert!(
+            capacities.values().all(|capacity| *capacity == 0),
+            "every arena storage lifetime must be released"
+        );
     }
 
     #[test]

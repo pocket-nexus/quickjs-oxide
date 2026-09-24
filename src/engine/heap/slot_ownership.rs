@@ -58,7 +58,7 @@ impl Heap {
     /// exactly that question instead of the zero-queue capacity one. Matches
     /// `try_release_leaf_reference`'s tracing and queue admission.
     fn slot_leaf_release_readiness(&self, id: RawId) -> Result<SlotReleaseReadiness, HeapError> {
-        let index = self.validate_slot_identity(id)?;
+        let index = self.validate_leaf_identity(id)?;
         if !self.zero_queue.is_empty() {
             return Ok(SlotReleaseReadiness::Drain);
         }
@@ -66,22 +66,27 @@ impl Heap {
         if matches!(id, RawId::String(id) if super::ownership::trace_string_matches(id)) {
             return self.slot_release_readiness(id);
         }
-        match &self.slots[index].state {
-            SlotState::Live(node) if node.strong.get() > 1 => Ok(SlotReleaseReadiness::Ready),
-            SlotState::Live(node) if node.strong.get() == 1 => {
-                // reclaim_vacant_slot either retires a generation-saturated
-                // slot in place or pushes onto the free list; only a full
-                // free list can allocate during that push.
-                if self.slots[index].generation == u32::MAX
-                    || self.free.len() < self.free.capacity()
-                {
-                    Ok(SlotReleaseReadiness::Ready)
-                } else {
-                    Ok(SlotReleaseReadiness::QueueCapacity)
-                }
+        let slot = &self.leaf_slots[index];
+        if slot.is_live() {
+            if slot.strong.get() > 1 {
+                return Ok(SlotReleaseReadiness::Ready);
             }
-            _ => Ok(SlotReleaseReadiness::Drain),
+            if slot.strong.get() == 1 {
+                // reclaim_leaf_vacant either retires a generation-saturated
+                // slot in place or pushes onto the leaf free list; only a
+                // full free list can allocate during that push.
+                return Ok(
+                    if slot.generation == u32::MAX
+                        || self.leaf_free.len() < self.leaf_free.capacity()
+                    {
+                        SlotReleaseReadiness::Ready
+                    } else {
+                        SlotReleaseReadiness::QueueCapacity
+                    },
+                );
+            }
         }
+        Ok(SlotReleaseReadiness::Drain)
     }
 
     fn slot_release_readiness(&self, id: RawId) -> Result<SlotReleaseReadiness, HeapError> {
@@ -281,7 +286,7 @@ mod leaf_readiness_tests {
             heap.slot_leaf_release_readiness(raw).unwrap(),
             SlotReleaseReadiness::QueueCapacity
         );
-        heap.free.reserve(1);
+        heap.leaf_free.reserve(1);
         assert_eq!(
             heap.slot_leaf_release_readiness(raw).unwrap(),
             SlotReleaseReadiness::Ready
@@ -297,13 +302,13 @@ mod leaf_readiness_tests {
         let id = heap.allocate_bigint(JsBigInt::from(i128::MAX)).unwrap();
         let raw = RawId::BigInt(id);
         heap.retain_bigint(id).unwrap();
-        assert_eq!(heap.free.capacity(), heap.free.len());
+        assert_eq!(heap.leaf_free.capacity(), heap.leaf_free.len());
         assert_eq!(
             heap.slot_leaf_release_readiness(raw).unwrap(),
             SlotReleaseReadiness::Ready
         );
         assert_eq!(heap.try_release_leaf_reference(raw).unwrap(), Some(false));
-        heap.free.reserve(1);
+        heap.leaf_free.reserve(1);
         assert_eq!(heap.try_release_leaf_reference(raw).unwrap(), Some(true));
     }
 
@@ -315,7 +320,7 @@ mod leaf_readiness_tests {
         ] {
             let runtime = Runtime::new();
             let mut value = runtime.into_jsvalue(public).unwrap();
-            runtime.0.state.borrow_mut().heap.free.reserve(2);
+            runtime.0.state.borrow_mut().heap.leaf_free.reserve(2);
             let ready = runtime
                 .slot_value_release_readiness_jsvalue(&value)
                 .unwrap();
@@ -350,7 +355,7 @@ mod leaf_readiness_tests {
         let mut heap = Heap::default();
         let first = heap.allocate_bigint(JsBigInt::from(i128::MAX)).unwrap();
         let second = heap.allocate_bigint(JsBigInt::from(i128::MAX)).unwrap();
-        heap.free.reserve(2);
+        heap.leaf_free.reserve(2);
         heap.release_raw_no_drain(RawId::BigInt(first)).unwrap();
         let readiness = heap
             .slot_leaf_release_readiness(RawId::BigInt(second))

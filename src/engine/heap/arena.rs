@@ -9,41 +9,48 @@ impl Heap {
             #[cfg(not(feature = "profiling"))]
             slots: Vec::new(),
             #[cfg(feature = "profiling")]
-            slots: profiling::ArenaStorage::new(),
+            slots: profiling::ArenaStorage::new(1),
             free: Vec::new(),
+            #[cfg(not(feature = "profiling"))]
+            leaf_slots: Vec::new(),
+            #[cfg(feature = "profiling")]
+            leaf_slots: profiling::ArenaStorage::new(2),
+            leaf_free: Vec::new(),
             zero_queue: VecDeque::new(),
             weak_head: None,
             weak_tail: None,
             #[cfg(debug_assertions)]
             alloc_sites: Vec::new(),
+            #[cfg(debug_assertions)]
+            leaf_alloc_sites: Vec::new(),
         }
     }
 
     /// Strong count for diagnostics.  A zombie remains queryable until all
     /// candidate incoming edges have been detached.
     pub fn object_strong_count(&self, id: ObjectId) -> Result<u32, HeapError> {
-        self.strong_count(RawId::Object(id))
+        self.shared_strong_count(RawId::Object(id))
     }
 
     /// Strong count for diagnostics.
     pub fn shape_strong_count(&self, id: ShapeId) -> Result<u32, HeapError> {
-        self.strong_count(RawId::Shape(id))
+        self.shared_strong_count(RawId::Shape(id))
     }
 
     /// Strong count for captured-variable diagnostics.
     pub fn var_ref_strong_count(&self, id: VarRefId) -> Result<u32, HeapError> {
-        self.strong_count(RawId::VarRef(id))
+        self.shared_strong_count(RawId::VarRef(id))
     }
 
     /// Strong count for context diagnostics.
     pub fn context_strong_count(&self, id: ContextId) -> Result<u32, HeapError> {
-        self.strong_count(RawId::Context(id))
+        self.shared_strong_count(RawId::Context(id))
     }
 
     /// Strong count for function-bytecode diagnostics.
     #[cfg(test)]
     pub fn function_bytecode_strong_count(&self, id: FunctionBytecodeId) -> Result<u32, HeapError> {
-        self.strong_count(RawId::FunctionBytecode(id))
+        self.shared_strong_count(RawId::FunctionBytecode(id))
     }
 
     /// Snapshot aggregate arena counts for tests and runtime diagnostics.
@@ -72,9 +79,29 @@ impl Heap {
                 SlotState::Retired => counts.retired = counts.retired.saturating_add(1),
             }
         }
+        for slot in &self.leaf_slots {
+            match slot.value.kind() {
+                Some(kind) => {
+                    increment_kind_count(&mut counts, kind);
+                    if slot.strong.get() == 0 {
+                        counts.zero_queued = counts.zero_queued.saturating_add(1);
+                    } else {
+                        counts.live = counts.live.saturating_add(1);
+                    }
+                }
+                None => {
+                    if matches!(slot.value, LeafValue::Retired) {
+                        counts.retired = counts.retired.saturating_add(1);
+                    } else {
+                        counts.vacant = counts.vacant.saturating_add(1);
+                    }
+                }
+            }
+        }
         counts
     }
 
+    #[inline]
     pub(in crate::engine::heap) fn reserve(
         &mut self,
         kind: HeapNodeKind,
@@ -120,20 +147,47 @@ impl Heap {
         Ok((index, slot.generation))
     }
 
-    // Leaf payloads own no outgoing heap edges. Keep their concrete variants at
-    // the final slot assignment: passing NodeData through publish caused two
-    // arena-sized memcpy operations even with publish inlined in release builds.
+    /// Reserve one vacant leaf slot from the leaf free list.
+    fn leaf_reserve_vacant(&mut self) -> Result<(u32, u32), HeapError> {
+        let index = if let Some(index) = self.leaf_free.pop() {
+            index
+        } else {
+            let index = u32::try_from(self.leaf_slots.len()).map_err(|_| HeapError::Overflow {
+                operation: "allocating a leaf arena slot",
+            })?;
+            self.leaf_slots.push(LeafSlot {
+                generation: 1,
+                strong: Cell::new(0),
+                value: LeafValue::Vacant,
+            });
+            index
+        };
+        let slot = self
+            .leaf_slots
+            .get_mut(index as usize)
+            .ok_or(HeapError::Invariant(
+                "leaf free list referenced a missing slot",
+            ))?;
+        if !matches!(slot.value, LeafValue::Vacant) {
+            return Err(HeapError::Invariant(
+                "leaf free list referenced an occupied slot",
+            ));
+        }
+        Ok((index, slot.generation))
+    }
+
+    // Leaf payloads own no outgoing heap edges and never carry weak links, so
+    // they live in their own compact arena.
     pub(in crate::engine::heap) fn allocate_string_leaf(
         &mut self,
         value: JsString,
     ) -> Result<StringId, HeapError> {
-        let (index, generation) = self.reserve_vacant()?;
-        self.slots[index as usize].state = SlotState::Live(Node {
-            strong: Cell::new(1),
-            data: NodeData::String(value),
-        });
+        let (index, generation) = self.leaf_reserve_vacant()?;
+        let slot = &mut self.leaf_slots[index as usize];
+        slot.strong.set(1);
+        slot.value = LeafValue::String(value);
         #[cfg(debug_assertions)]
-        self.record_alloc_site(index, generation, HeapNodeKind::String);
+        self.record_leaf_alloc_site(index, generation, HeapNodeKind::String);
         Ok(StringId { index, generation })
     }
 
@@ -141,13 +195,12 @@ impl Heap {
         &mut self,
         value: JsBigInt,
     ) -> Result<BigIntId, HeapError> {
-        let (index, generation) = self.reserve_vacant()?;
-        self.slots[index as usize].state = SlotState::Live(Node {
-            strong: Cell::new(1),
-            data: NodeData::BigInt(value),
-        });
+        let (index, generation) = self.leaf_reserve_vacant()?;
+        let slot = &mut self.leaf_slots[index as usize];
+        slot.strong.set(1);
+        slot.value = LeafValue::BigInt(value);
         #[cfg(debug_assertions)]
-        self.record_alloc_site(index, generation, HeapNodeKind::BigInt);
+        self.record_leaf_alloc_site(index, generation, HeapNodeKind::BigInt);
         Ok(BigIntId { index, generation })
     }
 
@@ -173,7 +226,7 @@ impl Heap {
 
     // Expose the concrete payload variant to allocation sites, so leaf nodes
     // do not travel through an opaque wide-enum copy in no-LTO builds.
-    #[inline]
+    #[inline(always)]
     pub(in crate::engine::heap) fn publish(
         &mut self,
         index: u32,
@@ -202,6 +255,109 @@ impl Heap {
             data,
         });
         Ok(())
+    }
+
+    /// Validate a leaf handle against the leaf arena, returning its slot index.
+    ///
+    /// Accepts live and zero-queued payloads; dead slots and wrong-kind
+    /// handles surface the same diagnostics as [`Heap::validate_slot_identity`].
+    pub(in crate::engine::heap) fn validate_leaf_identity(
+        &self,
+        id: RawId,
+    ) -> Result<usize, HeapError> {
+        debug_assert!(id.is_leaf(), "non-leaf handle reached the leaf arena");
+        let index = id.index() as usize;
+        let slot = self.leaf_slots.get(index).ok_or(HeapError::Stale {
+            index: id.index(),
+            generation: id.generation(),
+        })?;
+        if slot.generation != id.generation() {
+            return Err(HeapError::Stale {
+                index: id.index(),
+                generation: id.generation(),
+            });
+        }
+        let actual = slot.value.kind().ok_or(HeapError::Stale {
+            index: id.index(),
+            generation: id.generation(),
+        })?;
+        if actual != id.kind() {
+            return Err(HeapError::WrongKind {
+                expected: id.kind(),
+                actual,
+            });
+        }
+        Ok(index)
+    }
+
+    /// Shared-borrow leaf slot in any payload state. Test-only: production
+    /// callers use the typed wrappers or the live accessors.
+    #[cfg(test)]
+    fn leaf_slot(&self, id: RawId) -> Result<&LeafSlot, HeapError> {
+        let index = self.validate_leaf_identity(id)?;
+        Ok(&self.leaf_slots[index])
+    }
+
+    /// Shared-borrow leaf slot for a live handle; a zero-queued or dead slot
+    /// declines with `Stale`, matching the shared arena's [`Heap::live_node`].
+    pub(in crate::engine::heap) fn live_leaf_slot(
+        &self,
+        id: RawId,
+    ) -> Result<&LeafSlot, HeapError> {
+        let index = self.validate_leaf_identity(id)?;
+        let slot = &self.leaf_slots[index];
+        if !slot.is_live() {
+            return Err(HeapError::Stale {
+                index: id.index(),
+                generation: id.generation(),
+            });
+        }
+        Ok(slot)
+    }
+
+    pub(in crate::engine::heap) fn live_leaf_slot_mut(
+        &mut self,
+        id: RawId,
+    ) -> Result<&mut LeafSlot, HeapError> {
+        let index = self.validate_leaf_identity(id)?;
+        let slot = &mut self.leaf_slots[index];
+        if !slot.is_live() {
+            return Err(HeapError::Stale {
+                index: id.index(),
+                generation: id.generation(),
+            });
+        }
+        Ok(slot)
+    }
+
+    /// Trusted leaf accessor paired with [`Heap::live_node_fast`].
+    #[inline]
+    pub(in crate::engine::heap) fn live_leaf_fast(&self, id: RawId) -> &LeafSlot {
+        debug_assert!(
+            self.validate_leaf_identity(id).is_ok(),
+            "trusted leaf handle failed its debug identity check"
+        );
+        let slot = &self.leaf_slots[id.index() as usize];
+        if slot.is_live() {
+            slot
+        } else {
+            unreachable!("trusted leaf handle reached a non-live slot")
+        }
+    }
+
+    /// Trusted mutable leaf accessor paired with [`Heap::live_leaf_fast`].
+    #[inline]
+    pub(in crate::engine::heap) fn live_leaf_fast_mut(&mut self, id: RawId) -> &mut LeafSlot {
+        debug_assert!(
+            self.validate_leaf_identity(id).is_ok(),
+            "trusted leaf handle failed its debug identity check"
+        );
+        let slot = &mut self.leaf_slots[id.index() as usize];
+        if slot.is_live() {
+            slot
+        } else {
+            unreachable!("trusted leaf handle reached a non-live slot")
+        }
     }
 
     pub(in crate::engine::heap) fn live_index(&self, id: RawId) -> Result<usize, HeapError> {
@@ -280,9 +436,7 @@ impl Heap {
             NodeData::Shape(_)
             | NodeData::VarRef(_)
             | NodeData::Context(_)
-            | NodeData::FunctionBytecode(_)
-            | NodeData::String(_)
-            | NodeData::BigInt(_) => Err(HeapError::Invariant(
+            | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
                 "typed object lookup reached another node payload",
             )),
         }
@@ -297,15 +451,17 @@ impl Heap {
             NodeData::Object(_)
             | NodeData::Shape(_)
             | NodeData::Context(_)
-            | NodeData::FunctionBytecode(_)
-            | NodeData::String(_)
-            | NodeData::BigInt(_) => Err(HeapError::Invariant(
+            | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
                 "typed var-ref lookup reached another node payload",
             )),
         }
     }
 
-    pub(in crate::engine::heap) fn strong_count(&self, id: RawId) -> Result<u32, HeapError> {
+    /// Strong count for a shared-arena handle. Leaf callers use
+    /// [`Heap::leaf_slot`] instead; keeping this branch-free preserves the
+    /// inlining of the typed diagnostics on the property-deletion path.
+    #[inline]
+    fn shared_strong_count(&self, id: RawId) -> Result<u32, HeapError> {
         let index = self.validate_slot_identity(id)?;
         self.slots[index].state.strong().ok_or(HeapError::Stale {
             index: id.index(),
@@ -313,13 +469,30 @@ impl Heap {
         })
     }
 
+    #[cfg(test)]
+    pub(in crate::engine::heap) fn strong_count(&self, id: RawId) -> Result<u32, HeapError> {
+        if id.is_leaf() {
+            return Ok(self.leaf_slot(id)?.strong.get());
+        }
+        self.shared_strong_count(id)
+    }
+
     /// Overwrite one live node's strong count for saturation tests.
     #[cfg(test)]
     pub(in crate::engine::heap) fn set_strong_count_for_test(&mut self, id: RawId, count: u32) {
+        if id.is_leaf() {
+            self.live_leaf_fast_mut(id).strong.set(count);
+            return;
+        }
         self.live_node_fast_mut(id).strong.set(count);
     }
 
     pub(in crate::engine::heap) fn is_live(&self, id: RawId) -> bool {
+        if id.is_leaf() {
+            return self
+                .validate_leaf_identity(id)
+                .is_ok_and(|index| self.leaf_slots[index].is_live());
+        }
         self.validate_slot_identity(id)
             .is_ok_and(|index| matches!(self.slots[index].state, SlotState::Live(_)))
     }

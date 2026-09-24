@@ -6,16 +6,19 @@ use std::ops::{Deref, DerefMut};
 
 // Deliberately exposes a slice, not Vec mutators: every capacity-changing
 // operation goes through push and every backing release goes through Drop.
-pub(super) struct ArenaStorage {
-    values: Vec<ArenaSlot>,
+pub(super) struct ArenaStorage<T> {
+    values: Vec<T>,
     trace: Option<AllocationTrace>,
+    /// Storage-lifetime identity in the allocation trace: each arena owns one.
+    allocation_id: u64,
 }
 
-impl ArenaStorage {
-    pub(super) const fn new() -> Self {
+impl<T> ArenaStorage<T> {
+    pub(super) const fn new(allocation_id: u64) -> Self {
         Self {
             values: Vec::new(),
             trace: None,
+            allocation_id,
         }
     }
 
@@ -23,54 +26,55 @@ impl ArenaStorage {
         self.values.capacity()
     }
 
-    pub(super) fn push(&mut self, value: ArenaSlot) {
+    pub(super) fn push(&mut self, value: T) {
         let previous = self.values.capacity();
         self.values.push(value);
         if let Some(trace) = &self.trace {
             trace.record(
-                previous * size_of::<ArenaSlot>(),
-                self.capacity() * size_of::<ArenaSlot>(),
+                self.allocation_id,
+                previous * size_of::<T>(),
+                self.capacity() * size_of::<T>(),
             );
         }
     }
 }
 
-impl Deref for ArenaStorage {
-    type Target = [ArenaSlot];
+impl<T> Deref for ArenaStorage<T> {
+    type Target = [T];
     fn deref(&self) -> &Self::Target {
         &self.values
     }
 }
 
-impl DerefMut for ArenaStorage {
+impl<T> DerefMut for ArenaStorage<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.values
     }
 }
 
-impl<'a> IntoIterator for &'a ArenaStorage {
-    type Item = &'a ArenaSlot;
-    type IntoIter = std::slice::Iter<'a, ArenaSlot>;
+impl<'a, T> IntoIterator for &'a ArenaStorage<T> {
+    type Item = &'a T;
+    type IntoIter = std::slice::Iter<'a, T>;
     fn into_iter(self) -> Self::IntoIter {
         self.values.iter()
     }
 }
 
-impl<'a> IntoIterator for &'a mut ArenaStorage {
-    type Item = &'a mut ArenaSlot;
-    type IntoIter = std::slice::IterMut<'a, ArenaSlot>;
+impl<'a, T> IntoIterator for &'a mut ArenaStorage<T> {
+    type Item = &'a mut T;
+    type IntoIter = std::slice::IterMut<'a, T>;
     fn into_iter(self) -> Self::IntoIter {
         self.values.iter_mut()
     }
 }
 
-impl Drop for ArenaStorage {
+impl<T> Drop for ArenaStorage<T> {
     fn drop(&mut self) {
         if let Some(trace) = &self.trace {
-            let previous = self.capacity() * size_of::<ArenaSlot>();
+            let previous = self.capacity() * size_of::<T>();
             // Record F after the backing allocation and all its payloads drop.
             drop(std::mem::take(&mut self.values));
-            trace.record(previous, 0);
+            trace.record(self.allocation_id, previous, 0);
             trace.finish();
         }
     }
@@ -79,7 +83,8 @@ impl Drop for ArenaStorage {
 impl Heap {
     pub(crate) fn with_allocation_trace(trace: Option<AllocationTrace>) -> Self {
         let mut heap = Self::new();
-        heap.slots.trace = trace;
+        heap.slots.trace = trace.clone();
+        heap.leaf_slots.trace = trace;
         heap
     }
 
@@ -101,6 +106,18 @@ impl Heap {
                 "arena_free_indices",
                 self.free.len(),
                 self.free.capacity(),
+                size_of::<u32>(),
+            ),
+            storage(
+                "leaf_arena_slots",
+                self.leaf_slots.len(),
+                self.leaf_slots.capacity(),
+                size_of::<LeafSlot>(),
+            ),
+            storage(
+                "leaf_arena_free_indices",
+                self.leaf_free.len(),
+                self.leaf_free.capacity(),
                 size_of::<u32>(),
             ),
             storage(
@@ -195,13 +212,18 @@ impl Heap {
                             keys.iter().filter(|atom| atom.is_null()).count();
                     }
                 }
-                NodeData::String(_) => {
+                _ => {}
+            }
+        }
+        for slot in &self.leaf_slots {
+            match slot.value.kind() {
+                Some(HeapNodeKind::String) => {
                     *string_nodes.count.as_mut().unwrap() += 1;
                 }
-                NodeData::BigInt(_) => {
+                Some(HeapNodeKind::BigInt) => {
                     *bigint_nodes.count.as_mut().unwrap() += 1;
                 }
-                _ => {}
+                Some(_) | None => {}
             }
         }
         result.extend([

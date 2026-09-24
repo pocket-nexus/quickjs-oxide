@@ -1455,7 +1455,7 @@ fn shared_value_leaves_release_once_and_drain_older_queued_work() {
     for id in [RawId::String(string), RawId::BigInt(bigint)] {
         heap.retain_raw(id, 1).unwrap();
         assert_eq!(heap.release_reference(id).unwrap(), None);
-        assert_eq!(heap.live_node(id).unwrap().strong.get(), 1);
+        assert_eq!(heap.live_leaf_slot(id).unwrap().strong.get(), 1);
     }
     heap.release_raw_no_drain(RawId::String(string)).unwrap();
     heap.retain_raw(RawId::BigInt(bigint), 1).unwrap();
@@ -1465,7 +1465,10 @@ fn shared_value_leaves_release_once_and_drain_older_queued_work() {
         .unwrap();
     assert_eq!(cleanup.finalized_strings, 1);
     assert_eq!(
-        heap.live_node(RawId::BigInt(bigint)).unwrap().strong.get(),
+        heap.live_leaf_slot(RawId::BigInt(bigint))
+            .unwrap()
+            .strong
+            .get(),
         1
     );
     assert_eq!(heap.release_bigint(bigint).unwrap().finalized_bigints, 1);
