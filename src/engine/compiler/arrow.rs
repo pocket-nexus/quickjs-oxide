@@ -323,7 +323,7 @@ impl<'source> Parser<'source> {
     fn parenthesized_arrow_ahead(&self, opening: Span) -> bool {
         let mut lexer = self.lexer.clone();
         lexer.seek(opening.start);
-        let Ok(first) = lexer.next_token_with_goal(LexicalGoal::Div) else {
+        let Ok(first) = self.probe_token(&mut lexer, LexicalGoal::Div) else {
             return false;
         };
         if !matches!(first.kind, TokenKind::Punctuator(Punctuator::LeftParen)) {
@@ -336,7 +336,7 @@ impl<'source> Parser<'source> {
         loop {
             let requested_goal = goal;
             goal = LexicalGoal::Div;
-            let Ok(mut token) = lexer.next_token_with_goal(requested_goal) else {
+            let Ok(mut token) = self.probe_token(&mut lexer, requested_goal) else {
                 return false;
             };
             if requested_goal == LexicalGoal::Div
@@ -347,7 +347,7 @@ impl<'source> Parser<'source> {
                 )
             {
                 lexer.seek(token.span.start);
-                let Ok(regexp) = lexer.next_token_with_goal(LexicalGoal::RegExp) else {
+                let Ok(regexp) = self.probe_token(&mut lexer, LexicalGoal::RegExp) else {
                     return false;
                 };
                 token = regexp;
@@ -377,7 +377,7 @@ impl<'source> Parser<'source> {
                         return false;
                     }
                     if delimiters.is_empty() {
-                        let Ok(arrow) = lexer.next_token_with_goal(LexicalGoal::Div) else {
+                        let Ok(arrow) = self.probe_token(&mut lexer, LexicalGoal::Div) else {
                             return false;
                         };
                         return !arrow.line_terminator_before
@@ -430,7 +430,7 @@ impl<'source> Parser<'source> {
             TokenKind::Identifier(_) => {
                 let mut lexer = self.lexer.clone();
                 lexer.seek(self.current().span.end);
-                let next = lexer.next_token_with_goal(LexicalGoal::Div).ok()?;
+                let next = self.probe_token(&mut lexer, LexicalGoal::Div).ok()?;
                 (!next.line_terminator_before
                     && matches!(next.kind, TokenKind::Punctuator(Punctuator::Arrow)))
                 .then_some(ArrowHead::Identifier)
@@ -454,7 +454,7 @@ impl<'source> Parser<'source> {
         }
         let mut lexer = self.lexer.clone();
         lexer.seek(self.current().span.end);
-        let Ok(arrow) = lexer.next_token_with_goal(LexicalGoal::Div) else {
+        let Ok(arrow) = self.probe_token(&mut lexer, LexicalGoal::Div) else {
             return false;
         };
         !arrow.line_terminator_before
@@ -470,7 +470,7 @@ impl<'source> Parser<'source> {
         }
         let mut lexer = self.lexer.clone();
         lexer.seek(self.current().span.end);
-        let Ok(parameter) = lexer.next_token_with_goal(LexicalGoal::Div) else {
+        let Ok(parameter) = self.probe_token(&mut lexer, LexicalGoal::Div) else {
             return None;
         };
         if parameter.line_terminator_before {
@@ -478,7 +478,7 @@ impl<'source> Parser<'source> {
         }
         match parameter.kind {
             TokenKind::Identifier(identifier) if !identifier.escaped_reserved_word => {
-                let Ok(arrow) = lexer.next_token_with_goal(LexicalGoal::Div) else {
+                let Ok(arrow) = self.probe_token(&mut lexer, LexicalGoal::Div) else {
                     return None;
                 };
                 (!arrow.line_terminator_before

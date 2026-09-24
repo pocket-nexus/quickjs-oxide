@@ -27,6 +27,16 @@ use crate::engine::heap::HeapCounts;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+/// Parser lookahead probe-cache hits and misses since process start.
+///
+/// Instrumented builds only; the public compile probe prints these to attribute
+/// rescan savings between checkpoints.
+#[cfg(feature = "profiling")]
+#[must_use]
+pub fn lookahead_probe_counters() -> (u64, u64) {
+    crate::engine::compiler::lookahead_probe_counters()
+}
+
 /// One disjoint storage category, except logical-only node categories.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MemoryCategory {

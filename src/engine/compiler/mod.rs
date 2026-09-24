@@ -24,6 +24,12 @@ mod parser;
 #[cfg(test)]
 use parser::diagnostics::source_span;
 
+/// Probe-cache hit/miss counters, exposed for the profiling compile probe.
+#[cfg(feature = "profiling")]
+pub(crate) fn lookahead_probe_counters() -> (u64, u64) {
+    parser::lookahead::counters::snapshot()
+}
+
 #[cfg(test)]
 use model::bindings::IrAnnexBinding;
 use parser::context::Parser;

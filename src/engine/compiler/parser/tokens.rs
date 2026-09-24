@@ -210,7 +210,7 @@ impl<'source> Parser<'source> {
         loop {
             let requested_goal = goal;
             goal = LexicalGoal::Div;
-            let Ok(mut token) = lexer.next_token_with_goal(requested_goal) else {
+            let Ok(mut token) = self.probe_token(&mut lexer, requested_goal) else {
                 return None;
             };
             if requested_goal == LexicalGoal::Div
@@ -221,7 +221,7 @@ impl<'source> Parser<'source> {
                 )
             {
                 lexer.seek(token.span.start);
-                let Ok(regexp) = lexer.next_token_with_goal(LexicalGoal::RegExp) else {
+                let Ok(regexp) = self.probe_token(&mut lexer, LexicalGoal::RegExp) else {
                     return None;
                 };
                 token = regexp;
@@ -311,7 +311,7 @@ impl<'source> Parser<'source> {
         loop {
             let requested_goal = goal;
             goal = LexicalGoal::Div;
-            let Ok(mut token) = lexer.next_token_with_goal(requested_goal) else {
+            let Ok(mut token) = self.probe_token(&mut lexer, requested_goal) else {
                 return has_semicolon;
             };
             if requested_goal == LexicalGoal::Div
@@ -322,7 +322,7 @@ impl<'source> Parser<'source> {
                 )
             {
                 lexer.seek(token.span.start);
-                let Ok(regexp) = lexer.next_token_with_goal(LexicalGoal::RegExp) else {
+                let Ok(regexp) = self.probe_token(&mut lexer, LexicalGoal::RegExp) else {
                     return has_semicolon;
                 };
                 token = regexp;
@@ -422,8 +422,11 @@ impl<'source> Parser<'source> {
 
         let mut lexer = self.lexer.clone();
         lexer.seek(self.current().span.start);
-        lexer.next_token().map_err(lex_error)?;
-        let next = lexer.next_token().map_err(lex_error)?;
+        self.probe_token(&mut lexer, LexicalGoal::Div)
+            .map_err(lex_error)?;
+        let next = self
+            .probe_token(&mut lexer, LexicalGoal::Div)
+            .map_err(lex_error)?;
         let other_declaration_start = matches!(
             &next.kind,
             TokenKind::Punctuator(Punctuator::LeftBrace)
@@ -454,7 +457,7 @@ impl<'source> Parser<'source> {
         let label_name = self.identifier_text(identifier).into_owned();
         let mut lexer = self.lexer.clone();
         lexer.seek(self.current().span.end);
-        let Ok(next) = lexer.next_token() else {
+        let Ok(next) = self.probe_token(&mut lexer, LexicalGoal::Div) else {
             return None;
         };
         matches!(next.kind, TokenKind::Punctuator(Punctuator::Colon)).then_some(label_name)
@@ -474,7 +477,9 @@ impl<'source> Parser<'source> {
         }
         let mut lexer = self.lexer.clone();
         lexer.seek(self.current().span.end);
-        let next = lexer.next_token().map_err(lex_error)?;
+        let next = self
+            .probe_token(&mut lexer, LexicalGoal::Div)
+            .map_err(lex_error)?;
         if generator {
             Ok(matches!(
                 next.kind,
@@ -497,7 +502,7 @@ impl<'source> Parser<'source> {
         }
         let mut lexer = self.lexer.clone();
         lexer.seek(self.current().span.end);
-        let Ok(function) = lexer.next_token_with_goal(LexicalGoal::Div) else {
+        let Ok(function) = self.probe_token(&mut lexer, LexicalGoal::Div) else {
             return false;
         };
         !function.line_terminator_before
@@ -560,7 +565,9 @@ impl<'source> Parser<'source> {
         }
         let mut probe = self.lexer.clone();
         probe.seek(start);
-        let next = probe.next_token().map_err(lex_error)?;
+        let next = self
+            .probe_token(&mut probe, LexicalGoal::Div)
+            .map_err(lex_error)?;
         let goal = if matches!(
             next.kind,
             TokenKind::Punctuator(Punctuator::Divide | Punctuator::DivideAssign)
@@ -579,6 +586,9 @@ impl<'source> Parser<'source> {
         if !self.at_eof() {
             self.cursor += 1;
             self.ensure_token_with_goal(self.cursor, goal)?;
+            // Probes only seek at or after the current token, so the committed
+            // prefix can never be requested again.
+            self.lookahead_invalidate_before(self.tokens[self.cursor].span.start.byte_offset);
         }
         Ok(())
     }
@@ -609,6 +619,7 @@ impl<'source> Parser<'source> {
     ) -> Result<(), Error> {
         let position = self.current().span.start;
         let line_terminator_before = self.current().line_terminator_before;
+        self.lookahead_invalidate_from(position.byte_offset);
         self.tokens.truncate(self.cursor);
         self.lexer.seek(position);
         self.ensure_token_with_goal(self.cursor, goal)?;
@@ -635,6 +646,7 @@ impl<'source> Parser<'source> {
     ) -> Result<(), Error> {
         let position = self.current().span.start;
         let line_terminator_before = self.current().line_terminator_before;
+        self.lookahead_invalidate_from(position.byte_offset);
         self.tokens.truncate(self.cursor);
         self.lexer.seek(position);
         self.lexer.set_context(context);
@@ -648,6 +660,7 @@ impl<'source> Parser<'source> {
     /// async arrow's unparenthesized parameter was already read in its parent.
     pub(in crate::engine::compiler) fn set_future_lex_context(&mut self, context: LexContext) {
         let position = self.current().span.end;
+        self.lookahead_invalidate_from(position.byte_offset);
         self.tokens.truncate(self.cursor + 1);
         self.lexer.seek(position);
         self.lexer.set_context(context);
@@ -664,7 +677,9 @@ impl<'source> Parser<'source> {
         let mut context = lexer.context();
         context.strict = inherited_strict;
         lexer.set_context(context);
-        let mut token = lexer.next_token().map_err(lex_error)?;
+        let mut token = self
+            .probe_token(&mut lexer, LexicalGoal::Div)
+            .map_err(lex_error)?;
         let mut found_strict = false;
 
         loop {
@@ -675,7 +690,9 @@ impl<'source> Parser<'source> {
                 _ => return Ok(found_strict),
             };
 
-            let next = lexer.next_token().map_err(lex_error)?;
+            let next = self
+                .probe_token(&mut lexer, LexicalGoal::Div)
+                .map_err(lex_error)?;
             let consumed = match &next.kind {
                 TokenKind::Punctuator(Punctuator::Semicolon) => 2,
                 TokenKind::Punctuator(Punctuator::RightBrace) | TokenKind::Eof => 1,
@@ -688,7 +705,8 @@ impl<'source> Parser<'source> {
             token = if consumed == 1 {
                 next
             } else {
-                lexer.next_token().map_err(lex_error)?
+                self.probe_token(&mut lexer, LexicalGoal::Div)
+                    .map_err(lex_error)?
             };
             if candidate {
                 let mut context = lexer.context();

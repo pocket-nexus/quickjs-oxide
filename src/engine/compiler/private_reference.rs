@@ -9,6 +9,7 @@ use crate::engine::api::error::Error;
 use crate::engine::code::bytecode::Instruction;
 use crate::engine::code::bytecode::PrivateNameSource;
 use crate::engine::compiler::lexer::Keyword;
+use crate::engine::compiler::lexer::LexicalGoal;
 use crate::engine::compiler::lexer::Span;
 use crate::engine::compiler::lexer::TokenKind;
 use crate::engine::compiler::model::bindings::BindingKind;
@@ -92,7 +93,9 @@ impl<'source> Parser<'source> {
 
         let mut lexer = self.lexer.clone();
         lexer.seek(self.current().span.end);
-        let next = lexer.next_token().map_err(lex_error)?;
+        let next = self
+            .probe_token(&mut lexer, LexicalGoal::Div)
+            .map_err(lex_error)?;
         if !matches!(next.kind, TokenKind::Keyword(Keyword::In)) {
             return Ok(false);
         }

@@ -9,6 +9,7 @@ pub(super) mod diagnostics;
 pub(super) mod entry;
 mod expressions;
 pub(super) mod literals;
+pub(in crate::engine::compiler) mod lookahead;
 mod loops;
 mod parameters;
 mod scopes;
