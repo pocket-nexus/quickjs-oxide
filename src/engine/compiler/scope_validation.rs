@@ -307,7 +307,7 @@ pub(super) fn validate_scope_graph(tree: &FunctionTree) -> Result<(), Error> {
                     .get(binding_id.0)
                     .ok_or_else(|| Error::internal("parameter binding is out of bounds"))?;
                 if usize::from(local) != cell
-                    || function.locals.get(cell).map(String::as_str) != Some(binding.name.as_str())
+                    || function.locals.get(cell).copied() != Some(binding.name)
                     || binding.storage != BindingStorage::Local(local)
                     || binding.storage_scope != parameter_scope
                     || binding.declaration_scope != parameter_scope
@@ -367,8 +367,8 @@ pub(super) fn validate_scope_graph(tree: &FunctionTree) -> Result<(), Error> {
                         "parameter pattern body binding was not allocated",
                     ));
                 };
-                let parameter_binding = function.binding_in_scope(parameter_scope, &pattern.name);
-                let body_binding = function.binding_in_scope(function.var_scope, &pattern.name);
+                let parameter_binding = function.binding_in_scope(parameter_scope, pattern.name);
+                let body_binding = function.binding_in_scope(function.var_scope, pattern.name);
                 if parameter_binding.is_none_or(|binding| {
                     binding.storage != BindingStorage::Local(pattern.parameter_local)
                 }) || body_binding.is_none_or(|binding| {
@@ -588,21 +588,19 @@ pub(super) fn validate_scope_graph(tree: &FunctionTree) -> Result<(), Error> {
         }
         if let Some(index) = function.arguments_local {
             let matches_binding = function.bindings.iter().any(|binding| {
-                binding.name == "arguments"
+                tree.names.name(binding.name) == "arguments"
                     && binding.storage_scope == function.var_scope
                     && binding.kind == BindingKind::Normal
                     && binding.storage == BindingStorage::Local(index)
             });
             if !matches!(function.kind, FunctionKind::Ordinary | FunctionKind::Method)
                 || usize::from(index) >= function.locals.len()
-                || function.locals[usize::from(index)] != "arguments"
-                || (function
-                    .parameters
-                    .iter()
-                    .any(|parameter| parameter.as_deref() == Some("arguments"))
-                    && !(function.parameter_scope.is_some()
-                        && !function.strict
-                        && function.eval_variable_object_local.is_some()))
+                || tree.names.name(function.locals[usize::from(index)]) != "arguments"
+                || (function.parameters.iter().any(|parameter| {
+                    parameter.is_some_and(|id| tree.names.name(id) == "arguments")
+                }) && !(function.parameter_scope.is_some()
+                    && !function.strict
+                    && function.eval_variable_object_local.is_some()))
                 || !matches_binding
             {
                 return Err(Error::internal(
@@ -623,7 +621,7 @@ pub(super) fn validate_scope_graph(tree: &FunctionTree) -> Result<(), Error> {
                 .bindings
                 .iter()
                 .filter(|binding| {
-                    binding.name == pseudo.name()
+                    tree.names.name(binding.name) == pseudo.name()
                         && matches!(binding.storage, BindingStorage::Local(_))
                 })
                 .collect::<Vec<_>>();
@@ -631,7 +629,8 @@ pub(super) fn validate_scope_graph(tree: &FunctionTree) -> Result<(), Error> {
                 (Some(index), [binding])
                     if function_owns_pseudo_binding(function.kind, pseudo)
                         && usize::from(index) < function.locals.len()
-                        && function.locals[usize::from(index)] == pseudo.name()
+                        && tree.names.name(function.locals[usize::from(index)])
+                            == pseudo.name()
                         && binding.storage == BindingStorage::Local(index)
                         && binding.kind
                             == if pseudo == PseudoBinding::This
@@ -735,7 +734,7 @@ pub(super) fn validate_scope_graph(tree: &FunctionTree) -> Result<(), Error> {
                     function.kind,
                     FunctionKind::Ordinary | FunctionKind::Method | FunctionKind::Arrow
                 ) && !function.strict
-                    && binding.name == EVAL_VARIABLE_OBJECT_LOCAL_NAME
+                    && tree.names.name(binding.name) == EVAL_VARIABLE_OBJECT_LOCAL_NAME
                     && binding.storage == BindingStorage::Local(index)
                     && binding.storage_scope == function.var_scope
                     && binding.declaration_scope == function.var_scope
@@ -767,7 +766,7 @@ pub(super) fn validate_scope_graph(tree: &FunctionTree) -> Result<(), Error> {
                 if function.parameter_scope.is_some()
                     && function.eval_variable_object_local.is_some()
                     && !function.strict
-                    && binding.name == ARG_EVAL_VARIABLE_OBJECT_LOCAL_NAME
+                    && tree.names.name(binding.name) == ARG_EVAL_VARIABLE_OBJECT_LOCAL_NAME
                     && binding.storage == BindingStorage::Local(index)
                     && binding.storage_scope == function.var_scope
                     && binding.declaration_scope == function.var_scope
@@ -797,15 +796,17 @@ pub(super) fn validate_scope_graph(tree: &FunctionTree) -> Result<(), Error> {
                     && function.arg_eval_variable_object_local.is_some()
                     && function.parameter_scope == Some(binding.storage_scope)
                     && binding.declaration_scope == binding.storage_scope
-                    && binding.name == "arguments"
+                    && tree.names.name(binding.name) == "arguments"
                     && binding.kind == (BindingKind::Lexical { is_const: false })
                     && binding.declaration_span.is_none()
-                    && function.locals.get(usize::from(index)).map(String::as_str)
-                        == Some("arguments")
+                    && function
+                        .locals
+                        .get(usize::from(index))
+                        .is_some_and(|id| tree.names.name(*id) == "arguments")
                     && !function
                         .parameter_names
                         .iter()
-                        .any(|name| name == "arguments") => {}
+                        .any(|name| tree.names.name(*name) == "arguments") => {}
             (None, []) => {}
             _ => {
                 return Err(Error::internal(
@@ -852,9 +853,7 @@ pub(super) fn validate_scope_graph(tree: &FunctionTree) -> Result<(), Error> {
                 .functions
                 .get(*child)
                 .ok_or_else(|| Error::internal("hoisted child function is out of bounds"))?;
-            if child.function_name.as_deref() != Some(binding.name.as_str())
-                || child.private_name_binding
-            {
+            if child.function_name != Some(binding.name) || child.private_name_binding {
                 return Err(Error::internal(
                     "hoisted child name metadata disagrees with its binding",
                 ));
@@ -1161,7 +1160,7 @@ pub(super) fn validate_scope_graph(tree: &FunctionTree) -> Result<(), Error> {
                 .functions
                 .get(*child_id)
                 .ok_or_else(|| Error::internal("scoped child function is out of bounds"))?;
-            if child.function_name.as_deref() != Some(binding.name.as_str())
+            if child.function_name != Some(binding.name)
                 || (child.execution_kind != BytecodeFunctionKind::Normal)
                     != binding.is_scoped_generator
                 || child.private_name_binding
@@ -1252,7 +1251,8 @@ pub(super) fn validate_scope_graph(tree: &FunctionTree) -> Result<(), Error> {
                                                 ClosureVariableName::Constant(name) => matches!(
                                                     function.constants.get(name as usize),
                                                     Some(IrConstant::Primitive(Value::String(found)))
-                                                        if found.to_utf8_lossy() == annex.name
+                                                        if found.to_utf8_lossy()
+                                                            == tree.names.name(annex.name)
                                                 ),
                                                 _ => false,
                                             }
@@ -1363,7 +1363,7 @@ pub(super) fn validate_scope_graph(tree: &FunctionTree) -> Result<(), Error> {
             let child = tree.functions.get(*child_id).ok_or_else(|| {
                 Error::internal("Program Annex B child function is out of bounds")
             })?;
-            if child.function_name.as_deref() != Some(binding.name.as_str())
+            if child.function_name != Some(binding.name)
                 || child.private_name_binding
                 || child.parent
                     != Some(ParentLink {
@@ -1417,7 +1417,7 @@ pub(super) fn validate_scope_graph(tree: &FunctionTree) -> Result<(), Error> {
                                 ClosureVariableName::Constant(name) => matches!(
                                     function.constants.get(name as usize),
                                     Some(IrConstant::Primitive(Value::String(found)))
-                                        if found.to_utf8_lossy() == binding.name
+                                        if found.to_utf8_lossy() == tree.names.name(binding.name)
                                 ),
                                 _ => false,
                             }
@@ -1455,7 +1455,7 @@ pub(super) fn validate_scope_graph(tree: &FunctionTree) -> Result<(), Error> {
                                 ClosureVariableName::Constant(name) => matches!(
                                     function.constants.get(name as usize),
                                     Some(IrConstant::Primitive(Value::String(found)))
-                                        if found.to_utf8_lossy() == binding.name
+                                        if found.to_utf8_lossy() == tree.names.name(binding.name)
                                 ),
                                 _ => false,
                             }
@@ -1498,7 +1498,7 @@ pub(super) fn validate_scope_graph(tree: &FunctionTree) -> Result<(), Error> {
                         BindingKind::Normal
                     };
                     let masked_program_lexical = declaration.is_lexical
-                        && function.first_global_declaration_is_normal(&declaration.name);
+                        && function.first_global_declaration_is_normal(declaration.name);
                     if binding.is_none_or(|binding| {
                         binding.storage != BindingStorage::Global
                             || if masked_program_lexical {
@@ -1717,7 +1717,7 @@ pub(super) fn validate_scope_graph(tree: &FunctionTree) -> Result<(), Error> {
                             ));
                         }
                         if binding.kind == BindingKind::WithObject
-                            && (binding.name != WITH_OBJECT_LOCAL_NAME
+                            && (tree.names.name(binding.name) != WITH_OBJECT_LOCAL_NAME
                                 || binding.storage_scope != binding.declaration_scope
                                 || function.scopes[binding.storage_scope.0].kind != ScopeKind::With
                                 || binding.is_catch_parameter)
@@ -1733,8 +1733,8 @@ pub(super) fn validate_scope_graph(tree: &FunctionTree) -> Result<(), Error> {
                                 | BindingKind::PrivateGetter { .. }
                                 | BindingKind::PrivateSetter { .. }
                                 | BindingKind::PrivateGetterSetter { .. }
-                        ) && (!binding.name.starts_with('#')
-                            || binding.name.len() == 1
+                        ) && (!tree.names.name(binding.name).starts_with('#')
+                            || tree.names.name(binding.name).len() == 1
                             || binding.storage_scope != binding.declaration_scope
                             || function.scopes[binding.storage_scope.0].kind
                                 != ScopeKind::ClassPrivate
@@ -1769,7 +1769,7 @@ pub(super) fn validate_scope_graph(tree: &FunctionTree) -> Result<(), Error> {
                             let supported_scope = supported_scope
                                 || (scope_kind == ScopeKind::FunctionRoot
                                     && function.derived_class_constructor
-                                    && binding.name == THIS_LOCAL_NAME
+                                    && tree.names.name(binding.name) == THIS_LOCAL_NAME
                                     && binding.kind == (BindingKind::Lexical { is_const: false })
                                     && binding.storage_scope == function.var_scope);
                             if binding.storage_scope != binding.declaration_scope
@@ -1830,7 +1830,7 @@ pub(super) fn validate_scope_graph(tree: &FunctionTree) -> Result<(), Error> {
                             || binding.declaration_scope != function.var_scope
                             || binding.declaration_span.is_some()
                             || binding.is_catch_parameter != external.is_catch_parameter
-                            || binding.name != external.name.to_utf8_lossy()
+                            || tree.names.name(binding.name) != external.name.to_utf8_lossy()
                             || !binding_kinds_compatible(binding.kind, expected_kind)
                         {
                             return Err(Error::internal(
@@ -1923,7 +1923,7 @@ pub(super) fn validate_scope_graph(tree: &FunctionTree) -> Result<(), Error> {
                     .get_mut(index)
                     .ok_or_else(|| Error::internal("synthetic local is out of bounds"))?,
                 true,
-            ) || name != synthetic.kind.name()
+            ) || tree.names.name(*name) != synthetic.kind.name()
             {
                 return Err(Error::internal("synthetic local metadata is malformed"));
             }
@@ -1951,7 +1951,7 @@ pub(super) fn validate_scope_graph(tree: &FunctionTree) -> Result<(), Error> {
                     && function
                         .locals
                         .first()
-                        .is_some_and(|name| name == EVAL_RET_LOCAL_NAME) => {}
+                        .is_some_and(|name| tree.names.name(*name) == EVAL_RET_LOCAL_NAME) => {}
             FunctionKind::Module
             | FunctionKind::Ordinary
             | FunctionKind::Method
@@ -1965,12 +1965,12 @@ pub(super) fn validate_scope_graph(tree: &FunctionTree) -> Result<(), Error> {
         }
         if function.bindings.iter().any(|binding| {
             matches!(
-                binding.name.as_str(),
+                tree.names.name(binding.name),
                 EVAL_RET_LOCAL_NAME | FINALLY_EVAL_RET_LOCAL_NAME
             )
         }) || function.locals.iter().enumerate().any(|(index, name)| {
             matches!(
-                name.as_str(),
+                tree.names.name(*name),
                 EVAL_RET_LOCAL_NAME | FINALLY_EVAL_RET_LOCAL_NAME
             ) && !seen_synthetic[index]
         }) {
@@ -2086,7 +2086,7 @@ pub(super) fn validate_scope_graph(tree: &FunctionTree) -> Result<(), Error> {
                         && binding.storage == BindingStorage::Local(index)
                         && binding.storage_scope == function.var_scope
                         && binding.declaration_scope == function.var_scope
-                        && function.function_name.as_deref() == Some(binding.name.as_str())
+                        && function.function_name == Some(binding.name)
                         && binding.kind
                             == (BindingKind::FunctionName {
                                 is_const: function.strict,
@@ -2137,7 +2137,7 @@ pub(super) fn validate_scope_graph(tree: &FunctionTree) -> Result<(), Error> {
                     "function-name binding is missing from the function root",
                 ));
             };
-            let function_name = function.function_name.as_deref().ok_or_else(|| {
+            let function_name = function.function_name.ok_or_else(|| {
                 Error::internal("function-name local has no intrinsic function name")
             })?;
             if root_bindings[..function_name_position]

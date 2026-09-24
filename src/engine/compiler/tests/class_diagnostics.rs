@@ -259,7 +259,9 @@ fn class_field_initializers_reset_async_lexing_to_the_normal_hidden_child() {
         .functions
         .iter()
         .find(|function| {
-            function.function_name.as_deref() == Some("build")
+            function
+                .function_name
+                .is_some_and(|id| tree.names.name(id) == "build")
                 && function.execution_kind == BytecodeFunctionKind::Async
         })
         .expect("outer async function");

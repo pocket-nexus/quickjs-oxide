@@ -17,6 +17,7 @@ use crate::engine::compiler::lexer::Token;
 use crate::engine::compiler::lexer::TokenKind;
 use crate::engine::compiler::lexer::quickjs_simple_lookahead_is_of;
 use crate::engine::compiler::model::ir::function::FunctionKind;
+use crate::engine::compiler::names::NameId;
 use crate::engine::compiler::parser::context::ForHeadDelimiter;
 use crate::engine::compiler::parser::context::ForIterationKind;
 use crate::engine::compiler::parser::context::Parser;
@@ -66,6 +67,51 @@ impl<'source> Parser<'source> {
             return Cow::Borrowed(raw);
         }
         Cow::Owned(self.lexer.decode_identifier_text(identifier.raw))
+    }
+
+    /// Intern an authored identifier's decoded text. A repeated spelling hits
+    /// the table without allocating; escaped spellings decode on this cold
+    /// path exactly like `identifier_text`.
+    pub(in crate::engine::compiler) fn intern_identifier(
+        &mut self,
+        identifier: &Identifier<'source>,
+    ) -> NameId {
+        let raw = identifier.raw.strip_prefix('#').unwrap_or(identifier.raw);
+        if !identifier.has_escape {
+            return self.names.intern(raw);
+        }
+        let decoded = self.lexer.decode_identifier_text(identifier.raw);
+        self.names.intern(&decoded)
+    }
+
+    /// Intern the `#name` binding-key spelling of a private identifier. The
+    /// decoded identifier body is interned separately by `intern_identifier`.
+    pub(in crate::engine::compiler) fn intern_private_identifier(
+        &mut self,
+        identifier: &Identifier<'source>,
+    ) -> NameId {
+        let mut binding = String::with_capacity(identifier.raw.len().saturating_add(1));
+        binding.push('#');
+        if identifier.has_escape {
+            binding.push_str(&self.lexer.decode_identifier_text(identifier.raw));
+        } else {
+            binding.push_str(identifier.raw.strip_prefix('#').unwrap_or(identifier.raw));
+        }
+        self.names.intern(&binding)
+    }
+
+    /// Intern one synthetic compiler name. The parser is the only caller.
+    pub(in crate::engine::compiler) fn intern_name(&mut self, name: &str) -> NameId {
+        self.names.intern(name)
+    }
+
+    /// Read back a name interned by the parser prologue. Shared synthetic
+    /// binding names are interned before parsing so hot emit sites never
+    /// allocate and never need a second mutable borrow of the parser.
+    pub(in crate::engine::compiler) fn pseudo_name(&self, name: &str) -> NameId {
+        self.names
+            .lookup(name)
+            .expect("synthetic binding name must be pre-interned")
     }
 
     /// Contextual-keyword comparison over decoded identifier text.
@@ -475,9 +521,14 @@ impl<'source> Parser<'source> {
                 | FunctionKind::Module
                 | FunctionKind::Eval(EvalKind::Indirect) => return false,
                 FunctionKind::Eval(EvalKind::Direct) => {
-                    return function
-                        .binding_from_scope(function.ir.var_scope, NEW_TARGET_LOCAL_NAME)
-                        .is_some();
+                    return self
+                        .names
+                        .lookup(NEW_TARGET_LOCAL_NAME)
+                        .is_some_and(|name| {
+                            function
+                                .binding_from_scope(function.ir.var_scope, name)
+                                .is_some()
+                        });
                 }
                 FunctionKind::Eval(EvalKind::None) => return false,
                 FunctionKind::Arrow => {

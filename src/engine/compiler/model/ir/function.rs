@@ -34,6 +34,8 @@ use crate::engine::compiler::model::scope::IrScope;
 use crate::engine::compiler::model::scope::ScopeId;
 use crate::engine::compiler::model::scope::ScopeKind;
 use crate::engine::compiler::module;
+use crate::engine::compiler::names::NameId;
+use crate::engine::compiler::names::NameTable;
 use crate::engine::compiler::pseudo_binding::ACTIVE_FUNCTION_LOCAL_NAME;
 use crate::engine::compiler::pseudo_binding::THIS_LOCAL_NAME;
 use crate::engine::value::JsString;
@@ -66,7 +68,7 @@ pub(in crate::engine::compiler) enum FunctionKind {
 
 #[derive(Debug)]
 pub(in crate::engine::compiler) struct IrParameterPatternBinding {
-    pub(in crate::engine::compiler) name: String,
+    pub(in crate::engine::compiler) name: NameId,
     pub(in crate::engine::compiler) parameter_local: u16,
     pub(in crate::engine::compiler) body_local: Option<u16>,
     pub(in crate::engine::compiler) declaration_span: Span,
@@ -108,7 +110,7 @@ pub(in crate::engine::compiler) struct FunctionIr {
     pub(in crate::engine::compiler) source: FunctionSourceInfo,
     /// Intrinsic function name, independent of contextual `SetName` inference
     /// for anonymous definitions.
-    pub(in crate::engine::compiler) function_name: Option<String>,
+    pub(in crate::engine::compiler) function_name: Option<NameId>,
     /// Whether a named expression may lazily create QuickJS's private
     /// `JS_VAR_FUNCTION_NAME` self binding. Declarations carry an intrinsic
     /// name but resolve recursion through their authored environment.
@@ -152,11 +154,11 @@ pub(in crate::engine::compiler) struct FunctionIr {
     /// Physical call-frame argument slots. Destructuring parameters use an
     /// unnamed slot, matching QuickJS's `JS_ATOM_NULL` argument descriptor;
     /// their individual BoundNames live in root locals instead.
-    pub(in crate::engine::compiler) parameters: Vec<Option<String>>,
+    pub(in crate::engine::compiler) parameters: Vec<Option<NameId>>,
     /// Every authored BoundName in formal-list order, including leaves of a
     /// BindingPattern. This is the authority for duplicate-parameter policy,
     /// `arguments` shadowing, and Annex B parameter-name checks.
-    pub(in crate::engine::compiler) parameter_names: Vec<String>,
+    pub(in crate::engine::compiler) parameter_names: Vec<NameId>,
     /// QuickJS `defined_arg_count`, exposed as the function's public `length`.
     /// An identifier rest parameter owns a physical argument slot but is not
     /// included in this count.
@@ -198,7 +200,7 @@ pub(in crate::engine::compiler) struct FunctionIr {
     /// Without a Parameter Environment it runs in FunctionRoot; with one it
     /// runs in the parentless parameter scope and is copied out at the end.
     pub(in crate::engine::compiler) pattern_parameter_initialization: bool,
-    pub(in crate::engine::compiler) locals: Vec<String>,
+    pub(in crate::engine::compiler) locals: Vec<NameId>,
     pub(in crate::engine::compiler) scopes: Vec<IrScope>,
     pub(in crate::engine::compiler) bindings: Vec<IrBinding>,
     pub(in crate::engine::compiler) global_declarations: Vec<IrGlobalDeclaration>,
@@ -212,7 +214,7 @@ pub(in crate::engine::compiler) struct FunctionIr {
     /// First caller lexical name which conflicts with an eval `var`/function.
     /// The eval still compiles so global declaration instantiation can run
     /// before this typed SyntaxError is thrown at bytecode entry.
-    pub(in crate::engine::compiler) eval_redeclaration: Option<String>,
+    pub(in crate::engine::compiler) eval_redeclaration: Option<NameId>,
     pub(in crate::engine::compiler) function_hoists_installed: bool,
     /// Phase marker for the final hidden-frame entry prefix. Unlike ordinary
     /// body hoists this also applies to scripts and eval roots, so it cannot
@@ -292,11 +294,11 @@ impl SuperCapabilities {
 
 #[derive(Clone, Debug)]
 pub(in crate::engine::compiler) struct FunctionIrOptions {
-    pub(in crate::engine::compiler) function_name: Option<String>,
+    pub(in crate::engine::compiler) function_name: Option<NameId>,
     pub(in crate::engine::compiler) private_name_binding: bool,
     pub(in crate::engine::compiler) class_constructor: bool,
     pub(in crate::engine::compiler) derived_class_constructor: bool,
-    pub(in crate::engine::compiler) parameters: Vec<Option<String>>,
+    pub(in crate::engine::compiler) parameters: Vec<Option<NameId>>,
     pub(in crate::engine::compiler) defined_argument_count: usize,
     pub(in crate::engine::compiler) has_simple_parameter_list: bool,
     pub(in crate::engine::compiler) rest_parameter: Option<u16>,
@@ -310,6 +312,7 @@ impl FunctionIr {
         kind: FunctionKind,
         source: FunctionSourceInfo,
         options: FunctionIrOptions,
+        names: &mut NameTable,
     ) -> Result<Self, Error> {
         let super_capabilities = options.super_capabilities.validated()?;
         if options.derived_class_constructor
@@ -337,7 +340,7 @@ impl FunctionIr {
         let (locals, eval_ret_local, synthetic_locals) =
             if matches!(kind, FunctionKind::Script | FunctionKind::Eval(_)) {
                 (
-                    vec![EVAL_RET_LOCAL_NAME.to_owned()],
+                    vec![names.intern(EVAL_RET_LOCAL_NAME)],
                     Some(0),
                     vec![SyntheticLocal {
                         index: 0,
@@ -462,7 +465,7 @@ impl FunctionIr {
             };
             let index = u16::try_from(index)
                 .map_err(|_| Error::new(ErrorKind::JsInternal, "too many arguments"))?;
-            function.parameter_names.push(name.clone());
+            function.parameter_names.push(name);
             function.add_binding(
                 function.var_scope,
                 function.var_scope,
@@ -481,6 +484,7 @@ impl FunctionIr {
     /// need physical operands until the later identifier-linking pass.
     pub(in crate::engine::compiler) fn allocate_derived_constructor_pseudo_bindings(
         &mut self,
+        names: &mut NameTable,
     ) -> Result<(), Error> {
         if !self.derived_class_constructor
             || !self.class_constructor
@@ -500,12 +504,13 @@ impl FunctionIr {
         }
         let active_function = u16::try_from(self.locals.len())
             .map_err(|_| Error::new(ErrorKind::JsInternal, "too many local variables"))?;
-        self.locals.push(ACTIVE_FUNCTION_LOCAL_NAME.to_owned());
+        let active_function_name = names.intern(ACTIVE_FUNCTION_LOCAL_NAME);
+        self.locals.push(active_function_name);
         self.active_function_local = Some(active_function);
         self.add_binding(
             self.var_scope,
             self.var_scope,
-            ACTIVE_FUNCTION_LOCAL_NAME.to_owned(),
+            active_function_name,
             BindingStorage::Local(active_function),
             BindingKind::Normal,
             None,
@@ -513,12 +518,13 @@ impl FunctionIr {
 
         let this = u16::try_from(self.locals.len())
             .map_err(|_| Error::new(ErrorKind::JsInternal, "too many local variables"))?;
-        self.locals.push(THIS_LOCAL_NAME.to_owned());
+        let this_name = names.intern(THIS_LOCAL_NAME);
+        self.locals.push(this_name);
         self.this_local = Some(this);
         self.add_binding(
             self.var_scope,
             self.var_scope,
-            THIS_LOCAL_NAME.to_owned(),
+            this_name,
             BindingStorage::Local(this),
             BindingKind::Lexical { is_const: false },
             None,
@@ -545,7 +551,7 @@ impl FunctionIr {
         &mut self,
         storage_scope: ScopeId,
         declaration_scope: ScopeId,
-        name: String,
+        name: NameId,
         storage: BindingStorage,
         kind: BindingKind,
         declaration_span: Option<Span>,
@@ -565,13 +571,14 @@ impl FunctionIr {
         self.scopes[storage_scope.0].bindings.push(binding);
         self.scopes[storage_scope.0]
             .bindings_by_name
-            .insert(self.bindings[binding.0].name.clone(), binding);
+            .insert(name, binding);
         binding
     }
 
     pub(in crate::engine::compiler) fn add_synthetic_local(
         &mut self,
         kind: SyntheticLocalKind,
+        names: &mut NameTable,
     ) -> Result<u16, Error> {
         if self.locals.len() >= MAX_LOCAL_VARIABLES {
             return Err(Error::new(
@@ -581,7 +588,7 @@ impl FunctionIr {
         }
         let index = u16::try_from(self.locals.len())
             .map_err(|_| Error::new(ErrorKind::JsInternal, "too many local variables"))?;
-        self.locals.push(kind.name().to_owned());
+        self.locals.push(names.intern(kind.name()));
         self.synthetic_locals.push(SyntheticLocal { index, kind });
         Ok(index)
     }
@@ -589,7 +596,7 @@ impl FunctionIr {
     pub(in crate::engine::compiler) fn binding_in_scope(
         &self,
         scope: ScopeId,
-        name: &str,
+        name: NameId,
     ) -> Option<&IrBinding> {
         self.binding_id_in_scope(scope, name)
             .map(|binding| &self.bindings[binding.0])
@@ -598,7 +605,7 @@ impl FunctionIr {
     pub(in crate::engine::compiler) fn binding_id_in_scope(
         &self,
         scope: ScopeId,
-        name: &str,
+        name: NameId,
     ) -> Option<BindingId> {
         self.scopes[scope.0].binding_named(name)
     }
@@ -611,14 +618,14 @@ impl FunctionIr {
         for &binding in &scope.bindings {
             scope
                 .bindings_by_name
-                .insert(self.bindings[binding.0].name.clone(), binding);
+                .insert(self.bindings[binding.0].name, binding);
         }
     }
 
     pub(in crate::engine::compiler) fn binding_id_from_scope(
         &self,
         mut scope: ScopeId,
-        name: &str,
+        name: NameId,
     ) -> Option<(ScopeId, BindingId)> {
         loop {
             if let Some(binding) = self.binding_id_in_scope(scope, name) {
@@ -630,7 +637,7 @@ impl FunctionIr {
 
     pub(in crate::engine::compiler) fn first_global_declaration_is_normal(
         &self,
-        name: &str,
+        name: NameId,
     ) -> bool {
         self.global_declarations
             .iter()
@@ -641,7 +648,7 @@ impl FunctionIr {
     pub(in crate::engine::compiler) fn binding_from_scope(
         &self,
         mut scope: ScopeId,
-        name: &str,
+        name: NameId,
     ) -> Option<ResolvedBinding> {
         loop {
             if let Some(binding) = self.binding_in_scope(scope, name) {
@@ -674,6 +681,7 @@ impl FunctionIr {
 #[derive(Debug)]
 pub(in crate::engine::compiler) struct FunctionTree {
     pub(in crate::engine::compiler) functions: Vec<FunctionIr>,
+    pub(in crate::engine::compiler) names: NameTable,
     pub(in crate::engine::compiler) source: SourceText,
     pub(in crate::engine::compiler) filename: JsString,
     pub(in crate::engine::compiler) module: Option<module::IrModule>,

@@ -17,6 +17,7 @@ use crate::engine::compiler::model::ir::function::IrParameterPatternBinding;
 use crate::engine::compiler::model::scope::IrScope;
 use crate::engine::compiler::model::scope::ScopeId;
 use crate::engine::compiler::model::scope::ScopeKind;
+use crate::engine::compiler::names::NameId;
 use crate::engine::compiler::parser::context::Parser;
 use crate::engine::compiler::parser::diagnostics::source_span;
 use crate::engine::value::JsString;
@@ -29,7 +30,7 @@ impl<'source> Parser<'source> {
     /// call-frame input ABI.
     pub(in crate::engine::compiler) fn append_identifier_parameter(
         &mut self,
-        name: String,
+        name: NameId,
         span: Span,
     ) -> Result<u16, Error> {
         let function = self.current_ir_mut();
@@ -50,9 +51,9 @@ impl<'source> Parser<'source> {
         }
         let index = u16::try_from(function.parameters.len())
             .map_err(|_| Error::new(ErrorKind::JsInternal, "too many arguments"))?;
-        function.parameters.push(Some(name.clone()));
+        function.parameters.push(Some(name));
         function.parameter_argument_locals.push(None);
-        function.parameter_names.push(name.clone());
+        function.parameter_names.push(name);
         function.ir.add_binding(
             function.ir.var_scope,
             function.ir.var_scope,
@@ -127,7 +128,7 @@ impl<'source> Parser<'source> {
 
     pub(in crate::engine::compiler) fn register_pattern_parameter_binding(
         &mut self,
-        name: &str,
+        name: NameId,
         declaration_span: Span,
         conflict_span: Span,
     ) -> Result<(), Error> {
@@ -146,24 +147,23 @@ impl<'source> Parser<'source> {
             .current_ir()
             .parameter_names
             .iter()
-            .any(|parameter| parameter == name)
+            .any(|parameter| *parameter == name)
         {
             return Err(Error::syntax(
                 "duplicate parameter names not allowed in this context",
                 source_span(conflict_span),
             ));
         }
-        self.current_ir_mut().parameter_names.push(name.to_owned());
+        self.current_ir_mut().parameter_names.push(name);
         if self.current_ir().parameter_scope.is_none() {
             return self.register_var_binding(name, declaration_span, conflict_span);
         }
 
-        let parameter_local =
-            self.allocate_parameter_binding_local(name.to_owned(), declaration_span)?;
+        let parameter_local = self.allocate_parameter_binding_local(name, declaration_span)?;
         self.current_ir_mut()
             .parameter_pattern_bindings
             .push(IrParameterPatternBinding {
-                name: name.to_owned(),
+                name,
                 parameter_local,
                 body_local: None,
                 declaration_span,
@@ -173,7 +173,7 @@ impl<'source> Parser<'source> {
 
     pub(in crate::engine::compiler) fn allocate_parameter_binding_local(
         &mut self,
-        name: String,
+        name: NameId,
         span: Span,
     ) -> Result<u16, Error> {
         let function = self.current_ir_mut();
@@ -187,7 +187,7 @@ impl<'source> Parser<'source> {
                     "parameter binding exceeded its pre-scan reservation",
                 ));
             }
-            function.locals[cell] = name.clone();
+            function.locals[cell] = name;
             u16::try_from(cell)
                 .map_err(|_| Error::new(ErrorKind::JsInternal, "too many local variables"))?
         } else {
@@ -199,7 +199,7 @@ impl<'source> Parser<'source> {
             }
             let local = u16::try_from(function.locals.len())
                 .map_err(|_| Error::new(ErrorKind::JsInternal, "too many local variables"))?;
-            function.locals.push(name.clone());
+            function.locals.push(name);
             local
         };
         function.parameter_locals.push(local);
@@ -253,7 +253,7 @@ impl<'source> Parser<'source> {
             return Ok(());
         }
         let scan_span = self.current().span;
-        let function = self.current_ir_mut();
+        let function = &mut self.functions[self.current_function];
         if !matches!(
             function.kind,
             FunctionKind::Ordinary | FunctionKind::Method | FunctionKind::Arrow
@@ -283,9 +283,8 @@ impl<'source> Parser<'source> {
                         .with_span(source_span(scan_span)),
                 );
             }
-            function
-                .locals
-                .resize(bound_name_count, "<parameter-reserved>".to_owned());
+            let reserved = self.names.intern("<parameter-reserved>");
+            function.locals.resize(bound_name_count, reserved);
             function.parameter_local_reservation_count = Some(bound_name_count);
         }
         function.ops.clear();
@@ -373,7 +372,7 @@ impl<'source> Parser<'source> {
 
     pub(in crate::engine::compiler) fn register_plain_identifier_parameter(
         &mut self,
-        name: String,
+        name: NameId,
         span: Span,
     ) -> Result<(), Error> {
         let argument = self.append_identifier_parameter(name, span)?;
@@ -390,10 +389,10 @@ impl<'source> Parser<'source> {
 
     pub(in crate::engine::compiler) fn parse_default_identifier_parameter(
         &mut self,
-        name: String,
+        name: NameId,
         span: Span,
     ) -> Result<(), Error> {
-        let argument = self.append_identifier_parameter(name.clone(), span)?;
+        let argument = self.append_identifier_parameter(name, span)?;
         self.current_ir_mut().has_simple_parameter_list = false;
         self.current_ir_mut()
             .parameter_default_sources
@@ -410,9 +409,8 @@ impl<'source> Parser<'source> {
         self.anonymous_function_definition = None;
         self.parse_assignment_allow_in()?;
         if let Some(definition) = self.take_anonymous_function_definition() {
-            let name = self.add_constant(IrConstant::Primitive(Value::String(
-                JsString::try_from_utf8(&name)?,
-            )))?;
+            let js_name = JsString::try_from_utf8(self.names.name(name))?;
+            let name = self.add_constant(IrConstant::Primitive(Value::String(js_name)))?;
             self.emit_anonymous_set_name(definition, Instruction::SetName(name))?;
         }
         self.emit_instruction(Instruction::Dup)?;
@@ -425,7 +423,7 @@ impl<'source> Parser<'source> {
 
     pub(in crate::engine::compiler) fn register_rest_identifier_parameter(
         &mut self,
-        name: String,
+        name: NameId,
         span: Span,
     ) -> Result<(), Error> {
         let argument = self.append_identifier_parameter(name, span)?;
@@ -497,13 +495,13 @@ impl<'source> Parser<'source> {
             let (name, parameter_local, declaration_span) = {
                 let binding = &function.parameter_pattern_bindings[binding_index];
                 (
-                    binding.name.clone(),
+                    binding.name,
                     binding.parameter_local,
                     binding.declaration_span,
                 )
             };
             if function
-                .binding_in_scope(function.ir.var_scope, &name)
+                .binding_in_scope(function.ir.var_scope, name)
                 .is_some()
             {
                 return Err(Error::internal(
@@ -518,7 +516,7 @@ impl<'source> Parser<'source> {
             }
             let body_local = u16::try_from(function.locals.len())
                 .map_err(|_| Error::new(ErrorKind::JsInternal, "too many local variables"))?;
-            function.locals.push(name.clone());
+            function.locals.push(name);
             function.ir.add_binding(
                 function.ir.var_scope,
                 function.ir.var_scope,

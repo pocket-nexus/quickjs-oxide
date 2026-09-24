@@ -28,7 +28,6 @@ use crate::engine::compiler::parser::context::MemberReference;
 use crate::engine::compiler::parser::context::Parser;
 use crate::engine::compiler::parser::context::PowerMode;
 use crate::engine::compiler::parser::diagnostics::source_offset;
-use crate::engine::compiler::private_reference;
 use crate::engine::value::JsString;
 use crate::engine::value::PrimitiveValue as Value;
 
@@ -166,7 +165,8 @@ impl<'source> Parser<'source> {
             if let Some(target) =
                 self.promote_tail_identifier_get(IdentifierReferenceAccess::Get)?
             {
-                let infer_name = direct_identifier_name.as_deref() == Some(target.name.as_str());
+                let infer_name =
+                    direct_identifier_name.as_deref() == Some(self.names.name(target.name));
                 return self.parse_logical_identifier_assignment(target, logical, infer_name);
             }
             return self.parse_logical_member_assignment(logical);
@@ -238,11 +238,11 @@ impl<'source> Parser<'source> {
             self.parse_assignment()?;
             self.inherit_source_marker_at(rhs_start, source_offset(target.span)?)?;
             let anonymous_rhs = self.take_anonymous_function_definition();
-            if direct_identifier_name.as_deref() == Some(target.name.as_str())
+            if direct_identifier_name.as_deref() == Some(self.names.name(target.name))
                 && let Some(definition) = anonymous_rhs
             {
                 let name_constant = self.add_constant(IrConstant::Primitive(Value::String(
-                    JsString::try_from_utf8(&target.name)?,
+                    JsString::try_from_utf8(self.names.name(target.name))?,
                 )))?;
                 self.emit_anonymous_set_name(definition, Instruction::SetName(name_constant))?;
             }
@@ -318,7 +318,7 @@ impl<'source> Parser<'source> {
         let anonymous_rhs = self.take_anonymous_function_definition();
         if infer_name && let Some(definition) = anonymous_rhs {
             let name_constant = self.add_constant(IrConstant::Primitive(Value::String(
-                JsString::try_from_utf8(&target.name)?,
+                JsString::try_from_utf8(self.names.name(target.name))?,
             )))?;
             self.emit_anonymous_set_name(definition, Instruction::SetName(name_constant))?;
         }
@@ -363,7 +363,8 @@ impl<'source> Parser<'source> {
         &self,
         target: &IdentifierReference,
     ) -> Result<(), Error> {
-        if self.current_ir().strict && matches!(target.name.as_str(), "eval" | "arguments") {
+        if self.current_ir().strict && matches!(self.names.name(target.name), "eval" | "arguments")
+        {
             return Err(self.syntax_here("invalid lvalue in strict mode"));
         }
         Ok(())
@@ -1084,8 +1085,7 @@ impl<'source> Parser<'source> {
             let token = *self.current();
             let name = match token.kind {
                 TokenKind::PrivateIdentifier(identifier) => {
-                    let name =
-                        private_reference::private_binding_name(&self.identifier_text(&identifier));
+                    let name = self.intern_private_identifier(&identifier);
                     self.advance()?;
                     let operation =
                         self.emit_private_field_get(name, token.span, source_offset(member_span)?)?;
@@ -1263,30 +1263,32 @@ impl<'source> Parser<'source> {
     pub(in crate::engine::compiler) fn take_direct_eval_scope(
         &mut self,
     ) -> Result<Option<ScopeId>, Error> {
-        let function = self.current_ir_mut();
-        if function.context.last_identifier_reference != function.ops.len().checked_sub(1) {
-            return Ok(None);
-        }
-        let Some(SpannedIrOp {
-            op:
-                IrOp::Identifier {
-                    name,
-                    scope,
-                    access: IdentifierAccess::Get,
-                    ..
-                },
-            ..
-        }) = function.ops.last()
-        else {
-            return Err(Error::internal(
-                "identifier Reference marker did not point to a getter",
-            ));
+        let (name, scope) = {
+            let function = self.current_ir_mut();
+            if function.context.last_identifier_reference != function.ops.len().checked_sub(1) {
+                return Ok(None);
+            }
+            let Some(SpannedIrOp {
+                op:
+                    IrOp::Identifier {
+                        name,
+                        scope,
+                        access: IdentifierAccess::Get,
+                        ..
+                    },
+                ..
+            }) = function.ops.last()
+            else {
+                return Err(Error::internal(
+                    "identifier Reference marker did not point to a getter",
+                ));
+            };
+            (*name, *scope)
         };
-        if name != "eval" {
+        if self.names.name(name) != "eval" {
             return Ok(None);
         }
-        let scope = *scope;
-        function.context.last_identifier_reference = None;
+        self.current_ir_mut().context.last_identifier_reference = None;
         Ok(Some(scope))
     }
 

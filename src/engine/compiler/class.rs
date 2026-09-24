@@ -25,6 +25,7 @@ use crate::engine::compiler::model::ir::function::FunctionSourceInfo;
 use crate::engine::compiler::model::ir::function::ParentLink;
 use crate::engine::compiler::model::ir::function::SuperCapabilities;
 use crate::engine::compiler::model::scope::ScopeKind;
+use crate::engine::compiler::names::NameId;
 use crate::engine::compiler::parser::builder::FunctionBuilder;
 use crate::engine::compiler::parser::context::AnonymousFunctionDefinition;
 use crate::engine::compiler::parser::context::ModuleDeclarationExport;
@@ -34,7 +35,6 @@ use crate::engine::compiler::parser::diagnostics::lex_error;
 use crate::engine::compiler::parser::diagnostics::source_offset;
 use crate::engine::compiler::parser::diagnostics::source_span;
 use crate::engine::compiler::parser::literals::parse_number;
-use crate::engine::compiler::private_reference;
 use crate::engine::value::JsString;
 use crate::engine::value::PrimitiveValue as Value;
 use crate::source::SourceOffset;
@@ -52,7 +52,7 @@ use fields::ClassElementState;
 enum ClassPropertyKey {
     Fixed { value: JsString },
     Computed,
-    Private { name: String, span: Span },
+    Private { name: NameId, span: Span },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -105,7 +105,7 @@ impl<'source> Parser<'source> {
                 IdentifierContext::Variable,
             )?;
             self.advance()?;
-            Some((self.identifier_text(&identifier).into_owned(), span))
+            Some((self.intern_identifier(&identifier), span))
         } else {
             None
         };
@@ -118,10 +118,10 @@ impl<'source> Parser<'source> {
         let outer_binding = if expression {
             None
         } else if let Some((name, span)) = &name {
-            Some((name.clone(), *span))
+            Some((*name, *span))
         } else {
             Some((
-                crate::engine::code::module::MODULE_DEFAULT_BINDING_NAME.to_owned(),
+                self.intern_name(crate::engine::code::module::MODULE_DEFAULT_BINDING_NAME),
                 class_token.span,
             ))
         };
@@ -129,10 +129,10 @@ impl<'source> Parser<'source> {
         // The declaration binding is distinct from the immutable inner class
         // name binding. It is registered in the surrounding scope before the
         // class evaluation scope is entered, just like QuickJS JS_VAR_DEF_LET.
-        if let Some((outer_name, outer_span)) = &outer_binding {
+        if let Some((outer_name, outer_span)) = outer_binding {
             self.register_lexical_binding(
                 outer_name,
-                *outer_span,
+                outer_span,
                 self.current().span,
                 false,
                 false,
@@ -144,7 +144,7 @@ impl<'source> Parser<'source> {
             // This scope already covers a future heritage expression, so a
             // same-name `extends C` observes the inner TDZ rather than the
             // declaration outside the class.
-            self.register_lexical_binding(name, *span, self.current().span, true, false)?;
+            self.register_lexical_binding(*name, *span, self.current().span, true, false)?;
         }
 
         let has_heritage = if matches!(self.current().kind, TokenKind::Keyword(Keyword::Extends)) {
@@ -168,7 +168,7 @@ impl<'source> Parser<'source> {
 
         let constructor_placeholder = self.emit(IrOp::MakeClosure(u32::MAX))?;
         let class_name = match &name {
-            Some((name, _)) => JsString::try_from_utf8(name)?,
+            Some((name, _)) => JsString::try_from_utf8(self.names.name(*name))?,
             None if default_declaration => JsString::from_static("default"),
             None => JsString::from_static(""),
         };
@@ -200,6 +200,9 @@ impl<'source> Parser<'source> {
         };
         let class_end = SourceOffset::try_from_usize(closing_brace.end.byte_offset)
             .map_err(|error| Error::internal(error.to_string()))?;
+        let constructor_name = name
+            .as_ref()
+            .map_or_else(|| self.names.intern(""), |(name, _)| *name);
         {
             let constructor = self
                 .functions
@@ -207,10 +210,7 @@ impl<'source> Parser<'source> {
                 .ok_or_else(|| Error::internal("class constructor child disappeared"))?;
             constructor.class_constructor = true;
             constructor.derived_class_constructor = has_heritage;
-            constructor.function_name = Some(
-                name.as_ref()
-                    .map_or_else(String::new, |(name, _)| name.clone()),
-            );
+            constructor.function_name = Some(constructor_name);
             constructor.source.span = class_token.span;
             constructor.source.definition = class_start;
             constructor.source.range = Some(class_start..class_end);
@@ -235,7 +235,7 @@ impl<'source> Parser<'source> {
         self.emit_instruction(Instruction::Drop)?;
         if let Some((name, span)) = &name {
             self.emit_instruction(Instruction::Dup)?;
-            self.emit_identifier(name.clone(), *span, IdentifierAccess::Initialize)?;
+            self.emit_identifier(*name, *span, IdentifierAccess::Initialize)?;
         }
         let static_initializer_start = self.finish_class_static_initializer(&mut elements)?;
         self.pop_scope(private_scope)?;
@@ -503,10 +503,9 @@ impl<'source> Parser<'source> {
                 if is_constructor {
                     return Err(self.syntax_here("invalid method name"));
                 }
+                let name = self.intern_private_identifier(&identifier);
                 return Ok(ClassPropertyKey::Private {
-                    name: private_reference::private_binding_name(
-                        &self.identifier_text(&identifier),
-                    ),
+                    name,
                     span: token.span,
                 });
             }
@@ -593,6 +592,7 @@ impl<'source> Parser<'source> {
                 strict: true,
                 super_capabilities: SuperCapabilities::PROPERTY,
             },
+            &mut self.names,
         )?);
         self.current_function = child;
         self.emit_instruction(Instruction::CheckCtor)?;
@@ -641,8 +641,9 @@ impl<'source> Parser<'source> {
                 strict: true,
                 super_capabilities: SuperCapabilities::CALL_AND_PROPERTY,
             },
+            &mut self.names,
         )?);
-        self.functions[child].allocate_derived_constructor_pseudo_bindings()?;
+        self.functions[child].allocate_derived_constructor_pseudo_bindings(&mut self.names)?;
         self.current_function = child;
         let this = self
             .current_ir()

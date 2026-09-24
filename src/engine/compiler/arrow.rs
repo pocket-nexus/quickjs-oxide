@@ -106,6 +106,7 @@ impl<'source> Parser<'source> {
                 strict: parent_strict,
                 super_capabilities,
             },
+            &mut self.names,
         )?);
         self.functions[child].execution_kind = execution_kind;
         self.functions[child].arguments_forbidden = self.functions[parent].arguments_forbidden;
@@ -144,10 +145,8 @@ impl<'source> Parser<'source> {
                     false,
                     IdentifierContext::Argument,
                 )?;
-                self.register_plain_identifier_parameter(
-                    self.identifier_text(&identifier).into_owned(),
-                    token.span,
-                )?;
+                let parameter = self.intern_identifier(&identifier);
+                self.register_plain_identifier_parameter(parameter, token.span)?;
                 parameter_tokens.push((identifier, token.span));
                 self.advance()?;
             }
@@ -210,11 +209,8 @@ impl<'source> Parser<'source> {
                             false,
                             IdentifierContext::Argument,
                         )?;
+                        let parameter = self.intern_identifier(&identifier);
                         parameter_tokens.push((identifier, token.span));
-                        let parameter = parameter_tokens
-                            .last()
-                            .map(|(identifier, _)| self.identifier_text(identifier).into_owned())
-                            .ok_or_else(|| Error::internal("arrow parameter disappeared"))?;
                         self.advance()?;
                         if is_rest {
                             self.register_rest_identifier_parameter(parameter, token.span)?;

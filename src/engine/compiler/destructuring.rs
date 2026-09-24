@@ -14,6 +14,7 @@ use crate::engine::compiler::model::ir::IdentifierAccess;
 use crate::engine::compiler::model::ir::IdentifierReferenceAccess;
 use crate::engine::compiler::model::ir::IrConstant;
 use crate::engine::compiler::model::ir::PrivateFieldAccess;
+use crate::engine::compiler::names::NameId;
 use crate::engine::compiler::parser::context::ForAssignmentDeclaration;
 use crate::engine::compiler::parser::context::ForAssignmentTargetInfo;
 use crate::engine::compiler::parser::context::ForHeadDelimiter;
@@ -300,9 +301,9 @@ impl DestructuringAssignmentReference {
         }
     }
 
-    fn inferred_name(&self) -> Option<&str> {
+    fn inferred_name(&self) -> Option<NameId> {
         match self {
-            Self::Identifier(reference) => Some(&reference.name),
+            Self::Identifier(reference) => Some(reference.name),
             Self::Member(_) => None,
         }
     }
@@ -1141,7 +1142,7 @@ impl<'source> Parser<'source> {
     fn parse_array_assignment_leaf(&mut self, is_rest: bool) -> Result<(), Error> {
         let target = self.parse_destructuring_assignment_reference()?;
         let reference_depth = target.depth();
-        let inferred_name = target.inferred_name().map(str::to_owned);
+        let inferred_name = target.inferred_name();
         let target_site = target.site()?;
 
         if is_rest {
@@ -1158,9 +1159,9 @@ impl<'source> Parser<'source> {
                 self.parse_assignment_allow_in()?;
                 let anonymous_default = self.take_anonymous_function_definition();
                 if let (Some(definition), Some(name)) = (anonymous_default, inferred_name) {
-                    let name_constant = self.add_constant(IrConstant::Primitive(Value::String(
-                        JsString::try_from_utf8(&name)?,
-                    )))?;
+                    let js_name = JsString::try_from_utf8(self.names.name(name))?;
+                    let name_constant =
+                        self.add_constant(IrConstant::Primitive(Value::String(js_name)))?;
                     self.emit_anonymous_set_name(definition, Instruction::SetName(name_constant))?;
                 }
                 let has_value_target = self.current_ir().ops.len();
@@ -1404,7 +1405,7 @@ impl<'source> Parser<'source> {
             self.parse_destructuring_assignment_reference()?
         };
         let reference_depth = target.depth();
-        let inferred_name = target.inferred_name().map(str::to_owned);
+        let inferred_name = target.inferred_name();
         let target_site = target.site()?;
         self.emit_object_assignment_read_reorder(fixed_key.is_none(), reference_depth)?;
 
@@ -1425,7 +1426,7 @@ impl<'source> Parser<'source> {
             let anonymous_default = self.take_anonymous_function_definition();
             if let (Some(definition), Some(name)) = (anonymous_default, inferred_name) {
                 let name_constant = self.add_constant(IrConstant::Primitive(Value::String(
-                    JsString::try_from_utf8(&name)?,
+                    JsString::try_from_utf8(self.names.name(name))?,
                 )))?;
                 self.emit_anonymous_set_name(definition, Instruction::SetName(name_constant))?;
             }
@@ -1460,14 +1461,14 @@ impl<'source> Parser<'source> {
         let object_environment =
             self.parser_scope_has_authored_with(self.current_function, scope)?;
         let reference = IdentifierReference {
-            name: self.identifier_text(&identifier).into_owned(),
+            name: self.intern_identifier(&identifier),
             span: token.span,
             scope,
             object_environment,
         };
         if object_environment {
             self.emit_identifier_reference_inherited(
-                reference.name.clone(),
+                reference.name,
                 reference.span,
                 reference.scope,
                 IdentifierReferenceAccess::Prepare,
@@ -1687,13 +1688,13 @@ impl<'source> Parser<'source> {
             )?;
             let invalid_lexical_let = declaration == ForAssignmentDeclaration::Lexical
                 && self.identical_name(&identifier, "let");
-            let name = self.identifier_text(&identifier).into_owned();
+            let name = self.intern_identifier(&identifier);
             let strict = self.current_ir().strict;
             self.advance()?;
             if invalid_lexical_let {
                 return Err(self.syntax_here("invalid lexical variable name"));
             }
-            if strict && matches!(name.as_str(), "eval" | "arguments") {
+            if strict && matches!(self.names.name(name), "eval" | "arguments") {
                 return Err(Error::syntax(
                     "invalid destructuring target",
                     source_span(token.span),
@@ -1702,7 +1703,7 @@ impl<'source> Parser<'source> {
             match declaration {
                 ForAssignmentDeclaration::Lexical => {
                     self.register_lexical_binding(
-                        &name,
+                        name,
                         token.span,
                         self.current().span,
                         is_const,
@@ -1712,12 +1713,12 @@ impl<'source> Parser<'source> {
                 ForAssignmentDeclaration::Var => {
                     if site == BindingSite::Parameter {
                         self.register_pattern_parameter_binding(
-                            &name,
+                            name,
                             token.span,
                             self.current().span,
                         )?;
                     } else {
-                        self.register_var_binding(&name, token.span, self.current().span)?;
+                        self.register_var_binding(name, token.span, self.current().span)?;
                     }
                 }
                 ForAssignmentDeclaration::Assignment => {
@@ -1736,7 +1737,7 @@ impl<'source> Parser<'source> {
             let next_offset = if declaration == ForAssignmentDeclaration::Var && !parameter_lexical
             {
                 self.emit_identifier_reference_inherited(
-                    name.clone(),
+                    name,
                     token.span,
                     reference_scope,
                     IdentifierReferenceAccess::Prepare,
@@ -1761,9 +1762,9 @@ impl<'source> Parser<'source> {
                     // initializer is using the NoIn grammar.
                     self.parse_assignment_allow_in()?;
                     if let Some(definition) = self.take_anonymous_function_definition() {
-                        let name_constant = self.add_constant(IrConstant::Primitive(
-                            Value::String(JsString::try_from_utf8(&name)?),
-                        ))?;
+                        let js_name = JsString::try_from_utf8(self.names.name(name))?;
+                        let name_constant =
+                            self.add_constant(IrConstant::Primitive(Value::String(js_name)))?;
                         self.emit_anonymous_set_name(
                             definition,
                             Instruction::SetName(name_constant),
@@ -2111,8 +2112,8 @@ impl<'source> Parser<'source> {
         if invalid_lexical_let {
             return Err(self.syntax_here("invalid lexical variable name"));
         }
-        let name = self.identifier_text(&identifier).into_owned();
-        if self.current_ir().strict && matches!(name.as_str(), "eval" | "arguments") {
+        let name = self.intern_identifier(&identifier);
+        if self.current_ir().strict && matches!(self.names.name(name), "eval" | "arguments") {
             // For shorthand properties QuickJS has already advanced to the
             // token following the property name when it diagnoses this case.
             let span = if shorthand_binding {
@@ -2127,7 +2128,7 @@ impl<'source> Parser<'source> {
         }
         match declaration {
             ForAssignmentDeclaration::Lexical => self.register_lexical_binding(
-                &name,
+                name,
                 token.span,
                 self.current().span,
                 is_const,
@@ -2135,13 +2136,9 @@ impl<'source> Parser<'source> {
             )?,
             ForAssignmentDeclaration::Var => {
                 if site == BindingSite::Parameter {
-                    self.register_pattern_parameter_binding(
-                        &name,
-                        token.span,
-                        self.current().span,
-                    )?;
+                    self.register_pattern_parameter_binding(name, token.span, self.current().span)?;
                 } else {
-                    self.register_var_binding(&name, token.span, self.current().span)?;
+                    self.register_var_binding(name, token.span, self.current().span)?;
                 }
             }
             ForAssignmentDeclaration::Assignment => {
@@ -2160,7 +2157,7 @@ impl<'source> Parser<'source> {
         }
         if declaration == ForAssignmentDeclaration::Var && !parameter_lexical {
             self.emit_identifier_reference_inherited(
-                name.clone(),
+                name,
                 token.span,
                 reference_scope,
                 IdentifierReferenceAccess::Prepare,
@@ -2195,7 +2192,7 @@ impl<'source> Parser<'source> {
             self.parse_assignment_allow_in()?;
             if let Some(definition) = self.take_anonymous_function_definition() {
                 let name_constant = self.add_constant(IrConstant::Primitive(Value::String(
-                    JsString::try_from_utf8(&name)?,
+                    JsString::try_from_utf8(self.names.name(name))?,
                 )))?;
                 self.emit_anonymous_set_name(definition, Instruction::SetName(name_constant))?;
             }
@@ -2247,14 +2244,14 @@ impl<'source> Parser<'source> {
                 source_span(token.span),
             ));
         }
-        let name = self.identifier_text(&identifier).into_owned();
+        let name = self.intern_identifier(&identifier);
         self.validate_identifier_reservation(
             &identifier,
             token.span,
             self.current_ir().strict,
             IdentifierContext::Variable,
         )?;
-        if self.current_ir().strict && matches!(name.as_str(), "eval" | "arguments") {
+        if self.current_ir().strict && matches!(self.names.name(name), "eval" | "arguments") {
             return Err(Error::syntax(
                 "invalid destructuring target",
                 source_span(token.span),
@@ -2264,12 +2261,12 @@ impl<'source> Parser<'source> {
         if !self.is_punctuator(Punctuator::RightBrace) {
             return Err(self.syntax_here("assignment rest property must be last"));
         }
-        if declaration == ForAssignmentDeclaration::Lexical && name == "let" {
+        if declaration == ForAssignmentDeclaration::Lexical && self.names.name(name) == "let" {
             return Err(self.syntax_here("invalid lexical variable name"));
         }
         match declaration {
             ForAssignmentDeclaration::Lexical => self.register_lexical_binding(
-                &name,
+                name,
                 token.span,
                 self.current().span,
                 is_const,
@@ -2277,13 +2274,9 @@ impl<'source> Parser<'source> {
             )?,
             ForAssignmentDeclaration::Var => {
                 if site == BindingSite::Parameter {
-                    self.register_pattern_parameter_binding(
-                        &name,
-                        token.span,
-                        self.current().span,
-                    )?;
+                    self.register_pattern_parameter_binding(name, token.span, self.current().span)?;
                 } else {
-                    self.register_var_binding(&name, token.span, self.current().span)?;
+                    self.register_var_binding(name, token.span, self.current().span)?;
                 }
             }
             ForAssignmentDeclaration::Assignment => {
@@ -2304,7 +2297,7 @@ impl<'source> Parser<'source> {
             // QuickJS prepares a potentially dynamic sloppy-var Reference
             // before allocating/enumerating the rest object.
             self.emit_identifier_reference_inherited(
-                name.clone(),
+                name,
                 token.span,
                 reference_scope,
                 IdentifierReferenceAccess::Prepare,

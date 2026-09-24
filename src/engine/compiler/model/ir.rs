@@ -3,6 +3,7 @@
 use super::scope::ScopeId;
 use crate::engine::code::bytecode::{DynamicEnvironmentSource, Instruction};
 use crate::engine::compiler::lexer::Span;
+use crate::engine::compiler::names::NameId;
 use crate::engine::value::{JsString, PrimitiveValue as Value};
 use crate::source::SourceOffset;
 use std::rc::Rc;
@@ -157,13 +158,13 @@ pub(in crate::engine::compiler) enum IrOp {
         fallback_readonly: bool,
     },
     Identifier {
-        name: String,
+        name: NameId,
         span: Span,
         scope: ScopeId,
         access: IdentifierAccess,
     },
     IdentifierReference {
-        name: String,
+        name: NameId,
         span: Span,
         scope: ScopeId,
         access: IdentifierReferenceAccess,
@@ -173,7 +174,7 @@ pub(in crate::engine::compiler) enum IrOp {
     /// resolution can select an authenticated local/closure cell. It is never
     /// represented by a normal Identifier operation or public stack Value.
     PrivateField {
-        name: String,
+        name: NameId,
         span: Span,
         scope: ScopeId,
         access: PrivateFieldAccess,

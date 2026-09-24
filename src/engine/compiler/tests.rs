@@ -10,6 +10,7 @@ use crate::engine::compiler::model::ir::function::FunctionIrOptions;
 use crate::engine::compiler::model::ir::function::FunctionKind;
 use crate::engine::compiler::model::ir::function::FunctionSourceInfo;
 use crate::engine::compiler::model::ir::function::SuperCapabilities;
+use crate::engine::compiler::names::NameTable;
 use crate::engine::compiler::parser::context::InMode;
 use crate::engine::compiler::parser::context::ModuleDeclarationExport;
 use crate::engine::compiler::parser::context::Parser;

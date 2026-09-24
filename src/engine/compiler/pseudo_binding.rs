@@ -12,6 +12,7 @@ use crate::engine::compiler::model::scope::ScopeId;
 use crate::engine::compiler::parser::diagnostics::source_span;
 use crate::engine::compiler::relocation::prepend_hoist_prefix;
 use crate::engine::compiler::resolution::find_or_create_own_binding;
+use crate::engine::compiler::resolution::lookup_interned_name;
 
 // QuickJS `JS_ATOM_this`, `JS_ATOM_new_target`, and `JS_ATOM_home_object`
 // pseudo variables. Arrow functions never own these bindings: the resolver
@@ -92,6 +93,7 @@ pub(super) fn ensure_eval_visible_pseudo_bindings(
     // Arrow functions do not own `arguments`. Force the lazy binding in the
     // nearest ordinary-function or method owner so the eval descriptor can
     // relay it through the same closure chain as an authored arrow reference.
+    let arguments_name = lookup_interned_name(tree, "arguments")?;
     let mut arguments_owner = Some(consuming_function);
     let mut definition_scope = None;
     while let Some(function_id) = arguments_owner {
@@ -117,12 +119,12 @@ pub(super) fn ensure_eval_visible_pseudo_bindings(
                 break;
             }
             let span = function.source.span;
-            find_or_create_own_binding(tree, function_id, ScopeId(0), "arguments", span)?;
+            find_or_create_own_binding(tree, function_id, ScopeId(0), arguments_name, span)?;
             break;
         }
         if matches!(function.kind, FunctionKind::Eval(EvalKind::Direct))
             && function
-                .binding_from_scope(function.var_scope, "arguments")
+                .binding_from_scope(function.var_scope, arguments_name)
                 .is_some()
         {
             break;
@@ -137,7 +139,7 @@ pub(super) fn ensure_eval_visible_pseudo_bindings(
             let function = &tree.functions[function_id];
             (
                 if function.private_name_binding {
-                    function.function_name.clone()
+                    function.function_name
                 } else {
                     None
                 },
@@ -146,7 +148,7 @@ pub(super) fn ensure_eval_visible_pseudo_bindings(
             )
         };
         if let Some(name) = name {
-            find_or_create_own_binding(tree, function_id, ScopeId(0), &name, span)?;
+            find_or_create_own_binding(tree, function_id, ScopeId(0), name, span)?;
         }
         cursor = parent.map(|parent| parent.function);
     }
@@ -154,6 +156,9 @@ pub(super) fn ensure_eval_visible_pseudo_bindings(
 }
 
 fn function_allows_new_target(tree: &FunctionTree, mut function_id: FunctionId) -> bool {
+    let Some(new_target_name) = tree.names.lookup(NEW_TARGET_LOCAL_NAME) else {
+        return false;
+    };
     loop {
         let function = &tree.functions[function_id];
         match function.kind {
@@ -163,7 +168,7 @@ fn function_allows_new_target(tree: &FunctionTree, mut function_id: FunctionId) 
             | FunctionKind::Eval(EvalKind::Indirect) => return false,
             FunctionKind::Eval(EvalKind::Direct) => {
                 return function
-                    .binding_from_scope(function.var_scope, NEW_TARGET_LOCAL_NAME)
+                    .binding_from_scope(function.var_scope, new_target_name)
                     .is_some();
             }
             FunctionKind::Eval(EvalKind::None) => return false,
@@ -294,7 +299,7 @@ pub(super) fn find_or_create_own_pseudo_binding(
     pseudo: PseudoBinding,
     span: Span,
 ) -> Result<Option<ResolvedBinding>, Error> {
-    let name = pseudo.name();
+    let name = lookup_interned_name(tree, pseudo.name())?;
     let function = tree
         .functions
         .get(function_id)
@@ -337,7 +342,7 @@ pub(super) fn find_or_create_own_pseudo_binding(
             "pseudo local metadata was allocated more than once",
         ));
     }
-    function.locals.push(name.to_owned());
+    function.locals.push(name);
     let kind = if pseudo == PseudoBinding::This && function.derived_class_constructor {
         BindingKind::Lexical { is_const: false }
     } else {
@@ -346,7 +351,7 @@ pub(super) fn find_or_create_own_pseudo_binding(
     function.add_binding(
         function.var_scope,
         function.var_scope,
-        name.to_owned(),
+        name,
         BindingStorage::Local(index),
         kind,
         None,

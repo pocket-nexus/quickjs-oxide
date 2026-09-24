@@ -4,6 +4,8 @@ use crate::engine::compiler::model::ir::function::FunctionIrOptions;
 use crate::engine::compiler::model::ir::function::FunctionKind;
 use crate::engine::compiler::model::ir::function::FunctionSourceInfo;
 use crate::engine::compiler::model::ir::function::ParentLink;
+use crate::engine::compiler::names::NameId;
+use crate::engine::compiler::names::NameTable;
 
 use super::context::FunctionParseContext;
 use crate::engine::api::error::Error;
@@ -22,8 +24,9 @@ impl FunctionBuilder {
         kind: FunctionKind,
         source: FunctionSourceInfo,
         options: FunctionIrOptions,
+        names: &mut NameTable,
     ) -> Result<Self, Error> {
-        let ir = FunctionIr::new(parent, kind, source, options)?;
+        let ir = FunctionIr::new(parent, kind, source, options, names)?;
         let context = FunctionParseContext::new(ir.body_scope);
         Ok(Self { ir, context })
     }
@@ -172,7 +175,7 @@ impl<'source> Parser<'source> {
 
     pub(in crate::engine::compiler) fn emit_identifier(
         &mut self,
-        name: String,
+        name: NameId,
         span: Span,
         access: IdentifierAccess,
     ) -> Result<usize, Error> {
@@ -181,7 +184,7 @@ impl<'source> Parser<'source> {
 
     pub(in crate::engine::compiler) fn emit_identifier_at(
         &mut self,
-        name: String,
+        name: NameId,
         span: Span,
         access: IdentifierAccess,
         pc_site: SourceOffset,
@@ -200,7 +203,7 @@ impl<'source> Parser<'source> {
 
     pub(in crate::engine::compiler) fn emit_identifier_inherited(
         &mut self,
-        name: String,
+        name: NameId,
         span: Span,
         scope: ScopeId,
         access: IdentifierAccess,
@@ -215,7 +218,7 @@ impl<'source> Parser<'source> {
 
     pub(in crate::engine::compiler) fn emit_identifier_reference_inherited(
         &mut self,
-        name: String,
+        name: NameId,
         span: Span,
         scope: ScopeId,
         access: IdentifierReferenceAccess,

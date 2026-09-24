@@ -69,7 +69,7 @@ impl<'source> Parser<'source> {
                     )
                 {
                     self.emit_identifier(
-                        THIS_LOCAL_NAME.to_owned(),
+                        self.pseudo_name(THIS_LOCAL_NAME),
                         token.span,
                         IdentifierAccess::Get,
                     )?;
@@ -124,8 +124,8 @@ impl<'source> Parser<'source> {
                 self.parse_function_expression()?;
             }
             TokenKind::Identifier(identifier) => {
-                let name = self.identifier_text(&identifier).into_owned();
-                self.reject_forbidden_identifier_reference(&name, token.span)?;
+                let name = self.intern_identifier(&identifier);
+                self.reject_forbidden_identifier_reference(self.names.name(name), token.span)?;
                 self.validate_identifier(
                     &identifier,
                     token.span,
