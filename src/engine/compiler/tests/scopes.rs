@@ -3,6 +3,10 @@ use super::*;
 #[test]
 fn string_constant_lookup_preserves_first_literal_and_append_ordinals() {
     let mut tree = Parser::parse("", JsString::from_static("<constant-index>")).unwrap();
+    let name = tree.names.intern("name");
+    let other = tree.names.intern("other");
+    let name_string = tree.names.js_string(name).unwrap();
+    let other_string = tree.names.js_string(other).unwrap();
     let function = &mut tree.functions[0];
     let start = function.constants.len() as u32;
     let literal = || {
@@ -12,13 +16,16 @@ fn string_constant_lookup_preserves_first_literal_and_append_ordinals() {
     };
     assert_eq!(function.append_constant(literal()).unwrap(), start);
     assert_eq!(function.append_constant(literal()).unwrap(), start + 1);
-    assert_eq!(ensure_string_constant(function, "name").unwrap(), start);
     assert_eq!(
-        ensure_string_constant(function, "other").unwrap(),
+        ensure_string_constant(function, name_string).unwrap(),
+        start
+    );
+    assert_eq!(
+        ensure_string_constant(function, other_string).unwrap(),
         start + 2
     );
     assert_eq!(
-        ensure_string_constant(function, "other").unwrap(),
+        ensure_string_constant(function, tree.names.js_string(other).unwrap()).unwrap(),
         start + 2
     );
     assert_eq!(function.constants.len(), start as usize + 3);

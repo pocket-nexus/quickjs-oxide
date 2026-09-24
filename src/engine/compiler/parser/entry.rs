@@ -408,7 +408,7 @@ pub(in crate::engine::compiler) fn install_eval_external_bindings(
             .map_err(|_| Error::new(ErrorKind::JsInternal, "too many closure variables"))?;
         let name = String::from_utf16(&binding.name.utf16_units().collect::<Vec<_>>())
             .map_err(|_| Error::internal("eval caller binding name is not well formed"))?;
-        let name = ensure_string_constant(function, &name)?;
+        let name = ensure_string_constant(function, JsString::try_from_utf8(&name)?)?;
         let descriptor = ClosureVariable {
             source: ClosureSource::EvalEnvironment(index),
             name: ClosureVariableName::Constant(name),

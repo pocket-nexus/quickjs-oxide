@@ -1043,7 +1043,8 @@ fn seed_global_declarations(tree: &mut FunctionTree) -> Result<(), Error> {
     for (declaration_index, (name, is_lexical, is_const, is_function)) in
         declarations.into_iter().enumerate()
     {
-        let name_index = ensure_string_constant(&mut tree.functions[0], tree.names.name(name))?;
+        let name_index =
+            ensure_string_constant(&mut tree.functions[0], tree.names.js_string(name)?)?;
         let closure_index = push_closure_variable(
             &mut tree.functions[0],
             ClosureVariable {
@@ -1084,7 +1085,8 @@ fn seed_module_bindings(tree: &mut FunctionTree) -> Result<(), Error> {
     for (binding_index, (name, declaration, import, is_import_meta)) in
         bindings.into_iter().enumerate()
     {
-        let name_index = ensure_string_constant(&mut tree.functions[0], tree.names.name(name))?;
+        let name_index =
+            ensure_string_constant(&mut tree.functions[0], tree.names.js_string(name)?)?;
         let (source, is_lexical, is_const, kind) = if is_import_meta {
             if declaration.is_some() || import.is_some() {
                 return Err(Error::internal(
@@ -1321,7 +1323,7 @@ fn install_eval_declaration_hoists(tree: &mut FunctionTree) -> Result<(), Error>
             .saturating_add(usize::from(function.eval_redeclaration.is_some())),
     );
     if let Some(name) = function.eval_redeclaration {
-        let name = ensure_string_constant(function, names.name(name))?;
+        let name = ensure_string_constant(function, names.js_string(name)?)?;
         prefix.push(SpannedIrOp {
             op: IrOp::Bytecode(Instruction::ThrowRedeclaration(name)),
             pc_site: None,
@@ -1345,7 +1347,7 @@ fn install_eval_declaration_hoists(tree: &mut FunctionTree) -> Result<(), Error>
 
         let write = match declaration.target {
             EvalDeclarationTarget::Dynamic(source) => {
-                let name = ensure_string_constant(function, names.name(declaration.name))?;
+                let name = ensure_string_constant(function, names.js_string(declaration.name)?)?;
                 Some(IrOp::Bytecode(Instruction::DefineEvalVariable {
                     source,
                     name,
@@ -1715,7 +1717,7 @@ fn resolve_identifier_reference(
         let FunctionTree {
             functions, names, ..
         } = tree;
-        ensure_string_constant(&mut functions[function_id], names.name(name))?
+        ensure_string_constant(&mut functions[function_id], names.js_string(name)?)?
     };
     Ok(IrOp::DynamicIdentifierReference {
         name,
@@ -2118,7 +2120,7 @@ fn binding_storage_is_module_import_view(
 
 fn module_binding_operation(
     function: &mut FunctionIr,
-    names: &NameTable,
+    names: &mut NameTable,
     index: u16,
     kind: BindingKind,
     access: IdentifierAccess,
@@ -2310,7 +2312,7 @@ fn resolve_eval_external_chain(
 
 fn wrap_dynamic_identifier(
     function: &mut FunctionIr,
-    names: &NameTable,
+    names: &mut NameTable,
     name: NameId,
     access: IdentifierAccess,
     sources: Vec<DynamicEnvironmentSource>,
@@ -2329,7 +2331,7 @@ fn wrap_dynamic_identifier(
             "declaration-only identifier access crossed a dynamic environment",
         ));
     }
-    let name = ensure_string_constant(function, names.name(name))?;
+    let name = ensure_string_constant(function, names.js_string(name)?)?;
     Ok(IrOp::DynamicIdentifier {
         name,
         access,
@@ -2451,7 +2453,7 @@ fn capture_global_declaration_path(
             let FunctionTree {
                 functions, names, ..
             } = tree;
-            ensure_string_constant(&mut functions[function_id], names.name(name))?
+            ensure_string_constant(&mut functions[function_id], names.js_string(name)?)?
         };
         let descriptor = ClosureVariable {
             source,
@@ -2492,7 +2494,7 @@ fn capture_global_path(
             let FunctionTree {
                 functions, names, ..
             } = tree;
-            ensure_string_constant(&mut functions[function_id], names.name(name))?
+            ensure_string_constant(&mut functions[function_id], names.js_string(name)?)?
         };
         let descriptor = ClosureVariable {
             source,
@@ -2508,8 +2510,10 @@ fn capture_global_path(
     final_index.ok_or_else(|| Error::internal("global closure path was empty"))
 }
 
-pub(super) fn ensure_string_constant(function: &mut FunctionIr, name: &str) -> Result<u32, Error> {
-    let name = JsString::try_from_utf8(name)?;
+pub(super) fn ensure_string_constant(
+    function: &mut FunctionIr,
+    name: JsString,
+) -> Result<u32, Error> {
     if let Some(&index) = function.string_constants.get(&name) {
         return Ok(index);
     }
@@ -2672,7 +2676,7 @@ pub(super) fn find_or_create_own_binding(
 
 fn binding_instruction(
     function: &mut FunctionIr,
-    names: &NameTable,
+    names: &mut NameTable,
     binding: ResolvedBinding,
     access: IdentifierAccess,
     name: NameId,
@@ -2785,7 +2789,7 @@ fn binding_instruction(
             BindingKind::Lexical { is_const: true },
             IdentifierAccess::Put | IdentifierAccess::Set,
         ) => {
-            let name = ensure_string_constant(function, names.name(name))?;
+            let name = ensure_string_constant(function, names.js_string(name)?)?;
             Ok(Instruction::ThrowReadOnly(name))
         }
         (
@@ -2801,7 +2805,7 @@ fn binding_instruction(
 
 fn closure_binding_operation(
     function: &mut FunctionIr,
-    names: &NameTable,
+    names: &mut NameTable,
     index: u16,
     kind: BindingKind,
     access: IdentifierAccess,
@@ -2859,7 +2863,7 @@ fn closure_binding_operation(
             BindingKind::Lexical { is_const: true },
             IdentifierAccess::Put | IdentifierAccess::Set,
         ) => {
-            let name = ensure_string_constant(function, names.name(name))?;
+            let name = ensure_string_constant(function, names.js_string(name)?)?;
             Ok(IrOp::Bytecode(Instruction::ThrowReadOnly(name)))
         }
         (BindingKind::FunctionName { is_const }, IdentifierAccess::Put | IdentifierAccess::Set) => {
@@ -2874,13 +2878,13 @@ fn closure_binding_operation(
 
 fn function_name_write_instruction(
     function: &mut FunctionIr,
-    names: &NameTable,
+    names: &mut NameTable,
     name: NameId,
     is_const: bool,
     access: IdentifierAccess,
 ) -> Result<Instruction, Error> {
     if is_const {
-        let name = ensure_string_constant(function, names.name(name))?;
+        let name = ensure_string_constant(function, names.js_string(name)?)?;
         return Ok(Instruction::ThrowReadOnly(name));
     }
     Ok(match access {
@@ -2986,7 +2990,10 @@ pub(super) fn capture_binding_path(
                     | BindingKind::PrivateSetter { .. }
                     | BindingKind::PrivateGetterSetter { .. }
             ) {
-            ClosureVariableName::Constant(ensure_string_constant(function, tree.names.name(name))?)
+            ClosureVariableName::Constant(ensure_string_constant(
+                function,
+                tree.names.js_string(name)?,
+            )?)
         } else {
             ClosureVariableName::None
         };
