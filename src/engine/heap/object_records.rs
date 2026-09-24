@@ -785,8 +785,8 @@ impl Slots {
     pub fn clear(&mut self) {
         match self {
             Self::Inline { len, slots } => {
-                for index in 0..usize::from(*len) {
-                    slots[index] = Self::EMPTY;
+                for slot in slots.iter_mut().take(usize::from(*len)) {
+                    *slot = Self::EMPTY;
                 }
                 *len = 0;
             }

@@ -299,7 +299,7 @@ impl RuntimeState {
             .get(&hash)?
             .iter()
             .copied()
-            .find(|&shape| self.heap.shape(shape).is_ok_and(|shape| matches(shape)))
+            .find(|&shape| self.heap.shape(shape).is_ok_and(&matches))
     }
 
     pub(crate) fn insert_shape_cache(&mut self, shape: ShapeId, hash: u64) {
@@ -383,14 +383,14 @@ impl RuntimeState {
         {
             return Some(target);
         }
-        let source = self.heap.shape(parent).ok()?;
-        let prototype = source.prototype();
-        let hash = shape::extend_fingerprint_hash(source.fingerprint_hash(), &entry);
-        let parent_len = source.entries().len();
+        let parent_shape = self.heap.shape(parent).ok()?;
+        let prototype = parent_shape.prototype();
+        let hash = shape::extend_fingerprint_hash(parent_shape.fingerprint_hash(), &entry);
+        let parent_len = parent_shape.entries().len();
         self.cached_shape_matching(hash, |shape| {
             shape.prototype() == prototype
                 && shape.entries().len() == parent_len + 1
-                && shape.entries()[..parent_len] == *source.entries()
+                && shape.entries()[..parent_len] == *parent_shape.entries()
                 && shape.entries()[parent_len] == entry
         })
     }
