@@ -27,27 +27,18 @@ use crate::source::LineColumn;
 use std::rc::Rc;
 
 impl Runtime {
-    /// Consume a verified compiler draft and publish an immutable bytecode GC
-    /// node in `realm`.
+    /// Publish an immutable bytecode GC node in `realm` from an unlinked
+    /// compiler draft.
     pub(crate) fn publish_unlinked_function(
         &self,
         realm: ContextId,
         function: UnlinkedFunction,
     ) -> Result<FunctionBytecodeRef, RuntimeError> {
-        let function = bytecode_publish::VerifiedFunction::script(function)?;
-        self.publish_verified_unlinked_function(realm, function)
-    }
-
-    pub(crate) fn publish_verified_unlinked_function(
-        &self,
-        realm: ContextId,
-        function: bytecode_publish::VerifiedFunction,
-    ) -> Result<FunctionBytecodeRef, RuntimeError> {
         #[cfg(feature = "profiling")]
         let _phase_timer = crate::engine::api::profiling::PhaseTimer::start(
             crate::engine::api::profiling::CompilePhase::Publish,
         );
-        let flat_functions = bytecode_publish::flatten_unlinked_tree(function.into_function())?;
+        let flat_functions = bytecode_publish::flatten_unlinked_tree(function)?;
         #[cfg(feature = "test262-host")]
         if !self.0.dynamic_import_bytecode_allowed.get()
             && flat_functions.iter().any(|function| {

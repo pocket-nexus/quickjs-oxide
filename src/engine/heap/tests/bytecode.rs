@@ -527,42 +527,6 @@ fn class_initializers_require_a_home_object_slot() {
 }
 
 #[test]
-fn bytecode_allocation_rejects_stack_underflow_in_privileged_class_initializer() {
-    let mut heap = Heap::new();
-    let shape = empty_shape(&mut heap);
-    let prototype = leaf(&mut heap, shape);
-    let context = heap
-        .allocate_context(ContextData::new(
-            prototype, prototype, prototype, prototype, prototype, prototype, prototype, prototype,
-        ))
-        .unwrap();
-    heap.release_object(prototype).unwrap();
-
-    let code: Rc<[Instruction]> = Rc::from([
-        Instruction::Drop,
-        Instruction::Undefined,
-        Instruction::Return,
-    ]);
-    let mut initializer = bytecode(&code, context, Vec::new(), Vec::new());
-    initializer.metadata.class_initializer_kind = Some(ClassInitializerKind::InstanceFields);
-    initializer.metadata.strict = true;
-    initializer.metadata.super_allowed = true;
-    initializer.metadata.arguments_forbidden = true;
-    initializer.metadata.needs_home_object = true;
-    assert_eq!(
-        heap.allocate_function_bytecode(initializer),
-        Err(HeapError::Invariant(
-            "function bytecode failed generic verification"
-        ))
-    );
-    assert_eq!(heap.counts().function_bytecode_nodes, 0);
-
-    heap.release_context(context).unwrap();
-    heap.release_shape(shape).unwrap();
-    assert_eq!(heap.counts().live, 0);
-}
-
-#[test]
 fn class_static_initializer_claim_is_one_shot_per_constructor() {
     let mut heap = Heap::new();
     let shape = empty_shape(&mut heap);

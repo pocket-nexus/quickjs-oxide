@@ -290,14 +290,13 @@ mod enabled {
             )?;
             writeln!(
                 out,
-                "parse={:?} resolution={:?} lowering={:?} blocks={:?} fusion={:?} relocation={:?} verify={:?} publish={:?}",
+                "parse={:?} resolution={:?} lowering={:?} blocks={:?} fusion={:?} relocation={:?} publish={:?}",
                 costs.parse,
                 costs.resolution,
                 costs.lowering,
                 costs.blocks,
                 costs.fusion,
                 costs.relocation,
-                costs.verify,
                 costs.publish
             )?;
             writeln!(
@@ -548,7 +547,6 @@ mod enabled {
             ("blocks", costs.blocks),
             ("fusion", costs.fusion),
             ("relocation", costs.relocation),
-            ("verify", costs.verify),
             ("publish", costs.publish),
         ]
         .into_iter()

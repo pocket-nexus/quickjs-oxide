@@ -1313,12 +1313,6 @@ impl Heap {
                 }
             }
         }
-        crate::engine::code::bytecode::verify_parts(
-            &bytecode.code,
-            bytecode.constants.len(),
-            bytecode.metadata.max_stack,
-        )
-        .map_err(|_| HeapError::Invariant("function bytecode failed generic verification"))?;
         // A draft may have been assembled from another node's fields. Never
         // reuse its projection: only this authenticated immutable payload may
         // initialize the cache after publication.

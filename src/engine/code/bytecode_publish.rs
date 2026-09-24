@@ -1,4 +1,4 @@
-//! Atom linking and iterative flattening after draft authentication.
+//! Atom linking and iterative flattening for published bytecode.
 use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::atom::Atom;
 use crate::engine::code::bytecode::Instruction;
@@ -12,7 +12,6 @@ use crate::engine::heap::{BytecodeConstant, RawValue};
 use crate::engine::value::{JsString, Value};
 
 mod private_elements;
-pub(crate) use crate::engine::code::verify::VerifiedFunction;
 pub(crate) use private_elements::prepare_private_binding_publication;
 
 /// Link each distinct static-name constant index once. The caller owns the

@@ -17,21 +17,6 @@ pub(crate) enum DirectEvalPreparation {
 }
 
 impl Runtime {
-    /// Publish a synthetic eval root only after the eval-specific verifier has
-    /// matched every external closure slot against the invocation environment.
-    fn publish_unlinked_eval_function(
-        &self,
-        realm: ContextId,
-        function: UnlinkedFunction,
-        expected: &EvalCompileContext,
-    ) -> Result<FunctionBytecodeRef, RuntimeError> {
-        let function = bytecode_publish::VerifiedFunction::eval(
-            function,
-            crate::engine::api::compile::eval_publication_input(expected),
-        )?;
-        self.publish_verified_unlinked_function(realm, function)
-    }
-
     pub(crate) fn initialize_eval_intrinsic(
         &self,
         realm: ContextId,
@@ -502,7 +487,6 @@ impl Runtime {
     ) -> Result<Compilation, RuntimeError> {
         self.0.state.borrow().heap.context(realm)?;
         let debug_info = self.debug_info_mode();
-        let expected = context.clone();
         let function =
             match compile_unlinked_eval_source_with_filename(source, filename, debug_info, context)
             {
@@ -547,7 +531,7 @@ impl Runtime {
                 }
             };
         Ok(Compilation::Published(
-            self.publish_unlinked_eval_function(realm, function, &expected)?,
+            self.publish_unlinked_function(realm, function)?,
         ))
     }
 

@@ -27,7 +27,7 @@
 1. **eager vs lazy**：QuickJS 单遍编译器无惰性编译；Oxide 全量 lower；V8 默认惰性，
    用 `--no-lazy` 对齐。Boa 的 parse 档只产出 AST，不进入字节码口径。
 2. **AST vs 字节码**：Boa parse 档只产出 AST + scope 分析；QuickJS/Oxide/V8 是字节码口径。
-3. **Oxide 包含 verify/publish**：这是 `Context::compile_*` 的真实边界，不做删减；
+3. **Oxide 包含 publish**：这是 `Context::compile_*` 的真实边界，不做删减；
    阶段拆分由 §4 的 profiling 提供。
 4. **Unicode 版本**：Oxide 使用 checksum-pinned QuickJS Unicode 17 表；Boa/V8 各自实现。
 5. **测量方式**：四引擎均为探针进程内计时（`compile_ns`/`parse_ns`）；进程墙钟另存
@@ -70,11 +70,11 @@ test262 语料拼接与 Module goal 留作后续，需要联网与各引擎 load
 ## 4. 剖析方法
 
 1. **阶段占比**：`build_compile_probe.py --profiling` 构建的探针在 stderr 输出
-   parse/resolution/lowering/blocks/fusion/relocation/verify/publish 的
+   parse/resolution/lowering/blocks/fusion/relocation/publish 的
    inclusive/exclusive 纳秒与 attempts（现有 `CostProfile`），在 512KB 生成语料上采集。
 2. **函数级拆分**：release + `debug=1` 构建普通探针，`perf record -g` 后按符号归并
    `lexer.rs`（`scan_identifier`/`skip_trivia`/`scan_number`/…）、parser、resolution、
-   lowering、验证与分配（malloc）占比。用于回答“lexer 还是 parser 更贵”。
+   lowering、publish 与分配（malloc）占比。用于回答“lexer 还是 parser 更贵”。
 3. 若 perf 归因不足，再评估在 `profiling` 构建中加入 lexer 级计数器
    （token 数、identifier 分配次数、seek/re-scan 次数），仅诊断、不参与正式计时。
 

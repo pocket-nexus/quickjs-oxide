@@ -117,9 +117,9 @@ The following boundaries apply across internal reorganizations:
   Compiler constants use the restricted `PrimitiveValue` representation;
   compilation does not create live Object or Symbol roots. Full `Value`
   preserves Object and Symbol identity.
-- Verification authenticates the exact code that will be published.
-  Publication links names, retains roots and rolls back failures. Published
-  handles and runtime-owned identities cannot be reused across runtimes.
+- Drafts reach execution through one publication boundary: it links names,
+  retains roots and rolls back failures. Published handles and runtime-owned
+  identities cannot be reused across runtimes.
 - Pure Number and string helpers remain separate from runtime coercion.
   ToPrimitive, property operations and builtin callbacks may execute JS.
   Borrowed slots, heap views and buffer access must obey their callback and

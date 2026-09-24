@@ -233,46 +233,55 @@ impl UnlinkedModule {
     }
 
     #[must_use]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub const fn function(&self) -> &UnlinkedFunction {
         &self.function
     }
 
     #[must_use]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub const fn has_top_level_await(&self) -> bool {
         self.has_top_level_await
     }
 
     #[must_use]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub const fn declaration_order(&self) -> &[u16] {
         &self.declaration_order
     }
 
     #[must_use]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub const fn link_initializers(&self) -> &[ModuleLinkInitializer] {
         &self.link_initializers
     }
 
     #[must_use]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub const fn import_collisions(&self) -> &[ModuleImportCollision] {
         &self.import_collisions
     }
 
     #[must_use]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub const fn requested_modules(&self) -> &[ModuleRequest] {
         &self.requested_modules
     }
 
     #[must_use]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub const fn imports(&self) -> &[ModuleImport] {
         &self.imports
     }
 
     #[must_use]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub const fn exports(&self) -> &[ModuleExport] {
         &self.exports
     }
 
     #[must_use]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub const fn star_exports(&self) -> &[ModuleStarExport] {
         &self.star_exports
     }

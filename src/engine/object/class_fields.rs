@@ -375,37 +375,6 @@ mod tests {
     }
 
     #[test]
-    fn computed_field_bytecode_requires_three_operands_but_no_constant() {
-        let runtime = Runtime::new();
-        let context = runtime.new_context();
-        let callable = computed_field_callable(&runtime, &context);
-        let published = runtime.heap_counts().function_bytecode_nodes;
-
-        let malformed = UnlinkedFunction::fixture(
-            vec![
-                Instruction::Undefined,
-                Instruction::Undefined,
-                Instruction::DefineFieldComputed,
-                Instruction::Return,
-            ],
-            Vec::new(),
-            FunctionMetadata {
-                max_stack: 2,
-                ..FunctionMetadata::default()
-            },
-        );
-        let RuntimeError::Engine(error) = runtime
-            .publish_unlinked_function(context.realm, malformed)
-            .unwrap_err()
-        else {
-            panic!("malformed computed field did not fail bytecode publication")
-        };
-        assert_eq!(error.message(), "bytecode stack underflow");
-        assert_eq!(runtime.heap_counts().function_bytecode_nodes, published);
-        drop(callable);
-    }
-
-    #[test]
     fn computed_field_defines_cwe_own_data_without_calling_inherited_setter() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();

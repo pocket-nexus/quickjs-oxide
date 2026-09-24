@@ -107,18 +107,3 @@ impl Runtime {
         ))
     }
 }
-
-/// Adapt a compilation request to the narrower publication authority view.
-pub(crate) fn eval_publication_input(
-    context: &crate::engine::compiler::EvalCompileContext,
-) -> crate::engine::code::function::publication::EvalPublicationInput<'_> {
-    crate::engine::code::function::publication::EvalPublicationInput {
-        kind: context.kind,
-        caller_strict: context.caller_strict,
-        bindings: &context.bindings,
-        caller_profile: &context.caller_profile,
-        super_call_allowed: context.super_call_allowed,
-        super_allowed: context.super_allowed,
-        arguments_forbidden: context.arguments_forbidden,
-    }
-}

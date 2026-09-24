@@ -90,7 +90,7 @@ reject profiling flags with an explanatory error.
 
 `-d --profile-json` reuses the same CLI and benchmark workload entry. Its
 `oxide-compile-vm-cost-v1` record describes the owned execution core:
-parse/resolution/lowering, blocks, fusion, relocation, verify and publish attempts
+parse/resolution/lowering, blocks, fusion, relocation and publish attempts
 and inclusive/exclusive monotonic wall nanoseconds,
 successfully lowered function drafts (including children), final instruction
 count and inline typed-code bytes, maximum verified stack, and owned instruction
@@ -100,7 +100,7 @@ or unique-code counts. Inline code bytes exclude boxed operands and metadata.
 Inclusive phase time includes nested compilation and callbacks and is not
 additive. `exclusive_ns` subtracts measured child phases in the same collector;
 uninstrumented work and nested collectors remain charged to their parent.
-Verify covers draft authentication; publish covers flattening, linking and heap
+Publish covers flattening, linking and heap
 publication (including the heap boundary's independent checks). Blocks covers
 compiler block discovery; fusion covers the owned execution projection.
 Relocation covers IR fragment moves and target-bearing lowered instructions,

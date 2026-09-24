@@ -3,7 +3,6 @@
 mod fixtures;
 pub(crate) mod layout;
 pub mod metadata;
-pub(crate) mod publication;
 use crate::engine::code::bytecode::Instruction;
 use crate::engine::code::debug::Pc2LineTable;
 
@@ -134,6 +133,7 @@ impl UnlinkedConstant {
 
     /// Borrow the primitive value, or return `None` for another constant kind.
     #[must_use]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn as_primitive(&self) -> Option<&PrimitiveValue> {
         match &self.0 {
             UnlinkedConstantKind::Primitive(value) | UnlinkedConstantKind::AtomString(value) => {
@@ -147,6 +147,7 @@ impl UnlinkedConstant {
 
     /// Borrow a RegExp literal payload, or return `None` for other constants.
     #[must_use]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn as_regexp(&self) -> Option<(&JsString, &Rc<CompiledRegExp>)> {
         match &self.0 {
             UnlinkedConstantKind::RegExp { pattern, program } => Some((pattern, program)),
@@ -176,20 +177,9 @@ impl UnlinkedConstant {
         }
     }
 
-    /// Borrow a template-site payload for publication verification.
-    #[must_use]
-    pub fn as_template_object(&self) -> Option<(&[Option<JsString>], &[JsString])> {
-        match &self.0 {
-            UnlinkedConstantKind::TemplateObject { cooked, raw } => Some((cooked, raw)),
-            UnlinkedConstantKind::Primitive(_)
-            | UnlinkedConstantKind::AtomString(_)
-            | UnlinkedConstantKind::RegExp { .. }
-            | UnlinkedConstantKind::Child(_) => None,
-        }
-    }
-
     /// Borrow the child draft, or return `None` for another constant kind.
     #[must_use]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn as_child(&self) -> Option<&UnlinkedFunction> {
         match &self.0 {
             UnlinkedConstantKind::Primitive(_)
@@ -447,50 +437,60 @@ impl UnlinkedFunction {
     }
 
     #[must_use]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn code(&self) -> &[Instruction] {
         &self.code
     }
 
     #[must_use]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn constants(&self) -> &[UnlinkedConstant] {
         &self.constants
     }
 
     #[must_use]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub const fn metadata(&self) -> &FunctionMetadata {
         &self.metadata
     }
 
     #[must_use]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub const fn parameter_environment(&self) -> Option<&ParameterEnvironmentLayout> {
         self.parameter_environment.as_ref()
     }
 
     #[must_use]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn func_name(&self) -> Option<&crate::engine::value::JsString> {
         self.func_name.as_ref()
     }
 
     #[must_use]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn closure_variables(&self) -> &[ClosureVariable] {
         &self.closure_variables
     }
 
     #[must_use]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn argument_definitions(&self) -> &[UnlinkedVariableDefinition] {
         &self.argument_definitions
     }
 
     #[must_use]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn local_definitions(&self) -> &[UnlinkedVariableDefinition] {
         &self.local_definitions
     }
 
     #[must_use]
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn eval_environments(&self) -> &[EvalEnvironment<JsString>] {
         &self.eval_environments
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     #[must_use]
     pub const fn debug(&self) -> Option<&UnlinkedFunctionDebug> {
         self.debug.as_ref()

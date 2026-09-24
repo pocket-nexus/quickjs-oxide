@@ -12,7 +12,6 @@ pub(crate) enum CompilePhase {
     Blocks,
     Fusion,
     Relocation,
-    Verify,
     Publish,
 }
 
@@ -25,7 +24,6 @@ impl CompilePhase {
             Self::Blocks => &mut costs.blocks,
             Self::Fusion => &mut costs.fusion,
             Self::Relocation => &mut costs.relocation,
-            Self::Verify => &mut costs.verify,
             Self::Publish => &mut costs.publish,
         }
     }
@@ -130,7 +128,7 @@ mod tests {
         let profile = CostProfile::start();
         let mut parent = PhaseTimer::start(CompilePhase::Lowering);
         let mut child = PhaseTimer::start(CompilePhase::Lowering);
-        let mut grandchild = PhaseTimer::start(CompilePhase::Verify);
+        let mut grandchild = PhaseTimer::start(CompilePhase::Blocks);
         grandchild.0.take().unwrap().finish(3);
         child.0.take().unwrap().finish(8);
         parent.0.take().unwrap().finish(20);
@@ -138,7 +136,7 @@ mod tests {
         assert_eq!(costs.lowering.attempts, 2);
         assert_eq!(costs.lowering.inclusive_ns, 28);
         assert_eq!(costs.lowering.exclusive_ns, 17);
-        assert_eq!(costs.verify.exclusive_ns, 3);
+        assert_eq!(costs.blocks.exclusive_ns, 3);
     }
 
     #[test]
@@ -146,24 +144,24 @@ mod tests {
         let outer = CostProfile::start();
         let mut parent = PhaseTimer::start(CompilePhase::Parse);
         let inner = CostProfile::start();
-        let mut child = PhaseTimer::start(CompilePhase::Verify);
+        let mut child = PhaseTimer::start(CompilePhase::Fusion);
         child.0.take().unwrap().finish(5);
         drop(inner);
         parent.0.take().unwrap().finish(10);
         let costs = outer.snapshot();
         assert_eq!(costs.parse.exclusive_ns, 10);
-        assert_eq!(costs.verify.attempts, 0);
+        assert_eq!(costs.fusion.attempts, 0);
     }
     #[test]
     fn runtime_and_compile_nesting_share_one_exclusive_clock() {
         let profile = CostProfile::start();
         let mut parent = PhaseTimer::start_vm("freeze.encode");
-        let mut child = PhaseTimer::start(CompilePhase::Verify);
+        let mut child = PhaseTimer::start(CompilePhase::Relocation);
         child.0.take().unwrap().finish(8);
         parent.0.take().unwrap().finish(20);
         let costs = profile.snapshot();
         assert_eq!(costs.vm_phases["freeze.encode"].samples_ns, vec![[20, 12]]);
         assert_eq!(costs.vm_phases["freeze.encode"].cost.exclusive_ns, 12);
-        assert_eq!(costs.verify.exclusive_ns, 8);
+        assert_eq!(costs.relocation.exclusive_ns, 8);
     }
 }

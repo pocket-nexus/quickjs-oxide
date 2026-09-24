@@ -20,7 +20,6 @@ use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::atom::AtomIdx;
 
 use crate::engine::builtins::native::{DynamicImportHandlerKind, ModuleEvaluationKind};
-use crate::engine::code::bytecode_publish;
 use crate::engine::code::debug::DebugInfoMode;
 use crate::source::QuickJsSourceLocator;
 
@@ -1946,7 +1945,7 @@ impl Runtime {
         module: UnlinkedModule,
         import_meta: Option<&ObjectRef>,
     ) -> Result<RawModuleRef, RuntimeError> {
-        let parts = bytecode_publish::VerifiedFunction::module(module)?;
+        let parts = module.into_parts();
 
         let parsing_record = self.module_record(parsing_module)?;
         if parsing_module.cache != realm
@@ -1957,7 +1956,7 @@ impl Runtime {
             ));
         }
 
-        let function = self.publish_verified_unlinked_function(realm, parts.function)?;
+        let function = self.publish_unlinked_function(realm, parts.function)?;
         let exports = parts
             .exports
             .into_vec()

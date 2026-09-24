@@ -102,7 +102,6 @@ pub struct CostSnapshot {
     pub blocks: PhaseCost,
     pub fusion: PhaseCost,
     pub relocation: PhaseCost,
-    pub verify: PhaseCost,
     pub publish: PhaseCost,
     /// Successfully lowered function drafts, including nested functions.
     /// This is not a count of published functions or a unique-code inventory.

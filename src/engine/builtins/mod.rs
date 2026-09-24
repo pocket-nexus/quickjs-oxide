@@ -5,8 +5,6 @@ use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::builtins::native::{
     DateGetFieldKind, DateNativeKind, DateSetFieldKind, DateStringMethod, NativeFunctionId,
 };
-use crate::engine::code::bytecode_publish;
-use crate::engine::code::function::UnlinkedFunction;
 use crate::source::QuickJsSourceLocator;
 
 use crate::engine::api::compile::Compilation;

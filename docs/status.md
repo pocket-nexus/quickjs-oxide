@@ -33,7 +33,7 @@ The exact profile, inputs, summary, line counts, and report hashes live in
 
 ## Implemented architecture
 
-- Rust compiler, verified bytecode, runtime, jobs, modules, and embedding API
+- Rust compiler, bytecode, runtime, jobs, modules, and embedding API
 - byte-exact Script and ECMAScript Module embedding APIs and loader payloads,
   with QuickJS-compatible malformed UTF-8, WTF-8/CESU-8, source retention, and
   diagnostic locations

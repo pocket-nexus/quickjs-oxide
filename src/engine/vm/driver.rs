@@ -4439,16 +4439,11 @@ mod tests {
                 source,
                 "<eval>",
                 DebugInfoMode::Full,
-                eval_context.clone(),
-            )
-            .unwrap();
-            let verified = crate::engine::code::bytecode_publish::VerifiedFunction::eval(
-                unlinked,
-                crate::engine::api::compile::eval_publication_input(&eval_context),
+                eval_context,
             )
             .unwrap();
             let bytecode = runtime
-                .publish_verified_unlinked_function(context.realm, verified)
+                .publish_unlinked_function(context.realm, unlinked)
                 .unwrap();
             let Value::Object(object) = context.eval(setup).unwrap() else {
                 panic!("expected eval environment")

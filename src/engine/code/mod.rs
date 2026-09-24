@@ -1,4 +1,4 @@
-//! Instructions, compilation drafts, verification and runtime-rooted code.
+//! Instructions, compilation drafts and runtime-rooted code.
 pub mod bytecode;
 pub(crate) mod bytecode_validation;
 pub mod debug;
@@ -8,7 +8,6 @@ pub mod module;
 pub mod rooted;
 
 pub(crate) mod bytecode_publish;
-pub(crate) mod verify;
 
 pub(crate) mod dynamic_import_policy;
 

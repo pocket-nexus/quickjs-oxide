@@ -5,47 +5,6 @@ use crate::engine::api::runtime::Runtime;
 use crate::engine::value::{JsValue, Value};
 
 #[test]
-fn invalid_binding_modes_are_rejected_before_creating_a_runtime_frame() {
-    use crate::engine::code::bytecode::Instruction;
-    use crate::engine::code::function::metadata::FunctionMetadata;
-    use crate::engine::code::function::{UnlinkedFunction, UnlinkedVariableDefinition};
-    use crate::engine::value::JsString;
-
-    let cases = [
-        (
-            Instruction::GetLocal(0),
-            UnlinkedVariableDefinition::lexical(Some(JsString::from_static("n")), false),
-            "unchecked local opcode referenced a lexical definition",
-        ),
-        (
-            Instruction::GetLocalCheck(0),
-            UnlinkedVariableDefinition::ordinary(None),
-            "checked lexical-local opcode referenced an ordinary definition",
-        ),
-    ];
-    for (instruction, definition, expected) in cases {
-        let runtime = Runtime::new();
-        let context = runtime.new_context();
-        let before = runtime.heap_counts().function_bytecode_nodes;
-        let function = UnlinkedFunction::fixture(
-            vec![instruction, Instruction::Return],
-            vec![],
-            FunctionMetadata {
-                local_count: 1,
-                max_stack: 1,
-                ..FunctionMetadata::default()
-            },
-        )
-        .with_fixture_definitions(vec![], vec![definition]);
-        let error = runtime
-            .publish_unlinked_function(context.realm, function)
-            .unwrap_err();
-        assert!(error.to_string().contains(expected), "{error}");
-        assert_eq!(runtime.heap_counts().function_bytecode_nodes, before);
-    }
-}
-
-#[test]
 fn published_bindings_keep_capture_eval_and_argument_aliases_live() {
     for (source, expected) in [
         (
@@ -176,36 +135,6 @@ fn published_static_branches_preserve_resume_finally_and_loop_targets() {
         assert!(
             matches!(context.eval(source).unwrap(), Value::Bool(true)),
             "{source}"
-        );
-    }
-}
-
-#[test]
-fn invalid_fetch_and_branch_programs_are_rejected_before_execution() {
-    use crate::engine::code::{
-        bytecode::Instruction,
-        function::{UnlinkedFunction, metadata::FunctionMetadata},
-    };
-    for code in [
-        vec![Instruction::Nop],
-        vec![Instruction::Goto(u32::MAX)],
-        vec![Instruction::IfTrue(99)],
-        vec![Instruction::Ret],
-    ] {
-        let runtime = Runtime::new();
-        let context = runtime.new_context();
-        let draft = UnlinkedFunction::fixture(
-            code,
-            vec![],
-            FunctionMetadata {
-                max_stack: 1,
-                ..FunctionMetadata::default()
-            },
-        );
-        assert!(
-            runtime
-                .publish_unlinked_function(context.realm, draft)
-                .is_err()
         );
     }
 }

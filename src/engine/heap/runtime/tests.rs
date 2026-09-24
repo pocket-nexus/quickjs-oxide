@@ -262,17 +262,8 @@ fn push_named_eval_active_frame(
         compile_context,
     )
     .unwrap();
-    let function = crate::engine::code::bytecode_publish::VerifiedFunction::eval(
-        function,
-        crate::engine::api::compile::eval_publication_input(&match kind {
-            EvalKind::Direct => EvalCompileContext::direct(false, Vec::new()),
-            EvalKind::Indirect => EvalCompileContext::indirect(),
-            EvalKind::None => unreachable!(),
-        }),
-    )
-    .unwrap();
     let bytecode = runtime
-        .publish_verified_unlinked_function(context.realm, function)
+        .publish_unlinked_function(context.realm, function)
         .unwrap();
     let callable = runtime
         .new_bytecode_closure_with_slots(context.realm, &bytecode, &[])
@@ -289,11 +280,9 @@ fn push_named_module_active_frame(
 ) -> super::ActiveFrameGuard {
     let module =
         compile_unlinked_module_with_filename("", filename, runtime.debug_info_mode()).unwrap();
-    let function = crate::engine::code::bytecode_publish::VerifiedFunction::module(module)
-        .unwrap()
-        .function;
+    let function = module.into_parts().function;
     let bytecode = runtime
-        .publish_verified_unlinked_function(context.realm, function)
+        .publish_unlinked_function(context.realm, function)
         .unwrap();
     let callable = runtime
         .new_bytecode_closure_with_slots(context.realm, &bytecode, &[])
