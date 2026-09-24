@@ -832,8 +832,8 @@ perf（4MB 扣 64KB tiny 档，P3/P4 两探针交错 min-of-7）：
 | | task-clock/KB | 0.351 ms | 0.350 ms（−0.28%） |
 
 64KB 档：functions instr +0.46%、cycles +1.74%；expressions +0.48%/−0.17%；
-syntax-mixed +0.78%/+2.62%。探针内 `compile_ns`（5 次）：functions
-1.185s→1.167s（−1.5%）。即 69.3M 步扫描被消除，但指令节省多为廉价的向量化
+syntax-mixed +0.78%/+2.62%。探针内 `compile_ns`（5 次 min）：functions
+1.171s→1.151s（−1.8%）。即 69.3M 步扫描被消除，但指令节省多为廉价的向量化
 比较，cycles/task-clock 几乎不动，而小函数侧被 HashMap 常数开销抵消。
 
 真实 bundle（67 case，P1b/P3/P4 交错 5 次）：每 case 速度比值 p3/p4 中位
