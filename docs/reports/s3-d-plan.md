@@ -1,8 +1,9 @@
 # 阶段 D 实施计划：数据导向堆与形状/键存储（2026-09-24）
 
-> 状态：实施中。D1a/D1b 已提交（`84654cc8`/`98bd54c3`）；D2 leaf/cold payload
-> 与 D3a/D3b/D3c 已落地，D4 已实现并提交（`17a77e6e`/`2bb3595c`，见 §4
-> 实施记录；指令与 slice RSS 门禁未达，待裁决），D5 待做。基线为
+> 状态：已收口（2026-09-24）。D1a/D1b 已提交（`84654cc8`/`98bd54c3`）；
+> D2/D3/D4 已落地并提交（D4 为 `17a77e6e`/`2bb3595c`，见 §4 实施记录）；
+> D4 指令与 slice RSS 门禁按累计口径接受（slice 缺口与 native 编组链
+> 一并归 B 重新立项），D5 按启动门禁未满足降级为 backlog。基线为
 > `feat/pr27-a4`
 > （= PR27 tip，T1/T2 已收口），裁决依据见
 > [A4/D/B 决策报告](s3-a4-d-b-decision.md)。本计划取代
@@ -599,9 +600,51 @@ map-string SipHash 6.4%（含 `hash_one`）；map_get 同键微负载 7.29×。
   unsupported-negative-provenance=2534，其余类别与冻结 receipt 相同），
   +28 行经核对恰为 `00bb387f fix(lexer)` 的 14 条契约 ×2 变体，D 未
   引入行级变化。字节比对门禁仍因冻结 receipt 停留 `022e7b48` 而不过
-  （promotion 为独立事项，见 `s3-a-closure-plan.md`）。
+  （基线晋升为独立事项，见 `s3-a-closure-plan.md`）。
 - 验证：lib 2319、workspace `--all-targets` 全绿、零警告；
   `--features profiling` 仅剩基线既有失败。
+- **裁决（2026-09-24）**：D4 按「记录收窄 + 累计口径」接受——指令
+  slice 缺口与 native 调用编组链一并归 B 重新立项处理，Map RSS 以对
+  d1a 累计 −59.0% 计；不再扩大 D4 范围。D5 按启动门禁未满足降级为
+  backlog（见下）。
+
+### D 收尾记录（2026-09-24）
+
+**范围**：D1a/D1b（shape 缓存一致性 + FxHash 指纹免分配）→ D2（叶节点
+typed arena + 冷载荷装箱）→ D3a/D3b/D3c（accessor 打包、lazy-intrinsic
+装箱、双内联槽、immediate 写快路径）→ D4（Map/Set 稠密记录 + 字符串键
+seeded FxHash）。全部按片独立提交、可单独回退。
+
+**最终证据**（对 D1a 累计，fat LTO、`taskset -c 2`、中位）：
+- 尺寸：`ArenaSlot` 440 → 288B；`ObjectData` 256B（`≤272` 断言）。
+- 1M RSS：objects.js 425.2 → 333.1 MiB（−21.7%）；maps.js 797.0 →
+  326.8 MiB（−59.0%）；strings.js 无回退（D4 去掉每节点缓存后
+  176.7→176.5 MiB）。
+- 指令：map-int −8.00%、map-string −11.19%、map_delete −8.20%；
+  prop_write −26.82%（D3c slice）；固定行其余项 ≤±0.5%。
+- 未达项：D4 slice 指令 ≥10%（6.5–9.0%）、Map slice RSS ≥25%
+  （−18.6%）；D3 各片门禁均达成。
+
+**正确性/门禁**：`cargo test --locked --workspace --all-targets` 全绿
+（lib 2319）、零警告、`--features profiling` 仅基线既有失败；
+Test262 全量复跑与阶段 A 状态逐项一致（无 D 引入的行级变化，见上）；
+`python3 scripts/checks/check-source-layout.py` 通过（698 个 reachable
+Rust 文件）。
+
+**挂账（未完成）**：Test262 基线晋升。现状：`current.conf` 的
+`engine_semantics_source` 仍为 `022e7b48`，其覆盖契约是旧路径
+（`scripts/prepare-test262.sh`/`scripts/test-test262.sh` + `src`），而
+门禁工作区指纹已改为 `scripts/test262/*` + `verify-report.cjs` + 6 棵树
+（`adapters,apps,conformance,examples,src,tests`），二者集合不同，
+`--focused` 按设计拒绝。晋升需要同步修改：门禁脚本硬编码覆盖契约、
+`current.conf` 的 `engine_semantics_source/files/trees/sha256`、focused
+receipt 首行身份与哈希、`full_*` 汇总，以及 `docs/status.md` 指标块
+（可由 `scripts/test262/current-test262-metrics.mjs --write-docs` 生成）；
+且新契约必须落成一个提交，`engine_semantics_source` 才能指向它。此项
+留待独立提交处理，不与 D 混合。
+
+**下一步**：B 重新立项（自改写专用字节码，先写 spike/设计文档，见
+[性能架构](performance-architecture.md) §11）。
 
 ### D5 per-prototype validity cell（条件项，需先补证据）
 
