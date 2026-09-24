@@ -16,7 +16,7 @@ const HIGH_SURROGATE_START: u16 = 0xd800;
 const LOW_SURROGATE_END: u16 = 0xdfff;
 const CARRIER_START: u32 = 0xe000;
 const CARRIER_UTF8_LEN: usize = 3;
-const INVALID_BYTE_CARRIER: char = '\u{7f}';
+pub(crate) const INVALID_BYTE_CARRIER: char = '\u{7f}';
 
 /// One surrogate-code-unit substitution in a [`SourceText`] carrier.
 ///
