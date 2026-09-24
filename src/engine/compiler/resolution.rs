@@ -701,7 +701,7 @@ fn link_eval_environment(
                         .get(binding.0)
                         .map(|binding| {
                             (
-                                binding.name.clone(),
+                                binding.name,
                                 binding.storage,
                                 binding.kind,
                                 binding.is_catch_parameter,
@@ -733,7 +733,7 @@ fn link_eval_environment(
                     })
                     .map(|binding| {
                         (
-                            binding.name.clone(),
+                            binding.name,
                             binding.storage,
                             binding.kind,
                             binding.is_catch_parameter,
@@ -1032,7 +1032,7 @@ fn seed_global_declarations(tree: &mut FunctionTree) -> Result<(), Error> {
         .iter()
         .map(|declaration| {
             (
-                declaration.name.clone(),
+                declaration.name,
                 declaration.is_lexical,
                 declaration.is_const,
                 declaration.function_constant.is_some(),
@@ -1074,7 +1074,7 @@ fn seed_module_bindings(tree: &mut FunctionTree) -> Result<(), Error> {
         .iter()
         .map(|binding| {
             (
-                binding.name.clone(),
+                binding.name,
                 binding.declaration,
                 binding.import,
                 binding.is_import_meta,
@@ -1170,7 +1170,7 @@ fn install_global_function_hoists(tree: &mut FunctionTree) -> Result<(), Error> 
         .filter_map(|declaration| {
             declaration
                 .function_constant
-                .map(|constant| (declaration.name.clone(), constant))
+                .map(|constant| (declaration.name, constant))
         })
         .collect::<Vec<_>>();
     if declarations.is_empty() {
@@ -2531,10 +2531,7 @@ fn find_or_create_parameter_special_binding(
         .ok_or_else(|| Error::internal("parameter binding owner is out of bounds"))?;
     let arguments = tree.names.name(name) == "arguments"
         && matches!(function.kind, FunctionKind::Ordinary | FunctionKind::Method)
-        && !function
-            .parameters
-            .iter()
-            .any(|parameter| *parameter == Some(name));
+        && !function.parameters.contains(&Some(name));
     let private_name = function.private_name_binding && function.function_name == Some(name);
     if arguments {
         find_or_create_own_binding(tree, function_id, ScopeId(0), name, span)

@@ -363,7 +363,7 @@ impl<'source> Parser<'source> {
                 self.parse_private_class_method(
                     elements,
                     is_static,
-                    name.clone(),
+                    *name,
                     *span,
                     function_span,
                     flavor,
@@ -372,7 +372,7 @@ impl<'source> Parser<'source> {
                 self.parse_private_class_accessor(
                     elements,
                     is_static,
-                    name.clone(),
+                    *name,
                     *span,
                     function_span,
                     method_kind,

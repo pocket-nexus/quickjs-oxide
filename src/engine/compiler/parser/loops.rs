@@ -333,7 +333,7 @@ impl<'source> Parser<'source> {
                     .as_ref()
                     .ok_or_else(|| Error::internal("for-in var initializer lost its binding"))?;
                 self.emit_identifier_inherited(
-                    initializer.name.clone(),
+                    initializer.name,
                     initializer.span,
                     initializer.scope,
                     IdentifierAccess::Put,

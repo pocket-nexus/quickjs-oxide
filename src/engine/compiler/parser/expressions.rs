@@ -1201,7 +1201,7 @@ impl<'source> Parser<'source> {
         };
         let object_environment = self.parser_scope_has_authored_with(function_id, *scope)?;
         let reference = IdentifierReference {
-            name: name.clone(),
+            name: *name,
             span: *span,
             scope: *scope,
             object_environment,
@@ -1215,7 +1215,7 @@ impl<'source> Parser<'source> {
                 ));
             };
             *op = IrOp::IdentifierReference {
-                name: reference.name.clone(),
+                name: reference.name,
                 span: reference.span,
                 scope: reference.scope,
                 access: reference_access,
@@ -1321,7 +1321,7 @@ impl<'source> Parser<'source> {
         };
         let object_environment = self.parser_scope_has_authored_with(function_id, *scope)?;
         let reference = IdentifierReference {
-            name: name.clone(),
+            name: *name,
             span: *span,
             scope: *scope,
             object_environment,
@@ -1335,7 +1335,7 @@ impl<'source> Parser<'source> {
                 ));
             };
             *op = IrOp::IdentifierReference {
-                name: reference.name.clone(),
+                name: reference.name,
                 span: reference.span,
                 scope: reference.scope,
                 access: IdentifierReferenceAccess::Prepare,
@@ -1484,7 +1484,7 @@ impl<'source> Parser<'source> {
                 *access = PrivateFieldAccess::GetKeepReceiver;
                 (
                     MemberReference::Private {
-                        name: name.clone(),
+                        name: *name,
                         span: *span,
                         scope: *scope,
                         site,

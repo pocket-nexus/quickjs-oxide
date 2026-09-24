@@ -143,12 +143,7 @@ impl<'source> Parser<'source> {
                 "pattern parameter binding escaped its initialization phase",
             ));
         }
-        if self
-            .current_ir()
-            .parameter_names
-            .iter()
-            .any(|parameter| *parameter == name)
-        {
+        if self.current_ir().parameter_names.contains(&name) {
             return Err(Error::syntax(
                 "duplicate parameter names not allowed in this context",
                 source_span(conflict_span),

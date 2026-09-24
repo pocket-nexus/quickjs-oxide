@@ -117,10 +117,7 @@ impl<'source> Parser<'source> {
         let selects_arguments_object =
             matches!(function.kind, FunctionKind::Ordinary | FunctionKind::Method)
                 && arguments == Some(name)
-                && !function
-                    .parameters
-                    .iter()
-                    .any(|parameter| *parameter == Some(name))
+                && !function.parameters.contains(&Some(name))
                 && !function
                     .parameter_pattern_bindings
                     .iter()
@@ -545,7 +542,7 @@ impl<'source> Parser<'source> {
                 );
             if masked_program_duplicate {
                 function.global_declarations.push(IrGlobalDeclaration {
-                    name: name,
+                    name,
                     is_lexical: true,
                     is_const,
                     function_constant: None,
@@ -636,7 +633,7 @@ impl<'source> Parser<'source> {
         }
         if is_global {
             function.global_declarations.push(IrGlobalDeclaration {
-                name: name,
+                name,
                 is_lexical: true,
                 is_const,
                 function_constant: None,
@@ -1064,10 +1061,7 @@ impl<'source> Parser<'source> {
             || (matches!(
                 function.kind,
                 FunctionKind::Ordinary | FunctionKind::Method | FunctionKind::Arrow
-            ) && function
-                .parameter_names
-                .iter()
-                .any(|parameter| *parameter == name))
+            ) && function.parameter_names.contains(&name))
         {
             return false;
         }
