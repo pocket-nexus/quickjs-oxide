@@ -404,7 +404,7 @@ site 不参与 GC 扫描；generator 恢复走 canonical PC + 同一
 | --- | --- | --- | --- |
 | B2.0 | 证据冻结（§2 表格 + `target/s3-b-recon/`）；尺寸断言（`Instruction`==12、`RunExit`==16 编译期 `const` 断言；`Error`/`Result` 记为诊断指标不加断言）；`SpanKind` 单次查询重构实测不成立，已回退（§5.1） | 无 | 断言随 lib 测试编译；基线 A/A 复现 607.27/1355.27/1730.28 |
 | B2.1a | S1 `LocalCompareBranch`（含 `Goto` 折叠），结果见 §5.2 | B2.0 | `empty_loop` 每轮 337（−44.5%）；`ic_share_*` +0.72%（布局伪影 <2% 线）；其余负载不退化 |
-| B2.1b | S2 `LocalAddConstStore` + S4 UpdateLocal/LocalAdd 快路径 | B2.1a | `int_local` 每轮 ≤300；BigInt/字符串固定行不退化 |
+| B2.1b | S2 `LocalAddConstStore` + S4 UpdateLocal/LocalAdd 快路径，结果见 §5.3 | B2.1a | `int_local` 每轮 460（片内 −58.2%，累计 −66.0%；≤300 未达，留 B2.2 评估）；BigInt 固定行片内 +1.16%/+1.04%/+0.64%（<2% 线） |
 | B2.1c | S3 `LocalFieldAddStore`（含 IC peek 变体） | B2.1b | `prop_read` 每轮 ≤450；属性固定行不退化 |
 | B2.2 | 自适应 per-PC 专用槽（§4.3） | B2.1c + 启动门禁 | 启动门禁满足且内存门禁通过；否则记 backlog |
 | B2.3 | native 编组链 spike（独立文档） | B2.1 冻结 | 给出定向方案与预估，不在本轮改代码 |
@@ -476,6 +476,50 @@ flag（33 = 无 `Goto`，长 4；34 = 折叠尾 `Goto`，长 5）；第一生产
 `empty_loop` 337.27。handler 的 `#[inline]` 与 `#[inline(never)]` 在两种
 顺序下都无差异，与既有 `compare_branch` 风格一致取 `#[inline]`。
 `empty_loop` 337 > 200 的余量留给 B2.1b 的 S4（`j++`）。
+
+### 5.3 B2.1b 结果：S2 `LocalAddConstStore` + S4 不可失败写回
+
+实现：生成器新增 flag 35/36（`GetLocal(a); 数值字面量; Add; store(a)[; Drop]`；
+字面量域在发布期由常量池固定，`FusionPlan::build` 因此新增 `constants` 参数）。
+运行期 `GetLocal` 臂在既有 `local_add_span` 块内先探一次 `numeric_local_add`
+（outlined）：数字对或数字字面量在标量域内完成加法和写回；其余形态原样走
+`local_add_supported`/`RunAdd` 桥。`update_local` 增加 Direct+Number 前置快
+路径（读非拥有、`Number::update`、标量写回，不经过 `Result`），结果入栈前
+用 `has_operand_room` 守卫容量。`store_number_local`/`push_number` 只在该守卫
+之后使用。
+
+实测（`taskset -c 2`，相对上一片 b21a 构建；括号为相对分支起点 base）：
+
+| 负载 | b21a | B2.1b | 片内 | 累计 |
+| --- | --- | --- | --- | --- |
+| `int_local` | 11,002,737,550 | 4,602,736,640 | **−58.17%**（1100.27 → 460.27/轮） | −66.04% |
+| `empty_loop` | 3,372,681,432 | 3,552,681,406 | +5.34% | −41.50% |
+| `prop_read` | 14,912,818,081 | 15,252,819,299 | +2.28% | −11.85% |
+| `array_read` | — | — | +1.72% | −7.36% |
+| `bigint_loop` | 5,840,093,219 | 5,845,294,163 | +0.09% | −0.78% |
+| `call0` | — | — | +0.62% | −5.56% |
+| `ic_share_1prop/2prop` | 43,502,858,590 | 43,743,111,528 | +0.55% | +1.27% |
+| `prop_read_same_key` | — | — | −0.04% | −0.20% |
+| `map_get_same_key` / `rotate_keys` | — | — | −0.01% / −0.02% | −0.09% / −0.14% |
+| `bigint32` 固定行 | 4,225,385,282 | 4,274,416,230 | +1.16% | +2.89% |
+| `bigint64` 固定行 | 4,731,072,197 | 4,780,103,245 | +1.04% | +2.59% |
+| `bigint256` 固定行 | 7,617,018,564 | 7,666,050,132 | +0.64% | +1.65% |
+
+输出在全部负载上逐字节一致（含 `ic_share` 4995000000、bigint 固定行）。
+
+布局敏感度（本轮最重要的工程发现）：把 S2/S4 的判定代码内联进 `run` 的
+`GetLocal` 臂会改变无关热循环的布局——`empty_loop` +10~13%、`prop_read`
++4~5%，即使这些负载根本不执行新代码。最终形态把判定收进
+`#[inline(never)] fn numeric_local_add`，`run` 臂只多一次调用点，是全部
+变体中最优（`empty_loop` +5.3%）。`#[inline(always)]` 固定 S1/S2 handler
+在本结构下反而更差（`empty_loop` +14.5%），已回退为 `#[inline]`。
+
+验收判断：`int_local` ≤300 未达（460.27）；缺口来自不能在 B2.1 静态跨度
+内消除的三项——S1 条件调用、S4 更新调用、每轮 4 个派发入口。BigInt 固定
+行片内均 <2%（符合 §6.2 的逐片比较协议），但累计 +2.9%/+2.6%/+1.7% 已
+超过 2% 线，主要来自 B2.1a 的 `run` 布局漂移（片内 +1.71%/+1.54%/+0.99%）。
+该缺口记入 B2.1c/B2.4 的默认路径裁决：若 B2.1c 无法回收，需要一次专门的
+布局/内联整理或按 kind 回退 S1/S2/S4 之一。
 
 ## 6. 验收门禁
 
