@@ -33,7 +33,6 @@ use crate::engine::compiler::parser::diagnostics::IdentifierContext;
 use crate::engine::compiler::parser::diagnostics::lex_error;
 use crate::engine::compiler::parser::diagnostics::source_offset;
 use crate::engine::compiler::parser::diagnostics::source_span;
-use crate::engine::compiler::parser::diagnostics::validate_identifier_reservation;
 use crate::engine::compiler::parser::literals::parse_number;
 use crate::engine::compiler::private_reference;
 use crate::engine::value::JsString;
@@ -99,9 +98,14 @@ impl<'source> Parser<'source> {
             // ClassBinding, even though it parses the surrounding definition
             // in strict mode. In particular, `eval` and `arguments` remain
             // accepted class names.
-            validate_identifier_reservation(&identifier, span, true, IdentifierContext::Variable)?;
+            self.validate_identifier_reservation(
+                &identifier,
+                span,
+                true,
+                IdentifierContext::Variable,
+            )?;
             self.advance()?;
-            Some((identifier.value, span))
+            Some((self.identifier_text(&identifier).into_owned(), span))
         } else {
             None
         };
@@ -306,11 +310,11 @@ impl<'source> Parser<'source> {
             && !asynchronous
             && let TokenKind::Identifier(identifier) = &self.current().kind
             && !identifier.has_escape
-            && matches!(identifier.value.as_str(), "get" | "set")
+            && matches!(identifier.raw, "get" | "set")
         {
             let next = self.class_token_after_current()?;
             if !next.line_terminator_before && Self::class_property_name_starts(&next.kind) {
-                method_kind = if identifier.value == "get" {
+                method_kind = if identifier.raw == "get" {
                     DefineMethodKind::Getter
                 } else {
                     DefineMethodKind::Setter
@@ -451,7 +455,7 @@ impl<'source> Parser<'source> {
         let value = match token.kind {
             TokenKind::Identifier(identifier) => {
                 self.advance()?;
-                JsString::try_from_utf8(&identifier.value)?
+                JsString::try_from_utf8(&self.identifier_text(&identifier))?
             }
             TokenKind::Keyword(keyword) => {
                 self.advance()?;
@@ -490,7 +494,7 @@ impl<'source> Parser<'source> {
                 return Ok(ClassPropertyKey::Computed);
             }
             TokenKind::PrivateIdentifier(identifier) => {
-                let is_constructor = identifier.value == "constructor";
+                let is_constructor = self.identical_name(&identifier, "constructor");
                 self.advance()?;
                 // QuickJS checks `JS_ATOM_hash_constructor` only after
                 // `js_parse_property_name` has advanced to the following
@@ -500,7 +504,9 @@ impl<'source> Parser<'source> {
                     return Err(self.syntax_here("invalid method name"));
                 }
                 return Ok(ClassPropertyKey::Private {
-                    name: private_reference::private_binding_name(&identifier.value),
+                    name: private_reference::private_binding_name(
+                        &self.identifier_text(&identifier),
+                    ),
                     span: token.span,
                 });
             }
@@ -513,7 +519,7 @@ impl<'source> Parser<'source> {
         let TokenKind::Identifier(identifier) = &self.current().kind else {
             return Ok(false);
         };
-        if identifier.value != "async" || identifier.has_escape {
+        if !self.is_unescaped_name(identifier, "async") {
             return Ok(false);
         }
         let next = self.class_token_after_current()?;

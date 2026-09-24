@@ -103,7 +103,7 @@ impl<'source> Parser<'source> {
         let TokenKind::PrivateIdentifier(identifier) = token.kind else {
             unreachable!("private-in probe changed the current token")
         };
-        let name = private_binding_name(&identifier.value);
+        let name = private_binding_name(&self.identifier_text(&identifier));
         let scope = self.current_ir().context.current_scope;
         self.advance()?;
         if !matches!(self.current().kind, TokenKind::Keyword(Keyword::In)) {

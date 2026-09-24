@@ -1,7 +1,6 @@
 use crate::engine::compiler::parser::diagnostics::IdentifierContext;
 use crate::engine::compiler::parser::diagnostics::source_offset;
 use crate::engine::compiler::parser::diagnostics::source_span;
-use crate::engine::compiler::parser::diagnostics::validate_identifier;
 
 use crate::engine::api::error::Error;
 use crate::engine::code::bytecode::{DefineMethodKind, Instruction};
@@ -172,7 +171,12 @@ impl<'source> Parser<'source> {
         let name = match self.current().kind.clone() {
             TokenKind::Identifier(identifier) => {
                 let span = self.current().span;
-                validate_identifier(&identifier, span, false, IdentifierContext::FunctionName)?;
+                self.validate_identifier(
+                    &identifier,
+                    span,
+                    false,
+                    IdentifierContext::FunctionName,
+                )?;
                 self.advance()?;
                 Some((identifier, span))
             }
@@ -187,7 +191,6 @@ impl<'source> Parser<'source> {
                 let span = self.current().span;
                 let identifier = Identifier {
                     raw: "yield",
-                    value: "yield".to_owned(),
                     has_escape: false,
                     keyword_hint: Some(crate::engine::compiler::lexer::Keyword::Yield),
                     escaped_reserved_word: false,
@@ -206,7 +209,6 @@ impl<'source> Parser<'source> {
                 let span = self.current().span;
                 let identifier = Identifier {
                     raw: "await",
-                    value: "await".to_owned(),
                     has_escape: false,
                     keyword_hint: Some(crate::engine::compiler::lexer::Keyword::Await),
                     escaped_reserved_word: false,
@@ -242,7 +244,7 @@ impl<'source> Parser<'source> {
                 BytecodeFunctionKind::Generator | BytecodeFunctionKind::AsyncGenerator
             )
             && let Some((identifier, span)) = &header.name
-            && identifier.value == "yield"
+            && self.identical_name(identifier, "yield")
             && (!header.parent_context.generator
                 || header.parent_context.strict
                 || identifier.has_escape
@@ -262,7 +264,7 @@ impl<'source> Parser<'source> {
                 BytecodeFunctionKind::Async | BytecodeFunctionKind::AsyncGenerator
             )
             && let Some((identifier, span)) = &header.name
-            && identifier.value == "await"
+            && self.identical_name(identifier, "await")
             && (!header.parent_context.async_function
                 || header.parent_context.module
                 || identifier.has_escape
@@ -418,7 +420,7 @@ impl<'source> Parser<'source> {
         let parent_strict = self.functions[parent].strict;
         let function_name = function_name_token
             .as_ref()
-            .map(|(identifier, _)| identifier.value.clone());
+            .map(|(identifier, _)| self.identifier_text(identifier).into_owned());
         let child = self.functions.len();
         let parent_scope = self.functions[parent].context.current_scope;
         let super_capabilities = match options.kind {
@@ -554,9 +556,14 @@ impl<'source> Parser<'source> {
                 let TokenKind::Identifier(identifier) = token.kind else {
                     return Err(self.syntax_here("missing formal parameter"));
                 };
-                validate_identifier(&identifier, token.span, false, IdentifierContext::Argument)?;
-                parameter_tokens.push((identifier.clone(), token.span));
-                let parameter = identifier.value;
+                self.validate_identifier(
+                    &identifier,
+                    token.span,
+                    false,
+                    IdentifierContext::Argument,
+                )?;
+                parameter_tokens.push((identifier, token.span));
+                let parameter = self.identifier_text(&identifier).into_owned();
                 self.advance()?;
                 if is_rest {
                     self.register_rest_identifier_parameter(parameter, token.span)?;
@@ -620,7 +627,7 @@ impl<'source> Parser<'source> {
         if strict {
             let strict_validation_span = self.current().span;
             if let Some((identifier, _)) = &function_name_token {
-                validate_identifier(
+                self.validate_identifier(
                     identifier,
                     strict_validation_span,
                     true,
@@ -628,7 +635,7 @@ impl<'source> Parser<'source> {
                 )?;
             }
             for (identifier, _) in &parameter_tokens {
-                validate_identifier(
+                self.validate_identifier(
                     identifier,
                     strict_validation_span,
                     true,
@@ -720,7 +727,8 @@ impl<'source> Parser<'source> {
         Ok(ParsedFunctionDefinition {
             constant,
             child,
-            name: function_name_token.map(|(identifier, span)| (identifier.value, span)),
+            name: function_name_token
+                .map(|(identifier, span)| (self.identifier_text(&identifier).into_owned(), span)),
         })
     }
 }

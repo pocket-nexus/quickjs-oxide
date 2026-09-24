@@ -31,7 +31,6 @@ use crate::engine::compiler::parser::context::StatementPosition;
 use crate::engine::compiler::parser::diagnostics::IdentifierContext;
 use crate::engine::compiler::parser::diagnostics::lex_error;
 use crate::engine::compiler::parser::diagnostics::source_span;
-use crate::engine::compiler::parser::diagnostics::validate_identifier_reservation;
 use crate::engine::value::JsString;
 use crate::engine::value::PrimitiveValue as Value;
 use std::collections::HashMap;
@@ -311,13 +310,16 @@ impl<'source> Parser<'source> {
                         )
                         .into());
                     };
-                    validate_identifier_reservation(
+                    self.validate_identifier_reservation(
                         &identifier,
                         imported_token.span,
                         true,
                         IdentifierContext::Variable,
                     )?;
-                    (identifier.value, imported_token.span)
+                    (
+                        self.identifier_text(&identifier).into_owned(),
+                        imported_token.span,
+                    )
                 };
                 let binding =
                     self.register_module_import_binding(&local_name, local_span, false)?;
@@ -435,7 +437,9 @@ impl<'source> Parser<'source> {
             let key_token = self.current().clone();
             let key = match key_token.kind {
                 TokenKind::String(literal) => JsString::try_from_utf16(literal.value.utf16)?,
-                TokenKind::Identifier(identifier) => JsString::try_from_utf8(&identifier.value)?,
+                TokenKind::Identifier(identifier) => {
+                    JsString::try_from_utf8(&self.identifier_text(&identifier))?
+                }
                 TokenKind::Keyword(keyword) => JsString::try_from_utf8(keyword.as_str())?,
                 _ => return Err(self.syntax_here("identifier expected").into()),
             };
@@ -481,14 +485,14 @@ impl<'source> Parser<'source> {
         // reserved-word validation here, but let those two strict names reach
         // `register_module_import_binding` so the observable diagnostic and
         // current-token location follow the module grammar path.
-        validate_identifier_reservation(
+        self.validate_identifier_reservation(
             &identifier,
             token.span,
             true,
             IdentifierContext::Variable,
         )?;
         self.advance()?;
-        Ok((identifier.value, token.span))
+        Ok((self.identifier_text(&identifier).into_owned(), token.span))
     }
 
     fn register_module_import_binding(
@@ -697,7 +701,7 @@ impl<'source> Parser<'source> {
     fn module_identifier_name(&mut self) -> Result<(String, Span), Error> {
         let token = self.current().clone();
         let name = match token.kind {
-            TokenKind::Identifier(identifier) => identifier.value,
+            TokenKind::Identifier(identifier) => self.identifier_text(&identifier).into_owned(),
             TokenKind::Keyword(keyword) => keyword.as_str().to_owned(),
             _ => return Err(self.syntax_here("identifier expected")),
         };
@@ -714,7 +718,9 @@ impl<'source> Parser<'source> {
                 })?;
                 JsString::try_from_utf16(literal.value.utf16)?
             }
-            TokenKind::Identifier(identifier) => JsString::try_from_utf8(&identifier.value)?,
+            TokenKind::Identifier(identifier) => {
+                JsString::try_from_utf8(&self.identifier_text(&identifier))?
+            }
             TokenKind::Keyword(keyword) => JsString::try_from_utf8(keyword.as_str())?,
             _ => return Err(self.syntax_here("identifier expected")),
         };
@@ -726,7 +732,7 @@ impl<'source> Parser<'source> {
         matches!(
             &self.current().kind,
             TokenKind::Identifier(identifier)
-                if identifier.value == expected && !identifier.has_escape
+                if self.is_unescaped_name(identifier, expected)
         )
     }
 
@@ -906,7 +912,7 @@ impl<'source> Parser<'source> {
         let source_name = header
             .name
             .as_ref()
-            .map(|(identifier, span)| (identifier.value.clone(), *span));
+            .map(|(identifier, span)| (self.identifier_text(identifier).into_owned(), *span));
         let (name, declaration_span) = source_name
             .clone()
             .unwrap_or_else(|| (MODULE_DEFAULT_BINDING_NAME.to_owned(), header.span));

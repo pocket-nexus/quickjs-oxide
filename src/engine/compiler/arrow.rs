@@ -22,7 +22,6 @@ use crate::engine::compiler::parser::context::Parser;
 use crate::engine::compiler::parser::diagnostics::IdentifierContext;
 use crate::engine::compiler::parser::diagnostics::source_offset;
 use crate::engine::compiler::parser::diagnostics::source_span;
-use crate::engine::compiler::parser::diagnostics::validate_identifier;
 use crate::engine::compiler::parser::tokens::for_head_regexp_allowed_after;
 use crate::source::SourceOffset;
 
@@ -139,8 +138,16 @@ impl<'source> Parser<'source> {
                         "identifier arrow lookahead lost its parameter token",
                     ));
                 };
-                validate_identifier(&identifier, token.span, false, IdentifierContext::Argument)?;
-                self.register_plain_identifier_parameter(identifier.value.clone(), token.span)?;
+                self.validate_identifier(
+                    &identifier,
+                    token.span,
+                    false,
+                    IdentifierContext::Argument,
+                )?;
+                self.register_plain_identifier_parameter(
+                    self.identifier_text(&identifier).into_owned(),
+                    token.span,
+                )?;
                 parameter_tokens.push((identifier, token.span));
                 self.advance()?;
             }
@@ -197,7 +204,7 @@ impl<'source> Parser<'source> {
                         let TokenKind::Identifier(identifier) = token.kind else {
                             return Err(self.syntax_here("missing formal parameter"));
                         };
-                        validate_identifier(
+                        self.validate_identifier(
                             &identifier,
                             token.span,
                             false,
@@ -206,7 +213,7 @@ impl<'source> Parser<'source> {
                         parameter_tokens.push((identifier, token.span));
                         let parameter = parameter_tokens
                             .last()
-                            .map(|(identifier, _)| identifier.value.clone())
+                            .map(|(identifier, _)| self.identifier_text(identifier).into_owned())
                             .ok_or_else(|| Error::internal("arrow parameter disappeared"))?;
                         self.advance()?;
                         if is_rest {
@@ -266,7 +273,7 @@ impl<'source> Parser<'source> {
         }
         if strict {
             for (identifier, span) in &parameter_tokens {
-                validate_identifier(identifier, *span, true, IdentifierContext::Argument)?;
+                self.validate_identifier(identifier, *span, true, IdentifierContext::Argument)?;
             }
         }
         let parameters = &self.functions[child].parameter_names;
@@ -462,7 +469,7 @@ impl<'source> Parser<'source> {
         let TokenKind::Identifier(identifier) = &self.current().kind else {
             return None;
         };
-        if identifier.value != "async" || identifier.has_escape {
+        if !self.is_unescaped_name(identifier, "async") {
             return None;
         }
         let mut lexer = self.lexer.clone();

@@ -29,7 +29,6 @@ use crate::engine::compiler::parser::context::StatementPosition;
 use crate::engine::compiler::parser::diagnostics::IdentifierContext;
 use crate::engine::compiler::parser::diagnostics::source_offset;
 use crate::engine::compiler::parser::diagnostics::source_span;
-use crate::engine::compiler::parser::diagnostics::validate_identifier_reservation;
 use crate::engine::value::JsString;
 use crate::engine::value::PrimitiveValue as Value;
 
@@ -567,15 +566,15 @@ impl<'source> Parser<'source> {
                     if identifier.escaped_reserved_word {
                         return Err(self.syntax_here("identifier expected"));
                     }
-                    validate_identifier_reservation(
+                    self.validate_identifier_reservation(
                         &identifier,
                         token.span,
                         self.current_ir().strict,
                         IdentifierContext::Variable,
                     )?;
-                    let invalid_strict_name = self.current_ir().strict
-                        && matches!(identifier.value.as_str(), "eval" | "arguments");
-                    let name = identifier.value;
+                    let name = self.identifier_text(&identifier).into_owned();
+                    let invalid_strict_name =
+                        self.current_ir().strict && matches!(name.as_str(), "eval" | "arguments");
                     self.advance()?;
                     if invalid_strict_name {
                         return Err(Error::syntax(
@@ -813,19 +812,19 @@ impl<'source> Parser<'source> {
                 let TokenKind::Identifier(identifier) = token.kind else {
                     return Err(self.syntax_here("variable name expected"));
                 };
-                validate_identifier_reservation(
+                self.validate_identifier_reservation(
                     &identifier,
                     token.span,
                     self.current_ir().strict,
                     IdentifierContext::Variable,
                 )?;
-                if identifier.value == "let" {
+                if self.identical_name(&identifier, "let") {
                     return Err(Error::syntax(
                         "'let' is not a valid lexical identifier",
                         source_span(token.span),
                     ));
                 }
-                let name = identifier.value;
+                let name = self.identifier_text(&identifier).into_owned();
                 let strict = self.current_ir().strict;
                 self.advance()?;
                 if strict && matches!(name.as_str(), "eval" | "arguments") {
@@ -904,14 +903,14 @@ impl<'source> Parser<'source> {
                 let TokenKind::Identifier(identifier) = token.kind else {
                     return Err(self.syntax_here("variable name expected"));
                 };
-                validate_identifier_reservation(
+                self.validate_identifier_reservation(
                     &identifier,
                     token.span,
                     self.current_ir().strict,
                     IdentifierContext::Variable,
                 )?;
                 let strict = self.current_ir().strict;
-                let name = identifier.value;
+                let name = self.identifier_text(&identifier).into_owned();
                 self.advance()?;
                 if strict && matches!(name.as_str(), "eval" | "arguments") {
                     return Err(Error::syntax(

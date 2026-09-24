@@ -121,7 +121,9 @@ impl<'source> Parser<'source> {
         // starts with the identifier token itself. Parenthesized lvalues are
         // valid References but intentionally do not trigger NamedEvaluation.
         let direct_identifier_name = match &self.current().kind {
-            TokenKind::Identifier(identifier) => Some(identifier.value.clone()),
+            TokenKind::Identifier(identifier) => {
+                Some(self.identifier_text(identifier).into_owned())
+            }
             _ => None,
         };
         self.parse_conditional()?;
@@ -1082,7 +1084,8 @@ impl<'source> Parser<'source> {
             let token = self.current().clone();
             let name = match token.kind {
                 TokenKind::PrivateIdentifier(identifier) => {
-                    let name = private_reference::private_binding_name(&identifier.value);
+                    let name =
+                        private_reference::private_binding_name(&self.identifier_text(&identifier));
                     self.advance()?;
                     let operation =
                         self.emit_private_field_get(name, token.span, source_offset(member_span)?)?;
@@ -1090,7 +1093,7 @@ impl<'source> Parser<'source> {
                     self.anonymous_function_definition = None;
                     return Ok(true);
                 }
-                TokenKind::Identifier(identifier) => identifier.value,
+                TokenKind::Identifier(identifier) => self.identifier_text(&identifier).into_owned(),
                 TokenKind::Keyword(keyword) => keyword.as_str().to_owned(),
                 _ => return Err(self.syntax_here("expecting field name")),
             };

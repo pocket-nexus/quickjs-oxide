@@ -102,7 +102,7 @@ impl<'source> Parser<'source> {
             let TokenKind::Identifier(identifier) = token.kind else {
                 return Err(self.syntax_here("expecting target"));
             };
-            if identifier.value != "target" || identifier.has_escape {
+            if !self.is_unescaped_name(&identifier, "target") {
                 return Err(self.syntax_here("expecting target"));
             }
             if matches!(self.current_ir().kind, FunctionKind::Eval(EvalKind::None)) {
@@ -278,7 +278,7 @@ impl<'source> Parser<'source> {
                         source_span(token.span),
                     ));
                 }
-                TokenKind::Identifier(identifier) => identifier.value,
+                TokenKind::Identifier(identifier) => self.identifier_text(&identifier).into_owned(),
                 TokenKind::Keyword(keyword) => keyword.as_str().to_owned(),
                 _ => return Err(self.syntax_here("expecting field name")),
             };
@@ -311,7 +311,7 @@ impl<'source> Parser<'source> {
             let exact_meta = matches!(
                 &self.current().kind,
                 TokenKind::Identifier(identifier)
-                    if identifier.value == "meta" && !identifier.has_escape
+                    if self.is_unescaped_name(identifier, "meta")
             );
             if !exact_meta {
                 return Err(self.syntax_here("meta expected"));
