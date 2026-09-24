@@ -1474,3 +1474,22 @@ fn shared_value_leaves_release_once_and_drain_older_queued_work() {
     assert_eq!(heap.release_bigint(bigint).unwrap().finalized_bigints, 1);
     assert_eq!(heap.counts().live, 0);
 }
+
+#[test]
+#[cfg(target_pointer_width = "64")]
+fn accessor_refs_pack_the_null_sentinel_into_eight_bytes() {
+    use std::mem::size_of;
+    assert_eq!(size_of::<AccessorRef>(), 8);
+    assert_eq!(AccessorRef::NONE.option(), None);
+    let getter = ObjectId {
+        index: 7,
+        generation: 3,
+    };
+    assert_eq!(AccessorRef::from_option(Some(getter)).option(), Some(getter));
+    let slot = PropertySlot::accessor(None, Some(getter));
+    let PropertySlot::Accessor { get, set } = slot else {
+        panic!("accessor constructor produced a data slot");
+    };
+    assert_eq!(get.option(), None);
+    assert_eq!(set.option(), Some(getter));
+}

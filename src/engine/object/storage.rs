@@ -362,10 +362,7 @@ impl Runtime {
                 };
                 (
                     PropertyFlags::accessor(enumerable, configurable),
-                    PropertySlot::Accessor {
-                        get: id(get)?,
-                        set: id(set)?,
-                    },
+                    PropertySlot::accessor(id(get)?, id(set)?),
                 )
             }
         };
@@ -465,16 +462,16 @@ impl Runtime {
                     object,
                     key,
                     PropertyFlags::accessor(enumerable, configurable),
-                    PropertySlot::Accessor {
-                        get: get.map(|value| match value {
+                    PropertySlot::accessor(
+                        get.map(|value| match value {
                             RawValue::Object(id) => id,
                             _ => unreachable!("validated accessor"),
                         }),
-                        set: set.map(|value| match value {
+                        set.map(|value| match value {
                             RawValue::Object(id) => id,
                             _ => unreachable!("validated accessor"),
                         }),
-                    },
+                    ),
                 )
             }
         }

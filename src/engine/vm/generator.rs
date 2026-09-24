@@ -984,10 +984,7 @@ mod tests {
                 &function,
                 &prototype,
                 PropertyFlags::accessor(false, false),
-                PropertySlot::Accessor {
-                    get: Some(getter.object_id()),
-                    set: None,
-                },
+                PropertySlot::accessor(Some(getter.object_id()), None),
             )
             .unwrap();
         let thrown = match runtime

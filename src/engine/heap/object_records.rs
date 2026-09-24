@@ -8,12 +8,58 @@ pub enum PropertySlot {
     /// payload lives in a shared variable cell.
     VarRef(VarRefId),
     Accessor {
-        get: Option<ObjectId>,
-        set: Option<ObjectId>,
+        get: AccessorRef,
+        set: AccessorRef,
     },
     /// QuickJS-style lazy intrinsic property. It has ordinary data-property
     /// flags in the shape; only the payload and owned realm edge are deferred.
     AutoInit(AutoInitProperty),
+}
+
+impl PropertySlot {
+    /// Build one accessor slot from optional getter/setter references.
+    #[must_use]
+    pub const fn accessor(get: Option<ObjectId>, set: Option<ObjectId>) -> Self {
+        Self::Accessor {
+            get: AccessorRef::from_option(get),
+            set: AccessorRef::from_option(set),
+        }
+    }
+}
+
+/// Nullable object reference packed into an accessor pair.
+///
+/// `Option<ObjectId>` costs 12 bytes because `ObjectId` has no niche. Accessor
+/// pairs store `{ index: 0, generation: 0 }` as the null sentinel instead:
+/// generations start at 1 and saturate into retirement before wrapping, so a
+/// zero generation never names a live slot. This keeps the pair at 16 bytes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct AccessorRef(ObjectId);
+
+impl AccessorRef {
+    pub const NONE: Self = Self(ObjectId {
+        index: 0,
+        generation: 0,
+    });
+
+    #[must_use]
+    #[inline]
+    pub const fn from_option(id: Option<ObjectId>) -> Self {
+        match id {
+            Some(id) => Self(id),
+            None => Self::NONE,
+        }
+    }
+
+    #[must_use]
+    #[inline]
+    pub const fn option(self) -> Option<ObjectId> {
+        if self.0.generation == 0 {
+            None
+        } else {
+            Some(self.0)
+        }
+    }
 }
 
 /// Typed autoinit payloads. Keeping the creation realm in the per-object slot

@@ -771,8 +771,8 @@ impl QjsValuePrinter<'_, '_> {
                     PrintablePropertyValue::Data(state.heap.var_ref(*var_ref)?.value.clone())
                 }
                 PropertySlot::Accessor { get, set } => PrintablePropertyValue::Accessor {
-                    get: get.is_some(),
-                    set: set.is_some(),
+                    get: get.option().is_some(),
+                    set: set.option().is_some(),
                 },
                 PropertySlot::AutoInit(_) => PrintablePropertyValue::AutoInit,
             };

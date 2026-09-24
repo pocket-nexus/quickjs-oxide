@@ -131,7 +131,7 @@ fn select_set_slot(
         None => BorrowedSet::Missing(state.heap.shape(data.shape)?.prototype()),
         Some(slot) => match &data.slots[slot.index] {
             PropertySlot::Data(_) => BorrowedSet::Data(slot),
-            PropertySlot::Accessor { set, .. } => BorrowedSet::Setter(*set),
+            PropertySlot::Accessor { set, .. } => BorrowedSet::Setter(set.option()),
             PropertySlot::AutoInit(_) | PropertySlot::VarRef(_) => {
                 BorrowedSet::Special(SpecialKind::Other)
             }
@@ -170,7 +170,7 @@ fn select_missing_prototypes(
                         return Ok(MissingSelection::Complete(SetProbe::Stored(false)));
                     }
                     PropertySlot::Accessor { set, .. } => {
-                        return Ok(MissingSelection::Complete(SetProbe::Setter(*set)));
+                        return Ok(MissingSelection::Complete(SetProbe::Setter(set.option())));
                     }
                     _ => return Ok(MissingSelection::Special(id, SpecialKind::Other)),
                 }
@@ -507,8 +507,8 @@ impl Runtime {
                     flags,
                 },
                 PropertySlot::Accessor { get, set } => PropertySnapshot::Accessor {
-                    get: *get,
-                    set: *set,
+                    get: get.option(),
+                    set: set.option(),
                     flags,
                 },
                 PropertySlot::VarRef(var_ref) => PropertySnapshot::VarRef {
@@ -588,7 +588,7 @@ impl Runtime {
                     }),
                     Some(slot) => match &data.slots[slot.index] {
                         PropertySlot::Data(value) => Selected::Value(value.clone()),
-                        PropertySlot::Accessor { get, .. } => Selected::Getter(*get),
+                        PropertySlot::Accessor { get, .. } => Selected::Getter(get.option()),
                         PropertySlot::AutoInit(_) | PropertySlot::VarRef(_) => {
                             return Ok(ReadProbe::Special(SpecialKind::Other));
                         }

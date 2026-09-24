@@ -296,8 +296,8 @@ impl Runtime {
                     flags: entry.flags,
                 },
                 PropertySlot::Accessor { get, set } => PropertySnapshot::Accessor {
-                    get: *get,
-                    set: *set,
+                    get: get.option(),
+                    set: set.option(),
                     flags: entry.flags,
                 },
                 PropertySlot::AutoInit(_) => PropertySnapshot::AutoInit,
@@ -368,8 +368,8 @@ impl Runtime {
                     }
                 }
                 PropertySlot::Accessor { get, set } => Some(CompletePropertyDescriptor::Accessor {
-                    get: get.map(RawValue::Object),
-                    set: set.map(RawValue::Object),
+                    get: get.option().map(RawValue::Object),
+                    set: set.option().map(RawValue::Object),
                     enumerable: flags.enumerable,
                     configurable: flags.configurable,
                 }),
@@ -1111,8 +1111,8 @@ impl Runtime {
                         }),
                         PropertySlot::Accessor { get, set } => {
                             Ok(CompletePropertyDescriptor::Accessor {
-                                get: get.map(RawValue::Object),
-                                set: set.map(RawValue::Object),
+                                get: get.option().map(RawValue::Object),
+                                set: set.option().map(RawValue::Object),
                                 enumerable: flags.enumerable,
                                 configurable: flags.configurable,
                             })
@@ -1503,8 +1503,8 @@ impl Runtime {
                         }),
                         PropertySlot::Accessor { get, set } => {
                             Ok(CompletePropertyDescriptor::Accessor {
-                                get: get.map(RawValue::Object),
-                                set: set.map(RawValue::Object),
+                                get: get.option().map(RawValue::Object),
+                                set: set.option().map(RawValue::Object),
                                 enumerable: flags.enumerable,
                                 configurable: flags.configurable,
                             })

@@ -2250,7 +2250,7 @@ pub(super) fn property_slot_edges(slot: &PropertySlot) -> Edges {
         PropertySlot::Data(value) => edges.extend(raw_value_edge(value)),
         PropertySlot::VarRef(var_ref) => edges.push(RawId::VarRef(*var_ref)),
         PropertySlot::Accessor { get, set } => {
-            edges.extend(get.iter().chain(set.iter()).copied().map(RawId::Object))
+            edges.extend(get.option().into_iter().chain(set.option()).map(RawId::Object))
         }
         PropertySlot::AutoInit(
             AutoInitProperty::FunctionPrototype { realm }

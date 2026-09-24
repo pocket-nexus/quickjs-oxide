@@ -189,10 +189,7 @@ impl Runtime {
         } else {
             (
                 PropertyFlags::accessor(false, false),
-                PropertySlot::Accessor {
-                    get: Some(thrower),
-                    set: Some(thrower),
-                },
+                PropertySlot::accessor(Some(thrower), Some(thrower)),
             )
         };
         layout.push(callee, flags, slot);

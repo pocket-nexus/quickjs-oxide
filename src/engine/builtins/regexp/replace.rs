@@ -304,14 +304,13 @@ fn raw_regexp_getter_matches(
     let Some(slot) = raw_regexp_property_slot(heap, object, atom)? else {
         return Ok(false);
     };
-    let PropertySlot::Accessor {
-        get: Some(function),
-        ..
-    } = slot
-    else {
+    let PropertySlot::Accessor { get, .. } = slot else {
         return Ok(false);
     };
-    raw_native_function_matches(heap, *function, expected)
+    let Some(function) = get.option() else {
+        return Ok(false);
+    };
+    raw_native_function_matches(heap, function, expected)
 }
 
 fn raw_regexp_property_slot(
