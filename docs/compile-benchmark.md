@@ -442,3 +442,53 @@ perf（4MB 扣 64KB tiny 档，3 次中位数）：
    后更新本节；instr/miss/时间目标保持“相对 P0 基线”方向。
 3. 复现：`build_compile_probe.py` 生成上述两个探针目录后，按 §9.4 命令跑
    4MB + 64KB（perf 将 `-u` 换为 `--all-user`），alloc/RSS 直接跑探针。
+
+### 9.6 P1b checkpoint（HEAD `bd3eb461`，2026-09-24）
+
+P1b（`343acdfd` NameTable/NameId 贯穿 parser/IR/resolution/lowering +
+`2a606c5a` clippy 清理 + `bd3eb461` per-NameTable `JsString` 缓存）相对
+§9.5 P1a 的 checkpoint。度量口径与 §9.4 相同，但本次测量期间本机存在其他
+rustc 负载（load ≈ 4/16 核），perf 改用 P1a/P1b 探针**交错各 7 次取最小值**
+的稳健口径（与 §9.5 的 3 次中位数不完全可比，故同时给出相对同条件重测 P1a
+的差值）。探针构建目录：`target/p1b-alloc-probe`（分配/RSS）、
+`target/p1b-compile-probe`（perf），均用 `build_compile_probe.py --repo .`
+从当前 HEAD 构建。
+
+分配（4MB 档，计数逐次完全一致）：
+
+| 语料 | alloc 次数 | vs P1a | alloc+realloc 次数 | vs P1a | 分配字节 | vs P1a | peak live | vs P1a | max RSS | vs P1a |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| functions | 5,574,819 | −16.9% | 6,275,173 | −15.8% | 793.4 MB | −13.2% | 326.4 MB | −20.0% | 308.4 MB | −18.5% |
+| expressions | 2,745,312 | −15.9% | 2,949,318 | −15.3% | 650.0 MB | −11.4% | 353.7 MB | −13.6% | 245.6 MB | −12.4% |
+| syntax-mixed | 6,548,536 | −9.6% | 7,163,968 | −8.9% | 1,179.8 MB | −10.0% | 484.1 MB | −15.1% | 363.6 MB | −14.3% |
+
+perf（4MB 扣 64KB tiny 档，P1a/P1b 交错 7 次最小值；同条件重测 P1a 基线）：
+
+| 语料 | instr/KB | vs P1a | cycles/KB | vs P1a | cache-ref/KB | vs P1a | cache-miss/KB | vs P1a | task-clock/KB | vs P1a | IPC |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| functions | 2,618,044 | −6.2% | 1,393,757 | −16.9% | 84,509 | −27.3% | 5,055 | −68.5% | 0.343 ms | −16.5% | 1.88 |
+| expressions | 1,743,691 | −1.1% | 809,866 | −8.3% | 40,480 | −9.5% | 1,436 | −24.3% | 0.208 ms | −8.8% | 2.15 |
+| syntax-mixed | 2,576,779 | −0.9% | 1,533,229 | −7.9% | 69,942 | −7.5% | 4,608 | −18.6% | 0.394 ms | −7.5% | 1.68 |
+
+相对 P0 基线（§9.1/§9.2）：alloc 次数 functions −27.7%、expressions −32.4%、
+syntax-mixed −22.4%；instr/KB −9.6%/−6.0%/−4.9%；cache-miss/KB
+−71.2%/−36.9%/−32.9%；task-clock −21.1%/−17.1%/−14.7%。
+
+结论与校准：
+
+1. P1b 全部指标方向正确，cache-miss 收益最大（functions 相对 P1a −68.5%、
+   相对 P0 −71.2%），说明名字驻留消除了重复字符串分配造成的 cache 污染；
+   instr 收益最小（−0.9%~−6.2%），因为驻留只替换字符串构造，不改变
+   IR/字节码路径的指令数。
+2. 未达计划 §5 的 P1b 方向目标（分配再降 ≥70%、instr ≥15%、miss ≥40%、
+   时间 ≥15%）：仅 functions 的 miss/时间达标，分配差距最大
+   （−9.6%~−16.9%）。原因与 P1a checkpoint 的校准一致：4MB 语料分配大头在
+   IR/常量/绑定/字节码路径，名字字符串只占其中约 1/6；`bd3eb461` 的
+   per-NameTable `JsString` 缓存再贡献约 1–4 个百分点（`343acdfd` 后
+   functions alloc 5,758,344 → 5,574,819）。
+3. 后续按 §9.5 校准规则执行：P2/P3 分配目标继续用“相对上一 checkpoint 再
+   降”口径，绝对百分比以本表为准；P2（前瞻备忘/提交缓冲）不直接消除分配，
+   若 P2 后分配仍是瓶颈，需重估是否追加 IR/常量侧削减。
+4. 复现：`build_compile_probe.py` 生成上述两个探针目录后，按 §9.4 命令跑
+   4MB + 64KB（perf 将 `-u` 换为 `--all-user`）；高负载环境下 perf 用
+   P1a/P1b 交错 min-of-7，alloc/RSS 直接跑探针。

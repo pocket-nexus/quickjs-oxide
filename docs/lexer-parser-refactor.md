@@ -462,6 +462,30 @@ A.5 move/绑定点、A.6 token 复制、A.7 标志规则、A.8 测试适配）�
 - 指标：`functions-4194304` 分配次数相对 P1a 再降 ≥70%，
   instr/KB 再降 ≥15%，cache-miss/KB 再降 ≥40%，时间再降 ≥15%。
 
+实施记录（P1b 完成，HEAD `bd3eb461`）：
+
+- 提交：`343acdfd`（`compiler/names.rs` 新增 `NameTable`/`NameId`，parser 为
+  唯一 intern 方；IR/bindings/scope/module 字段换 `NameId`；resolution/
+  lowering/诊断改 `names.name(id)` 渲染；测试机械适配）、`2a606c5a`（clippy
+  清理：去冗余 clone 与 `iter().any()`）、`bd3eb461`（per-NameTable
+  `JsString` 缓存，`ensure_string_constant` 改收 `JsString`）。
+- 偏差：动态 eval 绑定的运行时 `JsString` 名在 resolution 期由
+  `tree.names.intern` 驻留（只写内部表，不产生输出影响；parser 之外的唯一
+  intern 点）；合成名由 parser 预驻留，`pseudo_name` 以 `expect` 断言该
+  不变量；private 名统一存含 `#` 的合成拼写；`ensure_string_constant` 的
+  14 个调用点相对顺序不变。
+- 验收：全量 Rust 测试（workspace all-targets 3375 passed / 0 failed、
+  `--doc` 3 passed、test262-host lib/bins 2414 passed、
+  `unsupported_diagnostics` 6 passed）、CI 5 组 clippy、fmt、oracle 全量
+  912 passed、`check-rust-only.sh`、`check-source-layout.py`（694 文件）、
+  bc5 pinned atoms/opcodes self-test、fixtures `--all --oxide`（13/13
+  字节一致）、c-oracles `--validate`。
+- test262：`--focused` 仍因 baseline stale 被拒（与 P1a 相同；本阶段不
+  promote，留到分支合并/阶段收尾一次性完成）。
+- 指标：见 §5 校准段与 `docs/compile-benchmark.md` §9.6。未达 §5 的 P1b
+  方向目标（分配 ≥70%、instr ≥15%、miss ≥40%、时间 ≥15%），仅 functions 的
+  miss（−68.5%）/时间（−16.5%）达标；原因与后续校准见 §9.6。
+
 ### P2a 前瞻备忘缓存（低风险第一步）
 
 改动点：新增只服务探针的 `LookaheadCache`（键
@@ -570,6 +594,14 @@ parse 之后的 IR/常量/绑定路径，lexer 侧每 token 分配消除只覆�
 后续阶段分配目标按“相对上一 checkpoint 再降”执行（P1b ≥70% 相对 P1a），
 instr/miss/时间目标保持“相对 P0 基线”方向；每阶段 checkpoint 后更新
 §9.5 对照。
+
+P1b checkpoint 实测（`docs/compile-benchmark.md` §9.6，HEAD `bd3eb461`）：
+alloc 次数相对 P1a −9.6%~−16.9%、instr/KB −0.9%~−6.2%、cache-miss/KB
+−18.6%~−68.5%、task-clock −7.5%~−16.5%、RSS −12.4%~−18.5%；相对 P0
+基线 alloc −22.4%~−32.4%、instr −4.9%~−9.6%、cache-miss −32.9%~−71.2%。
+仍低于 P1b 方向目标：分配大头在 IR/常量/绑定/字节码路径（名字字符串仅约
+1/6），per-NameTable `JsString` 缓存只再贡献约 1–4 个百分点；P2/P3 分配
+目标继续按“相对上一 checkpoint 再降”执行，P2 后若分配仍为瓶颈需重估。
 
 ## 6. 提交与分支
 
