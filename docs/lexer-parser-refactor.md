@@ -480,8 +480,16 @@ A.5 move/绑定点、A.6 token 复制、A.7 标志规则、A.8 测试适配）�
   912 passed、`check-rust-only.sh`、`check-source-layout.py`（694 文件）、
   bc5 pinned atoms/opcodes self-test、fixtures `--all --oxide`（13/13
   字节一致）、c-oracles `--validate`。
-- test262：`--focused` 仍因 baseline stale 被拒（与 P1a 相同；本阶段不
-  promote，留到分支合并/阶段收尾一次性完成）。
+- test262：`--full` 在当前 HEAD 跑通全部 102,037 variants（pass=80010、
+  fail-parse=7、fail-runtime=43、unsupported=3502、skipped=18475），
+  `target/test262-full.tsv/.jsonl`（engine hash `5dbb43ca`）除首行 engine
+  哈希外与 P1a HEAD `a5b651be` 的 full report（`09740268`，备份
+  `target/p1a-full-report.*`）逐字节一致（TSV 主体 sha `971cc666…`、JSONL
+  主体 sha `8447c3de…`），证明 P1b 相对 P1a 语义中立。脚本对 frozen
+  milestone `full_summary` 的最终比对以 exit 5 失败（当前 pass=80010 /
+  unsupported-negative-provenance=2534 vs 里程碑 79982/2562，28 例漂移），
+  与 P1a 记录的既有漂移一致、与本次重构无关；`--focused` 仍因 stale 被拒。
+  不 promote，留到分支合并/阶段收尾一次性完成。
 - 指标：见 §5 校准段与 `docs/compile-benchmark.md` §9.6。未达 §5 的 P1b
   方向目标（分配 ≥70%、instr ≥15%、miss ≥40%、时间 ≥15%），仅 functions 的
   miss（−68.5%）/时间（−16.5%）达标；原因与后续校准见 §9.6。
