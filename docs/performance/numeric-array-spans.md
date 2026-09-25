@@ -1,14 +1,14 @@
 # 数值／数组跨度：冻结的实施规格 v1
 
 > 设计基线：`6f09205c51f8b34e3c7a90ce406739fe1dd07c48`（PR #6，生产源码与 R0 `f531f605` 相同）。
-> 本文取代 implementation.md 原 B0–B7 中“再选形态／意向接口”的部分。白名单、签名、接线位置和提交协议在此冻结；启用仍须通过测量门禁。
-> 本次核对了编译器、发布器及 VM 源码，**没有运行 Rust 编译或取得四个完整函数的真实 dump**。下面的符号序列是匹配器规范／源码推导，不伪装成带真实 PC 的输出。随文提供使用现有内部 API 的完整发布后 dump 探针；未运行的动态覆盖和性能验收不能标成通过。
+> 本文取代 implementation.md 原 B0–B7 中“再选形态／意向接口”的部分。白名单、签名、接线位置和提交协议在此冻结；当前生产代码已实现全部 13 种形态，性能门禁尚未裁决。
+> 已用 Rust 1.94.1 编译完整真实内核并取得四个目标函数的[发布后 dump 与 25 个站点 manifest](receipts/all-dense-6db6bfb0/README.md)。下面的符号序列仍是匹配器规范／源码推导，真实 PC 以 manifest 为准。静态站点不是动态覆盖或性能验收。
 
 ## 1. 已确定的产品边界
 
 不重写 `Instruction`，不修改 canonical 指令、PC、异常表或恢复 ABI；`FusionPlan` 保持 `Option<Rc<[u8]>>`。只新增下表 13 种短跨度，最长 9 条。不引入每 PC descriptor、可变 QuickOp、通用 register IR、TOS facade 或 adaptive counter。
 
-P2 实施 R0–R3；P3 实施 R4、A0–A3；P4 实施 W0–W3。这些是冻结的分批白名单，不是待实现者自由选择的方向。真实程序不命中时收窄／停止投入，不自动扩大语法；增加形态必须独立改规格、测试和 A/B。`this`、closure/global producer 本版明确不支持；B4 只记录其覆盖缺口，不安排未设计的 captured 写入。
+P2 实施 R0–R3；P3 实施 R4、A0–A3；P4 实施 W0–W3。这些是冻结的白名单，不是待实现者自由选择的方向。四函数里 A0–A3、W2、W3 静态站点为零，已记录而未擅自扩大语法；增加形态必须独立改规格、测试和 A/B。`this`、closure/global producer 本版明确不支持；B4 只记录其覆盖缺口，不安排未设计的 captured 写入。
 
 ### 1.1 Operand 的精确定义
 
@@ -82,13 +82,13 @@ python3 docs/performance/probes/run_dump.py \
   --toolchain 1.94.1
 ```
 
-探针代码本次做了 API 对照，未做 Rust 编译验证；入口脚本不会虚构输出或将失败标成成功。接纳时必须附 probe receipt 和四份实际函数内容（crypto/navier 文件中合计恰有 am3/project/lin_solve/advect 四个目标），再运行实际生产 matcher 生成 site manifest。manifest 固定字段：source/function path、canonical 首末 PC、flag、所有 slot/constant 编号、每条 opcode、peak/delta、拒绝原因。不得由 JS 正则推算 manifest。
+探针已完成 Rust 编译和真实运行；[收据](receipts/all-dense-6db6bfb0/README.md)包含四份完整函数内容、原始 PC 和生产 matcher 生成的 manifest。manifest 字段包括 source/function path、canonical 首末 PC、flag、slot/constant 编号、每条 opcode、peak/delta；R0 triad 的拒绝分类单独保存。不得由 JS 正则推算 manifest。
 
 **B0 不再承担选设计的工作。**它验证上述冻结设计在真实输入上的实际覆盖；不匹配就报告具体断点并停止扩大，不把“先 dump 再决定 API”重新留给下一位实现者。
 
 ## 3. 类型与 API：完整声明及所有权
 
-下面是本片要新增的准确契约，不声称基线已经拥有它们。生产代码不得使用 `...` 参数或另造未定义的 Value/NextPc。现有 `Number` 直接复用 `engine::value::number::operations::Number`，它是 `Copy` 的 Int/Float enum；通过既有 `From<Number> for JsValue` 写回，不新造数值表示。
+下面是本片已经实现的接口契约；设计基线没有这些新接口。生产代码没有另造未定义的 Value/NextPc。现有 `Number` 直接复用 `engine::value::number::operations::Number`，它是 `Copy` 的 Int/Float enum；通过既有 `From<Number> for JsValue` 写回，不新造数值表示。
 
 ### 3.1 编译期类型（code/fusion/dense.rs）
 
@@ -359,7 +359,7 @@ read/acc/update 的所有 mutable slot 操作都在唯一 commit 内；W 的唯�
 
 测试模式增加 canonical-only 对照只控制新候选的生成，不能改 JS body；保留旧融合用于 Base/Parent 比较。生产构建不保留每操作调试 toggle。
 
-P2 起步先 R0，再 R1，再 R2/R3，各片独立提交和撤回；P3 先 R4 再 acc；P4 四种 store 分开。所有启用继续遵守 [测量协议](measurement.md)：累计不回退、真实 V8 覆盖、codegen 与失败成本。第一片 real-kernel manifest 不命中是停止信号，不是扩大到任意“numeric block”的理由。
+原分片计划要求 P2 先 R0、再 R1、再 R2/R3，P3 后接 R4 与 acc，P4 最后接 store。当前实现已在全部 handler 完成后发布 13 个 flag；[真实 manifest](receipts/all-dense-6db6bfb0/README.md)记录零覆盖形态。性能未过门或不命中只记录和归因，不扩大到任意“numeric block”；组合版正式结果仍待[测量协议](measurement.md)所述串行 A/B。
 
 ## 8. 固定源码入口与本次验证
 

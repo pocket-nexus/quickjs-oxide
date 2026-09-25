@@ -1,6 +1,6 @@
 # 测量、累计门禁与回退协议
 
-> 新计划的执行协议；不是本次文档 PR 已完成的测量。
+> 本协议保留原准入阈值和可复现的测量方法。当前 13 种跨度与 #41 已实现，但组合版尚未测量；按本轮实施要求，未达到阈值须如实记录和归因，不作为停止既定代码实现的理由。正式 benchmark／profiling 仍须与构建和其他测试串行隔离。
 > 与 [benchmark 工具说明](../../scripts/benchmark/README.md)、[Test262 契约](../test262.md) 配套。
 
 <a id="baselines"></a>
@@ -37,7 +37,7 @@ RUSTUP_TOOLCHAIN=1.94.1 python3 scripts/benchmark/build.py \
 
 `build.py` 记录 commit、二进制 hash、rustc/cargo、manifest/lock hash 和部分环境；P0 还需补实际 release overrides、target CPU/features、profile 配置、工作负载 hash、主机状态、完整命令和 stdout/stderr。不要依赖它尚未记录的字段。不同 worktree 的 OUT 必须不同。
 
-本项目源码和计划目录内不 vendor 外部 benchmark。P0 将下列四个维护者重建探针保存为项目诊断 fixtures；本次文档 PR 仅给出完整配方，不声称那些文件已经入库。
+本项目源码和计划目录内不 vendor 外部 benchmark。以下四个维护者重建探针保留为固定工作量配方；本次实施的原始负载与样本见[历史门禁收据](receipts/gates-2026-09-25/README.md)，不能混同外部 V8 正式 Score。
 
 ```sh
 mkdir -p "$OUT/micro"
@@ -135,7 +135,7 @@ RSS 的复核线为 `max(3%, 1 MiB)`，编译／首次执行复核线为 3%；�
 
 捕获后用生产 `FusionPlan` matcher 输出真实 site manifest，对照 flags 1–13，包含所有 slot/constant 编号和每站点拒绝原因。固定模板是实施规范，不是对未知真实 PC 的预先断言。动态覆盖和正式 Score 仍在独立运行中测量，不能使用这个 compile-only 诊断产物报性能。
 
-本次文档补全仅验证脚本语法、失败处理及静态契约；没有 Rust 工具链，不能宣称探针编译或四函数 capture 已通过。
+后续实施已用 Rust 1.94.1 完成四函数 capture；[完整 manifest 与回执](receipts/all-dense-6db6bfb0/README.md)记录 25 个已发布站点。本段以上保留探针本身的执行契约。
 
 ## 6. 一致性与文档 PR 的验证边界
 
@@ -154,4 +154,4 @@ TEST262_WORKERS=2 ./scripts/test262/test-test262.sh --full
 
 PR #48 后，focused／full 对比身份行之后的完整结果正文，不能手工修改 admission、诊断契约或 frozen outcome 来接受性能退化。#41 的语义无变化候选不需要仅因 source SHA 改变就晋升结果基线。
 
-本次文档 PR 的合理验证是：数据来源核对、算术与链接／锚点检查、删除清单检查、确认 Git diff 仅含文档。没有执行 Cargo／Test262／性能跑分时必须明说，不能引用 #41 的通过记录作为自己的 CI 结果。
+文档本身仍须核对数据来源、算术、链接和收据身份。当前引擎实施必须分别报告已执行的 Cargo／Test262／性能命令；#41 独立候选的通过记录不能代替组合版的 CI 或正式成绩。
