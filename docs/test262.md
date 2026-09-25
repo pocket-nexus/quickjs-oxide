@@ -37,17 +37,35 @@ TEST262_WORKERS=2 ./scripts/test262/test-test262.sh \
   --spec dev-support/test262/current.conf --full
 ```
 
-`--check` authenticates the current upstream pin, profile, negative-diagnostic
+`--check` authenticates the in-tree upstream pin, profile, negative-diagnostic
 contract and legacy exemption ledger, focused manifest, and frozen TSV/JSONL
-receipts. `--runner-provenance` builds the Rust runner with the current source
-fingerprint, verifies the embedded binding, and executes no Test262 cases.
-`--focused` replays the current 6,844-variant focused vector and
-requires byte-identical output. It retains the dependency-closed
-private-callable, static import-attributes, and static JSON module coverage and
-adds source-authenticated dynamic-import and top-level-await syntax, runtime,
-graph, and rejection cohorts plus the exact dependency-free module
-local-binding family. `--full` runs every 102,037 variant and checks the complete
-summary and report hashes.
+receipts; it resolves no external commit or branch state. `--runner-provenance`
+builds the Rust runner with the current source fingerprint, verifies the embedded
+binding, and executes no Test262 cases. `--focused` replays the current
+6,844-variant focused vector and requires the result body, everything after the
+identity line, to be byte-identical; public CI runs it on every pull request,
+every push to main, and a `test262-focused` dispatch. It retains the
+dependency-closed private-callable, static import-attributes, and static JSON
+module coverage and adds source-authenticated dynamic-import and top-level-await
+syntax, runtime, graph, and rejection cohorts plus the exact dependency-free
+module local-binding family. `--full` runs every 102,037 variant and compares the
+complete result body against the frozen `full_*_body_sha256` hashes; the
+scheduled `test262-full` job and the `test262-receipt` dispatch cover it.
+
+## Promotion
+
+The spec is self-contained: no key points at a commit outside the tree. When
+outcomes change, only frozen data and hashes are updated.
+
+- Focused outcomes: regenerate the frozen focused receipts, update
+  `focused_tsv_sha256`/`focused_jsonl_sha256` and their line counts, and set
+  `engine_semantics_sha256` to the receipt identity reported by
+  `test262-engine-fingerprint.mjs --worktree`.
+- Full outcomes: dispatch `test262-receipt`; the capture step prints
+  `full_tsv_body_sha256` and `full_jsonl_body_sha256`, which replace the old
+  values in `current.conf`.
+- Every gate then replays the frozen vectors and compares result bodies
+  directly, so no branch or commit has to stay resolvable.
 
 Negative admissions remain fail-closed: an expected failure counts only when
 its exact path is present in the audited-negative data. Every admitted

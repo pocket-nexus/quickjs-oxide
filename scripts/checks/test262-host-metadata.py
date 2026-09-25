@@ -123,6 +123,13 @@ if '--verify-runner-provenance "$workspace_engine_semantics_sha256"' not in gate
     fail("central Test262 gate must verify the compiled runner fingerprint")
 if "run-test262 accepted a stale engine semantics fingerprint" not in gate:
     fail("central Test262 gate must probe that stale fingerprints are rejected")
+if "engine_semantics_source" in gate or "--commit" in gate:
+    fail("central Test262 gate must not resolve external commit state")
+spec = Path("dev-support/test262/current.conf").read_text()
+if "schema=test262-gate-v3" not in spec or "engine_semantics_source" in spec:
+    fail("Test262 spec must be the stateless v3 schema")
+if "full_tsv_body_sha256=" not in spec or "full_jsonl_body_sha256=" not in spec:
+    fail("Test262 spec must pin the frozen full result bodies")
 
 gc_gate = Path("scripts/quickjs/test-host-gc-reentrant-oracle.sh").read_text()
 if "--features test262-host" not in gc_gate:
@@ -137,3 +144,5 @@ if "./scripts/checks/check-test262-host-boundary.sh" not in workflow:
     fail("public fast CI must enforce the Test262 host boundary")
 if "./scripts/test262/test-test262.sh --spec dev-support/test262/current.conf --runner-provenance" not in workflow:
     fail("public fast CI must authenticate the compiled Test262 runner")
+if "--spec dev-support/test262/current.conf --focused" not in workflow:
+    fail("public CI must replay the frozen focused Test262 vector")

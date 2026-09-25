@@ -16,6 +16,7 @@ on:
         type: choice
         options:
           - fast
+          - test262-focused
           - quickjs-differential
           - test262-full
           - test262-receipt
@@ -116,6 +117,49 @@ jobs:
           cargo clippy --locked --workspace --features test262-host \
             --test unsupported_diagnostics --test oracle \
             -- -D warnings
+
+  test262-focused:
+    if: >-
+      github.event_name == 'pull_request' ||
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && inputs.tier == 'test262-focused')
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      QJS_ORACLE_CACHE: ${{ github.workspace }}-oracle-cache
+      TEST262_WORKERS: "2"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned Rust toolchain
+        run: |
+          rustup toolchain install "${RUST_VERSION}" --profile minimal
+          rustup default "${RUST_VERSION}"
+
+      - name: Install Test262 dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential curl git ripgrep xz-utils
+
+      - name: Restore authenticated input caches
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ github.workspace }}-oracle-cache
+          key: >-
+            ${{ runner.os }}-test262-${{ env.RUST_VERSION }}-${{
+            hashFiles('Cargo.lock', 'compat/upstream.toml',
+            'scripts/quickjs/build-quickjs-oracle.sh', 'scripts/test262/prepare-test262.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-test262-${{ env.RUST_VERSION }}-
+
+      - name: Replay the frozen focused Test262 vector
+        run: ./scripts/test262/test-test262.sh --spec dev-support/test262/current.conf --focused
 
   quickjs-differential:
     if: >-
@@ -225,7 +269,6 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
           persist-credentials: false
 
       - name: Install pinned Rust toolchain
@@ -278,7 +321,7 @@ jobs:
             exit "$test262_status"
           fi
 
-          expected_error="error: full TSV receipt checksum drifted: $PWD/target/test262-full.tsv"
+          expected_error="error: full TSV result body drifted: $PWD/target/test262-full.tsv"
           error_count=$(grep -c '^error:' target/test262-full.log || true)
           expected_error_count=$(grep -Fxc "$expected_error" target/test262-full.log || true)
           if [[ "$error_count" != 1 || "$expected_error_count" != 1 ]]; then
@@ -352,16 +395,6 @@ jobs:
             return value;
           }
 
-          function countOccurrences(text, needle) {
-            let count = 0;
-            let offset = 0;
-            while ((offset = text.indexOf(needle, offset)) !== -1) {
-              count += 1;
-              offset += needle.length;
-            }
-            return count;
-          }
-
           function repositoryPath(root, path, label) {
             if (
               path === "" || isAbsolute(path) || path.includes("\\") ||
@@ -387,17 +420,15 @@ jobs:
           const spec = parseSpec(regular(specPath, "current.conf"));
           const shaPattern = /^[0-9a-f]{64}$/;
           const countPattern = /^[1-9][0-9]*$/;
-          const baseline = required(spec, "engine_semantics_sha256");
-          const expectedTsvHash = required(spec, "full_tsv_sha256");
-          const expectedJsonHash = required(spec, "full_jsonl_sha256");
+          const expectedTsvBody = required(spec, "full_tsv_body_sha256");
+          const expectedJsonBody = required(spec, "full_jsonl_body_sha256");
           const expectedTsvLines = required(spec, "full_tsv_lines");
           const expectedJsonLines = required(spec, "full_jsonl_lines");
           const expectedToolHash = required(spec, "engine_fingerprint_tool_sha256");
           const expectedToolLines = required(spec, "engine_fingerprint_tool_lines");
           for (const [label, value] of [
-            ["engine semantics", baseline],
-            ["full TSV", expectedTsvHash],
-            ["full JSONL", expectedJsonHash],
+            ["full TSV body", expectedTsvBody],
+            ["full JSONL body", expectedJsonBody],
             ["fingerprint tool", expectedToolHash],
           ]) {
             if (!shaPattern.test(value)) fail(`invalid ${label} SHA-256`);
@@ -436,9 +467,6 @@ jobs:
             fail("fingerprint tool output drifted");
           }
           const current = fingerprintOutput.trim();
-          if (current === baseline) {
-            fail("receipt capture requires a source-stale baseline");
-          }
 
           const tsvBytes = regular(tsvPath, "full TSV receipt");
           const jsonBytes = regular(jsonPath, "full JSONL receipt");
@@ -450,29 +478,12 @@ jobs:
           }
           const tsv = utf8(tsvBytes, "full TSV receipt");
           const json = utf8(jsonBytes, "full JSONL receipt");
-          const tsvCurrent =
+          const tsvIdentity =
             `# quickjs-oxide Test262 outcome vector v5 ` +
             `engine_semantics_sha256=${current}\n`;
-          const tsvBaseline =
-            `# quickjs-oxide Test262 outcome vector v5 ` +
-            `engine_semantics_sha256=${baseline}\n`;
-          if (
-            !tsv.startsWith(tsvCurrent) || countOccurrences(tsv, current) !== 1 ||
-            countOccurrences(tsv, baseline) !== 0
-          ) {
-            fail("full TSV fingerprint placement drifted");
+          if (!tsv.startsWith(tsvIdentity)) {
+            fail("full TSV identity line drifted");
           }
-          const normalizedTsv = Buffer.from(
-            tsvBaseline + tsv.slice(tsvCurrent.length),
-            "utf8",
-          );
-          if (
-            sha256(tsvBytes) === expectedTsvHash ||
-            sha256(normalizedTsv) !== expectedTsvHash
-          ) {
-            fail("full TSV differs by more than its engine fingerprint");
-          }
-
           const firstNewline = json.indexOf("\n");
           if (firstNewline === -1) fail("full JSONL metadata line is missing");
           let metadata;
@@ -487,29 +498,15 @@ jobs:
           ) {
             fail("full JSONL metadata fingerprint drifted");
           }
-          const jsonCurrent = `\"engine_semantics_sha256\":\"${current}\"`;
-          const jsonBaseline = `\"engine_semantics_sha256\":\"${baseline}\"`;
-          if (
-            !json.slice(0, firstNewline).includes(jsonCurrent) ||
-            countOccurrences(json, current) !== 1 || countOccurrences(json, baseline) !== 0
-          ) {
-            fail("full JSONL fingerprint placement drifted");
-          }
-          const normalizedJson = Buffer.from(
-            json.replace(jsonCurrent, jsonBaseline),
-            "utf8",
-          );
-          if (
-            sha256(jsonBytes) === expectedJsonHash ||
-            sha256(normalizedJson) !== expectedJsonHash
-          ) {
-            fail("full JSONL differs by more than its engine fingerprint");
-          }
 
-          console.log(
-            "Current-source Test262 receipts differ only by engine fingerprint: " +
-              `${baseline} -> ${current}`,
-          );
+          const tsvBodyHash = sha256(tsvBytes.subarray(tsvBytes.indexOf(0x0a) + 1));
+          const jsonBodyHash = sha256(jsonBytes.subarray(jsonBytes.indexOf(0x0a) + 1));
+          if (tsvBodyHash === expectedTsvBody && jsonBodyHash === expectedJsonBody) {
+            fail("receipt capture requires changed full result bodies");
+          }
+          console.log(`full_tsv_body_sha256=${tsvBodyHash}`);
+          console.log(`full_jsonl_body_sha256=${jsonBodyHash}`);
+          console.log(`workspace_engine_semantics_sha256=${current}`);
           NODE
 
       - name: Upload complete Test262 receipts
