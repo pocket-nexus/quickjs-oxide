@@ -110,9 +110,22 @@ def main() -> int:
                     sites = list(csv.DictReader(stream, delimiter="\t"))
                 if any(site["kind"] != "R0" or site["source"] not in SOURCE_FILES for site in sites):
                     raise RuntimeError("Invalid R0 site manifest")
+                with (output / "all-dense-spans.tsv").open(newline="", encoding="utf-8") as stream:
+                    spans = list(csv.DictReader(stream, delimiter="\t"))
+                if any(span["source"] not in SOURCE_FILES
+                       or not 1 <= int(span["flag"]) <= 13
+                       or int(span["last_pc"]) < int(span["first_pc"])
+                       or span["rejection_reason"] != "accepted"
+                       for span in spans):
+                    raise RuntimeError("Invalid published dense span manifest")
                 receipt["sites"] = {
                     "array_reads": len(sites),
                     "published_r0": sum(site["flag"] == "1" for site in sites),
+                    "all_published": len(spans),
+                    "published_by_flag": {
+                        str(flag): sum(int(span["flag"]) == flag for span in spans)
+                        for flag in range(1, 14)
+                    },
                     "rejections": {
                         reason: sum(site["rejection_reason"] == reason for site in sites)
                         for reason in sorted({site["rejection_reason"] for site in sites
@@ -120,7 +133,8 @@ def main() -> int:
                     },
                 }
                 files = [output / "crypto.canonical.txt", output / "navier-stokes.canonical.txt",
-                         output / "target-counts.tsv", output / "dense-sites.tsv", output / "cargo.log"]
+                         output / "target-counts.tsv", output / "dense-sites.tsv",
+                         output / "all-dense-spans.tsv", output / "cargo.log"]
                 receipt["artifacts"] = {path.name: digest(path) for path in files}
                 receipt["status"] = "captured"
             finally:

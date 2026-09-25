@@ -16,6 +16,14 @@ fn operand(instruction: &Instruction) -> String {
         Instruction::GetLocal(index) => format!("L({index})"),
         Instruction::GetLocalCheck(index) => format!("LCheck({index})"),
         Instruction::GetArg(index) => format!("P({index})"),
+        Instruction::PutLocal(index) | Instruction::PutLocalCheck(index) => {
+            format!("PUT_L({index})")
+        }
+        Instruction::SetLocal(index) | Instruction::SetLocalCheck(index) => {
+            format!("SET_L({index})")
+        }
+        Instruction::PutArg(index) => format!("PUT_P({index})"),
+        Instruction::SetArg(index) => format!("SET_P({index})"),
         Instruction::PushI32(value) => format!("I32({value})"),
         Instruction::PushConst(index) => format!("K({index})"),
         _ => "-".to_owned(),
@@ -59,6 +67,7 @@ fn walk(
     source: &str,
     out: &mut File,
     manifest: &mut File,
+    all_spans: &mut File,
     counts: &mut [usize; 4],
 ) -> io::Result<()> {
     let data = heap.function_bytecode(id).map_err(|error| {
@@ -91,6 +100,34 @@ fn walk(
                 control.ends_block(),
             )?;
         }
+        // The flag is read from the published production plan. Report every
+        // admitted first PC, including overlapping flags inside other spans.
+        for first in 0..data.code.len() {
+            let Some(kind) = data.fusion.dense_span(first) else {
+                continue;
+            };
+            let end = first + kind.len();
+            let ops = &data.code[first..end];
+            let operands = ops
+                .iter()
+                .map(operand)
+                .filter(|item| item != "-")
+                .collect::<Vec<_>>()
+                .join(";");
+            let opcodes = ops
+                .iter()
+                .map(|op| format!("{op:?}"))
+                .collect::<Vec<_>>()
+                .join(";");
+            writeln!(
+                all_spans,
+                "{source}\t{path}\t{first}\t{}\t{}\t{kind:?}\t{operands}\t{opcodes}\t{}\t{}\taccepted",
+                end - 1,
+                kind as u8,
+                kind.peak(),
+                kind.delta()
+            )?;
+        }
         // Every GetArrayEl is considered as the tail of an R0 triad. The
         // accepted flag comes from the published production FusionPlan, not
         // from a second matcher or source-text search.
@@ -109,6 +146,8 @@ fn walk(
             let accepted = data.fusion.dense_span(first) == Some(super::DenseSpanKind::Read);
             let reason = if accepted {
                 "accepted"
+            } else if data.fusion.dense_span(first).is_some() {
+                "published_longer_at_first"
             } else if !is_direct(&ops[0], &data.local_definitions) {
                 "base_not_direct"
             } else if !is_numeric_source(&ops[1], &data.local_definitions, &data.constants) {
@@ -148,6 +187,7 @@ fn walk(
                 source,
                 out,
                 manifest,
+                all_spans,
                 counts,
             )?;
         }
@@ -167,6 +207,12 @@ fn dump_numeric_spans() {
         .open(output.join("dense-sites.tsv"))
         .expect("create fresh site manifest");
     writeln!(manifest, "source\tfunction_path\tfirst_pc\tlast_pc\tflag\tbase_slot\tkey_source\topcodes\tpeak\tdelta\tkind\trejection_reason").unwrap();
+    let mut all_spans = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output.join("all-dense-spans.tsv"))
+        .expect("create full published span manifest");
+    writeln!(all_spans, "source\tfunction_path\tfirst_pc\tlast_pc\tflag\tkind\toperands\topcodes\tpeak\tdelta\trejection_reason").unwrap();
     for name in ["crypto", "navier-stokes"] {
         let path = source.join("v8-v7").join(format!("{name}.js"));
         let text = std::fs::read_to_string(&path).expect("read complete pinned source");
@@ -200,6 +246,7 @@ fn dump_numeric_spans() {
                 &format!("v8-v7/{name}.js"),
                 &mut out,
                 &mut manifest,
+                &mut all_spans,
                 &mut counts,
             )
             .expect("walk published bytecode while root is alive");
@@ -218,4 +265,5 @@ fn dump_numeric_spans() {
     }
     out.sync_all().unwrap();
     manifest.sync_all().unwrap();
+    all_spans.sync_all().unwrap();
 }
