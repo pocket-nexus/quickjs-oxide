@@ -1,6 +1,34 @@
 # Issue 41 验证：成功路径 ABI 成本审计与紧凑错误载体小实验
 
-> 恢复说明：本报告原属 `0cd4acee`，以下数值是 `fd9b4eac` 对该提交的历史实验，不能作为从 R0 `2ed79f46` 恢复后的正式性能验收。当前代码已恢复原候选并补公共错误语义测试；按 [统一测量协议](../performance/measurement.md) 的空载 cycles、错误分配/RSS 和完整 V8 重测仍待串行完成。
+> 2026-09-25 R0 复验：现行候选为 `04bb1a74`（仅新增测试的后继为
+> `32f61560`），父版本为 `2ed79f46`。与下文 `fd9b4eac` 历史实验
+> 分开看。Rust 1.94.1 普通 release 使用 fat LTO、CGU=1；13 个原始固定
+> 负载在两轮 A/A、ABBA/BAAB 中全部减少退休指令，但 `prop_write` 的
+> cycles 在两轮分别增加 11.04%／10.95%，`string_build1` 增加
+> 4.42%／3.94%。错误分配探针每 100,000 次构造由 100,000 次／1.3 MB
+> 增至 200,000 次／9.3 MB；保留模式的 RSS HWM 中位数由 13,312 增至
+> 15,652 KiB。原始数据和构建回执在 `perf/performance-gate-results`
+> 的 `docs/performance/receipts/gates-2026-09-25/`。因此下文历史“正结果”
+> **不是当前基线上的性能结论**。回退已记录，数组实施不因此停止。
+
+本次恢复版的 Rust 1.88.0 `--workspace --all-targets` 测试通过；
+R0 与候选 release 二进制对 14 个错误场景、未捕获异常和语法错误的
+stdout/stderr/退出码逐字节一致。全量 Test262 在清除调用方 `GIT_*`
+环境后运行，冻结结果正文匹配：102,037 变体中 80,010 pass、
+3,552 既有 fail、3,502 unsupported、18,475 skipped；
+80,010／80,060 eligible。新增测试还编译验证 `with_span` 保持
+`const fn` 公共契约。全量 V8 性能重测仍待独占测量窗口。
+
+> 恢复说明：本报告原属 `0cd4acee`，以下数值是 `fd9b4eac` 对该提交的历史实验，不能作为从 R0 `2ed79f46` 恢复后的正式性能验收。当前代码已恢复原候选并补公共错误语义测试；空载 cycles、错误分配/RSS 已按 [统一测量协议](../performance/measurement.md) 补测，完整 V8 仍待串行完成。
+
+代码审查发现一项与 `prop_write` 回退有关、但尚未证明因果的生成代码变化：
+R0 中 `RunSlots::property_ic_write_scalar` 保留约 2.5 KiB 的独立符号，
+候选的 fat-LTO 产物中该符号消失；`run::run` 从 `0x9202` 增至
+`0xb310` 字节，栈帧从 `0xea8` 减至 `0x888`。成功的 `PutField` 路径
+不会构造公共 `Error`，因此新增的错误 Box 分配不能直接解释这一正常
+循环的 cycles 回退。独立分支 `perf/issue-41-prop-write-outline` 的
+`0ac97a83` 只让该属性写入 wrapper 保留为调用边界，用于检验内联变化；
+未经 A/B 前不把代码尺寸或栈帧变化当作速度结论。
 
 恢复版在独立 target 上通过：`error.rs` 4 项、ordinary 布局 3 项、
 runtime exceptions 6 项、CLI evaluation 9 项，以及 Rust 1.88.0 的
