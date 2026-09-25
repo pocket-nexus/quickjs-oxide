@@ -6,7 +6,7 @@ use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::atom::{Atom, AtomIdx};
 use crate::engine::heap::runtime::RuntimeState;
-use crate::engine::heap::{ObjectId, ObjectKind, ObjectPayload, PropertySlot};
+use crate::engine::heap::{ObjectId, ObjectKind, ObjectPayload, PropertySlot, RawValue};
 use crate::engine::object::shape::PropertyFlags;
 use crate::engine::object::{ObjectRef, PropertyKey};
 use crate::engine::value::number::operations::Number;
@@ -1166,8 +1166,6 @@ impl Runtime {
     /// Read a Number from an existing dense Array element while its base owner
     /// remains in the frame. The heap borrow ends before the Copy result leaves.
     pub(crate) fn peek_dense_number(&self, base: &JsValue, index: u32) -> Option<Number> {
-        use crate::engine::heap::RawValue;
-
         let JsValue::Object(id) = base else {
             return None;
         };
@@ -1181,6 +1179,28 @@ impl Runtime {
             RawValue::Float(value) => Some(Number::Float(*value)),
             _ => None,
         }
+    }
+
+    /// Replace one existing own dense Number under a single heap borrow. A
+    /// dense element has the default writable data descriptor; descriptor
+    /// changes materialize the Array and make this leaf decline. Both the old
+    /// and new values are immediate, so this cannot release an owner, drain
+    /// cleanup, change layout or length, or invoke user code.
+    #[inline]
+    pub(crate) fn try_write_dense_number(&self, base: &JsValue, index: u32, value: Number) -> bool {
+        let JsValue::Object(id) = base else {
+            return false;
+        };
+        let Ok(mut state) = self.0.state.try_borrow_mut() else {
+            return false;
+        };
+        let replacement = match value {
+            Number::Int(number) => RawValue::Int(number),
+            Number::Float(number) => RawValue::Float(number),
+        };
+        state
+            .heap
+            .try_replace_dense_number_value(*id, index, replacement)
     }
 
     /// Borrow an existing dense own immediate value while proving that the VM
@@ -1317,6 +1337,127 @@ mod dense_array_read_tests {
         let base = runtime.into_jsvalue(receiver(&runtime, "[1]")).unwrap();
         assert!(Runtime::new().peek_dense_number(&base, 0).is_none());
         assert!(runtime.peek_dense_number(&JsValue::Int(1), 0).is_none());
+        runtime.release_jsvalue(base).unwrap();
+    }
+
+    #[test]
+    fn dense_number_write_overwrites_existing_elements_without_changing_layout_or_owners() {
+        let runtime = Runtime::new();
+        let base = runtime
+            .into_jsvalue(receiver(&runtime, "[7, -0, NaN]"))
+            .unwrap();
+        let JsValue::Object(id) = &base else {
+            panic!("array");
+        };
+        let (shape, length, strong_count) = {
+            let state = runtime.0.state.borrow();
+            let data = state.heap.object(*id).unwrap();
+            (
+                data.shape,
+                data.slots[0].clone(),
+                state.heap.object_strong_count(*id),
+            )
+        };
+        assert!(runtime.try_write_dense_number(&base, 0, Number::Float(-0.0)));
+        assert!(runtime.try_write_dense_number(&base, 1, Number::Int(23)));
+        assert!(runtime.try_write_dense_number(&base, 2, Number::Float(f64::NAN)));
+        assert!(
+            matches!(runtime.peek_dense_number(&base, 0), Some(Number::Float(n)) if n == 0.0 && n.is_sign_negative())
+        );
+        assert!(matches!(
+            runtime.peek_dense_number(&base, 1),
+            Some(Number::Int(23))
+        ));
+        assert!(
+            matches!(runtime.peek_dense_number(&base, 2), Some(Number::Float(n)) if n.is_nan())
+        );
+        let state = runtime.0.state.borrow();
+        let data = state.heap.object(*id).unwrap();
+        assert_eq!(data.shape, shape);
+        assert!(
+            matches!((&data.slots[0], &length), (PropertySlot::Data(RawValue::Int(a)), PropertySlot::Data(RawValue::Int(b))) if a == b)
+        );
+        assert_eq!(state.heap.object_strong_count(*id), strong_count);
+        drop(state);
+        runtime.release_jsvalue(base).unwrap();
+    }
+
+    #[test]
+    fn dense_number_write_allows_readonly_length_and_same_array_source() {
+        let runtime = Runtime::new();
+        let base = runtime
+            .into_jsvalue(receiver(
+                &runtime,
+                "(function(){let a=[3,4];Object.defineProperty(a,'length',{writable:false});return a})()",
+            ))
+            .unwrap();
+        let copied = runtime.peek_dense_number(&base, 0).expect("dense source");
+        assert!(runtime.try_write_dense_number(&base, 1, copied));
+        assert!(matches!(
+            runtime.peek_dense_number(&base, 1),
+            Some(Number::Int(3))
+        ));
+        runtime.release_jsvalue(base).unwrap();
+    }
+
+    #[test]
+    fn dense_number_write_uses_own_element_before_prototype_setter() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let base = runtime
+            .into_jsvalue(
+                context
+                    .eval("var writes=0;var a=[1];Object.setPrototypeOf(a,{set 0(v){writes++}});a")
+                    .unwrap(),
+            )
+            .unwrap();
+        assert!(runtime.try_write_dense_number(&base, 0, Number::Int(9)));
+        assert!(matches!(
+            runtime.peek_dense_number(&base, 0),
+            Some(Number::Int(9))
+        ));
+        assert_eq!(context.eval("writes").unwrap(), Value::Int(0));
+        runtime.release_jsvalue(base).unwrap();
+    }
+
+    #[test]
+    fn dense_number_write_declines_before_changing_nonwritable_or_non_dense_receivers() {
+        for (expression, index) in [
+            ("[,'hole']", 0),
+            ("[1, 'text']", 1),
+            ("Object.defineProperty([1], '0', {writable:false})", 0),
+            ("Object.defineProperty([1], '0', {get(){throw 71}})", 0),
+            ("Object.freeze([1])", 0),
+            ("Object.seal([1])", 0),
+            ("new Proxy([1], {set(){throw 72}})", 0),
+            ("new Uint8Array([1])", 0),
+            ("({0:1,length:1})", 0),
+        ] {
+            let runtime = Runtime::new();
+            let base = runtime
+                .into_jsvalue(receiver(&runtime, expression))
+                .unwrap();
+            assert!(
+                !runtime.try_write_dense_number(&base, index, Number::Int(42)),
+                "{expression}"
+            );
+            runtime.release_jsvalue(base).unwrap();
+        }
+        let runtime = Runtime::new();
+        let base = runtime.into_jsvalue(receiver(&runtime, "[1]")).unwrap();
+        for index in [1, 2, u32::MAX] {
+            assert!(!runtime.try_write_dense_number(&base, index, Number::Int(42)));
+        }
+        assert!(!runtime.try_write_dense_number(&JsValue::Int(1), 0, Number::Int(42)));
+        assert!(!Runtime::new().try_write_dense_number(&base, 0, Number::Int(42)));
+        {
+            let _borrow = runtime.0.state.borrow();
+            assert!(!runtime.try_write_dense_number(&base, 0, Number::Int(42)));
+        }
+        assert!(matches!(
+            runtime.peek_dense_number(&base, 0),
+            Some(Number::Int(1))
+        ));
         runtime.release_jsvalue(base).unwrap();
     }
 

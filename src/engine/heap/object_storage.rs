@@ -570,6 +570,39 @@ impl Heap {
         self.release_replaced_raw_value(previous)
     }
 
+    /// Overwrite a numeric own dense element with another immediate Number.
+    /// Dense entries have default writable data attributes; changing an
+    /// indexed descriptor first materializes the Array into slow storage.
+    /// This transaction never changes ownership, length, shape, or layout.
+    #[inline]
+    pub(crate) fn try_replace_dense_number_value(
+        &mut self,
+        id: ObjectId,
+        index: u32,
+        replacement: RawValue,
+    ) -> bool {
+        if !matches!(replacement, RawValue::Int(_) | RawValue::Float(_)) {
+            return false;
+        }
+        let Ok(data) = self.object_mut(id) else {
+            return false;
+        };
+        if !matches!(data.kind, ObjectKind::Array) {
+            return false;
+        }
+        let ObjectPayload::Array { dense: Some(dense) } = &mut data.payload else {
+            return false;
+        };
+        let Some(slot) = dense.get_mut(index as usize) else {
+            return false;
+        };
+        if !matches!(slot, RawValue::Int(_) | RawValue::Float(_)) {
+            return false;
+        }
+        *slot = replacement;
+        true
+    }
+
     /// Reserve every container needed to shorten a fast Array prefix without
     /// changing either its dense storage or logical `length` slot.
     pub(crate) fn prepare_array_dense_truncation(
