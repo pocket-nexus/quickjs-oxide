@@ -374,15 +374,11 @@ pub(super) fn candidate(
         DenseSpanKind::ReadIndexBinary,
         DenseSpanKind::Read,
     ];
-    for kind in PRIORITY {
-        if rest.len() >= kind.len()
-            && matches_shape(kind, &rest[..kind.len()], first, locals, constants)
-            && authenticated(rest, entries, kind)
-        {
-            return Some(kind);
-        }
-    }
-    None
+    PRIORITY.into_iter().find(|kind| {
+        rest.len() >= kind.len()
+            && matches_shape(*kind, &rest[..kind.len()], first, locals, constants)
+            && authenticated(rest, entries, *kind)
+    })
 }
 
 #[cfg(test)]
