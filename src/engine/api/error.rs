@@ -353,6 +353,19 @@ mod tests {
     }
 
     #[test]
+    fn with_span_remains_usable_from_a_const_function() {
+        const fn attach_span(error: Error, span: SourceSpan) -> Error {
+            error.with_span(span)
+        }
+
+        let span = SourceSpan::new(SourceLocation::new(2, 1, 3), SourceLocation::new(5, 1, 6));
+        let error = attach_span(Error::new(ErrorKind::Unsupported, "frontier"), span);
+        assert_eq!(error.kind(), ErrorKind::Unsupported);
+        assert_eq!(error.message(), "frontier");
+        assert_eq!(error.span(), Some(span));
+    }
+
+    #[test]
     fn native_error_payload_remains_exact_after_clone_and_span_change() {
         let mut raw = NativeErrorMessage::new();
         raw.push_bytes([b'A', 0, 0x80]);
