@@ -349,7 +349,9 @@ impl FusionPlan {
             .copied()
             .unwrap_or(0)
     }
-    #[inline]
+    // This lookup is on every direct local/argument read in `run`. Keeping it
+    // outlined adds a call and caller spills even when no dense span exists.
+    #[inline(always)]
     pub(crate) fn dense_span(&self, pc: usize) -> Option<DenseSpanKind> {
         DenseSpanKind::from_flag(self.flag(pc))
     }
