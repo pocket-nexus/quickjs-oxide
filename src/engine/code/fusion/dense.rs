@@ -1,8 +1,28 @@
-//! Published numeric spans. Only `Read` is admitted until its complete
-//! runtime path has been integrated and measured.
+//! Published numeric spans over canonical instructions.
 use super::super::bytecode::Instruction;
 use super::super::function::metadata::{ClosureVariableKind, VariableDefinition};
 use crate::engine::heap::{BytecodeConstant, RawValue};
+
+#[cfg(test)]
+thread_local! {
+    static DISABLE_CANDIDATES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Build the same canonical bytecode and legacy fusion plan without new dense
+/// candidates. The switch is thread-local so parallel crate tests cannot
+/// change one another's publication. Production builds contain no switch.
+#[cfg(test)]
+pub(crate) fn with_dense_candidates_disabled<R>(run: impl FnOnce() -> R) -> R {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            DISABLE_CANDIDATES.with(|disabled| disabled.set(self.0));
+        }
+    }
+    let previous = DISABLE_CANDIDATES.with(|disabled| disabled.replace(true));
+    let _restore = Restore(previous);
+    run()
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DirectSlot {
@@ -129,6 +149,180 @@ fn numeric_source(
     }
 }
 
+fn writable_local(slot: DirectSlot, locals: &[VariableDefinition]) -> bool {
+    let DirectSlot::Local(index) = slot else {
+        return false;
+    };
+    locals
+        .get(usize::from(index))
+        .is_some_and(|local| local.kind == ClosureVariableKind::Normal && !local.is_const)
+}
+
+fn store_matches(
+    instruction: &Instruction,
+    slot: DirectSlot,
+    locals: &[VariableDefinition],
+    put: bool,
+) -> bool {
+    match (instruction, slot, put) {
+        (
+            Instruction::PutLocal(index) | Instruction::PutLocalCheck(index),
+            DirectSlot::Local(target),
+            true,
+        )
+        | (
+            Instruction::SetLocal(index) | Instruction::SetLocalCheck(index),
+            DirectSlot::Local(target),
+            false,
+        ) if index == &target => writable_local(slot, locals),
+        (Instruction::PutArg(index), DirectSlot::Argument(target), true)
+        | (Instruction::SetArg(index), DirectSlot::Argument(target), false) => index == &target,
+        _ => false,
+    }
+}
+
+fn index_binary(instruction: &Instruction) -> bool {
+    matches!(
+        instruction,
+        Instruction::Add | Instruction::Sub | Instruction::BitAnd
+    )
+}
+
+fn number_binary(instruction: &Instruction) -> bool {
+    matches!(
+        instruction,
+        Instruction::Add
+            | Instruction::Sub
+            | Instruction::Mul
+            | Instruction::Div
+            | Instruction::BitAnd
+            | Instruction::BitOr
+            | Instruction::BitXor
+            | Instruction::Shl
+            | Instruction::Sar
+            | Instruction::Shr
+    )
+}
+
+fn matches_shape(
+    kind: DenseSpanKind,
+    code: &[Instruction],
+    first: DirectSlot,
+    locals: &[VariableDefinition],
+    constants: &[BytecodeConstant],
+) -> bool {
+    let source = |at: usize| {
+        code.get(at)
+            .and_then(|instruction| numeric_source(instruction, locals, constants))
+            .is_some()
+    };
+    let base = |at: usize| {
+        code.get(at)
+            .and_then(|instruction| direct_slot(instruction, locals))
+            .is_some()
+    };
+    let is = |at: usize, expected: &Instruction| {
+        code.get(at).is_some_and(|actual| {
+            std::mem::discriminant(actual) == std::mem::discriminant(expected)
+        })
+    };
+    match kind {
+        DenseSpanKind::Read => source(1) && is(2, &Instruction::GetArrayEl),
+        DenseSpanKind::ReadIndexBinary => {
+            source(1)
+                && source(2)
+                && code.get(3).is_some_and(index_binary)
+                && is(4, &Instruction::GetArrayEl)
+        }
+        DenseSpanKind::ReadPostUpdate | DenseSpanKind::ReadPreUpdate => {
+            let Some(slot) = code.get(1).and_then(|i| direct_slot(i, locals)) else {
+                return false;
+            };
+            let (operation, put) = match kind {
+                DenseSpanKind::ReadPostUpdate => (
+                    matches!(
+                        code.get(2),
+                        Some(Instruction::PostInc | Instruction::PostDec)
+                    ),
+                    true,
+                ),
+                DenseSpanKind::ReadPreUpdate => (
+                    matches!(code.get(2), Some(Instruction::Inc | Instruction::Dec)),
+                    false,
+                ),
+                _ => unreachable!(),
+            };
+            operation
+                && code
+                    .get(3)
+                    .is_some_and(|instruction| store_matches(instruction, slot, locals, put))
+                && is(4, &Instruction::GetArrayEl)
+        }
+        DenseSpanKind::ReadBinary => {
+            source(1)
+                && is(2, &Instruction::GetArrayEl)
+                && source(3)
+                && code.get(4).is_some_and(number_binary)
+        }
+        DenseSpanKind::AccPut
+        | DenseSpanKind::AccSetDrop
+        | DenseSpanKind::AccIndexPut
+        | DenseSpanKind::AccIndexSetDrop => {
+            let indexed = matches!(
+                kind,
+                DenseSpanKind::AccIndexPut | DenseSpanKind::AccIndexSetDrop
+            );
+            let put = matches!(kind, DenseSpanKind::AccPut | DenseSpanKind::AccIndexPut);
+            let read_at = if indexed { 5 } else { 3 };
+            let store_at = read_at + 2;
+            writable_local(first, locals)
+                && base(1)
+                && source(2)
+                && (!indexed || (source(3) && code.get(4).is_some_and(index_binary)))
+                && is(read_at, &Instruction::GetArrayEl)
+                && is(read_at + 1, &Instruction::Add)
+                && code
+                    .get(store_at)
+                    .is_some_and(|instruction| store_matches(instruction, first, locals, put))
+                && (put || is(store_at + 1, &Instruction::Drop))
+        }
+        DenseSpanKind::Store => {
+            source(1)
+                && source(2)
+                && is(3, &Instruction::Insert3)
+                && is(4, &Instruction::PutArrayEl)
+                && is(5, &Instruction::Drop)
+        }
+        DenseSpanKind::Copy => {
+            source(1)
+                && base(2)
+                && source(3)
+                && is(4, &Instruction::GetArrayEl)
+                && is(5, &Instruction::Insert3)
+                && is(6, &Instruction::PutArrayEl)
+                && is(7, &Instruction::Drop)
+        }
+        DenseSpanKind::StoreBinary => {
+            source(1)
+                && source(2)
+                && source(3)
+                && code.get(4).is_some_and(number_binary)
+                && is(5, &Instruction::Insert3)
+                && is(6, &Instruction::PutArrayEl)
+                && is(7, &Instruction::Drop)
+        }
+        DenseSpanKind::UpdateElement => {
+            source(1)
+                && is(2, &Instruction::GetArrayEl3)
+                && source(3)
+                && code.get(4).is_some_and(number_binary)
+                && is(5, &Instruction::Insert3)
+                && is(6, &Instruction::PutArrayEl)
+                && is(7, &Instruction::Drop)
+        }
+    }
+}
+
 /// Check a candidate against the canonical stack effects before publishing.
 /// `entries` starts at the candidate's first PC.
 fn authenticated(rest: &[Instruction], entries: &[bool], kind: DenseSpanKind) -> bool {
@@ -159,16 +353,34 @@ pub(super) fn candidate(
     constants: &[BytecodeConstant],
     entries: &[bool],
 ) -> Option<DenseSpanKind> {
-    // This first-opcode filter avoids work for ordinary bytecode sites.
-    direct_slot(rest.first()?, locals)?;
-    if matches!(rest.get(2), Some(Instruction::GetArrayEl))
-        && rest
-            .get(1)
-            .and_then(|instruction| numeric_source(instruction, locals, constants))
-            .is_some()
-        && authenticated(rest, entries, DenseSpanKind::Read)
-    {
-        return Some(DenseSpanKind::Read);
+    #[cfg(test)]
+    if DISABLE_CANDIDATES.with(std::cell::Cell::get) {
+        return None;
+    }
+    // Ordinary bytecode PCs must not test thirteen candidate shapes.
+    let first = direct_slot(rest.first()?, locals)?;
+    const PRIORITY: [DenseSpanKind; 13] = [
+        DenseSpanKind::AccIndexSetDrop,
+        DenseSpanKind::AccIndexPut,
+        DenseSpanKind::AccSetDrop,
+        DenseSpanKind::AccPut,
+        DenseSpanKind::Copy,
+        DenseSpanKind::StoreBinary,
+        DenseSpanKind::UpdateElement,
+        DenseSpanKind::Store,
+        DenseSpanKind::ReadBinary,
+        DenseSpanKind::ReadPostUpdate,
+        DenseSpanKind::ReadPreUpdate,
+        DenseSpanKind::ReadIndexBinary,
+        DenseSpanKind::Read,
+    ];
+    for kind in PRIORITY {
+        if rest.len() >= kind.len()
+            && matches_shape(kind, &rest[..kind.len()], first, locals, constants)
+            && authenticated(rest, entries, kind)
+        {
+            return Some(kind);
+        }
     }
     None
 }
@@ -345,11 +557,26 @@ mod tests {
                 authenticated(&code, &vec![false; code.len()], kind),
                 "{kind:?} stack contract"
             );
+            assert_eq!(plan(&code).dense_span(0), Some(kind), "{kind:?} published");
+            for entry in 1..code.len() {
+                let mut entries = vec![false; code.len()];
+                entries[entry] = true;
+                assert_ne!(
+                    candidate(
+                        &code,
+                        &[local(ClosureVariableKind::Normal); 2],
+                        &[],
+                        &entries,
+                    ),
+                    Some(kind),
+                    "{kind:?} admitted interior entry {entry}"
+                );
+            }
         }
     }
 
     #[test]
-    fn dense_r0_candidate_checks_all_interior_entries() {
+    fn dense_candidate_prefers_valid_longest() {
         let original = vec![GetLocal(0), GetArg(0), GetArrayEl, Return];
         assert_eq!(plan(&original).dense_span(0), Some(DenseSpanKind::Read));
         for target in 1..3 {
@@ -360,10 +587,31 @@ mod tests {
         let mut code = original;
         code.push(Goto(3));
         assert_eq!(plan(&code).dense_span(0), Some(DenseSpanKind::Read));
+
+        let mut long = vec![GetLocal(0), GetArg(0), GetArrayEl, PushI32(1), Add];
+        assert_eq!(plan(&long).dense_span(0), Some(DenseSpanKind::ReadBinary));
+        long.push(Goto(4));
+        assert_eq!(
+            plan(&long).dense_span(0),
+            Some(DenseSpanKind::Read),
+            "invalid long span must not hide a valid short prefix"
+        );
     }
 
     #[test]
-    fn dense_r0_producer_whitelist_and_only_r0_is_published() {
+    fn dense_canonical_only_keeps_legacy_fusion() {
+        let dense = [GetLocal(0), GetArg(0), GetArrayEl];
+        let legacy = [GetLocal(0), PushI32(1), Add, PutLocal(0)];
+        assert_eq!(plan(&dense).dense_span(0), Some(DenseSpanKind::Read));
+        super::super::with_dense_candidates_disabled(|| {
+            assert_eq!(plan(&dense).dense_span(0), None);
+            assert_eq!(plan(&legacy).local_add_span(0), Some(4));
+        });
+        assert_eq!(plan(&dense).dense_span(0), Some(DenseSpanKind::Read));
+    }
+
+    #[test]
+    fn dense_producer_and_store_whitelist() {
         let locals = [local(ClosureVariableKind::Normal); 2];
         let constants = [
             BytecodeConstant::Value(RawValue::Float(2.0)),
@@ -414,13 +662,101 @@ mod tests {
         let read_binary = [GetLocal(0), GetArg(0), GetArrayEl, PushI32(1), Add];
         assert_eq!(
             FusionPlan::build(&read_binary, &locals, &constants).dense_span(0),
-            Some(DenseSpanKind::Read),
-            "an unpublished R4 must leave its valid R0 prefix available"
+            Some(DenseSpanKind::ReadBinary)
         );
         let index_binary = [GetLocal(0), GetArg(0), PushI32(1), Add, GetArrayEl];
         assert_eq!(
             FusionPlan::build(&index_binary, &locals, &constants).dense_span(0),
+            Some(DenseSpanKind::ReadIndexBinary)
+        );
+
+        let post = [
+            GetArg(0),
+            GetLocalCheck(1),
+            PostInc,
+            PutLocalCheck(1),
+            GetArrayEl,
+        ];
+        assert_eq!(
+            FusionPlan::build(&post, &locals, &constants).dense_span(0),
+            Some(DenseSpanKind::ReadPostUpdate)
+        );
+        for wrong_store in [PutArg(0), SetLocal(1), PutLocal(0), PutLocal(1)] {
+            let code = [GetArg(0), GetArg(1), PostInc, wrong_store, GetArrayEl];
+            assert_eq!(
+                FusionPlan::build(&code, &locals, &constants).dense_span(0),
+                None,
+                "incorrect postfix store {code:?}"
+            );
+        }
+        let pre = [GetArg(0), GetArg(1), Inc, SetArg(1), GetArrayEl];
+        assert_eq!(
+            FusionPlan::build(&pre, &locals, &constants).dense_span(0),
+            Some(DenseSpanKind::ReadPreUpdate)
+        );
+        let mut const_local = locals;
+        const_local[1].is_const = true;
+        assert_eq!(
+            FusionPlan::build(&post, &const_local, &constants).dense_span(0),
+            None,
+            "const local cannot be an update target"
+        );
+        let acc = [
+            GetLocal(1),
+            GetLocal(0),
+            GetArg(0),
+            GetArrayEl,
+            Add,
+            PutLocal(1),
+        ];
+        assert_eq!(
+            FusionPlan::build(&acc, &const_local, &constants).dense_span(0),
+            None,
+            "const local cannot be an accumulator"
+        );
+        let mut wrong_acc = acc;
+        wrong_acc[5] = PutLocal(0);
+        assert_ne!(
+            FusionPlan::build(&wrong_acc, &locals, &constants).dense_span(0),
+            Some(DenseSpanKind::AccPut)
+        );
+        let mut bad_value = [
+            GetArg(0),
+            GetArg(1),
+            PushConst(1),
+            Insert3,
+            PutArrayEl,
+            Drop,
+        ];
+        assert_eq!(
+            FusionPlan::build(&bad_value, &locals, &constants).dense_span(0),
             None
+        );
+        bad_value[2] = PushConst(0);
+        assert_eq!(
+            FusionPlan::build(&bad_value, &locals, &constants).dense_span(0),
+            Some(DenseSpanKind::Store)
+        );
+        let kept_assignment = [GetArg(0), GetArg(1), PushI32(1), Insert3, PutArrayEl];
+        assert_eq!(
+            FusionPlan::build(&kept_assignment, &locals, &constants).dense_span(0),
+            None,
+            "W0 must require trailing Drop"
+        );
+        let wrong_compound = [
+            GetArg(0),
+            GetArg(1),
+            GetArrayEl,
+            PushI32(1),
+            Add,
+            Insert3,
+            PutArrayEl,
+            Drop,
+        ];
+        assert_eq!(
+            FusionPlan::build(&wrong_compound, &locals, &constants).dense_span(0),
+            Some(DenseSpanKind::ReadBinary),
+            "GetArrayEl cannot stand in for W3's GetArrayEl3"
         );
     }
 }

@@ -10,6 +10,8 @@ use crate::engine::heap::{BytecodeConstant, RawValue};
 use std::rc::Rc;
 
 mod dense;
+#[cfg(test)]
+pub(crate) use dense::with_dense_candidates_disabled;
 pub(crate) use dense::{DenseSpanKind, DirectSlot, NumericSource};
 
 #[derive(Clone, Debug, Default)]
@@ -315,8 +317,8 @@ impl FusionPlan {
                     }
                     _ => None,
                 });
-            // Publish only complete dense slices. R0 is the first enabled
-            // slice; later flag values are reserved but have no matcher yet.
+            // Publish only authenticated complete dense slices. The matcher
+            // tests longer candidates before their shorter prefixes.
             let dense_candidate = dense::candidate(rest, locals, constants, &entries[pc..])
                 .map(|kind| (kind as u8, kind.len()));
             let candidate = dense_candidate.or(old_candidate);
