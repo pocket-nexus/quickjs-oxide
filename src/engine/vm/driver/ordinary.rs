@@ -346,11 +346,14 @@ mod layout_tests {
 
     #[test]
     fn unified_call_entry_keeps_the_ordinary_result_abi_size() {
-        // Error already determines the old result's size. Adding the native
-        // completion must not enlarge every ordinary Call return transaction.
-        assert_eq!(
-            std::mem::size_of::<Result<super::Entry, super::Error>>(),
-            std::mem::size_of::<Result<bool, super::Error>>(),
-        );
+        // The boxed error channel is one word, so a result transaction is now
+        // governed by its own payload instead of an 80-byte error slot. The
+        // ordinary completion stays at two words; the unified entry is bounded
+        // by its own payload plus the one-word error channel.
+        let word = std::mem::size_of::<usize>();
+        assert_eq!(std::mem::size_of::<super::Error>(), word);
+        assert_eq!(std::mem::size_of::<Result<(), super::Error>>(), word);
+        assert!(std::mem::size_of::<Result<bool, super::Error>>() <= 2 * word);
+        assert!(std::mem::size_of::<Result<super::Entry, super::Error>>() <= 3 * word);
     }
 }
