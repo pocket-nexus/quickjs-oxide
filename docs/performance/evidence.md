@@ -16,7 +16,7 @@ R0 已合入 PR #48 的无状态 Test262 gate。#41 评论提到“合并后晋�
 
 `3341ac456ea2719858fd6173e8dcd9123ad9e660` 是 [PR #37] 的真实 head（文档／receipt 提交），不是一个虚构基线；只是不能把它说成实现提交。PR #37 的 merge 为 `26a5726a19efb0088c59d0325f6c3db3699b7048`，最终写回调整包含 `2fa370a7`。#42 报告指出 R0 与 PR #40 `fd9b4eac` 的引擎源码相同。新实验仍需记录完整源码与构建身份，不用这些关系替代 receipt。
 
-原整理时 `0cd4acee` 不可解析，因此未把旧 hash 冒充当前实验。现已独立恢复 `04bb1a74`，并把 R0 复验原始样本、构建身份与负结果收据纳入本仓。#44 的历史报告仍按其原身份阅读。
+原整理时 `0cd4acee` 不可解析，因此未把旧 hash 冒充当前实验。现已独立恢复 `04bb1a74`，本仓只保留 R0 复验的[结果总结](receipts/gates-2026-09-25/README.md)；原始样本与构建文件不进入 PR。#44 的历史报告仍按其原身份阅读。
 
 <a id="e41"></a>
 ## E41. 紧凑错误载体：历史机制与当前负结果
@@ -46,7 +46,7 @@ R0 已合入 PR #48 的无状态 Test262 gate。#41 评论提到“合并后晋�
 | bigint256 | −4.31% | throw_catch | −1.20% |
 | tdz_catch | −0.79% | | |
 
-原报告中的 instructions A/A 为 0.00%；cycles A/A 却为 −3.4%～+10.5%。当前 R0 复验已补上两轮配对：`prop_write` cycles 中位数 +10.87%，`string_build1` +4.09%；每 100,000 次错误构造／传播由 100,000 次／1.3 MB 分配升至 200,000 次／9.3 MB，保留模式 RSS HWM 中位数增加 2,340 KiB。完整原始样本见[复验收据](receipts/gates-2026-09-25/README.md)。**不能以指令下降抵消已测得的时间和错误路径成本。**
+原报告中的 instructions A/A 为 0.00%；cycles A/A 却为 −3.4%～+10.5%。当前 R0 复验已补上两轮配对：`prop_write` cycles 中位数 +10.87%，`string_build1` +4.09%；每 100,000 次错误构造／传播由 100,000 次／1.3 MB 分配升至 200,000 次／9.3 MB，保留模式 RSS HWM 中位数增加 2,340 KiB。[复验总结](receipts/gates-2026-09-25/README.md)记录方法和结果，原始样本不入库。**不能以指令下降抵消已测得的时间和错误路径成本。**
 
 报告称 14 个错误场景、CLI 输出／退出码、3009 workspace tests、2048 test262-host tests、完整 Test262 80010/80060 等通过。这是原候选的历史验证记录，不替代恢复版或组合版的重放；恢复版的独立验证见[#41 报告](../reports/issue-41-error-carrier.md)。
 
@@ -146,7 +146,7 @@ B2.2 的旧上界实验只把 `prop_read` 从 752→632 指令／轮（约 1.19 
 
 [冻结规格](numeric-array-spans.md) §8 给出固定源码链接；13 种序列及栈代数来自这些规则。对 pin 上游源码另核对：project 实际使用 `u[++nextValue]` 等前缀更新，advect 的原顺序是 `d0[i0 + row1]`，不能以等价手写表达式冒充原始程序。
 
-本次没有 cargo/rustc，没有取得真实函数 PC/slot 编号或动态覆盖；随附的 [捕获入口](probes/run_dump.py) 和 [test-only 探针](probes/dump_numeric_spans.rs) 是新增诊断源码，不是已跑成功的 receipt。完整函数发布后的 dump、生产 matcher manifest、Rust 编译和每片 A/B 仍须执行，不填造静态站点数或加速数字。
+最初整理本文时尚无 Rust 编译或真实函数 PC。后续已用[捕获入口](probes/run_dump.py)和[test-only 探针](probes/dump_numeric_spans.rs)取得[发布覆盖总结](receipts/all-dense-6db6bfb0/README.md)，并完成[四方 V8 与 profile 总结](receipts/fourway-2026-09-25/README.md)。生成文件只保留在本机测量目录，不作为 PR 附件。
 
 ## 来源
 

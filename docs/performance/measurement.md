@@ -1,6 +1,6 @@
 # 测量、累计门禁与回退协议
 
-> 本协议保留原准入阈值和可复现的测量方法。当前 13 种跨度与 #41 已实现；一次完整[四方 V8 配对及定向 profile](receipts/fourway-2026-09-25/README.md)已完成。未达到阈值须如实记录和归因，不作为停止既定代码实现的理由。正式 benchmark／profiling 仍须与构建和其他测试串行隔离。
+> 本协议保留原准入阈值和可复现的测量方法。当前 13 种跨度与 #41 已实现；一次完整[四方 V8 配对及定向 profile](receipts/fourway-2026-09-25/README.md)已完成。未达到阈值须如实记录和归因，不作为停止既定代码实现的理由。正式 benchmark／profiling 仍须与构建和其他测试串行隔离。本次 PR 只提交结果总结；协议要求的原始样本和构建回执保留在本机测量目录，不作为仓库附件。
 > 与 [benchmark 工具说明](../../scripts/benchmark/README.md)、[Test262 契约](../test262.md) 配套。
 
 <a id="baselines"></a>
@@ -37,7 +37,7 @@ RUSTUP_TOOLCHAIN=1.94.1 python3 scripts/benchmark/build.py \
 
 `build.py` 记录 commit、二进制 hash、rustc/cargo、manifest/lock hash 和部分环境；P0 还需补实际 release overrides、target CPU/features、profile 配置、工作负载 hash、主机状态、完整命令和 stdout/stderr。不要依赖它尚未记录的字段。不同 worktree 的 OUT 必须不同。
 
-本项目源码和计划目录内不 vendor 外部 benchmark。以下四个维护者重建探针保留为固定工作量配方；本次实施的原始负载与样本见[历史门禁收据](receipts/gates-2026-09-25/README.md)，不能混同外部 V8 正式 Score。
+本项目源码和计划目录内不 vendor 外部 benchmark。以下四个维护者重建探针保留为固定工作量配方；本次实施的[历史门禁总结](receipts/gates-2026-09-25/README.md)记录结果，原始负载与样本留在本机，不能混同外部 V8 正式 Score。
 
 ```sh
 mkdir -p "$OUT/micro"

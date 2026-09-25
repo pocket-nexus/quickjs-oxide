@@ -82,7 +82,7 @@ python3 docs/performance/probes/run_dump.py \
   --toolchain 1.94.1
 ```
 
-探针已完成 Rust 编译和真实运行；[收据](receipts/all-dense-6db6bfb0/README.md)包含四份完整函数内容、原始 PC 和生产 matcher 生成的 manifest。manifest 字段包括 source/function path、canonical 首末 PC、flag、slot/constant 编号、每条 opcode、peak/delta；R0 triad 的拒绝分类单独保存。不得由 JS 正则推算 manifest。
+探针已完成 Rust 编译和真实运行；[覆盖总结](receipts/all-dense-6db6bfb0/README.md)记录四个目标函数的 flag、首末 PC 和拒绝分类。完整生成 dump 与 manifest 保留在本机测量目录，不提交到 PR。manifest 原始字段包括 source/function path、canonical 首末 PC、flag、slot/constant 编号、每条 opcode、peak/delta；不得由 JS 正则推算。
 
 **B0 不再承担选设计的工作。**它验证上述冻结设计在真实输入上的实际覆盖；不匹配就报告具体断点并停止扩大，不把“先 dump 再决定 API”重新留给下一位实现者。
 
