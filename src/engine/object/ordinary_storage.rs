@@ -9,6 +9,7 @@ use crate::engine::heap::runtime::RuntimeState;
 use crate::engine::heap::{ObjectId, ObjectKind, ObjectPayload, PropertySlot};
 use crate::engine::object::shape::PropertyFlags;
 use crate::engine::object::{ObjectRef, PropertyKey};
+use crate::engine::value::number::operations::Number;
 use crate::engine::value::{JsValue, Value};
 
 /// Affine native payload fact selected together with an own property value.
@@ -1162,6 +1163,26 @@ impl Runtime {
 }
 
 impl Runtime {
+    /// Read a Number from an existing dense Array element while its base owner
+    /// remains in the frame. The heap borrow ends before the Copy result leaves.
+    pub(crate) fn peek_dense_number(&self, base: &JsValue, index: u32) -> Option<Number> {
+        use crate::engine::heap::RawValue;
+
+        let JsValue::Object(id) = base else {
+            return None;
+        };
+        let state = self.0.state.try_borrow().ok()?;
+        let data = state.heap.object(*id).ok()?;
+        if !matches!(data.kind, ObjectKind::Array) {
+            return None;
+        }
+        match data.dense_array_value(index)? {
+            RawValue::Int(value) => Some(Number::Int(*value)),
+            RawValue::Float(value) => Some(Number::Float(*value)),
+            _ => None,
+        }
+    }
+
     /// Borrow an existing dense own immediate value while proving that the VM
     /// can subsequently release its base operand without draining heap work.
     /// Every decline leaves owners and storage untouched; the general property
@@ -1235,6 +1256,68 @@ mod dense_array_read_tests {
         drop(context);
         runtime.run_gc().unwrap();
         value
+    }
+
+    #[test]
+    fn dense_number_peek_reads_only_existing_numeric_array_elements() {
+        let runtime = Runtime::new();
+        let base = runtime
+            .into_jsvalue(receiver(&runtime, "[7, -0, NaN, 'x']"))
+            .unwrap();
+        let JsValue::Object(id) = &base else {
+            panic!("array");
+        };
+        let count = runtime.0.state.borrow().heap.object_strong_count(*id);
+        assert!(matches!(
+            runtime.peek_dense_number(&base, 0),
+            Some(Number::Int(7))
+        ));
+        assert!(
+            matches!(runtime.peek_dense_number(&base, 1), Some(Number::Float(n)) if n == 0.0 && n.is_sign_negative())
+        );
+        assert!(
+            matches!(runtime.peek_dense_number(&base, 2), Some(Number::Float(n)) if n.is_nan())
+        );
+        for index in [3, 4, 5, u32::MAX] {
+            assert!(runtime.peek_dense_number(&base, index).is_none());
+        }
+        assert_eq!(
+            runtime.0.state.borrow().heap.object_strong_count(*id),
+            count
+        );
+        {
+            let _borrow = runtime.0.state.borrow_mut();
+            assert!(runtime.peek_dense_number(&base, 0).is_none());
+        }
+        runtime.release_jsvalue(base).unwrap();
+    }
+
+    #[test]
+    fn dense_number_peek_declines_slow_exotic_and_foreign_receivers() {
+        for expression in [
+            "[, 1]",
+            "Object.defineProperty([1], '0', {get(){throw 71}})",
+            "Object.defineProperty([1], '0', {writable:false})",
+            "Object.freeze([1])",
+            "new Proxy([1], {get(){throw 72}})",
+            "new Uint8Array([1])",
+            "({0:1,length:1})",
+        ] {
+            let runtime = Runtime::new();
+            let base = runtime
+                .into_jsvalue(receiver(&runtime, expression))
+                .unwrap();
+            assert!(
+                runtime.peek_dense_number(&base, 0).is_none(),
+                "{expression}"
+            );
+            runtime.release_jsvalue(base).unwrap();
+        }
+        let runtime = Runtime::new();
+        let base = runtime.into_jsvalue(receiver(&runtime, "[1]")).unwrap();
+        assert!(Runtime::new().peek_dense_number(&base, 0).is_none());
+        assert!(runtime.peek_dense_number(&JsValue::Int(1), 0).is_none());
+        runtime.release_jsvalue(base).unwrap();
     }
 
     #[test]

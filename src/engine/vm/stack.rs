@@ -224,7 +224,9 @@ impl Drop for FrameStorageGuard {
 
 mod number;
 mod window;
-pub(in crate::engine::vm) use window::{FrameTransaction, LinkedReadCompletion, RunSlots};
+pub(in crate::engine::vm) use window::{
+    FrameTransaction, LinkedReadCompletion, NumberUpdate, NumericDestination, RunSlots,
+};
 
 impl SlotStore {
     /// Commit a retained IC result only after output capacity and the receiver

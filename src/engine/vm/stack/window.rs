@@ -1,7 +1,20 @@
 //! One authenticated continuous execution borrow. No arena mutation API escapes.
 use super::{Error, FrameBinding, FrameWindow, JsValue, Runtime, SlotStore};
+use crate::engine::code::fusion::DirectSlot;
 use crate::engine::heap::ObjectId;
 use crate::engine::value::number::operations::Number;
+
+#[derive(Clone, Copy, Debug)]
+pub(in crate::engine::vm) enum NumericDestination {
+    Push,
+    Local(u16),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(in crate::engine::vm) struct NumberUpdate {
+    pub slot: DirectSlot,
+    pub value: Number,
+}
 
 pub(in crate::engine::vm) enum LinkedReadCompletion {
     Completed,
@@ -254,6 +267,44 @@ pub(in crate::engine::vm) struct RunSlots<'a> {
     pub(super) window: &'a mut FrameWindow,
 }
 impl RunSlots<'_> {
+    /// Borrow a direct binding only for this execution borrow. No owner is
+    /// created, and the returned reference cannot outlive a subsequent commit.
+    #[inline]
+    pub(in crate::engine::vm) fn direct_value<'borrow>(
+        &'borrow self,
+        source: DirectSlot,
+    ) -> Option<&'borrow JsValue> {
+        let region = match source {
+            DirectSlot::Local(_) => self.window.locals(),
+            DirectSlot::Argument(_) => self.window.parameters(),
+        };
+        let index = match source {
+            DirectSlot::Local(index) | DirectSlot::Argument(index) => usize::from(index),
+        };
+        let FrameBinding::Direct(value) = self.store.slots[region].get(index)?.as_ref()? else {
+            return None;
+        };
+        Some(value)
+    }
+
+    #[inline]
+    pub(in crate::engine::vm) fn numeric_span_room(&self, extra_peak: u8) -> bool {
+        self.store
+            .numeric_span_room_current(self.window, extra_peak)
+    }
+
+    #[inline]
+    pub(in crate::engine::vm) fn try_commit_number(
+        &mut self,
+        destination: NumericDestination,
+        result: Number,
+        update: Option<NumberUpdate>,
+        extra_peak: u8,
+    ) -> bool {
+        self.store
+            .try_commit_number_current(self.window, destination, result, update, extra_peak)
+    }
+
     pub(in crate::engine::vm) fn property_ic_read(
         &mut self,
         runtime: &Runtime,

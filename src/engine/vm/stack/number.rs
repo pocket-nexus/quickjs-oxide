@@ -1,10 +1,120 @@
 //! Pure Number transactions inside an authenticated continuous window.
+use super::window::{NumberUpdate, NumericDestination};
 #[cfg(feature = "profiling")]
 use super::{Cost, record_owned_storage};
 use super::{Error, FrameBinding, FrameWindow, SlotStore};
+use crate::engine::code::fusion::DirectSlot;
 use crate::engine::value::number::operations::Number;
 
+fn direct_slot_index(window: &FrameWindow, slot: DirectSlot) -> Option<usize> {
+    let (region, index) = match slot {
+        DirectSlot::Local(index) => (window.locals(), usize::from(index)),
+        DirectSlot::Argument(index) => (window.parameters(), usize::from(index)),
+    };
+    (index < region.len()).then(|| region.start + index)
+}
+
 impl SlotStore {
+    /// The virtual peak must fit in the authenticated operand window, and all
+    /// slots that canonical execution would temporarily occupy must be empty.
+    #[inline]
+    pub(super) fn numeric_span_room_current(&self, window: &FrameWindow, extra_peak: u8) -> bool {
+        let operands = window.operands();
+        let Some(end_depth) = window.depth.checked_add(usize::from(extra_peak)) else {
+            return false;
+        };
+        if end_depth > operands.len() {
+            return false;
+        }
+        self.slots
+            .get(operands.start + window.depth..operands.start + end_depth)
+            .is_some_and(|slots| slots.iter().all(Option::is_none))
+    }
+
+    /// A decline leaves both bindings and operand depth untouched. Once the
+    /// checks pass, only direct Number owners are replaced and no operation can
+    /// fail or invoke a release path.
+    #[inline]
+    pub(super) fn try_commit_number_current(
+        &mut self,
+        window: &mut FrameWindow,
+        destination: NumericDestination,
+        result: Number,
+        update: Option<NumberUpdate>,
+        extra_peak: u8,
+    ) -> bool {
+        if !self.numeric_span_room_current(window, extra_peak) {
+            return false;
+        }
+        if matches!(destination, NumericDestination::Local(_)) && update.is_some() {
+            return false;
+        }
+        let output_index = match destination {
+            NumericDestination::Push => {
+                let Some(index) = window.operands().start.checked_add(window.depth) else {
+                    return false;
+                };
+                if !matches!(self.slots.get(index), Some(None)) || index >= window.end {
+                    return false;
+                }
+                Some(index)
+            }
+            NumericDestination::Local(index) => {
+                let Some(index) = direct_slot_index(window, DirectSlot::Local(index)) else {
+                    return false;
+                };
+                if !matches!(
+                    self.slots.get(index),
+                    Some(Some(FrameBinding::Direct(value))) if value.as_number_repr().is_some()
+                ) {
+                    return false;
+                }
+                None
+            }
+        };
+        let update_index = if let Some(update) = update {
+            let Some(index) = direct_slot_index(window, update.slot) else {
+                return false;
+            };
+            if !matches!(
+                self.slots.get(index),
+                Some(Some(FrameBinding::Direct(value))) if value.as_number_repr().is_some()
+            ) {
+                return false;
+            }
+            Some(index)
+        } else {
+            None
+        };
+
+        if let (Some(index), Some(update)) = (update_index, update) {
+            self.slots[index] = Some(FrameBinding::Direct(update.value.into()));
+            #[cfg(feature = "profiling")]
+            record_owned_storage(Cost::Move(1));
+        }
+        match destination {
+            NumericDestination::Push => {
+                let index = output_index.expect("checked numeric output slot");
+                self.slots[index] = Some(FrameBinding::Direct(result.into()));
+                window.depth += 1;
+                #[cfg(feature = "profiling")]
+                {
+                    self.live_slots += 1;
+                    record_owned_storage(Cost::Move(1));
+                    self.record_occupancy();
+                }
+            }
+            NumericDestination::Local(index) => {
+                let index = direct_slot_index(window, DirectSlot::Local(index))
+                    .expect("checked numeric local slot");
+                self.slots[index] = Some(FrameBinding::Direct(result.into()));
+                #[cfg(feature = "profiling")]
+                record_owned_storage(Cost::Move(1));
+            }
+        }
+        true
+    }
+
     // Keep fused compare-branch at one call level even when the caller's own
     // inlining decision flips between builds.
     #[inline]
@@ -127,15 +237,18 @@ mod tests {
     fn frame(runtime: &Runtime, capacity: u16) -> (SlotStore, FrameWindow) {
         let context = runtime.new_context();
         let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
+        owner.metadata.argument_count = 1;
         owner.metadata.local_count = 1;
         owner.metadata.max_stack = capacity;
-        owner.local_definitions = Rc::from([VariableDefinition {
+        let definition = VariableDefinition {
             name: None,
             is_lexical: false,
             is_const: false,
             is_parameter_initializer: false,
             kind: ClosureVariableKind::Normal,
-        }]);
+        };
+        owner.argument_definitions = Rc::from([definition.clone()]);
+        owner.local_definitions = Rc::from([definition]);
         let mut slots = SlotStore::new(20);
         let window = slots
             .push_frame(
@@ -143,13 +256,168 @@ mod tests {
                 &owner.frame_layout(),
                 FrameStorage {
                     original_arguments: Vec::new(),
-                    parameters: Vec::new(),
+                    parameters: vec![FrameBinding::Direct(JsValue::Int(11))],
                     locals: vec![FrameBinding::Direct(JsValue::Int(7))],
                     operands: Vec::new(),
                 },
             )
             .unwrap();
         (slots, window)
+    }
+
+    #[test]
+    fn direct_slot_read_is_short_borrow_of_direct_local_or_argument() {
+        let runtime = Runtime::new();
+        let (mut slots, mut window) = frame(&runtime, 2);
+        {
+            let run = slots.run_window(&mut window).unwrap();
+            assert_eq!(
+                run.direct_value(DirectSlot::Local(0)),
+                Some(&JsValue::Int(7))
+            );
+            assert_eq!(
+                run.direct_value(DirectSlot::Argument(0)),
+                Some(&JsValue::Int(11))
+            );
+            assert!(run.direct_value(DirectSlot::Local(1)).is_none());
+            assert!(run.direct_value(DirectSlot::Argument(1)).is_none());
+        }
+        slots.slots[window.parameters().start] = Some(FrameBinding::Uninitialized);
+        assert!(
+            slots
+                .run_window(&mut window)
+                .unwrap()
+                .direct_value(DirectSlot::Argument(0))
+                .is_none()
+        );
+        slots.clear_frame(&runtime, window).unwrap();
+    }
+
+    #[test]
+    fn numeric_span_checks_full_peak_and_declines_without_partial_commit() {
+        let runtime = Runtime::new();
+        let (mut slots, mut window) = frame(&runtime, 2);
+        {
+            let mut run = slots.run_window(&mut window).unwrap();
+            assert!(run.numeric_span_room(2));
+            assert!(!run.numeric_span_room(3));
+            assert!(run.try_commit_number(
+                NumericDestination::Push,
+                Number::Int(21),
+                Some(NumberUpdate {
+                    slot: DirectSlot::Argument(0),
+                    value: Number::Int(12),
+                }),
+                2,
+            ));
+            assert_eq!(
+                run.direct_value(DirectSlot::Argument(0)),
+                Some(&JsValue::Int(12))
+            );
+            assert_eq!(run.peek(0).unwrap(), &JsValue::Int(21));
+            assert!(!run.numeric_span_room(2));
+            assert!(!run.try_commit_number(
+                NumericDestination::Push,
+                Number::Int(22),
+                Some(NumberUpdate {
+                    slot: DirectSlot::Argument(0),
+                    value: Number::Int(13),
+                }),
+                2,
+            ));
+            assert_eq!(
+                run.direct_value(DirectSlot::Argument(0)),
+                Some(&JsValue::Int(12))
+            );
+            assert_eq!(run.peek(0).unwrap(), &JsValue::Int(21));
+        }
+        assert_eq!(window.depth, 1);
+        slots.clear_frame(&runtime, window).unwrap();
+
+        let (mut slots, mut window) = frame(&runtime, 2);
+        let inactive = window.operands().start + 1;
+        slots.slots[inactive] = Some(FrameBinding::Direct(JsValue::Int(99)));
+        {
+            let mut run = slots.run_window(&mut window).unwrap();
+            assert!(!run.numeric_span_room(2));
+            assert!(!run.try_commit_number(
+                NumericDestination::Push,
+                Number::Int(21),
+                Some(NumberUpdate {
+                    slot: DirectSlot::Local(0),
+                    value: Number::Int(8),
+                }),
+                2,
+            ));
+            assert_eq!(
+                run.direct_value(DirectSlot::Local(0)),
+                Some(&JsValue::Int(7))
+            );
+        }
+        assert_eq!(window.depth, 0);
+        slots.slots[inactive] = None;
+        slots.clear_frame(&runtime, window).unwrap();
+    }
+
+    #[test]
+    fn numeric_commit_validates_binding_and_destination_before_writing() {
+        let runtime = Runtime::new();
+        let (mut slots, mut window) = frame(&runtime, 2);
+        {
+            let mut run = slots.run_window(&mut window).unwrap();
+            assert!(!run.try_commit_number(
+                NumericDestination::Local(0),
+                Number::Int(8),
+                Some(NumberUpdate {
+                    slot: DirectSlot::Argument(0),
+                    value: Number::Int(12),
+                }),
+                0,
+            ));
+            assert!(!run.try_commit_number(
+                NumericDestination::Push,
+                Number::Int(8),
+                Some(NumberUpdate {
+                    slot: DirectSlot::Local(1),
+                    value: Number::Int(9),
+                }),
+                1,
+            ));
+            assert_eq!(
+                run.direct_value(DirectSlot::Local(0)),
+                Some(&JsValue::Int(7))
+            );
+            assert_eq!(
+                run.direct_value(DirectSlot::Argument(0)),
+                Some(&JsValue::Int(11))
+            );
+            assert!(run.try_commit_number(
+                NumericDestination::Local(0),
+                Number::Float(-0.0),
+                None,
+                0,
+            ));
+            assert!(
+                matches!(run.direct_value(DirectSlot::Local(0)), Some(JsValue::Float(n)) if *n == 0.0 && n.is_sign_negative())
+            );
+        }
+        assert_eq!(window.depth, 0);
+        slots.slots[window.locals().start] = Some(FrameBinding::Uninitialized);
+        {
+            let mut run = slots.run_window(&mut window).unwrap();
+            assert!(!run.try_commit_number(NumericDestination::Local(0), Number::Int(9), None, 0,));
+            assert!(!run.try_commit_number(
+                NumericDestination::Push,
+                Number::Int(9),
+                Some(NumberUpdate {
+                    slot: DirectSlot::Local(0),
+                    value: Number::Int(10),
+                }),
+                1,
+            ));
+        }
+        assert_eq!(window.depth, 0);
+        slots.clear_frame(&runtime, window).unwrap();
     }
 
     #[test]
