@@ -9,6 +9,9 @@ use super::function::metadata::{ClosureVariableKind, VariableDefinition};
 use crate::engine::heap::{BytecodeConstant, RawValue};
 use std::rc::Rc;
 
+mod dense;
+pub(crate) use dense::{DenseSpanKind, DirectSlot, NumericSource};
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct FusionPlan(Option<Rc<[u8]>>);
 
@@ -269,7 +272,7 @@ impl FusionPlan {
                 ] => Some((33, 4)),
                 _ => None,
             };
-            let candidate = local_compare
+            let old_candidate = local_compare
                 .or(method)
                 .or(local_field_add)
                 .or(local_add_const)
@@ -312,6 +315,11 @@ impl FusionPlan {
                     }
                     _ => None,
                 });
+            // Publish only complete dense slices. R0 is the first enabled
+            // slice; later flag values are reserved but have no matcher yet.
+            let dense_candidate = dense::candidate(rest, locals, constants, &entries[pc..])
+                .map(|kind| (kind as u8, kind.len()));
+            let candidate = dense_candidate.or(old_candidate);
             if let Some((flag, length)) = candidate {
                 // The folded S1 Goto is an authenticated span tail: it may be
                 // entered canonically on its own, so it is exempt from the
@@ -340,6 +348,10 @@ impl FusionPlan {
             .and_then(|flags| flags.get(pc))
             .copied()
             .unwrap_or(0)
+    }
+    #[inline]
+    pub(crate) fn dense_span(&self, pc: usize) -> Option<DenseSpanKind> {
+        DenseSpanKind::from_flag(self.flag(pc))
     }
     #[inline]
     pub(crate) fn update(&self, pc: usize) -> Option<UpdateLocal> {
