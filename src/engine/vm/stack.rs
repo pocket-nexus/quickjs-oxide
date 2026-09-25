@@ -224,6 +224,8 @@ impl Drop for FrameStorageGuard {
 
 mod number;
 mod window;
+// R2/R3 consume NumberUpdate when their complete spans are published.
+#[allow(unused_imports)]
 pub(in crate::engine::vm) use window::{
     FrameTransaction, LinkedReadCompletion, NumberUpdate, NumericDestination, RunSlots,
 };

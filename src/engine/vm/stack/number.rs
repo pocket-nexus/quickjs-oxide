@@ -247,7 +247,7 @@ mod tests {
             is_parameter_initializer: false,
             kind: ClosureVariableKind::Normal,
         };
-        owner.argument_definitions = Rc::from([definition.clone()]);
+        owner.argument_definitions = Rc::from([definition]);
         owner.local_definitions = Rc::from([definition]);
         let mut slots = SlotStore::new(20);
         let window = slots
