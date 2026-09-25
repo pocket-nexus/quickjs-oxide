@@ -35,6 +35,7 @@ impl SlotStore {
     /// checks pass, only direct Number owners are replaced and no operation can
     /// fail or invoke a release path.
     #[inline]
+    #[cfg(test)]
     pub(super) fn try_commit_number_current(
         &mut self,
         window: &mut FrameWindow,
@@ -42,6 +43,33 @@ impl SlotStore {
         result: Number,
         update: Option<NumberUpdate>,
         extra_peak: u8,
+    ) -> bool {
+        self.commit_number_current(window, destination, result, update, extra_peak, false)
+    }
+
+    /// The span handler just read every overwritten binding as a Number in the
+    /// same non-reentrant frame borrow. Retain the slot/capacity transaction,
+    /// but do not classify those unchanged inputs a second time.
+    pub(super) fn try_commit_proven_number_current(
+        &mut self,
+        window: &mut FrameWindow,
+        destination: NumericDestination,
+        result: Number,
+        update: Option<NumberUpdate>,
+        extra_peak: u8,
+    ) -> bool {
+        self.commit_number_current(window, destination, result, update, extra_peak, true)
+    }
+
+    #[inline]
+    fn commit_number_current(
+        &mut self,
+        window: &mut FrameWindow,
+        destination: NumericDestination,
+        result: Number,
+        update: Option<NumberUpdate>,
+        extra_peak: u8,
+        inputs_proven: bool,
     ) -> bool {
         if !self.numeric_span_room_current(window, extra_peak) {
             return false;
@@ -65,7 +93,8 @@ impl SlotStore {
                 };
                 if !matches!(
                     self.slots.get(index),
-                    Some(Some(FrameBinding::Direct(value))) if value.as_number_repr().is_some()
+                    Some(Some(FrameBinding::Direct(value)))
+                        if inputs_proven || value.as_number_repr().is_some()
                 ) {
                     return false;
                 }
@@ -78,7 +107,8 @@ impl SlotStore {
             };
             if !matches!(
                 self.slots.get(index),
-                Some(Some(FrameBinding::Direct(value))) if value.as_number_repr().is_some()
+                Some(Some(FrameBinding::Direct(value)))
+                    if inputs_proven || value.as_number_repr().is_some()
             ) {
                 return false;
             }

@@ -81,12 +81,9 @@ impl FrameTransaction<'_> {
             let binding = locals[left]
                 .as_mut()
                 .ok_or_else(|| Error::internal("owned local is vacant"))?;
-            let FrameBinding::Direct(value) = binding else {
+            let FrameBinding::Direct(_) = binding else {
                 return Ok(None);
             };
-            if !local_add_values(value, value) {
-                return Ok(None);
-            }
             // Aliased locals cannot expose `&mut` and `&` views of the same
             // owner to the append callback at once; decline to the canonical
             // path until the fused append accepts a single-view callback.
@@ -112,9 +109,8 @@ impl FrameTransaction<'_> {
         let FrameBinding::Direct(right) = right else {
             return Ok(None);
         };
-        if !local_add_values(left, right) {
-            return Ok(None);
-        }
+        // Run's admission proved both primitive domains before this frame
+        // transaction. Nothing can mutate either binding across the boundary.
         Ok(Some(consume(left, right)))
     }
     pub(in crate::engine::vm) fn with_local_add_constant<T>(
@@ -131,9 +127,8 @@ impl FrameTransaction<'_> {
         let FrameBinding::Direct(left) = local else {
             return Ok(None);
         };
-        if !local_add_values(left, right) {
-            return Ok(None);
-        }
+        // The published constant is a String and Run proved the local's
+        // direct primitive domain before selecting AddLocal.
         Ok(Some(consume(left, right)))
     }
     /// Prepend `C + R`: the constant is the mutable left operand and the local
@@ -153,9 +148,7 @@ impl FrameTransaction<'_> {
         let FrameBinding::Direct(local) = local else {
             return Ok(None);
         };
-        if !local_add_values(constant, local) {
-            return Ok(None);
-        }
+        // The left constant is a String and Run proved the local domain.
         Ok(Some(consume(constant, local)))
     }
     pub(in crate::engine::vm) fn slots(&mut self) -> RunSlots<'_> {
@@ -295,6 +288,7 @@ impl RunSlots<'_> {
     }
 
     #[inline]
+    #[cfg(test)]
     pub(in crate::engine::vm) fn try_commit_number(
         &mut self,
         destination: NumericDestination,
@@ -304,6 +298,23 @@ impl RunSlots<'_> {
     ) -> bool {
         self.store
             .try_commit_number_current(self.window, destination, result, update, extra_peak)
+    }
+
+    #[inline]
+    pub(in crate::engine::vm) fn try_commit_proven_number(
+        &mut self,
+        destination: NumericDestination,
+        result: Number,
+        update: Option<NumberUpdate>,
+        extra_peak: u8,
+    ) -> bool {
+        self.store.try_commit_proven_number_current(
+            self.window,
+            destination,
+            result,
+            update,
+            extra_peak,
+        )
     }
 
     pub(in crate::engine::vm) fn property_ic_read(
@@ -590,7 +601,7 @@ impl RunSlots<'_> {
         executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
         pc: usize,
         key: u32,
-    ) -> Result<bool, Error> {
+    ) -> Result<Option<bool>, Error> {
         self.store
             .property_ic_write_scalar_current(self.window, runtime, executable, pc, key)
     }
@@ -603,6 +614,7 @@ impl RunSlots<'_> {
             .array_immediate_read_current(self.window, runtime)
     }
 
+    #[cfg(test)]
     pub(in crate::engine::vm) fn ordinary_field_immediate_read(
         &mut self,
         runtime: &Runtime,

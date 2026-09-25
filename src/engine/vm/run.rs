@@ -332,9 +332,8 @@ fn borrowed_base_field_read(
     // demand the base-release readiness that canonical droppable-base reads
     // pre-prove. The discarded native selection has no observable effect.
     let mut native = None;
-    let value = runtime
-        .property_ic_read_fast(base, executable, field_pc, key, true, &mut native)
-        .or_else(|| runtime.try_ordinary_field_immediate_read(base, executable, key))?;
+    let value =
+        runtime.property_ic_read_fast(base, executable, field_pc, key, true, &mut native)?;
     #[cfg(feature = "profiling")]
     cold::event("fusion.BorrowedBaseField");
     Some(value)
@@ -386,7 +385,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             handled
         }};
     }
-    loop {
+    'execute: loop {
         pc.fault = pc.resume;
         let instruction = executable
             .code
@@ -481,10 +480,11 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 let Some(identity) = frame.property_generation.checked_add(1) else {
                     return Ok(RunExit::SetProperty(Some(*index)));
                 };
-                if !slots.property_ic_write_scalar(runtime, executable, pc.fault, *index)?
-                    && !resident_property!(property::Operation::Write(*index))
-                {
-                    return Ok(RunExit::SetProperty(Some(*index)));
+                match slots.property_ic_write_scalar(runtime, executable, pc.fault, *index)? {
+                    Some(true) => {}
+                    Some(false) => return Ok(RunExit::SetProperty(Some(*index))),
+                    None if resident_property!(property::Operation::Write(*index)) => {}
+                    None => return Ok(RunExit::SetProperty(Some(*index))),
                 }
                 frame.property_generation = identity;
                 true
@@ -510,8 +510,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     *index,
                     false,
                     &mut native,
-                )? && !slots.ordinary_field_immediate_read(runtime, executable, *index)?
-                {
+                )? {
                     return Ok(RunExit::GetField {
                         index: *index,
                         keep_receiver: false,
@@ -534,13 +533,10 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         keep_receiver: true,
                     });
                 }
-                let candidate = executable.fusion.method_call(pc.fault).filter(|count| {
-                    slots.has_operand_capacity(*count)
-                        && super::method_arguments::available(
-                            &slots,
-                            &executable.code[pc.fault + 1..pc.fault + count + 1],
-                        )
-                });
+                let candidate = executable
+                    .fusion
+                    .method_call(pc.fault)
+                    .filter(|count| slots.has_operand_capacity(*count));
                 if let Some(count) = candidate {
                     #[cfg(feature = "profiling")]
                     cold::instruction(observed_depth);
@@ -548,11 +544,16 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     for offset in 0..count {
                         pc.fault = start + offset + 1;
                         pc.resume = pc.fault;
-                        let argument = super::method_arguments::argument(
+                        let Some(argument) = super::method_arguments::argument(
                             runtime,
                             &slots,
                             &executable.code[pc.fault],
-                        )?;
+                        )?
+                        else {
+                            // Earlier argument pushes are already canonical;
+                            // resume this non-direct binding at its own PC.
+                            continue 'execute;
+                        };
                         slots.push(argument)?;
                         #[cfg(feature = "profiling")]
                         cold::instruction(observed_depth + offset + 1);
@@ -1390,7 +1391,8 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 });
             }
             Instruction::GetLocal(index) | Instruction::GetLocalCheck(index) => {
-                if let Some(instructions) = executable.fusion.local_add_span(pc.fault) {
+                let fusion_entry = executable.fusion.entry(pc.fault);
+                if let Some(instructions) = fusion_entry.local_add_span() {
                     // S2/S4: a numeric pair or numeric literal completes
                     // inside the scalar domain; every other kind keeps the
                     // outlined primitive-addition bridge.
@@ -1422,7 +1424,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         return Ok(RunExit::AddLocal);
                     }
                 }
-                if let Some(update) = executable.fusion.update(pc.fault) {
+                if let Some(update) = fusion_entry.update() {
                     if fusion::update_local(&mut slots, *index, update)? {
                         #[cfg(feature = "profiling")]
                         fusion::record_span(
@@ -1436,7 +1438,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 // S1: two direct producers, one numeric comparison, one
                 // conditional branch. Nothing is pushed or popped, so a guard
                 // miss leaves the canonical span start untouched.
-                if let Some(instructions) = executable.fusion.local_compare_branch(pc.fault) {
+                if let Some(instructions) = fusion_entry.local_compare_branch() {
                     if let Some(next) = fusion::local_compare_branch(
                         &slots,
                         &executable.code[pc.fault..],
@@ -1455,7 +1457,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 // S3: one direct object base completes one linked field read
                 // into the numeric accumulator. The location-cache peek is
                 // non-owning; every other shape stays canonical.
-                if let Some(instructions) = executable.fusion.local_field_add_span(pc.fault) {
+                if let Some(instructions) = fusion_entry.local_field_add_span() {
                     if fusion::numeric_local_field_add(
                         &mut slots, runtime, executable, pc.fault, *index,
                     )
@@ -1470,7 +1472,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         continue;
                     }
                 }
-                if let Some(kind) = executable.fusion.dense_span(pc.fault) {
+                if let Some(kind) = fusion_entry.dense_span() {
                     if let Some(end) = fusion::try_numeric_span(
                         &mut slots,
                         runtime,
@@ -2959,6 +2961,44 @@ pub(super) fn strict_comparison(
 #[cfg(test)]
 mod resident_semantics {
     use crate::engine::api::{Runtime, Value};
+
+    #[test]
+    fn method_span_resumes_at_later_captured_argument() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(
+            context
+                .eval(
+                    r#"
+                    function call(a) {
+                        let captured = 7;
+                        function read() { return captured; }
+                        return Math.max(a, captured) + read();
+                    }
+                    Math.max;
+                    call(3) === 14 && call(9) === 16 && call(3) === 14
+                    "#,
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+        let callable = runtime
+            .callable_from_value(context.eval("call").unwrap())
+            .unwrap();
+        let crate::engine::vm::call::CallableExecution::Bytecode { bytecode, .. } =
+            runtime.bytecode_for_callable(&callable).unwrap()
+        else {
+            panic!("call was not bytecode");
+        };
+        let executable = runtime.snapshot_function_bytecode(&bytecode).unwrap();
+        assert!(
+            executable
+                .code
+                .iter()
+                .enumerate()
+                .any(|(pc, _)| executable.fusion.method_call(pc) == Some(2))
+        );
+    }
 
     #[test]
     fn resident_add_keeps_default_hint_order_and_errors() {

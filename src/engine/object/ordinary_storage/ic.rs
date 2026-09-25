@@ -11,6 +11,7 @@ impl Runtime {
     /// A miss only records a location and leaves the canonical read untouched.
     /// Native classification, when requested, describes this retained result;
     /// it never caches a value or outlives the result's ordinary slot owner.
+    #[cfg(test)]
     pub(crate) fn try_property_ic_read_owned(
         &self,
         base: &JsValue,
@@ -126,8 +127,14 @@ impl Runtime {
         native: &mut Option<LinkedNativeSelection>,
     ) -> Option<JsValue> {
         let atom = linked_field_atom(self, executable, key_index)?;
-        let cache = executable.property_read_ic.site(pc)?;
+        let cache = executable.property_read_ic.site(pc);
         if !keep_receiver && self.0.deferred_references.has_pending() {
+            return None;
+        }
+        if !keep_receiver
+            && matches!(base, JsValue::String(_))
+            && self.slot_value_release_readiness_jsvalue(base).ok()? != SlotReleaseReadiness::Ready
+        {
             return None;
         }
         let state = self.0.state.try_borrow().ok()?;
@@ -137,15 +144,17 @@ impl Runtime {
         let receiver = match base {
             JsValue::Object(object) => *object,
             _ => {
-                cache.miss(
-                    &state.heap,
-                    &state.atoms,
-                    self.domain_id(),
-                    executable.realm,
-                    None,
-                    atom,
-                );
-                return None;
+                if let Some(cache) = cache {
+                    cache.miss(
+                        &state.heap,
+                        &state.atoms,
+                        self.domain_id(),
+                        executable.realm,
+                        None,
+                        atom,
+                    );
+                }
+                return super::immediate_field_in_state(&state, base, atom);
             }
         };
         if !keep_receiver
@@ -154,17 +163,30 @@ impl Runtime {
         {
             return None;
         }
-        let Some(raw) = cache.read(&state.heap, self.domain_id(), executable.realm, receiver)
-        else {
-            cache.miss(
-                &state.heap,
-                &state.atoms,
-                self.domain_id(),
-                executable.realm,
-                Some(receiver),
-                atom,
-            );
-            return None;
+        let Some(cache) = cache else {
+            return super::immediate_field_in_state(&state, base, atom);
+        };
+        let raw = match cache.read(&state.heap, self.domain_id(), executable.realm, receiver) {
+            Some(raw) => raw,
+            None => {
+                cache.miss(
+                    &state.heap,
+                    &state.atoms,
+                    self.domain_id(),
+                    executable.realm,
+                    Some(receiver),
+                    atom,
+                );
+                // A first-site miss may just have installed a valid own-data
+                // location. Reuse it now instead of entering another leaf and
+                // eventually repeating the same property lookup.
+                let Some(raw) =
+                    cache.read(&state.heap, self.domain_id(), executable.realm, receiver)
+                else {
+                    return super::immediate_field_in_state(&state, base, atom);
+                };
+                raw
+            }
         };
         let result = match raw {
             RawValue::Object(function) => {
@@ -393,27 +415,30 @@ impl Runtime {
         let JsValue::Object(object) = base else {
             return Ok(None);
         };
-        {
-            let state = self.0.state.borrow();
-            let data = state.heap.object(*object)?;
-            if !super::is_ordinary(data) {
-                return Ok(None);
-            }
-            let shape = state.heap.shape(data.shape)?;
-            let Some(slot) = shape.find(AtomIdx::from_raw(key.atom().raw())) else {
-                return Ok(Some(true));
-            };
-            if !shape.entries()[slot as usize].flags.configurable
-                || !matches!(
-                    data.slots[slot as usize],
-                    crate::engine::heap::PropertySlot::Data(_)
-                )
-            {
-                return Ok(None);
-            }
+        let mut state = self.0.state.borrow_mut();
+        let data = state.heap.object(*object)?;
+        if !super::is_ordinary(data) {
+            return Ok(None);
         }
-        let object = crate::engine::object::ObjectRef::from_borrowed_handle(self.clone(), *object)?;
-        self.delete_property(&object, key).map(Some)
+        let shape = state.heap.shape(data.shape)?;
+        let Some(slot) = shape.find(AtomIdx::from_raw(key.atom().raw())) else {
+            return Ok(Some(true));
+        };
+        if !shape.entries()[slot as usize].flags.configurable
+            || !matches!(
+                data.slots[slot as usize],
+                crate::engine::heap::PropertySlot::Data(_)
+            )
+        {
+            return Ok(None);
+        }
+        // Ordinary own data deletion has no exotic callback or virtual index.
+        // Complete it under the same borrow that located the slot, rather than
+        // entering the general delete path and looking the property up again.
+        state.ensure_dictionary_layout(*object)?;
+        let cleanup = state.heap.delete_dictionary_property(*object, key.atom())?;
+        state.apply_cleanup(cleanup)?;
+        Ok(Some(true))
     }
 }
 
@@ -439,7 +464,11 @@ impl Runtime {
         pc: usize,
         key: u32,
         value: &JsValue,
-    ) -> Result<bool, RuntimeError> {
+    ) -> Result<Option<bool>, RuntimeError> {
+        // Some(false) means this site's IC cannot accept the write even after
+        // its miss update. The owning IC would repeat the same lookup; go
+        // straight to the canonical property writer. None means only the
+        // scalar leaf declined and the owning IC may still complete it.
         if !matches!(
             value,
             JsValue::Undefined
@@ -449,16 +478,16 @@ impl Runtime {
                 | JsValue::Float(_)
                 | JsValue::ShortBigInt(_)
         ) {
-            return Ok(false);
+            return Ok(None);
         }
         let Some(atom) = linked_field_atom(self, executable, key) else {
-            return Ok(false);
+            return Ok(Some(false));
         };
         let JsValue::Object(object) = base else {
-            return Ok(false);
+            return Ok(Some(false));
         };
         let Some(cache) = executable.property_read_ic.write_site(pc) else {
-            return Ok(false);
+            return Ok(Some(false));
         };
         let mut state = self.0.state.borrow_mut();
         let id = *object;
@@ -475,14 +504,14 @@ impl Runtime {
                 );
                 let Some(slot) = cache.slot(&state.heap, self.domain_id(), executable.realm, id)
                 else {
-                    return Ok(false);
+                    return Ok(Some(false));
                 };
                 slot
             }
         };
         let crate::engine::heap::PropertySlot::Data(old) = &state.heap.object(id)?.slots[slot]
         else {
-            return Ok(false);
+            return Ok(None);
         };
         if super::immediate_value(old).is_none() {
             // Releasing a non-scalar old value may need a driver boundary.
@@ -491,7 +520,7 @@ impl Runtime {
             // heap.
             drop(state);
             if self.slot_value_release_readiness_jsvalue(base)? != SlotReleaseReadiness::Ready {
-                return Ok(false);
+                return Ok(None);
             }
             state = self.0.state.borrow_mut();
         }
@@ -501,7 +530,7 @@ impl Runtime {
         state.replace_property_slot(id, slot, crate::engine::heap::PropertySlot::Data(raw))?;
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("property_write_ic.hit");
-        Ok(true)
+        Ok(Some(true))
     }
 }
 
@@ -524,10 +553,13 @@ impl Runtime {
         {
             return Ok(false);
         }
-        if self.try_dense_array_kept_read(base, index).is_none() {
+        let JsValue::Object(object) = base else {
             return Ok(false);
-        }
-        self.try_dense_array_write_owned(base, index, value)
+        };
+        let mut state = self.0.state.borrow_mut();
+        Ok(state
+            .heap
+            .try_replace_dense_immediate_value(*object, index, value.as_raw()))
     }
 }
 

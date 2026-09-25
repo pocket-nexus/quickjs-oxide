@@ -17,6 +17,55 @@ pub(crate) use dense::{DenseSpanKind, DirectSlot, NumericSource};
 #[derive(Clone, Debug, Default)]
 pub(crate) struct FusionPlan(Option<Rc<[u8]>>);
 
+/// One flag load shared by all fusion candidates at a local-read PC.
+#[derive(Clone, Copy)]
+pub(crate) struct FusionEntry(u8);
+
+impl FusionEntry {
+    #[inline]
+    pub(crate) fn dense_span(self) -> Option<DenseSpanKind> {
+        DenseSpanKind::from_flag(self.0)
+    }
+
+    #[inline]
+    pub(crate) fn update(self) -> Option<UpdateLocal> {
+        let flag = self.0;
+        (flag & 16 != 0).then_some(UpdateLocal {
+            increment: flag & 1 != 0,
+            postfix: flag & 2 != 0,
+            discard: flag & 4 != 0,
+            instructions: if flag & 8 != 0 { 4 } else { 3 },
+        })
+    }
+
+    #[inline]
+    pub(crate) fn local_compare_branch(self) -> Option<usize> {
+        match self.0 {
+            33 => Some(4),
+            34 => Some(5),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn local_add_span(self) -> Option<usize> {
+        match self.0 {
+            35 | 128 | 130 => Some(4),
+            36 | 129 | 131 => Some(5),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn local_field_add_span(self) -> Option<usize> {
+        match self.0 {
+            37 => Some(5),
+            38 => Some(6),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct UpdateLocal {
     pub increment: bool,
@@ -58,6 +107,17 @@ impl FusionPlan {
         let mut any = false;
         for pc in 0..code.len() {
             let rest = &code[pc..];
+            // Dense publication already authenticated the whole span, including
+            // interior entries. A match supersedes the legacy candidate at this
+            // PC, so do not build and authenticate that unused candidate too.
+            if let Some(kind) = dense::candidate(rest, locals, constants, &entries[pc..]) {
+                if flags.is_empty() {
+                    flags.resize(code.len(), 0);
+                }
+                flags[pc] = kind as u8;
+                any = true;
+                continue;
+            }
             let update = match rest {
                 [
                     Instruction::GetLocal(index) | Instruction::GetLocalCheck(index),
@@ -317,12 +377,7 @@ impl FusionPlan {
                     }
                     _ => None,
                 });
-            // Publish only authenticated complete dense slices. The matcher
-            // tests longer candidates before their shorter prefixes.
-            let dense_candidate = dense::candidate(rest, locals, constants, &entries[pc..])
-                .map(|kind| (kind as u8, kind.len()));
-            let candidate = dense_candidate.or(old_candidate);
-            if let Some((flag, length)) = candidate {
+            if let Some((flag, length)) = old_candidate {
                 // The folded S1 Goto is an authenticated span tail: it may be
                 // entered canonically on its own, so it is exempt from the
                 // interior-entry rule.
@@ -351,21 +406,20 @@ impl FusionPlan {
             .copied()
             .unwrap_or(0)
     }
+    #[inline(always)]
+    pub(crate) fn entry(&self, pc: usize) -> FusionEntry {
+        FusionEntry(self.flag(pc))
+    }
     // This lookup is on every direct local/argument read in `run`. Keeping it
     // outlined adds a call and caller spills even when no dense span exists.
     #[inline(always)]
     pub(crate) fn dense_span(&self, pc: usize) -> Option<DenseSpanKind> {
-        DenseSpanKind::from_flag(self.flag(pc))
+        self.entry(pc).dense_span()
     }
     #[inline]
+    #[cfg(test)]
     pub(crate) fn update(&self, pc: usize) -> Option<UpdateLocal> {
-        let flag = self.flag(pc);
-        (flag & 16 != 0).then_some(UpdateLocal {
-            increment: flag & 1 != 0,
-            postfix: flag & 2 != 0,
-            discard: flag & 4 != 0,
-            instructions: if flag & 8 != 0 { 4 } else { 3 },
-        })
+        self.entry(pc).update()
     }
     #[inline]
     pub(crate) fn compare_branch(&self, pc: usize) -> bool {
@@ -375,12 +429,9 @@ impl FusionPlan {
     /// is structural; the runtime guard requires both bindings to be direct
     /// numbers, so captured, TDZ and non-number operands fall back canonically.
     #[inline]
+    #[cfg(test)]
     pub(crate) fn local_compare_branch(&self, pc: usize) -> Option<usize> {
-        match self.flag(pc) {
-            33 => Some(4),
-            34 => Some(5),
-            _ => None,
-        }
+        self.entry(pc).local_compare_branch()
     }
     #[inline]
     pub(crate) fn add_store(&self, pc: usize) -> bool {
@@ -396,23 +447,16 @@ impl FusionPlan {
     /// numeric-literal writeback shares this span entry so each `GetLocal`
     /// pays one flag load for both shapes.
     pub(crate) fn local_add_span(&self, pc: usize) -> Option<usize> {
-        match self.flag(pc) {
-            35 | 128 | 130 => Some(4),
-            36 | 129 | 131 => Some(5),
-            _ => None,
-        }
+        self.entry(pc).local_add_span()
     }
     /// S3 `producer(acc); producer(base); GetField(key); Add; store(acc)[; Drop]`
     /// span length. Admission is structural; the runtime guard requires a
     /// direct number accumulator, a direct object base and a location-cache
     /// hit whose stored value is an immediate number.
     #[inline]
+    #[cfg(test)]
     pub(crate) fn local_field_add_span(&self, pc: usize) -> Option<usize> {
-        match self.flag(pc) {
-            37 => Some(5),
-            38 => Some(6),
-            _ => None,
-        }
+        self.entry(pc).local_field_add_span()
     }
     /// Constant-left (prepend) LocalAdd span length. Admission is structural;
     /// the runtime still proves the constant is a String and the local is a

@@ -145,14 +145,12 @@ pub(in crate::engine::vm::run) fn try_numeric_span(
                     let (slot, old) = read_slot_number(slots, &code[1])?;
                     let postfix = kind == DenseSpanKind::ReadPostUpdate;
                     let increment = matches!(code[2], Instruction::PostInc | Instruction::Inc);
-                    if !matches!(
+                    debug_assert!(matches!(
                         (&code[2], postfix),
                         (Instruction::PostInc | Instruction::PostDec, true)
                             | (Instruction::Inc | Instruction::Dec, false)
-                    ) || !store_matches(&code[3], slot, !postfix)
-                    {
-                        return None;
-                    }
+                    ));
+                    debug_assert!(store_matches(&code[3], slot, !postfix));
                     let next = old.update(increment);
                     let key = if postfix { old } else { next };
                     (
@@ -168,7 +166,8 @@ pub(in crate::engine::vm::run) fn try_numeric_span(
                 }
                 _ => unreachable!(),
             };
-            if !slots.try_commit_number(NumericDestination::Push, value, update, kind.peak()) {
+            if !slots.try_commit_proven_number(NumericDestination::Push, value, update, kind.peak())
+            {
                 return None;
             }
         }
@@ -196,14 +195,15 @@ pub(in crate::engine::vm::run) fn try_numeric_span(
             };
             let read_pc = if indexed { 5 } else { 3 };
             let store_pc = if indexed { 7 } else { 5 };
-            if !matches!(code[read_pc], Instruction::GetArrayEl)
-                || !matches!(code[read_pc + 1], Instruction::Add)
-                || !store_matches(&code[store_pc], DirectSlot::Local(acc_index), kept)
-            {
-                return None;
-            }
+            debug_assert!(matches!(code[read_pc], Instruction::GetArrayEl));
+            debug_assert!(matches!(code[read_pc + 1], Instruction::Add));
+            debug_assert!(store_matches(
+                &code[store_pc],
+                DirectSlot::Local(acc_index),
+                kept
+            ));
             let read = peek_number(slots, runtime, &code[1], key)?;
-            if !slots.try_commit_number(
+            if !slots.try_commit_proven_number(
                 NumericDestination::Local(acc_index),
                 acc.add(read),
                 None,

@@ -983,6 +983,7 @@ impl Runtime {
     /// A published same-domain bytecode root owns this linked static atom.
     /// Own-slot classification and projection share the ordinary read kernel;
     /// every decline leaves input owners, lazy properties and prototypes alone.
+    #[cfg(test)]
     pub(crate) fn try_ordinary_field_immediate_read(
         &self,
         base: &JsValue,
@@ -998,54 +999,62 @@ impl Runtime {
             return None;
         }
         let state = self.0.state.try_borrow().ok()?;
-        if let JsValue::String(id) = base {
-            // The executable owns a same-runtime interned atom; the pinned
-            // spelling has that same canonical identity. No text traversal is
-            // needed for each primitive string length read.
-            if atom
-                != state
-                    .pinned_atoms
-                    .get(crate::engine::atom::pinned::PinnedAtom::Length)
-            {
-                return None;
-            }
-            let length = state.heap.string_fast(*id).len();
+        immediate_field_in_state(&state, base, atom)
+    }
+}
+
+/// The scalar property kernel shared by the IC miss and the test-only leaf.
+/// The caller has already proved whether consuming `base` can drain storage.
+fn immediate_field_in_state(state: &RuntimeState, base: &JsValue, atom: Atom) -> Option<JsValue> {
+    if let JsValue::String(id) = base {
+        // The executable owns a same-runtime interned atom; the pinned
+        // spelling has that same canonical identity. No text traversal is
+        // needed for each primitive string length read.
+        if atom
+            != state
+                .pinned_atoms
+                .get(crate::engine::atom::pinned::PinnedAtom::Length)
+        {
+            return None;
+        }
+        let length = state.heap.string_fast(*id).len();
+        return Some(if let Ok(length) = i32::try_from(length) {
+            JsValue::Int(length)
+        } else {
+            JsValue::Float(length as f64)
+        });
+    }
+    let JsValue::Object(object) = base else {
+        return None;
+    };
+    let id = *object;
+    let data = state.heap.object(id).ok()?;
+    if matches!(
+        (data.kind, &data.payload),
+        (ObjectKind::Array, ObjectPayload::Array { .. })
+    ) {
+        let first = state.heap.shape(data.shape).ok()?.entries().first()?;
+        if first.atom == AtomIdx::from_raw(atom.raw()) {
+            let (length, _) = Runtime::array_length_state_in_heap(&state.heap, id, atom).ok()??;
             return Some(if let Ok(length) = i32::try_from(length) {
                 JsValue::Int(length)
             } else {
-                JsValue::Float(length as f64)
+                JsValue::Float(f64::from(length))
             });
         }
-        let JsValue::Object(object) = base else {
-            return None;
-        };
-        let id = *object;
-        let data = state.heap.object(id).ok()?;
-        if matches!(
-            (data.kind, &data.payload),
-            (ObjectKind::Array, ObjectPayload::Array { .. })
-        ) {
-            let first = state.heap.shape(data.shape).ok()?.entries().first()?;
-            if first.atom == AtomIdx::from_raw(atom.raw()) {
-                let (length, _) =
-                    Self::array_length_state_in_heap(&state.heap, id, atom).ok()??;
-                return Some(if let Ok(length) = i32::try_from(length) {
-                    JsValue::Int(length)
-                } else {
-                    JsValue::Float(f64::from(length))
-                });
-            }
-            return None;
-        }
-        if !is_ordinary(data) {
-            return None;
-        }
-        let slot = locate(&state, id, atom).ok()??;
-        let PropertySlot::Data(value) = &data.slots[slot.index] else {
-            return None;
-        };
-        immediate_value_jsvalue(value)
+        return None;
     }
+    if !is_ordinary(data) {
+        return None;
+    }
+    let slot = locate(state, id, atom).ok()??;
+    let PropertySlot::Data(value) = &data.slots[slot.index] else {
+        return None;
+    };
+    immediate_value_jsvalue(value)
+}
+
+impl Runtime {
     /// A published function already owns its static key. Only the selected
     /// result/getter is promoted here; fallback will acquire an owning key.
     #[cfg(test)]
