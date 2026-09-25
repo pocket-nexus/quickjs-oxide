@@ -7,7 +7,6 @@ use crate::engine::value::number::operations::Number;
 #[derive(Clone, Copy, Debug)]
 pub(in crate::engine::vm) enum NumericDestination {
     Push,
-    #[allow(dead_code)] // Reserved for the authenticated accumulator spans.
     Local(u16),
 }
 
@@ -290,7 +289,6 @@ impl RunSlots<'_> {
     }
 
     #[inline]
-    #[allow(dead_code)] // Store spans use this before their final heap commit.
     pub(in crate::engine::vm) fn numeric_span_room(&self, extra_peak: u8) -> bool {
         self.store
             .numeric_span_room_current(self.window, extra_peak)

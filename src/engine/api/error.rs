@@ -162,8 +162,9 @@ impl NativeErrorKind {
 }
 
 /// Cold error payload. Boxing it keeps [`Error`] at one word so the common
-/// `Result<(), _>`/`Result<bool, _>`/`Result<&T, _>` helper returns use the
-/// register ABI instead of a hidden 80-byte memory slot.
+/// `Result<(), _>`/`Result<bool, _>`/`Result<&T, _>` helper returns used the
+/// register ABI in the measured x86_64 fat-LTO build instead of a hidden
+/// 80-byte memory slot; that codegen result is target-specific.
 #[derive(Clone, Eq, PartialEq)]
 struct ErrorData {
     kind: ErrorKind,
