@@ -7,6 +7,7 @@ capture, not a benchmark. Any compiler/test failure is reported as failure.
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import os
@@ -105,8 +106,21 @@ def main() -> int:
                 counts = dict((name, int(count)) for name, count in (line.split("\t") for line in lines))
                 if len(lines) != 4 or counts != TARGETS:
                     raise RuntimeError(f"Incomplete or ambiguous target receipt: {counts}")
+                with (output / "dense-sites.tsv").open(newline="", encoding="utf-8") as stream:
+                    sites = list(csv.DictReader(stream, delimiter="\t"))
+                if any(site["kind"] != "R0" or site["source"] not in SOURCE_FILES for site in sites):
+                    raise RuntimeError("Invalid R0 site manifest")
+                receipt["sites"] = {
+                    "array_reads": len(sites),
+                    "published_r0": sum(site["flag"] == "1" for site in sites),
+                    "rejections": {
+                        reason: sum(site["rejection_reason"] == reason for site in sites)
+                        for reason in sorted({site["rejection_reason"] for site in sites
+                                            if site["flag"] != "1"})
+                    },
+                }
                 files = [output / "crypto.canonical.txt", output / "navier-stokes.canonical.txt",
-                         output / "target-counts.tsv", output / "cargo.log"]
+                         output / "target-counts.tsv", output / "dense-sites.tsv", output / "cargo.log"]
                 receipt["artifacts"] = {path.name: digest(path) for path in files}
                 receipt["status"] = "captured"
             finally:
