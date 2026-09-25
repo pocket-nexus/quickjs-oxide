@@ -3,6 +3,9 @@ use super::{BytecodeConstant, Error, Instruction, RawValue, RunSlots};
 use crate::engine::code::fusion::UpdateLocal;
 use crate::engine::value::number::operations::Number;
 
+mod dense;
+pub(super) use dense::try_numeric_span;
+
 pub(super) fn update_local(
     slots: &mut RunSlots<'_>,
     index: u16,

@@ -1470,6 +1470,21 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         continue;
                     }
                 }
+                if let Some(kind) = executable.fusion.dense_span(pc.fault) {
+                    if let Some(end) = fusion::try_numeric_span(
+                        &mut slots,
+                        runtime,
+                        executable,
+                        pc.fault,
+                        kind,
+                        &mut frame.property_generation,
+                    ) {
+                        #[cfg(feature = "profiling")]
+                        fusion::record_span(&executable.code[pc.fault..end], observed_depth);
+                        pc.resume = end;
+                        continue;
+                    }
+                }
                 match slots.local(*index)? {
                     FrameBinding::Direct(value) => {
                         // Borrowed-base fusion: the frame slot keeps this base
@@ -1740,6 +1755,21 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 }
             }
             Instruction::GetArg(index) => {
+                if let Some(kind) = executable.fusion.dense_span(pc.fault) {
+                    if let Some(end) = fusion::try_numeric_span(
+                        &mut slots,
+                        runtime,
+                        executable,
+                        pc.fault,
+                        kind,
+                        &mut frame.property_generation,
+                    ) {
+                        #[cfg(feature = "profiling")]
+                        fusion::record_span(&executable.code[pc.fault..end], observed_depth);
+                        pc.resume = end;
+                        continue;
+                    }
+                }
                 if let FrameBinding::Direct(value) = slots.parameter(*index)? {
                     let copied = copy_value(runtime, value)?;
                     slots.push(copied)?;
