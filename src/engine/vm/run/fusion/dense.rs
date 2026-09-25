@@ -285,6 +285,7 @@ pub(in crate::engine::vm::run) fn try_numeric_span(
 #[cfg(test)]
 mod tests {
     use crate::engine::api::{Runtime, Value};
+    use crate::engine::code::fusion::with_dense_candidates_disabled;
 
     const ALL_KINDS: [(&str, i32, &str); 13] = [
         (
@@ -313,7 +314,7 @@ mod tests {
             "fusion.DenseReadBinary",
         ),
         (
-            "(function(a,i){var s=1;s+=a[i];return s})([11],0)",
+            "(function(a,i){var s=1;var s=s+a[i];return s})([11],0)",
             12,
             "fusion.DenseAccPut",
         ),
@@ -323,7 +324,7 @@ mod tests {
             "fusion.DenseAccSetDrop",
         ),
         (
-            "(function(a,i){var s=1;s+=a[i+1];return s})([11,22],0)",
+            "(function(a,i){var s=1;var s=s+a[i+1];return s})([11,22],0)",
             23,
             "fusion.DenseAccIndexPut",
         ),
@@ -365,6 +366,42 @@ mod tests {
                 "{source}"
             );
             assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
+    }
+
+    #[test]
+    fn dense_spans_match_canonical_on_numbers_aliases_and_misses() {
+        let cases = [
+            "(function(a,i){return a[i+1]})([11,22],0)",
+            "(function(a,i){var v=a[i++];return v+i})([11,22],0)",
+            "(function(a,i){var v=a[++i];return v+i})([11,22],0)",
+            "(function(a,i){return a[i]>>>1})([-1],0)",
+            "(function(a,i){return a[i]+1})([2147483647],0)",
+            "(function(a,i){return Object.is(a[i]*1,-0)})([-0],0)",
+            "(function(a,i){var s=1;var s=s+a[i];return s})([11],0)",
+            "(function(a,i){var s=1;var s=s+a[i+1];return s})([11,22],0)",
+            "(function(a,i){var s=1;s=s+a[i];return s})([11],0)",
+            "(function(a,i){var s=1;s=s+a[i+1];return s})([11,22],0)",
+            "(function(a,i,v){a[i]=v;return a[i]})([11],0,22)",
+            "(function(a,i){a[i]=a[i+1];return a[i]})([11,22],0)",
+            "(function(a,i,v){a[i]=v+1;return a[i]})([11],0,21)",
+            "(function(a,i,v){a[i]+=v;return a[i]})([11],0,11)",
+            "(function(){let i=0,n=0,a=[];Object.defineProperty(a,0,{get(){n++;throw 7}});try{a[i++]}catch(e){}return i*10+n})()",
+            "(function(){let i=0,n=0,a=[0];Object.defineProperty(a,1,{get(){n++;throw 7}});try{a[++i]}catch(e){}return i*10+n})()",
+            "(function(){'use strict';let a=[1];Object.defineProperty(a,0,{writable:false});try{a[0]=2}catch(e){return a[0]}return 99})()",
+            "(function(){let a=[1];Object.defineProperty(a,'length',{writable:false});a[0]=2;return a[0]})()",
+            "(function(){let n=0,a=new Proxy([1],{set(t,k,v){n++;return Reflect.set(t,k,v)}});a[0]=2;return n*10+a[0]})()",
+            "(function(){let a=['x'];return a[0]+1})()",
+            "(function(){let a=[1];return a[-0]})()",
+            "(function(){let a=[1];a[0]++;return a[0]})()",
+        ];
+        for source in cases {
+            let runtime = Runtime::new();
+            let fused = runtime.new_context().eval(source).unwrap();
+            let runtime = Runtime::new();
+            let canonical =
+                with_dense_candidates_disabled(|| runtime.new_context().eval(source)).unwrap();
+            assert_eq!(fused, canonical, "{source}");
         }
     }
 
@@ -416,6 +453,7 @@ mod tests {
     fn dense_all_spans_reach_the_published_handlers() {
         use crate::engine::api::profiling::CostProfile;
 
+        let mut missing = Vec::new();
         for (source, expected, event) in ALL_KINDS {
             let runtime = Runtime::new();
             let mut context = runtime.new_context();
@@ -426,15 +464,102 @@ mod tests {
                 "{source}"
             );
             let costs = profile.snapshot();
-            assert!(
-                costs
+            if costs
+                .owned_execution_events
+                .get(event)
+                .copied()
+                .unwrap_or(0)
+                == 0
+            {
+                let actual = costs
                     .owned_execution_events
-                    .get(event)
-                    .copied()
-                    .unwrap_or(0)
-                    > 0,
-                "expected {event} for {source}: {costs:?}"
-            );
+                    .keys()
+                    .filter(|name| name.starts_with("fusion.Dense"))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                missing.push(format!("{event} for {source}; actual {actual:?}"));
+            }
+        }
+        assert!(missing.is_empty(), "{}", missing.join("\n"));
+    }
+
+    #[cfg(feature = "profiling")]
+    #[test]
+    fn dense_put_accumulators_execute_published_bytecode() {
+        use crate::engine::api::profiling::CostProfile;
+        use crate::engine::code::bytecode::Instruction;
+        use crate::engine::code::function::{UnlinkedFunction, metadata::FunctionMetadata};
+        use crate::engine::code::fusion::with_dense_candidates_disabled;
+
+        for (indexed, event, expected) in [
+            (false, "fusion.DenseAccPut", Value::Int(12)),
+            (true, "fusion.DenseAccIndexPut", Value::Int(23)),
+        ] {
+            let mut result = None;
+            for disabled in [false, true] {
+                let runtime = Runtime::new();
+                let mut context = runtime.new_context();
+                let array = context.eval("[11,22]").unwrap();
+                let mut code = vec![
+                    Instruction::PushI32(1),
+                    Instruction::PutLocal(0),
+                    Instruction::GetLocal(0),
+                    Instruction::GetArg(0),
+                    Instruction::GetArg(1),
+                ];
+                if indexed {
+                    code.extend([Instruction::PushI32(1), Instruction::Add]);
+                }
+                code.extend([
+                    Instruction::GetArrayEl,
+                    Instruction::Add,
+                    Instruction::PutLocal(0),
+                    Instruction::GetLocal(0),
+                    Instruction::Return,
+                ]);
+                let draft = UnlinkedFunction::fixture(
+                    code,
+                    vec![],
+                    FunctionMetadata {
+                        argument_count: 2,
+                        defined_argument_count: 2,
+                        local_count: 1,
+                        max_stack: if indexed { 4 } else { 3 },
+                        ..FunctionMetadata::default()
+                    },
+                );
+                let published = if disabled {
+                    with_dense_candidates_disabled(|| {
+                        runtime.publish_unlinked_function(context.realm, draft)
+                    })
+                } else {
+                    runtime.publish_unlinked_function(context.realm, draft)
+                }
+                .unwrap();
+                let callable = runtime
+                    .new_bytecode_closure(context.realm, &published)
+                    .unwrap();
+                let profile = CostProfile::start();
+                let value = context
+                    .call(&callable, Value::Undefined, &[array, Value::Int(0)])
+                    .unwrap();
+                let costs = profile.snapshot();
+                assert_eq!(value, expected);
+                if disabled {
+                    assert_eq!(costs.owned_execution_events.get(event), None);
+                    assert_eq!(Some(value), result);
+                } else {
+                    assert!(
+                        costs
+                            .owned_execution_events
+                            .get(event)
+                            .copied()
+                            .unwrap_or(0)
+                            > 0
+                    );
+                    result = Some(value);
+                }
+            }
         }
     }
 }

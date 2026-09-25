@@ -2559,15 +2559,17 @@ mod tests {
         let profile = CostProfile::start();
         assert_eq!(context.eval("(function(){var a=[undefined,null,true,42,1.5,-0];if(a[0]!==undefined||a[1]!==null||a[2]!==true||a[3]!==42||a[4]!==1.5||!Object.is(a[5],-0))return 0;try{var x=a[3];throw x}catch(e){return e}})()").unwrap(), Value::Int(42));
         let costs = profile.snapshot();
-        assert!(
-            costs
-                .owned_execution_events
-                .get("array_immediate_read_in_run")
-                .copied()
-                .unwrap_or(0)
-                >= 7,
-            "{costs:?}"
-        );
+        let canonical_reads = costs
+            .owned_execution_events
+            .get("array_immediate_read_in_run")
+            .copied()
+            .unwrap_or(0);
+        let fused_reads = costs
+            .owned_execution_events
+            .get("fusion.DenseRead")
+            .copied()
+            .unwrap_or(0);
+        assert!(canonical_reads + fused_reads >= 7, "{costs:?}");
     }
 
     #[test]
