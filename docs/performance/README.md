@@ -1,21 +1,21 @@
 # Safe Rust 性能改善路线
 
-> 状态（2026-09-25）：#41 错误载体和 P2–P4 全部 13 种数值数组跨度已在集成分支实现；四函数[真实 manifest](receipts/all-dense-6db6bfb0/README.md)有 25 个已发布站点。组合版正式 benchmark／profiling 仍待执行。
+> 状态（2026-09-25）：#41 错误载体和 P2–P4 全部 13 种数值数组跨度已在集成分支实现；四函数[真实 manifest](receipts/all-dense-6db6bfb0/README.md)有 25 个已发布站点。完整[四方 benchmark、profile 与代码审查收据](receipts/fourway-2026-09-25/README.md)已归档。
 > 唯一当前性能路线；取代原 `docs/reports/` 中的 S0–S3 规划、接线清单和混合实施计划。
 > 文档基线：`f531f6052cb497ce4707f01c276e8642e5e26788`（main，PR #48）。
 
 ## 1. 结论与阅读入口
 
-**#41 与数值／数组执行块的既定代码已完成；独立候选的回退已经记录，组合版收益尚未裁决。** 调用专用化没有纳入本轮实现。
+**#41 与数值／数组执行块的既定代码已完成；组合版相对 R0 的原版 V8 combined Score 中位数从 115 升至 130（+13.0%）。** 旧独立候选的微负载回退与本次四方对照并列保留；调用专用化没有纳入本轮实现。
 
 | 工作 | 新裁决 | 原因 | 执行入口 |
 | --- | --- | --- | --- |
-| #41 紧凑错误载体 | 已恢复并集成；R0 独立复验出现 cycles／错误分配／RSS 回退 | 不能用历史指令下降替代组合版测量 | [实施 A](implementation.md#a-error) |
-| #42 数值／数组执行块 | 13 种形态已完整接入；四函数静态发布 25 站点 | 动态覆盖和组合版正式收益仍待测 | [实施 B](implementation.md#b-arrays) |
+| #41 紧凑错误载体 | 已恢复并集成；R0 独立复验出现 cycles／错误分配／RSS 回退 | 本次八项隔离几何平均单独 +6.4%，但旧微负载回退未消失 | [实施 A](implementation.md#a-error) |
+| #42 数值／数组执行块 | 13 种形态已完整接入；四函数静态发布 25 站点 | 单独八项隔离几何平均 +5.4%，NavierStokes +55%；真实动态覆盖见收据 | [实施 B](implementation.md#b-arrays) |
 | #43 调用专用化 | 移出主线，仅留 DeltaBlue 定向复评 | 已测四个 V8 子项 JS 调用组自时间 0.96–10.46%，native 编组 0.36–1.06%；不能用 Map 微负载占比外推 | [条件项](implementation.md#c-deferred) |
 | #44 S3 检查顺序 | 不采纳，不把重排留在默认路径 | 命中 +12、peek 失败 +43 指令／次，实际采样未发现需要的 acc 失败占比 | [证据与重开条件](evidence.md#e44) |
 
-旧差距数字来自 issue 评论，当前 R0／#41 独立候选复验见[门禁收据](receipts/gates-2026-09-25/README.md)；组合版尚未跑正式 benchmark。完整来源、测量版本及限制见 [证据账本](evidence.md) 和 [测量协议](measurement.md)。数组主线的 opcode、签名、生命周期及逐函数接线见 [实施规格 v1](numeric-array-spans.md)。
+旧差距数字来自 issue 评论，R0／#41 独立候选复验见[旧门禁收据](receipts/gates-2026-09-25/README.md)；本次[四方正式 benchmark 和 profile](receipts/fourway-2026-09-25/README.md)分别给出单独及组合结果。完整来源、测量版本及限制见 [证据账本](evidence.md) 和 [测量协议](measurement.md)。数组主线的 opcode、签名、生命周期及逐函数接线见 [实施规格 v1](numeric-array-spans.md)。
 
 ## 2. 目标、边界与不变量
 

@@ -359,7 +359,7 @@ read/acc/update 的所有 mutable slot 操作都在唯一 commit 内；W 的唯�
 
 测试模式增加 canonical-only 对照只控制新候选的生成，不能改 JS body；保留旧融合用于 Base/Parent 比较。生产构建不保留每操作调试 toggle。
 
-原分片计划要求 P2 先 R0、再 R1、再 R2/R3，P3 后接 R4 与 acc，P4 最后接 store。当前实现已在全部 handler 完成后发布 13 个 flag；[真实 manifest](receipts/all-dense-6db6bfb0/README.md)记录零覆盖形态。性能未过门或不命中只记录和归因，不扩大到任意“numeric block”；组合版正式结果仍待[测量协议](measurement.md)所述串行 A/B。
+原分片计划要求 P2 先 R0、再 R1、再 R2/R3，P3 后接 R4 与 acc，P4 最后接 store。当前实现已在全部 handler 完成后发布 13 个 flag；[真实 manifest](receipts/all-dense-6db6bfb0/README.md)记录零覆盖形态。[四方正式测量](receipts/fourway-2026-09-25/README.md)记录动态命中和净效果。性能未过门或不命中只记录和归因，不扩大到任意“numeric block”。
 
 ## 8. 固定源码入口与本次验证
 

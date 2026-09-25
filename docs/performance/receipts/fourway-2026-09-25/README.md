@@ -1,0 +1,33 @@
+# #41 与完整数值数组跨度：四方代码审查和测量
+
+2026-09-25 在同一台 AMD Ryzen 7 7840HS 上，按顺序测量四个已提交的源码身份：基线 `2ed79f4649ca9ce438cad481ecfc89120e8d01be`、仅 #41 `04bb1a745dfd210e5630fa2d4467c06c53159eab`、仅数组 `b36b15b1b2932175fa5d7d4d9be9aefd73edb3f2`、两者组合 `ac51577babb00f9eba60282652f817a79d85d5e9`。四个普通 CLI 都使用 Rust 1.94.1 的 release fat LTO、`codegen-units=1`、无 PGO、无 profiling feature；精确命令、二进制 SHA-256 和工具链信息见 [`builds/`](builds/)。外部 V8-v7 源码固定为 `2034d98fc8c5f8044e186267593f5d5ea5232caf`，生成后的每个输入哈希见 [`isolated/metadata.json`](isolated/metadata.json) 与 [`combined/metadata.json`](combined/metadata.json)。
+
+八项隔离各版本 5 次，共 160/160 个有效进程；原版完整 combined 各版本 5 次，共 20/20 个有效进程。runner 交错版本顺序并校验完整 Score。原始样本、stdout/stderr、工作负载与构建身份保存在 [`isolated/`](isolated/) 和 [`combined/`](combined/)；本目录的 [`SHA256SUMS`](SHA256SUMS) 对所有归档文件逐个列出哈希。以下 Score 越高越好，数字均为各版本 5 次中位数。
+
+| 隔离子项 | 基线 | #41 | 仅数组 | 组合 |
+| --- | ---: | ---: | ---: | ---: |
+| Richards | 56.3 | 60.7 | 56.3 | 61.0 |
+| DeltaBlue | 65.8 | 72.7 | 65.9 | 68.3 |
+| Crypto | 70.7 | 75.1 | 71.2 | 76.0 |
+| RayTrace | 108 | 114 | 107 | 114 |
+| EarleyBoyer | 144 | 153 | 143 | 153 |
+| RegExp | 86.4 | 93.8 | 85.6 | 93.4 |
+| Splay | 357 | 379 | 357 | 372 |
+| NavierStokes | 263 | 265 | 407 | 430 |
+| 八项中位数比率的几何平均（相对基线） | 1.000 | 1.064 | 1.054 | 1.121 |
+
+原版 combined Score 中位数为 **115 / 122 / 121 / 130**，对应基线的 **+6.1% / +5.2% / +13.0%**。八项隔离的几何平均与原版 combined 是不同的测量，不互相替代。组合相对仅 #41 的八项隔离几何平均约 +5.3%；NavierStokes 从仅 #41 的 265 到组合版 430。组合 DeltaBlue 相对仅 #41 为 `68.3/72.7−1≈−6.1%`，虽然相对原基线仍为正；组合 Splay 相对仅 #41 约 −1.8%。DeltaBlue 组合样本范围 `64–71.5`，#41 为 `70.4–73`，因此这项交互还不能被称作精确稳定的单一回退百分比。保留了全套产品代码，没有按旧门禁撤回跨度。
+
+## 源码审查与 profile 归因
+
+相对本地 `main` 的完整 diff 覆盖了较早的 #33/#36 编译器改造、#40 发布改造，以及本轮 #41/#42。单独核对 `origin/main` 到本轮的 matcher、13 个 handler、事务性 Number 提交、dense 数值写入、两个 `run` 入口和直接相关测试，未找到可复现的新增语义错误。所有生产 matcher flag 均有完整 handler；最长合法候选才发布，内部入口和栈契约在发布时验证。组合版 workspace 全目标测试及 Rust 1.88 check/clippy 已在实现期间通过；随后完整 Test262 冻结向量也通过：总 102,037，pass 80,010，fail 3,552，unsupported 3,502，skipped 18,475，正文哈希与基线一致。完整报告本机 SHA-256 为 `9268fc3d6959c5d5e6bf2f4df65586b469720918bb4380175a2809fbaecc2a11`。
+
+源码有两个值得持续审查的性能交互：`GetLocal`/`GetArg` 的常用路径现在多做 dense flag 查询，即使该 PC 不会融合；#41 改变了 LTO 的内联/布局，普通 release 中 `run` 符号尺寸从基线 `0x9202` 变为仅 #41 的 `0xb310`，仅数组为 `0x9320`，组合为 `0xb451`。这些尺寸和额外查询是代码/二进制事实，不能单凭它们断言 DeltaBlue 回退的唯一原因。定向 profile 中 DeltaBlue 组合版只有 **1 次** `fusion.DenseRead`，说明该子项几乎没有新跨度可摊销入口成本；计时仍以上述普通版 Score 为准。其 profile 见 [`profiles/`](profiles/)。
+
+NavierStokes 的单次诊断运行记录了约 2,509 万次 `fusion.DenseRead`、649 万次 `DenseReadIndexBinary`、7,515 万次 `DenseReadPreUpdate`、108 万次 `DenseStore` 和 162 万次 `DenseCopy`；普通数组读事件从基线约 1.092 亿次降为约 89 万次。这与数组候选的真实内核收益对应。Crypto 记录约 1,549 万次 `DenseReadBinary` 和 1,547 万次 `DenseReadPostUpdate`，但仅数组的隔离 Score 从 70.7 到 71.2，接近持平。profile 构建带额外事件收集成本，不能用它的 wall time 计算正式收益；`owned_instructions` 在融合时按规范补计原始逻辑指令，亦不能作为机器退休指令下降的证据。
+
+相对本地 `main` 的审查另发现较早 #40 移除了内部 `UnlinkedFunction` 发布前的通用验证以及模块表验证；普通源码路径仍在 lowering 检查，尚无公开 JS 可触发的复现。这不是本次数组增量引入的问题，不能把它写成此次 Test262 已证明安全。较早编译器改造在含大量转义标识符时还存在从源码起点反复求位置的潜在二次复杂度，也与本轮跨度无关。上述问题保留为单独审查结论，不借本次性能数据裁决。
+
+## 限制
+
+本次是每版本 5 个有效进程的一次完整八项与 combined 配对；没有为组合版重复第二次独立正式轮，也没有重新执行当前四方固定微负载的 A/A、分配、RSS 与 cycles 矩阵。此前 R0/#41 独立门禁的负结果仍见[旧收据](../gates-2026-09-25/README.md)：#41 的 `prop_write` cycles 和错误分配回退是真实诊断结果，与本次 V8 Score 改善并存。旧分配探针的保留模式 RSS 为进程高水位，包含预留容器及启动影响，不应把差值单独归因于 Error Box。未在本次运行 PGO 或跨引擎成绩；未达到原计划的 3–4 倍总分目标，应直接记录，不据此撤回已完成的代码。

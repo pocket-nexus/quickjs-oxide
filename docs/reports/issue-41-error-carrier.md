@@ -19,7 +19,7 @@ stdout/stderr/退出码逐字节一致。全量 Test262 在清除调用方 `GIT_
 80,010／80,060 eligible。新增测试还编译验证 `with_span` 保持
 `const fn` 公共契约。全量 V8 性能重测仍待独占测量窗口。
 
-> 恢复说明：本报告原属 `0cd4acee`，以下数值是 `fd9b4eac` 对该提交的历史实验，不能作为从 R0 `2ed79f46` 恢复后的正式性能验收。当前代码已恢复原候选并补公共错误语义测试；空载 cycles、错误分配/RSS 已按 [统一测量协议](../performance/measurement.md) 补测，完整 V8 仍待串行完成。
+> 恢复说明：本报告原属 `0cd4acee`，以下数值是 `fd9b4eac` 对该提交的历史实验，不能作为从 R0 `2ed79f46` 恢复后的正式性能验收。当前代码已恢复原候选并补公共错误语义测试；空载 cycles、错误分配/RSS 已按 [统一测量协议](../performance/measurement.md) 补测，后续[四方完整 V8 对照](../performance/receipts/fourway-2026-09-25/README.md)另行记录。旧独立微负载回退与新 V8 改善同时成立。
 
 代码审查发现一项与 `prop_write` 回退有关、但尚未证明因果的生成代码变化：
 R0 中 `RunSlots::property_ic_write_scalar` 保留约 2.5 KiB 的独立符号，

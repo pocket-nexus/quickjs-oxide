@@ -1,7 +1,7 @@
 # 改善实施设计与切片
 
 > 实施状态（2026-09-25）：A 的紧凑错误载体、B 的 P2／P3／P4 共 13 种跨度及其 matcher、存储原语和两个 `run` 入口已提交。四个完整真实内核的发布后 dump 在[收据](receipts/all-dense-6db6bfb0/README.md)中，共有 25 个已发布站点。以下保留原设计的职责和边界；代码状态以本段和实际提交为准。
-> #41 在 R0 上的 cycles、错误分配和 RSS 回退见[复验收据](receipts/gates-2026-09-25/README.md)。按当前实施要求，未达到性能门禁只记录和归因，不停止完成既定代码。组合版的正式 benchmark／profiling 尚未运行。
+> #41 在 R0 上的 cycles、错误分配和 RSS 回退见[复验收据](receipts/gates-2026-09-25/README.md)。按当前实施要求，未达到性能门禁只记录和归因，不停止完成既定代码。[组合版的四方正式 benchmark、profile 和代码审查](receipts/fourway-2026-09-25/README.md)已完成。
 > 调用与检查重排仍是条件项，不属于这 13 种跨度的已实现范围。
 
 <a id="a-error"></a>
@@ -58,7 +58,7 @@ API 分为 `direct_value/numeric_span_room/try_commit_number`、Runtime 的 `pee
 
 R2/R3 只有所有读取、类型和 canonical peak 容量检查通过后才提交索引；W 的最后可失败动作是已有数值槽写入，成功后只更新预先检查过的 property_generation 并返回。miss 必须保持 slots/depth/heap/owner/PC/generation 不变。Src==dst 先复制 Number 并结束共享借用，再借可变 heap，不能重排浮点运算。
 
-规格 §7 的发布认证、栈容量、数值提交、alias／descriptor 与真实内核覆盖已有定向测试及收据；组合版 workspace 全目标测试和 Rust 1.88 check/clippy 已通过。full Test262 与正式串行 A/B 仍未完成，不能把源码完成或 25 个静态站点写成动态命中率、净收益或性能接纳。
+规格 §7 的发布认证、栈容量、数值提交、alias／descriptor 与真实内核覆盖已有定向测试及收据；组合版 workspace 全目标测试和 Rust 1.88 check/clippy 已通过。full Test262 冻结向量匹配；同机串行的四方正式 V8 对照与定向 profile 见[收据](receipts/fourway-2026-09-25/README.md)。25 个静态站点本身不能替代动态命中率或净收益，故两者均另行实测。
 
 <a id="c-deferred"></a>
 ## C. 条件项与明确不做

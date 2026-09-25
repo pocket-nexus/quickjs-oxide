@@ -1,13 +1,13 @@
 # 性能证据账本：issues #41–#44
 
 > 原账本整理日期：2026-09-25；历史主仓快照 R0：`f531f6052cb497ce4707f01c276e8642e5e26788`。下列 E41–E44 的旧表格保留原维护者实验身份，不冒充当前组合版测量。
-> 实施更新：#41 已以新身份 `04bb1a74` 恢复并合入当前集成分支；13 种数值数组跨度已全部实现。[#41 复验](receipts/gates-2026-09-25/README.md)和[四函数 25 站点 manifest](receipts/all-dense-6db6bfb0/README.md)是新的证据。组合版的 benchmark／profiling 尚待串行执行，不能宣称已取得 V8 总分收益。
+> 实施更新：#41 已以新身份 `04bb1a74` 恢复并合入当前集成分支；13 种数值数组跨度已全部实现。[#41 复验](receipts/gates-2026-09-25/README.md)、[四函数 25 站点 manifest](receipts/all-dense-6db6bfb0/README.md)及[四方正式 benchmark／profile](receipts/fourway-2026-09-25/README.md)分别记录独立门禁、静态覆盖和组合实测。组合版八项隔离几何平均相对 R0 为 +12.1%，原版 combined 为 +13.0%；不等于原计划 3–4 倍目标已达成。
 
 ## E0. 版本与证据可取得性
 
 | 记录 | 被测版本／环境 | 可以支持什么 | 仍缺什么 |
 | --- | --- | --- | --- |
-| [E41] | 历史报告候选 `0cd4acee`；新恢复候选 `04bb1a74` 另见[复验](receipts/gates-2026-09-25/README.md) | 宽错误载体改小后的 ABI 和固定指令变化；新复验发现 cycles／错误分配／RSS 回退 | 组合版 LTO codegen、完整 V8 与交互成本未测 |
+| [E41] | 历史报告候选 `0cd4acee`；新恢复候选 `04bb1a74` 另见[复验](receipts/gates-2026-09-25/README.md) | 宽错误载体改小后的 ABI 和固定指令变化；新复验发现 cycles／错误分配／RSS 回退；[四方 V8](receipts/fourway-2026-09-25/README.md)另见完整 Score | 第二次独立正式轮和当前四方固定微负载矩阵未测 |
 | [E42] | `8a4b89d4` → `f531f605`，Rust 1.88.0；固定 10M 轮，CPU 2、5 样本中位 | 数组路径剩余工作明显多于其他三个循环 | 四探针原来未入库；V8 captured miss 未测；无总分增益结果 |
 | [E43] | `8a4b89d4` → `f531f605`，Rust 1.94.1；release perf 自时间与独立 profiling 计数 | 四个真实 V8 子项上的调用路径不是主要高倍数来源 | 上游 checkout 为 `2034d98`，不是旧文档的 pin；仅四子项，无完整调用点类型分布 |
 | [E44] | `f531f605`；同机串行 release A/B；固定指令重复一致 | 便宜 guard 前移的候选在所测分布上净亏 | 更大 V8 语料的失败比例仍未知；wall 受共享主机影响 |
