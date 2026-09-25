@@ -118,7 +118,7 @@ function displayMilestone(value) {
 
 export function parseCurrentTest262Metrics(source) {
   const values = parseSpec(source);
-  if (required(values, "schema") !== "test262-gate-v2") {
+  if (required(values, "schema") !== "test262-gate-v3") {
     throw new TypeError("unsupported Test262 gate schema");
   }
   const numbers = Object.fromEntries(
