@@ -28,7 +28,11 @@ def main():
         parser.error("benchmark source has local changes")
     args.output.mkdir(parents=True, exist_ok=False)
     workloads, receipt = prepare_v8(args.source, ["all"] if args.aggregate else CASES)
+    # Reuse source assembly, but omit the runtime harness's measurement claims.
+    receipt.pop("timer")
+    receipt.pop("metric")
     for workload in workloads:
+        workload.pop("expected")
         workload["bytes"] = Path(workload["path"]).stat().st_size
     manifest = dict(schema="oxide-compile-corpus-v1", workloads=workloads, source=receipt,
                     purpose="diagnostic" if args.aggregate else "fixed parser-only primary corpus")
