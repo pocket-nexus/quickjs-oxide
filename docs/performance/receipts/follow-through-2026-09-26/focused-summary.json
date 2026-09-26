@@ -1,0 +1,456 @@
+{
+  "schema": "follow-through-focused-analysis-v1",
+  "scope": "six fixed whole-process workloads; no V8 Score or admission decision",
+  "series": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/focused",
+  "source_results": {
+    "metadata_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/focused/metadata.json",
+    "metadata_sha256": "4b8168d37a371b60eb9d3ffd56b7ae87f99d64887bc6a3b4dcc49e4694caca69",
+    "samples_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/focused/samples.jsonl",
+    "samples_sha256": "c92a0efb92d0472481a2b8742ced1cfba214e5ebaadcd274386e5f4cb026cb29",
+    "manifest_path": "/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/docs/performance/receipts/follow-through-2026-09-26/focused-manifest.json",
+    "manifest_sha256": "1af64eda74879068f4a5916c949cf5e0a334868759cbf6c295c3592f1e7b4f3a",
+    "runner_path": "/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/scripts/benchmark/fixed.py",
+    "runner_sha256": "8a852679221202ae6d3dac1e02b295368a79529a3e0c32e51fd6b914e5d4b425",
+    "analysis_script_sha256": "e08a1421aa26379c046ccd942a9a61777ef0f5a1cc4e1a6a79118ea216fe9848"
+  },
+  "machine": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "cpu": "Apple M1",
+    "logical_cpus": 8
+  },
+  "order_strategy": "abba",
+  "actual_order_per_case": [
+    [
+      "before",
+      "after"
+    ],
+    [
+      "after",
+      "before"
+    ]
+  ],
+  "repeat_per_engine": 2,
+  "counter_scope": "whole process including startup and teardown",
+  "engines": {
+    "before": {
+      "name": "before",
+      "commit": "8c38bc32a316aa6eb4fdf6540b448d0163770671",
+      "binary_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-inline/release/qjs",
+      "binary_sha256": "9631c36e6e387dd2c3187e9c75169556100a6b50418177e71b514dadd0eaad06",
+      "build_receipt_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-inline/release/qjs.build.json",
+      "build_receipt_sha256": "c8ec3c2454c9b3ccf57a823a798e5e21d3002a5e2ffd1b763f092d9fe60d1404",
+      "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+      "mode": "plain",
+      "features": []
+    },
+    "after": {
+      "name": "after",
+      "commit": "828bc6773a896e5198dbfc1893126e3592b5730c",
+      "binary_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/build-plain/release/qjs",
+      "binary_sha256": "d7773f5378af6e2f850172133d5c180d1f3261331ecbdb6684588951b3b026f9",
+      "build_receipt_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/build-plain/release/qjs.build.json",
+      "build_receipt_sha256": "ffbd5b688374d84de1d660f730b70e576e53d37c17bd2ce79e38900de15439b3",
+      "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+      "mode": "plain",
+      "features": []
+    }
+  },
+  "cases": [
+    {
+      "case": "reverse_fill_read",
+      "size": 1280000,
+      "workload_sha256": "6483357055c17afb5bd9c39126460bd72ba186bbf384c6aec29bfab041d2c2ad",
+      "expected": "41600000\n",
+      "before": {
+        "engine": "before",
+        "samples": [
+          {
+            "repetition": 0,
+            "process_wall_ns": 494294459,
+            "maximum_resident_set_size": 6275072,
+            "instructions_retired": 5054198187,
+            "cycles_elapsed": 1176829262,
+            "peak_memory_footprint": 2786176
+          },
+          {
+            "repetition": 1,
+            "process_wall_ns": 467853500,
+            "maximum_resident_set_size": 6176768,
+            "instructions_retired": 5048143466,
+            "cycles_elapsed": 1163140147,
+            "peak_memory_footprint": 2687872
+          }
+        ],
+        "median": {
+          "instructions_retired": 5051170826.5,
+          "cycles_elapsed": 1169984704.5,
+          "maximum_resident_set_size": 6225920.0,
+          "process_wall_ns": 481073979.5
+        }
+      },
+      "after": {
+        "engine": "after",
+        "samples": [
+          {
+            "repetition": 0,
+            "process_wall_ns": 72472666,
+            "maximum_resident_set_size": 5996544,
+            "instructions_retired": 993159094,
+            "cycles_elapsed": 161999687,
+            "peak_memory_footprint": 2589504
+          },
+          {
+            "repetition": 1,
+            "process_wall_ns": 71506458,
+            "maximum_resident_set_size": 6045696,
+            "instructions_retired": 986305371,
+            "cycles_elapsed": 155329055,
+            "peak_memory_footprint": 2638656
+          }
+        ],
+        "median": {
+          "instructions_retired": 989732232.5,
+          "cycles_elapsed": 158664371.0,
+          "maximum_resident_set_size": 6021120.0,
+          "process_wall_ns": 71989562.0
+        }
+      },
+      "after_over_before_pct": {
+        "instructions_retired": -80.40588476423012,
+        "cycles_elapsed": -86.43876536250906,
+        "maximum_resident_set_size": -3.289473684210531,
+        "process_wall_ns": -85.03565666244894
+      }
+    },
+    {
+      "case": "reverse_fill_build",
+      "size": 3000,
+      "workload_sha256": "b1ca2f811776225b097be39ed5a4a2af87b7a4f70ef5be5ec5a8211536d50dd0",
+      "expected": "483000\n",
+      "before": {
+        "engine": "before",
+        "samples": [
+          {
+            "repetition": 0,
+            "process_wall_ns": 166255375,
+            "maximum_resident_set_size": 6291456,
+            "instructions_retired": 2222569864,
+            "cycles_elapsed": 425021724,
+            "peak_memory_footprint": 2802560
+          },
+          {
+            "repetition": 1,
+            "process_wall_ns": 186573084,
+            "maximum_resident_set_size": 6193152,
+            "instructions_retired": 2223864495,
+            "cycles_elapsed": 436238043,
+            "peak_memory_footprint": 2687808
+          }
+        ],
+        "median": {
+          "instructions_retired": 2223217179.5,
+          "cycles_elapsed": 430629883.5,
+          "maximum_resident_set_size": 6242304.0,
+          "process_wall_ns": 176414229.5
+        }
+      },
+      "after": {
+        "engine": "after",
+        "samples": [
+          {
+            "repetition": 0,
+            "process_wall_ns": 162946000,
+            "maximum_resident_set_size": 6045696,
+            "instructions_retired": 2254097620,
+            "cycles_elapsed": 432754210,
+            "peak_memory_footprint": 2622272
+          },
+          {
+            "repetition": 1,
+            "process_wall_ns": 193076458,
+            "maximum_resident_set_size": 6029312,
+            "instructions_retired": 2255903083,
+            "cycles_elapsed": 450937991,
+            "peak_memory_footprint": 2605888
+          }
+        ],
+        "median": {
+          "instructions_retired": 2255000351.5,
+          "cycles_elapsed": 441846100.5,
+          "maximum_resident_set_size": 6037504.0,
+          "process_wall_ns": 178011229.0
+        }
+      },
+      "after_over_before_pct": {
+        "instructions_retired": 1.4296026628918046,
+        "cycles_elapsed": 2.6046072113804053,
+        "maximum_resident_set_size": -3.2808398950131212,
+        "process_wall_ns": 0.9052554913094424
+      }
+    },
+    {
+      "case": "call_scalar_args",
+      "size": 800000,
+      "workload_sha256": "7abfb4eb8ffc5fb963d3c7e1db4f05b9ae8c8602492ee5159a050c3320f66301",
+      "expected": "8400000\n",
+      "before": {
+        "engine": "before",
+        "samples": [
+          {
+            "repetition": 0,
+            "process_wall_ns": 329226542,
+            "maximum_resident_set_size": 6160384,
+            "instructions_retired": 4098717570,
+            "cycles_elapsed": 827205178,
+            "peak_memory_footprint": 2753344
+          },
+          {
+            "repetition": 1,
+            "process_wall_ns": 325782500,
+            "maximum_resident_set_size": 6094848,
+            "instructions_retired": 4099169835,
+            "cycles_elapsed": 824202348,
+            "peak_memory_footprint": 2687808
+          }
+        ],
+        "median": {
+          "instructions_retired": 4098943702.5,
+          "cycles_elapsed": 825703763.0,
+          "maximum_resident_set_size": 6127616.0,
+          "process_wall_ns": 327504521.0
+        }
+      },
+      "after": {
+        "engine": "after",
+        "samples": [
+          {
+            "repetition": 0,
+            "process_wall_ns": 305567209,
+            "maximum_resident_set_size": 5963776,
+            "instructions_retired": 4087027997,
+            "cycles_elapsed": 807182336,
+            "peak_memory_footprint": 2655104
+          },
+          {
+            "repetition": 1,
+            "process_wall_ns": 338195292,
+            "maximum_resident_set_size": 5980160,
+            "instructions_retired": 4087524054,
+            "cycles_elapsed": 814971987,
+            "peak_memory_footprint": 2671488
+          }
+        ],
+        "median": {
+          "instructions_retired": 4087276025.5,
+          "cycles_elapsed": 811077161.5,
+          "maximum_resident_set_size": 5971968.0,
+          "process_wall_ns": 321881250.5
+        }
+      },
+      "after_over_before_pct": {
+        "instructions_retired": -0.2846508234031986,
+        "cycles_elapsed": -1.7714102993618086,
+        "maximum_resident_set_size": -2.540106951871657,
+        "process_wall_ns": -1.7170054577658744
+      }
+    },
+    {
+      "case": "array_read",
+      "size": 2000000,
+      "workload_sha256": "e198b7a4f263a025b296aa6a49d77101603ee7c4ef0370c0cd6963711962b38d",
+      "expected": "5000000\n",
+      "before": {
+        "engine": "before",
+        "samples": [
+          {
+            "repetition": 0,
+            "process_wall_ns": 89700167,
+            "maximum_resident_set_size": 6078464,
+            "instructions_retired": 1486475999,
+            "cycles_elapsed": 229522855,
+            "peak_memory_footprint": 2671424
+          },
+          {
+            "repetition": 1,
+            "process_wall_ns": 91620959,
+            "maximum_resident_set_size": 6078464,
+            "instructions_retired": 1486504500,
+            "cycles_elapsed": 228336797,
+            "peak_memory_footprint": 2671424
+          }
+        ],
+        "median": {
+          "instructions_retired": 1486490249.5,
+          "cycles_elapsed": 228929826.0,
+          "maximum_resident_set_size": 6078464.0,
+          "process_wall_ns": 90660563.0
+        }
+      },
+      "after": {
+        "engine": "after",
+        "samples": [
+          {
+            "repetition": 0,
+            "process_wall_ns": 90701625,
+            "maximum_resident_set_size": 5865472,
+            "instructions_retired": 1504923323,
+            "cycles_elapsed": 231101987,
+            "peak_memory_footprint": 2556800
+          },
+          {
+            "repetition": 1,
+            "process_wall_ns": 89381541,
+            "maximum_resident_set_size": 5898240,
+            "instructions_retired": 1504575416,
+            "cycles_elapsed": 231649409,
+            "peak_memory_footprint": 2573120
+          }
+        ],
+        "median": {
+          "instructions_retired": 1504749369.5,
+          "cycles_elapsed": 231375698.0,
+          "maximum_resident_set_size": 5881856.0,
+          "process_wall_ns": 90041583.0
+        }
+      },
+      "after_over_before_pct": {
+        "instructions_retired": 1.2283376904854704,
+        "cycles_elapsed": 1.0683937705871394,
+        "maximum_resident_set_size": -3.2345013477088957,
+        "process_wall_ns": -0.6827444916705394
+      }
+    },
+    {
+      "case": "call0",
+      "size": 800000,
+      "workload_sha256": "459fe42f4945b40fdd67ebd8c95c290c91166565d14e03a267f0457dfe1d71fa",
+      "expected": "800000\n",
+      "before": {
+        "engine": "before",
+        "samples": [
+          {
+            "repetition": 0,
+            "process_wall_ns": 230617125,
+            "maximum_resident_set_size": 6094848,
+            "instructions_retired": 2789345945,
+            "cycles_elapsed": 550281507,
+            "peak_memory_footprint": 2687808
+          },
+          {
+            "repetition": 1,
+            "process_wall_ns": 207551625,
+            "maximum_resident_set_size": 6062080,
+            "instructions_retired": 2788213606,
+            "cycles_elapsed": 542570039,
+            "peak_memory_footprint": 2671488
+          }
+        ],
+        "median": {
+          "instructions_retired": 2788779775.5,
+          "cycles_elapsed": 546425773.0,
+          "maximum_resident_set_size": 6078464.0,
+          "process_wall_ns": 219084375.0
+        }
+      },
+      "after": {
+        "engine": "after",
+        "samples": [
+          {
+            "repetition": 0,
+            "process_wall_ns": 209859459,
+            "maximum_resident_set_size": 5849088,
+            "instructions_retired": 2799395022,
+            "cycles_elapsed": 538623811,
+            "peak_memory_footprint": 2523968
+          },
+          {
+            "repetition": 1,
+            "process_wall_ns": 209472916,
+            "maximum_resident_set_size": 5799936,
+            "instructions_retired": 2798655918,
+            "cycles_elapsed": 538106064,
+            "peak_memory_footprint": 2474816
+          }
+        ],
+        "median": {
+          "instructions_retired": 2799025470.0,
+          "cycles_elapsed": 538364937.5,
+          "maximum_resident_set_size": 5824512.0,
+          "process_wall_ns": 209666187.5
+        }
+      },
+      "after_over_before_pct": {
+        "instructions_retired": 0.36738987387998634,
+        "cycles_elapsed": -1.4751931366165594,
+        "maximum_resident_set_size": -4.17789757412399,
+        "process_wall_ns": -4.298885988560341
+      }
+    },
+    {
+      "case": "fusion_no_plan",
+      "size": 3000000,
+      "workload_sha256": "b4eeccb8624c086b664f7cb26741e82a946ca155fb2e738fbba46e372f172b7c",
+      "expected": "41\n",
+      "before": {
+        "engine": "before",
+        "samples": [
+          {
+            "repetition": 0,
+            "process_wall_ns": 289987917,
+            "maximum_resident_set_size": 6012928,
+            "instructions_retired": 3633250840,
+            "cycles_elapsed": 729019560,
+            "peak_memory_footprint": 2605888
+          },
+          {
+            "repetition": 1,
+            "process_wall_ns": 280370084,
+            "maximum_resident_set_size": 5963776,
+            "instructions_retired": 3632580301,
+            "cycles_elapsed": 723349132,
+            "peak_memory_footprint": 2556736
+          }
+        ],
+        "median": {
+          "instructions_retired": 3632915570.5,
+          "cycles_elapsed": 726184346.0,
+          "maximum_resident_set_size": 5988352.0,
+          "process_wall_ns": 285179000.5
+        }
+      },
+      "after": {
+        "engine": "after",
+        "samples": [
+          {
+            "repetition": 0,
+            "process_wall_ns": 293360292,
+            "maximum_resident_set_size": 5832704,
+            "instructions_retired": 3632890491,
+            "cycles_elapsed": 730492028,
+            "peak_memory_footprint": 2507584
+          },
+          {
+            "repetition": 1,
+            "process_wall_ns": 279080375,
+            "maximum_resident_set_size": 5832704,
+            "instructions_retired": 3632595033,
+            "cycles_elapsed": 730857511,
+            "peak_memory_footprint": 2507584
+          }
+        ],
+        "median": {
+          "instructions_retired": 3632742762.0,
+          "cycles_elapsed": 730674769.5,
+          "maximum_resident_set_size": 5832704.0,
+          "process_wall_ns": 286220333.5
+        }
+      },
+      "after_over_before_pct": {
+        "instructions_retired": -0.0047567441809892586,
+        "cycles_elapsed": 0.6183586199199009,
+        "maximum_resident_set_size": -2.599179206566349,
+        "process_wall_ns": 0.36515065912083866
+      }
+    }
+  ]
+}

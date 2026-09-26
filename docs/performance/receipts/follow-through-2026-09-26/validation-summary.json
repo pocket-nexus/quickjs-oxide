@@ -1,0 +1,72 @@
+{
+  "schema": "follow-through-validation-v1",
+  "initial_candidate": "828bc6773a896e5198dbfc1893126e3592b5730c",
+  "final_source": "44f6d340d84727560c2ea7c6f179add3a3863d6e",
+  "profiling_lib_tests": {
+    "passed": 2148,
+    "failed": 0,
+    "rust": "1.88.0",
+    "command": "CARGO_TARGET_DIR=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-choice-tests cargo +1.88.0 test --locked --lib --features profiling -j 2",
+    "scope": "initial three implementations; only a runtime comment differs from tested tree at initial commit"
+  },
+  "clippy": {
+    "status": "passed",
+    "command": "cargo +1.88.0 clippy --locked --lib --tests --features profiling -j 2 -- -D warnings",
+    "scope": "initial candidate before two-line helper correction"
+  },
+  "format": "passed on final source 44f6d340",
+  "source_layout": "passed; 626 reachable Rust files",
+  "final_helper_correction": "release build, selected machine-code comparison and 4 semantic-valid array_read samples; no full library/Test262 rerun",
+  "logs": {
+    "lib-profiling-r3.log": {
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/validation/lib-profiling-r3.log",
+      "sha256": "6bb79a65446c200eb81a8d9f11a6231310f098377338f711ca7b50fdb9cb2881"
+    },
+    "clippy.log": {
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/validation/clippy.log",
+      "sha256": "26227402f82bb331d877aac72e51c58aef5d4f27da67552ef059e3d523146088"
+    },
+    "build-plain-r2.log": {
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/validation/build-plain-r2.log",
+      "sha256": "07d3193b5afeed7ba4aef7fd5acf8e6d4d599924661518eddf8d692b60f379b7"
+    },
+    "build-plain-fixed.log": {
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/validation/build-plain-fixed.log",
+      "sha256": "af6bf27dfd0a87e9d40331d0fbcff6704326199bd4893c953eab957d7894ff5a"
+    },
+    "build-diagnostic.log": {
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/validation/build-diagnostic.log",
+      "sha256": "1420fad2ba0f735eeb45ded89b5fdc596309772e168cf82aa8b22fcffcdbc823"
+    },
+    "source-layout.log": {
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/validation/source-layout.log",
+      "sha256": "ec8e78f8acd7ec982c9eade15587182437eb2c5f5077a0f4950eefdcd7bef06e"
+    },
+    "focused-run.log": {
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/validation/focused-run.log",
+      "sha256": "843fc827ef9a61ae90816940b15e8c54d0f12b5d7bff382015f72650df63ff8d"
+    },
+    "array-read-fixed.log": {
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/validation/array-read-fixed.log",
+      "sha256": "651923c6c620258444ea41f1e049bdc0a542624626fc0e7c5cd73e7ff47a2c34"
+    },
+    "crypto-profile.log": {
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/validation/crypto-profile.log",
+      "sha256": "87f9af878fbd4bfeb3d9d4b195bcc4a5accb6e46c1144d25a713be58f811577c"
+    },
+    "fmt-final.log": {
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/validation/fmt-final.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "bounded_plan": {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/plan.json",
+    "sha256": "6e6e8e498a636bdbb4f716b492bd27fea943430381ab504497d9f2b351fc9c75"
+  },
+  "unsuccessful_attempts_retained": [
+    "lib-profiling.log: new test import and helper shadow compile errors, fixed",
+    "lib-profiling-r2.log: helper shadow before corrected source recompile",
+    "build-plain.log: named Rust toolchain lookup timed out; successful retry uses installed stable with exact Rust 1.96.0 hash in build receipt"
+  ],
+  "benchmark_scope": "24 initial fixed samples plus 4 regression-specific samples; one Crypto fixed logical profile; no original V8 Score matrix"
+}
