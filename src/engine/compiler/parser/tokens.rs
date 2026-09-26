@@ -200,6 +200,12 @@ impl<'source> Parser<'source> {
     /// the real parser still validates the complete LeftHandSideExpression and
     /// reports source-ordered syntax errors.
     pub(in crate::engine::compiler) fn for_iteration_kind_ahead(&self) -> Option<ForIterationKind> {
+        if let Some((start, context, hint)) = self.lookahead.borrow().iteration_hint
+            && start == self.current().span.start.byte_offset
+            && context == self.lexer.context()
+        {
+            return hint;
+        }
         let mut lexer = self.lexer.clone();
         lexer.seek(self.current().span.start);
         let mut delimiters = Vec::new();
@@ -307,95 +313,120 @@ impl<'source> Parser<'source> {
         let mut regexp_allowed = true;
         let mut has_semicolon = false;
 
-        loop {
-            let requested_goal = goal;
-            goal = LexicalGoal::Div;
-            let Ok(mut token) = self.probe_token(&mut lexer, requested_goal) else {
-                return has_semicolon;
-            };
-            if requested_goal == LexicalGoal::Div
-                && regexp_allowed
-                && matches!(
-                    token.kind,
-                    TokenKind::Punctuator(Punctuator::Divide | Punctuator::DivideAssign)
-                )
-            {
-                lexer.seek(token.span.start);
-                let Ok(regexp) = self.probe_token(&mut lexer, LexicalGoal::RegExp) else {
+        let mut inner_start = None;
+        let mut iteration_hint = None;
+        let has_semicolon = (|| {
+            loop {
+                let requested_goal = goal;
+                goal = LexicalGoal::Div;
+                let Ok(mut token) = self.probe_token(&mut lexer, requested_goal) else {
                     return has_semicolon;
                 };
-                token = regexp;
-            }
+                if requested_goal == LexicalGoal::Div
+                    && regexp_allowed
+                    && matches!(
+                        token.kind,
+                        TokenKind::Punctuator(Punctuator::Divide | Punctuator::DivideAssign)
+                    )
+                {
+                    lexer.seek(token.span.start);
+                    let Ok(regexp) = self.probe_token(&mut lexer, LexicalGoal::RegExp) else {
+                        return has_semicolon;
+                    };
+                    token = regexp;
+                }
 
-            match &token.kind {
-                TokenKind::Punctuator(Punctuator::LeftParen) => {
-                    if delimiters.len() >= 255 {
-                        return has_semicolon;
-                    }
-                    delimiters.push(ForHeadDelimiter::Parenthesis);
-                }
-                TokenKind::Punctuator(Punctuator::LeftBracket) => {
-                    if delimiters.len() >= 255 {
-                        return has_semicolon;
-                    }
-                    delimiters.push(ForHeadDelimiter::Bracket);
-                }
-                TokenKind::Punctuator(Punctuator::LeftBrace) => {
-                    if delimiters.len() >= 255 {
-                        return has_semicolon;
-                    }
-                    delimiters.push(ForHeadDelimiter::Brace);
-                }
-                TokenKind::Punctuator(Punctuator::RightParen) => {
-                    if delimiters.pop() != Some(ForHeadDelimiter::Parenthesis) {
-                        return has_semicolon;
-                    }
-                    if delimiters.is_empty() {
-                        return has_semicolon;
+                if delimiters.len() == 1 {
+                    inner_start.get_or_insert(token.span.start.byte_offset);
+                    if iteration_hint.is_none() {
+                        iteration_hint = match &token.kind {
+                            TokenKind::Keyword(Keyword::In) => Some(ForIterationKind::In),
+                            TokenKind::Identifier(identifier)
+                                if self.is_unescaped_name(identifier, "of") =>
+                            {
+                                Some(ForIterationKind::Of)
+                            }
+                            _ => None,
+                        };
                     }
                 }
-                TokenKind::Punctuator(Punctuator::RightBracket) => {
-                    if delimiters.pop() != Some(ForHeadDelimiter::Bracket) {
-                        return has_semicolon;
-                    }
-                }
-                TokenKind::Punctuator(Punctuator::RightBrace) => {
-                    if delimiters.last() == Some(&ForHeadDelimiter::Template) {
-                        goal = LexicalGoal::TemplateContinuation;
-                        regexp_allowed = true;
-                        continue;
-                    }
-                    if delimiters.pop() != Some(ForHeadDelimiter::Brace) {
-                        return has_semicolon;
-                    }
-                }
-                TokenKind::Punctuator(Punctuator::Semicolon) if delimiters.len() == 1 => {
-                    has_semicolon = true;
-                }
-                TokenKind::Template(part) => match part.kind {
-                    TemplatePartKind::Head => {
+                match &token.kind {
+                    TokenKind::Punctuator(Punctuator::LeftParen) => {
                         if delimiters.len() >= 255 {
                             return has_semicolon;
                         }
-                        delimiters.push(ForHeadDelimiter::Template);
+                        delimiters.push(ForHeadDelimiter::Parenthesis);
                     }
-                    TemplatePartKind::Middle => {
-                        if delimiters.last() != Some(&ForHeadDelimiter::Template) {
+                    TokenKind::Punctuator(Punctuator::LeftBracket) => {
+                        if delimiters.len() >= 255 {
+                            return has_semicolon;
+                        }
+                        delimiters.push(ForHeadDelimiter::Bracket);
+                    }
+                    TokenKind::Punctuator(Punctuator::LeftBrace) => {
+                        if delimiters.len() >= 255 {
+                            return has_semicolon;
+                        }
+                        delimiters.push(ForHeadDelimiter::Brace);
+                    }
+                    TokenKind::Punctuator(Punctuator::RightParen) => {
+                        if delimiters.pop() != Some(ForHeadDelimiter::Parenthesis) {
+                            return has_semicolon;
+                        }
+                        if delimiters.is_empty() {
                             return has_semicolon;
                         }
                     }
-                    TemplatePartKind::Tail => {
-                        if delimiters.pop() != Some(ForHeadDelimiter::Template) {
+                    TokenKind::Punctuator(Punctuator::RightBracket) => {
+                        if delimiters.pop() != Some(ForHeadDelimiter::Bracket) {
                             return has_semicolon;
                         }
                     }
-                    TemplatePartKind::NoSubstitution => {}
-                },
-                TokenKind::Eof => return has_semicolon,
-                _ => {}
+                    TokenKind::Punctuator(Punctuator::RightBrace) => {
+                        if delimiters.last() == Some(&ForHeadDelimiter::Template) {
+                            goal = LexicalGoal::TemplateContinuation;
+                            regexp_allowed = true;
+                            continue;
+                        }
+                        if delimiters.pop() != Some(ForHeadDelimiter::Brace) {
+                            return has_semicolon;
+                        }
+                    }
+                    TokenKind::Punctuator(Punctuator::Semicolon) if delimiters.len() == 1 => {
+                        has_semicolon = true;
+                    }
+                    TokenKind::Template(part) => match part.kind {
+                        TemplatePartKind::Head => {
+                            if delimiters.len() >= 255 {
+                                return has_semicolon;
+                            }
+                            delimiters.push(ForHeadDelimiter::Template);
+                        }
+                        TemplatePartKind::Middle => {
+                            if delimiters.last() != Some(&ForHeadDelimiter::Template) {
+                                return has_semicolon;
+                            }
+                        }
+                        TemplatePartKind::Tail => {
+                            if delimiters.pop() != Some(ForHeadDelimiter::Template) {
+                                return has_semicolon;
+                            }
+                        }
+                        TemplatePartKind::NoSubstitution => {}
+                    },
+                    TokenKind::Eof => return has_semicolon,
+                    _ => {}
+                }
+                regexp_allowed = for_head_regexp_allowed_after(&token.kind);
             }
-            regexp_allowed = for_head_regexp_allowed_after(&token.kind);
+        })();
+        if let Some(start) = inner_start {
+            // A failed/depth-limited scan has not ruled out a later delimiter.
+            // Only positive hints can replace the unlimited iteration probe.
+            self.lookahead.borrow_mut().iteration_hint =
+                iteration_hint.map(|hint| (start, self.lexer.context(), Some(hint)));
         }
+        has_semicolon
     }
 
     /// QuickJS `is_let(..., DECL_MASK_OTHER)` resolves sloppy `let` before the

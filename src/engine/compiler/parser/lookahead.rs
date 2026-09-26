@@ -15,11 +15,14 @@
 //! already committed past; the cache is capped and front-compacts so a probe
 //! that scans an arbitrarily long region cannot make parsing quadratic.
 
+use crate::engine::compiler::destructuring::{BindingPatternScan, ParenthesizedParameterScan};
 use crate::engine::compiler::lexer::LexContext;
 use crate::engine::compiler::lexer::LexError;
 use crate::engine::compiler::lexer::Lexer;
 use crate::engine::compiler::lexer::LexicalGoal;
+use crate::engine::compiler::lexer::Punctuator;
 use crate::engine::compiler::lexer::Token;
+use crate::engine::compiler::parser::context::ForIterationKind;
 use crate::engine::compiler::parser::context::Parser;
 
 /// Upper bound on memoized entries. A probe that scans a giant region (say a
@@ -36,6 +39,23 @@ pub(in crate::engine::compiler) struct LookaheadCache<'source> {
     entries: Vec<LookaheadEntry<'source>>,
     /// `entries[..base]` are invalidated and await compaction.
     base: usize,
+    // One result per probe family is enough for adjacent grammar consumers.
+    // These bounded summaries are pure functions of offset/context and never
+    // evict token entries or grow with source length.
+    pub(in crate::engine::compiler) binding_scan: Option<BindingScanMemo<'source>>,
+    pub(in crate::engine::compiler) parameter_scan:
+        Option<(usize, LexContext, Option<ParenthesizedParameterScan>)>,
+    pub(in crate::engine::compiler) iteration_hint:
+        Option<(usize, LexContext, Option<ForIterationKind>)>,
+}
+
+#[derive(Clone, Copy)]
+pub(in crate::engine::compiler) struct BindingScanMemo<'source> {
+    pub(in crate::engine::compiler) start: usize,
+    pub(in crate::engine::compiler) context: LexContext,
+    pub(in crate::engine::compiler) opening: Punctuator,
+    pub(in crate::engine::compiler) scan: Option<BindingPatternScan<'source>>,
+    pub(in crate::engine::compiler) assignment_seen: bool,
 }
 
 struct LookaheadEntry<'source> {
