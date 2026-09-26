@@ -1396,7 +1396,7 @@ impl SlotStore {
         self.local_current(window, index)
     }
 
-    #[inline]
+    #[inline(always)]
     fn local_current(&self, window: &FrameWindow, index: u16) -> Result<&FrameBinding, Error> {
         if usize::from(index) >= window.locals().len() {
             return Err(Error::internal("owned local index is out of bounds"));
@@ -1527,7 +1527,7 @@ impl SlotStore {
         self.parameter_current(window, index)
     }
 
-    #[inline]
+    #[inline(always)]
     fn parameter_current(&self, window: &FrameWindow, index: u16) -> Result<&FrameBinding, Error> {
         if usize::from(index) >= window.parameters().len() {
             return Err(Error::internal("owned parameter index is out of bounds"));
