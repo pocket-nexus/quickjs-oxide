@@ -3,6 +3,9 @@ use super::{BytecodeConstant, Error, Instruction, RawValue, RunSlots};
 use crate::engine::code::fusion::UpdateLocal;
 use crate::engine::value::number::operations::Number;
 
+mod dense;
+pub(super) use dense::try_numeric_span;
+
 pub(super) fn update_local(
     slots: &mut RunSlots<'_>,
     index: u16,
@@ -437,6 +440,60 @@ mod local_field_add_tests {
 #[cfg(test)]
 mod local_add_tests {
     use crate::engine::api::{Runtime, Value};
+
+    #[test]
+    fn mixed_fused_and_plain_local_reads_preserve_dynamic_misses() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(
+            context
+                .eval(
+                    r#"(()=>{
+                let conversions=0;
+                function step(initial) {
+                    let sum=initial, plain=41;
+                    for(let i=0;i<2;i++) {
+                        sum=sum+1;
+                        if(plain!==41) return null;
+                    }
+                    return sum;
+                }
+                let object={valueOf(){conversions++;return 5;}};
+                return step(0)===2 && step('x')==='x11'
+                    && step(object)===7 && conversions===1;
+            })()"#,
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+    }
+
+    #[test]
+    fn checked_local_add_read_keeps_both_tdz_error_points() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(
+            context
+                .eval(
+                    r#"(()=>{
+                function left() { value=value+1; let value=0; }
+                function right() { let value=1; value=value+later; let later=2; }
+                let errors=0;
+                try { left(); } catch(error) {
+                    if(!(error instanceof ReferenceError)) return false;
+                    errors++;
+                }
+                try { right(); } catch(error) {
+                    if(!(error instanceof ReferenceError)) return false;
+                    errors++;
+                }
+                return errors===2;
+            })()"#,
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+    }
 
     #[test]
     fn numeric_literal_and_pair_accumulators_match_canonical_results() {

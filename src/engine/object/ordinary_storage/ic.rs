@@ -3,6 +3,7 @@ use super::{LinkedNativeSelection, linked_field_atom};
 use crate::engine::api::{runtime::Runtime, runtime_error::RuntimeError};
 use crate::engine::atom::AtomIdx;
 use crate::engine::code::runtime::PublishedFunctionSnapshot;
+use crate::engine::heap::runtime::RuntimeState;
 use crate::engine::heap::{ObjectId, ObjectPayload, RawValue, SlotReleaseReadiness};
 use crate::engine::value::JsValue;
 use crate::engine::value::number::operations::Number;
@@ -11,6 +12,7 @@ impl Runtime {
     /// A miss only records a location and leaves the canonical read untouched.
     /// Native classification, when requested, describes this retained result;
     /// it never caches a value or outlives the result's ordinary slot owner.
+    #[cfg(test)]
     pub(crate) fn try_property_ic_read_owned(
         &self,
         base: &JsValue,
@@ -111,10 +113,9 @@ impl Runtime {
     /// Trusted shared-borrow data-property read.
     ///
     /// Covers the location-cache hit for a live receiver without a mutable
-    /// state borrow or fallible plumbing. Symbols need an atom-table retain
-    /// (S1b) and every non-data or non-cached case declines with `None`, so the
-    /// caller keeps its canonical `try_property_ic_read_owned` fallback. A
-    /// declined read claims no owner.
+    /// state borrow or fallible plumbing. A cache miss can promote an ordinary
+    /// own data slot under the same borrow, so owner-bearing values do not
+    /// repeat lookup in the driver. A declined read claims no owner.
     #[inline]
     pub(crate) fn property_ic_read_fast(
         &self,
@@ -126,8 +127,14 @@ impl Runtime {
         native: &mut Option<LinkedNativeSelection>,
     ) -> Option<JsValue> {
         let atom = linked_field_atom(self, executable, key_index)?;
-        let cache = executable.property_read_ic.site(pc)?;
+        let cache = executable.property_read_ic.site(pc);
         if !keep_receiver && self.0.deferred_references.has_pending() {
+            return None;
+        }
+        if !keep_receiver
+            && matches!(base, JsValue::String(_))
+            && self.slot_value_release_readiness_jsvalue(base).ok()? != SlotReleaseReadiness::Ready
+        {
             return None;
         }
         let state = self.0.state.try_borrow().ok()?;
@@ -137,15 +144,17 @@ impl Runtime {
         let receiver = match base {
             JsValue::Object(object) => *object,
             _ => {
-                cache.miss(
-                    &state.heap,
-                    &state.atoms,
-                    self.domain_id(),
-                    executable.realm,
-                    None,
-                    atom,
-                );
-                return None;
+                if let Some(cache) = cache {
+                    cache.miss(
+                        &state.heap,
+                        &state.atoms,
+                        self.domain_id(),
+                        executable.realm,
+                        None,
+                        atom,
+                    );
+                }
+                return self.uncached_field_in_state(&state, base, atom, keep_receiver, native);
             }
         };
         if !keep_receiver
@@ -154,19 +163,71 @@ impl Runtime {
         {
             return None;
         }
-        let Some(raw) = cache.read(&state.heap, self.domain_id(), executable.realm, receiver)
-        else {
-            cache.miss(
-                &state.heap,
-                &state.atoms,
-                self.domain_id(),
-                executable.realm,
-                Some(receiver),
-                atom,
-            );
-            return None;
+        let Some(cache) = cache else {
+            return self.uncached_field_in_state(&state, base, atom, keep_receiver, native);
         };
-        let result = match raw {
+        let raw = match cache.read(&state.heap, self.domain_id(), executable.realm, receiver) {
+            Some(raw) => raw,
+            None => {
+                cache.miss(
+                    &state.heap,
+                    &state.atoms,
+                    self.domain_id(),
+                    executable.realm,
+                    Some(receiver),
+                    atom,
+                );
+                // A first-site miss may just have installed a valid own-data
+                // location. Reuse it now instead of entering another leaf and
+                // eventually repeating the same property lookup.
+                let Some(raw) =
+                    cache.read(&state.heap, self.domain_id(), executable.realm, receiver)
+                else {
+                    return self.uncached_field_in_state(&state, base, atom, keep_receiver, native);
+                };
+                raw
+            }
+        };
+        let result = self.promote_field_in_state(&state, raw, keep_receiver, native);
+        #[cfg(feature = "profiling")]
+        if result.is_some() {
+            crate::engine::api::profiling::record_owned_execution_event("property_ic.hit");
+        }
+        result
+    }
+
+    fn uncached_field_in_state(
+        &self,
+        state: &RuntimeState,
+        base: &JsValue,
+        atom: crate::engine::atom::Atom,
+        keep_receiver: bool,
+        native: &mut Option<LinkedNativeSelection>,
+    ) -> Option<JsValue> {
+        let result = super::field_in_state(state, base, atom, |raw| {
+            self.promote_field_in_state(state, raw, keep_receiver, native)
+        });
+        #[cfg(feature = "profiling")]
+        if result.is_some() {
+            crate::engine::api::profiling::record_owned_execution_event(
+                "property_ic.uncached_field",
+            );
+        }
+        result
+    }
+
+    /// The slot and its receiver stay live for this entire borrow. Retaining
+    /// the result cannot drain cleanup or invoke JS, and no fallible step
+    /// follows a successful retain. Cache hits and uncached own reads use the
+    /// same promotion and native-selection contract.
+    fn promote_field_in_state(
+        &self,
+        state: &RuntimeState,
+        raw: &RawValue,
+        keep_receiver: bool,
+        native: &mut Option<LinkedNativeSelection>,
+    ) -> Option<JsValue> {
+        match raw {
             RawValue::Object(function) => {
                 let selected = if keep_receiver {
                     let object = state.heap.object_fast(*function);
@@ -209,12 +270,7 @@ impl Runtime {
             RawValue::Int(value) => Some(JsValue::Int(*value)),
             RawValue::Float(value) => Some(JsValue::Float(*value)),
             RawValue::Private(_) | RawValue::Uninitialized | RawValue::Exception => None,
-        };
-        #[cfg(feature = "profiling")]
-        if result.is_some() {
-            crate::engine::api::profiling::record_owned_execution_event("property_ic.hit");
         }
-        result
     }
 
     /// Non-owning immediate projection of the location cache.
@@ -393,27 +449,30 @@ impl Runtime {
         let JsValue::Object(object) = base else {
             return Ok(None);
         };
-        {
-            let state = self.0.state.borrow();
-            let data = state.heap.object(*object)?;
-            if !super::is_ordinary(data) {
-                return Ok(None);
-            }
-            let shape = state.heap.shape(data.shape)?;
-            let Some(slot) = shape.find(AtomIdx::from_raw(key.atom().raw())) else {
-                return Ok(Some(true));
-            };
-            if !shape.entries()[slot as usize].flags.configurable
-                || !matches!(
-                    data.slots[slot as usize],
-                    crate::engine::heap::PropertySlot::Data(_)
-                )
-            {
-                return Ok(None);
-            }
+        let mut state = self.0.state.borrow_mut();
+        let data = state.heap.object(*object)?;
+        if !super::is_ordinary(data) {
+            return Ok(None);
         }
-        let object = crate::engine::object::ObjectRef::from_borrowed_handle(self.clone(), *object)?;
-        self.delete_property(&object, key).map(Some)
+        let shape = state.heap.shape(data.shape)?;
+        let Some(slot) = shape.find(AtomIdx::from_raw(key.atom().raw())) else {
+            return Ok(Some(true));
+        };
+        if !shape.entries()[slot as usize].flags.configurable
+            || !matches!(
+                data.slots[slot as usize],
+                crate::engine::heap::PropertySlot::Data(_)
+            )
+        {
+            return Ok(None);
+        }
+        // Ordinary own data deletion has no exotic callback or virtual index.
+        // Complete it under the same borrow that located the slot, rather than
+        // entering the general delete path and looking the property up again.
+        state.ensure_dictionary_layout(*object)?;
+        let cleanup = state.heap.delete_dictionary_property(*object, key.atom())?;
+        state.apply_cleanup(cleanup)?;
+        Ok(Some(true))
     }
 }
 
@@ -439,7 +498,11 @@ impl Runtime {
         pc: usize,
         key: u32,
         value: &JsValue,
-    ) -> Result<bool, RuntimeError> {
+    ) -> Result<Option<bool>, RuntimeError> {
+        // Some(false) means this site's IC cannot accept the write even after
+        // its miss update. The owning IC would repeat the same lookup; go
+        // straight to the canonical property writer. None means only the
+        // scalar leaf declined and the owning IC may still complete it.
         if !matches!(
             value,
             JsValue::Undefined
@@ -449,16 +512,16 @@ impl Runtime {
                 | JsValue::Float(_)
                 | JsValue::ShortBigInt(_)
         ) {
-            return Ok(false);
+            return Ok(None);
         }
         let Some(atom) = linked_field_atom(self, executable, key) else {
-            return Ok(false);
+            return Ok(Some(false));
         };
         let JsValue::Object(object) = base else {
-            return Ok(false);
+            return Ok(Some(false));
         };
         let Some(cache) = executable.property_read_ic.write_site(pc) else {
-            return Ok(false);
+            return Ok(Some(false));
         };
         let mut state = self.0.state.borrow_mut();
         let id = *object;
@@ -475,14 +538,14 @@ impl Runtime {
                 );
                 let Some(slot) = cache.slot(&state.heap, self.domain_id(), executable.realm, id)
                 else {
-                    return Ok(false);
+                    return Ok(Some(false));
                 };
                 slot
             }
         };
         let crate::engine::heap::PropertySlot::Data(old) = &state.heap.object(id)?.slots[slot]
         else {
-            return Ok(false);
+            return Ok(None);
         };
         if super::immediate_value(old).is_none() {
             // Releasing a non-scalar old value may need a driver boundary.
@@ -491,7 +554,7 @@ impl Runtime {
             // heap.
             drop(state);
             if self.slot_value_release_readiness_jsvalue(base)? != SlotReleaseReadiness::Ready {
-                return Ok(false);
+                return Ok(None);
             }
             state = self.0.state.borrow_mut();
         }
@@ -501,7 +564,7 @@ impl Runtime {
         state.replace_property_slot(id, slot, crate::engine::heap::PropertySlot::Data(raw))?;
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("property_write_ic.hit");
-        Ok(true)
+        Ok(Some(true))
     }
 }
 
@@ -524,10 +587,13 @@ impl Runtime {
         {
             return Ok(false);
         }
-        if self.try_dense_array_kept_read(base, index).is_none() {
+        let JsValue::Object(object) = base else {
             return Ok(false);
-        }
-        self.try_dense_array_write_owned(base, index, value)
+        };
+        let mut state = self.0.state.borrow_mut();
+        Ok(state
+            .heap
+            .try_replace_dense_immediate_value(*object, index, value.as_raw()))
     }
 }
 
@@ -565,6 +631,121 @@ mod tests {
             })
             .unwrap();
         (executable, pc, key)
+    }
+
+    #[test]
+    fn uncached_own_read_retains_every_owner_after_last_base_release() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let (code, pc, key) = site(&runtime);
+        // Three distinct shapes put this site into its megamorphic cooldown.
+        // Every following value must therefore use the uncached own-slot path.
+        for expression in ["({x:1})", "({a:0,x:2})", "({b:0,a:0,x:3})"] {
+            let base = runtime
+                .into_jsvalue(context.eval(expression).unwrap())
+                .unwrap();
+            let result = runtime
+                .property_ic_read_fast(&base, &code, pc, key, true, &mut None)
+                .unwrap();
+            runtime.release_jsvalue(result).unwrap();
+            runtime.release_jsvalue(base).unwrap();
+        }
+        for expression in [
+            "({nested:7})",
+            "'wide λ text'",
+            "123456789012345678901234567890n",
+            "Symbol.for('uncached-read')",
+            "undefined",
+            "null",
+            "true",
+            "1.25",
+        ] {
+            let base = runtime
+                .into_jsvalue(context.eval(&format!("({{x:{expression}}})")).unwrap())
+                .unwrap();
+            let result = runtime
+                .property_ic_read_fast(&base, &code, pc, key, true, &mut None)
+                .unwrap_or_else(|| panic!("uncached {expression}"));
+            runtime.release_jsvalue(base).unwrap();
+            runtime.run_gc().unwrap();
+            let result = runtime.root_and_release_jsvalue(result).unwrap();
+            if let Value::Object(object) = result {
+                assert_eq!(
+                    context
+                        .get_property(&object, &runtime.intern_property_key("nested").unwrap())
+                        .unwrap(),
+                    Value::Int(7)
+                );
+            } else {
+                assert_eq!(result, context.eval(expression).unwrap(), "{expression}");
+            }
+        }
+    }
+
+    #[test]
+    fn uncached_own_read_declines_accessors_proxies_and_last_owner_consumption() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let (code, pc, key) = site(&runtime);
+        for expression in [
+            "({get x(){throw 1}})",
+            "new Proxy({x:1},{get(){throw 2}})",
+            "Object.create({get x(){throw 3}})",
+        ] {
+            let base = runtime
+                .into_jsvalue(context.eval(expression).unwrap())
+                .unwrap();
+            assert!(
+                runtime
+                    .property_ic_read_fast(&base, &code, pc, key, true, &mut None)
+                    .is_none()
+            );
+            runtime.release_jsvalue(base).unwrap();
+        }
+        let base = runtime
+            .into_jsvalue(context.eval("({x:{marker:1}})").unwrap())
+            .unwrap();
+        assert!(
+            runtime
+                .property_ic_read_fast(&base, &code, pc, key, false, &mut None)
+                .is_none()
+        );
+        let result = runtime
+            .property_ic_read_fast(&base, &code, pc, key, true, &mut None)
+            .unwrap();
+        runtime.release_jsvalue(result).unwrap();
+        runtime.release_jsvalue(base).unwrap();
+    }
+
+    #[test]
+    fn uncached_native_hint_describes_the_retained_current_value() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let (code, pc, key) = site(&runtime);
+        let poison = runtime
+            .into_jsvalue(context.eval("({get x(){throw 1}})").unwrap())
+            .unwrap();
+        assert!(
+            runtime
+                .property_ic_read_fast(&poison, &code, pc, key, true, &mut None)
+                .is_none()
+        );
+        runtime.release_jsvalue(poison).unwrap();
+        let base = runtime
+            .into_jsvalue(context.eval("({x:Math.min})").unwrap())
+            .unwrap();
+        let mut native = None;
+        let result = runtime
+            .property_ic_read_fast(&base, &code, pc, key, true, &mut native)
+            .unwrap();
+        assert!(
+            native
+                .unwrap()
+                .into_parts_jsvalue(&runtime, object(&result))
+                .is_some()
+        );
+        runtime.release_jsvalue(base).unwrap();
+        runtime.release_jsvalue(result).unwrap();
     }
 
     #[test]

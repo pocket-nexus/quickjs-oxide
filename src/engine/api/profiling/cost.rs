@@ -15,7 +15,16 @@ pub(crate) use buffers::{
     record_call_buffer_share, record_call_raw_buffer_copies,
 };
 mod phases;
-pub(crate) use phases::{CompilePhase, PhaseTimer};
+pub(crate) use phases::{CompilePhase, PhaseTimer, VmCallSample};
+mod sites;
+pub use sites::{
+    CallsiteCost, FunctionSiteKey, FusionDispatchCost, FusionSiteCost, FusionSiteKey,
+    FusionStaticCost, SiteKey,
+};
+#[cfg(feature = "profiling")]
+pub(crate) use sites::{
+    record_callsite_callee, record_fusion_dispatch, record_fusion_outcome, record_fusion_static,
+};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PhaseCost {
@@ -126,6 +135,20 @@ pub struct CostSnapshot {
     pub call_preparation: CallPreparationCost,
     pub call_buffers: std::collections::BTreeMap<&'static str, CallBufferCost>,
     pub vm_phases: std::collections::BTreeMap<&'static str, VmPhaseCost>,
+    /// Published bytecode shape, recorded once per executed function in this
+    /// scope; this is not an inventory of every compiled function.
+    pub fusion_static: std::collections::BTreeMap<FunctionSiteKey, FusionStaticCost>,
+    /// Dynamic visits to direct local/argument producers, including sites with
+    /// no published candidate. These are logical visits, not time samples.
+    pub fusion_dispatch: std::collections::BTreeMap<SiteKey, FusionDispatchCost>,
+    /// Each attempted published span is recorded at its canonical starting PC.
+    pub fusion_sites: std::collections::BTreeMap<FusionSiteKey, FusionSiteCost>,
+    /// Ordinary callsite callee identity observations. No JS owner is retained.
+    pub callsites: std::collections::BTreeMap<SiteKey, CallsiteCost>,
+    pub omitted_fusion_static_functions: u64,
+    pub omitted_fusion_dispatch_events: u64,
+    pub omitted_fusion_outcome_events: u64,
+    pub omitted_callsite_events: u64,
 }
 
 type Collector = RefCell<CostSnapshot>;

@@ -1,0 +1,506 @@
+{
+  "schema": "cost-follow-up-short-probe-v1",
+  "validation": "12/12 samples, source/output/binary/raw counters/build receipts/ABBA order",
+  "scope": "three fixed whole-process cases; not adaptive V8 Score",
+  "timing_interfered": true,
+  "timing_interference_basis": "reported for this short diagnostic series; no independent A/A control",
+  "aa_samples": 0,
+  "small_delta_admission": "not admissible from two samples per engine under timing interference",
+  "series": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-cost-follow-up/focused",
+  "evidence": {
+    "metadata_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-cost-follow-up/focused/metadata.json",
+    "metadata_sha256": "4434745018f18052f2ec3eb0ced9d4d0d4157708a21b8fc92552a975ecc7ade1",
+    "samples_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-cost-follow-up/focused/samples.jsonl",
+    "samples_sha256": "cca51ecc9042c6e37625b5ab07f90a27b206dc6c01502529afbf25d8ec9ad191",
+    "manifest_path": "/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/docs/performance/receipts/follow-through-2026-09-26/focused-manifest.json",
+    "manifest_sha256": "1af64eda74879068f4a5916c949cf5e0a334868759cbf6c295c3592f1e7b4f3a",
+    "runner_path": "/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/scripts/benchmark/fixed.py",
+    "runner_sha256": "8a852679221202ae6d3dac1e02b295368a79529a3e0c32e51fd6b914e5d4b425",
+    "analysis_script_sha256": "7b963e5a2e887c7399334290a67e72bb638ab1aa5c99b63998e7daebf8436556"
+  },
+  "machine": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "cpu": "Apple M1",
+    "logical_cpus": 8,
+    "python": "3.14.7",
+    "cpu_affinity": null,
+    "scaling_governors": {},
+    "load_average": [
+      3.6376953125,
+      6.0126953125,
+      6.087890625
+    ],
+    "macos": {
+      "physical_memory_bytes": 17179869184,
+      "power_settings": {
+        "command": [
+          "pmset",
+          "-g",
+          "custom"
+        ],
+        "exit_code": 0,
+        "stdout": "Battery Power:\n Sleep On Power Button 1\n lowpowermode         0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         20\n womp                 0\n networkoversleep     0\n sleep                1\n lessbright           1\n tcpkeepalive         1\n disksleep            10\nAC Power:\n Sleep On Power Button 1\n lowpowermode         0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         0\n womp                 1\n networkoversleep     0\n sleep                1\n tcpkeepalive         1\n disksleep            10",
+        "stderr": ""
+      },
+      "power_source": {
+        "command": [
+          "pmset",
+          "-g",
+          "batt"
+        ],
+        "exit_code": 0,
+        "stdout": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=22741091)\t100%; charged; 0:00 remaining present: true",
+        "stderr": ""
+      },
+      "vm_stat": {
+        "command": [
+          "vm_stat"
+        ],
+        "exit_code": 0,
+        "stdout": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                     3783.\nPages active:                                 240997.\nPages inactive:                               238251.\nPages speculative:                              2284.\nPages throttled:                                   0.\nPages wired down:                             172357.\nPages purgeable:                                   2.\n\"Translation faults\":                     1708578885.\nPages copy-on-write:                       104873334.\nPages zero filled:                         551810727.\nPages reactivated:                         237813187.\nPages purged:                               20683511.\nFile-backed pages:                            128866.\nAnonymous pages:                              352666.\nPages stored in compressor:                  1566253.\nPages occupied by compressor:                 342258.\nDecompressions:                            216441821.\nCompressions:                              244129574.\nPageins:                                    44593707.\nPageouts:                                     529857.\nSwapins:                                     2143259.\nSwapouts:                                    2971350.",
+        "stderr": ""
+      }
+    },
+    "runner_sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5",
+    "repository": {
+      "commit": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD"
+        ],
+        "exit_code": 0,
+        "stdout": "c7fb5b69d88bb5e6170fab3b8af5a3062fd4cb72",
+        "stderr": ""
+      },
+      "tree": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD^{tree}"
+        ],
+        "exit_code": 0,
+        "stdout": "a772566bd64d079502ec931139b038f775a6bfd4",
+        "stderr": ""
+      },
+      "top_level": {
+        "command": [
+          "git",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "exit_code": 0,
+        "stdout": "/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide",
+        "stderr": ""
+      },
+      "status": {
+        "command": [
+          "git",
+          "status",
+          "--porcelain"
+        ],
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    }
+  },
+  "order_strategy": "abba",
+  "actual_order_per_case": [
+    [
+      "before",
+      "after"
+    ],
+    [
+      "after",
+      "before"
+    ]
+  ],
+  "repeat_per_engine": 2,
+  "counter_scope": "whole process including startup and teardown",
+  "engines": {
+    "before": {
+      "name": "before",
+      "commit": "44f6d340d84727560c2ea7c6f179add3a3863d6e",
+      "tree": "10a0e62b59c8970f6f652cc52d31da789d111017",
+      "binary_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/build-plain-fixed/release/qjs",
+      "binary_sha256": "9a815b7f2607e9aa2474db4ea2bf4ba4a5203a06aa43dca6992d0b8a364b5517",
+      "receipt_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/build-plain-fixed/release/qjs.build.json",
+      "receipt_sha256": "c92bff9471c96b035978988ba9fe2ad8665a47cc2c0f2b43db721d2869b771de",
+      "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2",
+      "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)",
+      "release_profile": {
+        "manifest": {
+          "lto": "\"fat\"",
+          "codegen-units": "1"
+        },
+        "environment_overrides": {},
+        "cargo_config_sha256": {},
+        "qjs_rustc_invocation": {
+          "command": "rustc --crate-name qjs --edition=2024 apps/cli/src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C opt-level=3 -C lto=fat -C codegen-units=1 '--warn=clippy::all' --forbid=unsafe_code --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values(\"default\", \"profiling\", \"test262-host\"))' -C metadata=f318d7eac3aa0c1d -C extra-filename=-3cfe3c105f2435ac --out-dir /Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/build-plain-fixed/release/deps -C strip=debuginfo -L dependency=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/build-plain-fixed/release/deps --extern quickjs_oxide=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/build-plain-fixed/release/deps/libquickjs_oxide-e0446d572207f926.rlib --extern quickjs_oxide_host=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/build-plain-fixed/release/deps/libquickjs_oxide_host-78c1c28f3dc115b8.rlib",
+          "crate": "qjs",
+          "codegen": {
+            "opt-level": "3",
+            "lto": "fat",
+            "codegen-units": "1"
+          },
+          "target": null
+        },
+        "observed_rustc_compilations": 9,
+        "observed_codegen_groups": [
+          {
+            "target": null,
+            "codegen": {},
+            "crates": [
+              "autocfg",
+              "build_script_build"
+            ]
+          },
+          {
+            "target": null,
+            "codegen": {
+              "opt-level": "3",
+              "codegen-units": "1"
+            },
+            "crates": [
+              "tz",
+              "num_traits",
+              "num_integer",
+              "num_bigint",
+              "quickjs_oxide",
+              "quickjs_oxide_host"
+            ]
+          },
+          {
+            "target": null,
+            "codegen": {
+              "opt-level": "3",
+              "lto": "fat",
+              "codegen-units": "1"
+            },
+            "crates": [
+              "qjs"
+            ]
+          }
+        ]
+      },
+      "target": {
+        "requested_triple": null,
+        "rustc_host": "aarch64-apple-darwin",
+        "observed_triple": null,
+        "observed_target_cpu": null,
+        "observed_target_feature": null
+      }
+    },
+    "after": {
+      "name": "after",
+      "commit": "c7fb5b69d88bb5e6170fab3b8af5a3062fd4cb72",
+      "tree": "a772566bd64d079502ec931139b038f775a6bfd4",
+      "binary_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-cost-follow-up/build-plain/release/qjs",
+      "binary_sha256": "b241d0252cfe19d54b18843ae106f91c4cb66f2d7f462f120ce21e2d643f3573",
+      "receipt_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-cost-follow-up/build-plain/release/qjs.build.json",
+      "receipt_sha256": "469a6befb0fe6344739d60f5a8bff697d82b190bc81ee4a8a2e849dcadd64fb3",
+      "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2",
+      "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)",
+      "release_profile": {
+        "manifest": {
+          "lto": "\"fat\"",
+          "codegen-units": "1"
+        },
+        "environment_overrides": {},
+        "cargo_config_sha256": {},
+        "qjs_rustc_invocation": {
+          "command": "rustc --crate-name qjs --edition=2024 apps/cli/src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C opt-level=3 -C lto=fat -C codegen-units=1 '--warn=clippy::all' --forbid=unsafe_code --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values(\"default\", \"profiling\", \"test262-host\"))' -C metadata=f318d7eac3aa0c1d -C extra-filename=-3cfe3c105f2435ac --out-dir /Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-cost-follow-up/build-plain/release/deps -C strip=debuginfo -L dependency=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-cost-follow-up/build-plain/release/deps --extern quickjs_oxide=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-cost-follow-up/build-plain/release/deps/libquickjs_oxide-e0446d572207f926.rlib --extern quickjs_oxide_host=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-cost-follow-up/build-plain/release/deps/libquickjs_oxide_host-78c1c28f3dc115b8.rlib",
+          "crate": "qjs",
+          "codegen": {
+            "opt-level": "3",
+            "lto": "fat",
+            "codegen-units": "1"
+          },
+          "target": null
+        },
+        "observed_rustc_compilations": 9,
+        "observed_codegen_groups": [
+          {
+            "target": null,
+            "codegen": {},
+            "crates": [
+              "autocfg",
+              "build_script_build"
+            ]
+          },
+          {
+            "target": null,
+            "codegen": {
+              "opt-level": "3",
+              "codegen-units": "1"
+            },
+            "crates": [
+              "tz",
+              "num_traits",
+              "num_integer",
+              "num_bigint",
+              "quickjs_oxide",
+              "quickjs_oxide_host"
+            ]
+          },
+          {
+            "target": null,
+            "codegen": {
+              "opt-level": "3",
+              "lto": "fat",
+              "codegen-units": "1"
+            },
+            "crates": [
+              "qjs"
+            ]
+          }
+        ]
+      },
+      "target": {
+        "requested_triple": null,
+        "rustc_host": "aarch64-apple-darwin",
+        "observed_triple": null,
+        "observed_target_cpu": null,
+        "observed_target_feature": null
+      }
+    }
+  },
+  "cases": [
+    {
+      "case": "reverse_fill_build",
+      "size": 3000,
+      "source_sha256": "b1ca2f811776225b097be39ed5a4a2af87b7a4f70ef5be5ec5a8211536d50dd0",
+      "expected_stdout": "483000\n",
+      "before": {
+        "engine": "before",
+        "samples": [
+          {
+            "repetition": 0,
+            "process_wall_ns": 165664666,
+            "maximum_resident_set_size": 6078464,
+            "instructions_retired": 2261529861,
+            "cycles_elapsed": 431198674,
+            "peak_memory_footprint": 2655040,
+            "stdout_sha256": "1ba669891e32697947b2fa99a16bc4f8094be56172982c4f670ab08ebed16d25",
+            "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "raw_counter_sha256": "95e8b9c68eec66517f8441b387aebd373116ad5bdc5b50097010aa028f0af7ca"
+          },
+          {
+            "repetition": 1,
+            "process_wall_ns": 143244792,
+            "maximum_resident_set_size": 6242304,
+            "instructions_retired": 2255063021,
+            "cycles_elapsed": 429509749,
+            "peak_memory_footprint": 2818880,
+            "stdout_sha256": "1ba669891e32697947b2fa99a16bc4f8094be56172982c4f670ab08ebed16d25",
+            "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "raw_counter_sha256": "ee117ff9bd9515152cc37e61dae040cca1a8341f2809dd70db2add9a1bd7158e"
+          }
+        ],
+        "median": {
+          "instructions_retired": 2258296441.0,
+          "cycles_elapsed": 430354211.5,
+          "maximum_resident_set_size": 6160384.0,
+          "process_wall_ns": 154454729.0
+        }
+      },
+      "after": {
+        "engine": "after",
+        "samples": [
+          {
+            "repetition": 0,
+            "process_wall_ns": 143342750,
+            "maximum_resident_set_size": 5931008,
+            "instructions_retired": 2248649914,
+            "cycles_elapsed": 430168460,
+            "peak_memory_footprint": 2507584,
+            "stdout_sha256": "1ba669891e32697947b2fa99a16bc4f8094be56172982c4f670ab08ebed16d25",
+            "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "raw_counter_sha256": "c421c0c570922bd6f570363a86e2d3974dfac69145ddf063a7d9eeef58669b38"
+          },
+          {
+            "repetition": 1,
+            "process_wall_ns": 139686041,
+            "maximum_resident_set_size": 5783552,
+            "instructions_retired": 2241369099,
+            "cycles_elapsed": 424483300,
+            "peak_memory_footprint": 2376576,
+            "stdout_sha256": "1ba669891e32697947b2fa99a16bc4f8094be56172982c4f670ab08ebed16d25",
+            "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "raw_counter_sha256": "3c4b742ace884e050d6ef3a924c40ddf053b6b755c48b71d27af09fa0f0267ac"
+          }
+        ],
+        "median": {
+          "instructions_retired": 2245009506.5,
+          "cycles_elapsed": 427325880.0,
+          "maximum_resident_set_size": 5857280.0,
+          "process_wall_ns": 141514395.5
+        }
+      },
+      "after_over_before_pct": {
+        "instructions_retired": -0.5883609546900925,
+        "cycles_elapsed": -0.703683481903139,
+        "maximum_resident_set_size": -4.9202127659574435,
+        "process_wall_ns": -8.37807529997997
+      }
+    },
+    {
+      "case": "call_scalar_args",
+      "size": 800000,
+      "source_sha256": "7abfb4eb8ffc5fb963d3c7e1db4f05b9ae8c8602492ee5159a050c3320f66301",
+      "expected_stdout": "8400000\n",
+      "before": {
+        "engine": "before",
+        "samples": [
+          {
+            "repetition": 0,
+            "process_wall_ns": 265087334,
+            "maximum_resident_set_size": 5980160,
+            "instructions_retired": 4085334073,
+            "cycles_elapsed": 800562968,
+            "peak_memory_footprint": 2655040,
+            "stdout_sha256": "7e6f83b6508e275ffdb1b18ec11ca26546d3c7e025e2a4cdb7653b7aee3166bd",
+            "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "raw_counter_sha256": "73f9fec0c910e5518382d67d9e50d0a52fa1ded8102b0a4cd363f08983c3bb36"
+          },
+          {
+            "repetition": 1,
+            "process_wall_ns": 259905375,
+            "maximum_resident_set_size": 5701632,
+            "instructions_retired": 4084575868,
+            "cycles_elapsed": 797191639,
+            "peak_memory_footprint": 2376512,
+            "stdout_sha256": "7e6f83b6508e275ffdb1b18ec11ca26546d3c7e025e2a4cdb7653b7aee3166bd",
+            "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "raw_counter_sha256": "a691687f3d396a7fd963e66591e965b9451042d75867044cc24ba85643b45e7c"
+          }
+        ],
+        "median": {
+          "instructions_retired": 4084954970.5,
+          "cycles_elapsed": 798877303.5,
+          "maximum_resident_set_size": 5840896.0,
+          "process_wall_ns": 262496354.5
+        }
+      },
+      "after": {
+        "engine": "after",
+        "samples": [
+          {
+            "repetition": 0,
+            "process_wall_ns": 259531583,
+            "maximum_resident_set_size": 5799936,
+            "instructions_retired": 4077836354,
+            "cycles_elapsed": 793349543,
+            "peak_memory_footprint": 2458432,
+            "stdout_sha256": "7e6f83b6508e275ffdb1b18ec11ca26546d3c7e025e2a4cdb7653b7aee3166bd",
+            "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "raw_counter_sha256": "6f08824b449e034552c38039ad66f112a573d7debc1baba0061fee29bf8c0aa9"
+          },
+          {
+            "repetition": 1,
+            "process_wall_ns": 257788208,
+            "maximum_resident_set_size": 5931008,
+            "instructions_retired": 4077498883,
+            "cycles_elapsed": 791124241,
+            "peak_memory_footprint": 2589504,
+            "stdout_sha256": "7e6f83b6508e275ffdb1b18ec11ca26546d3c7e025e2a4cdb7653b7aee3166bd",
+            "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "raw_counter_sha256": "ae02c4497f39a6dab5c7a94fa72b2d659f8499c1c415b408417ad31eadfaecb1"
+          }
+        ],
+        "median": {
+          "instructions_retired": 4077667618.5,
+          "cycles_elapsed": 792236892.0,
+          "maximum_resident_set_size": 5865472.0,
+          "process_wall_ns": 258659895.5
+        }
+      },
+      "after_over_before_pct": {
+        "instructions_retired": -0.17839491628736104,
+        "cycles_elapsed": -0.8312179443460632,
+        "maximum_resident_set_size": 0.42075736325386526,
+        "process_wall_ns": -1.4615284876270507
+      }
+    },
+    {
+      "case": "call0",
+      "size": 800000,
+      "source_sha256": "459fe42f4945b40fdd67ebd8c95c290c91166565d14e03a267f0457dfe1d71fa",
+      "expected_stdout": "800000\n",
+      "before": {
+        "engine": "before",
+        "samples": [
+          {
+            "repetition": 0,
+            "process_wall_ns": 296491250,
+            "maximum_resident_set_size": 5931008,
+            "instructions_retired": 2798047303,
+            "cycles_elapsed": 545946090,
+            "peak_memory_footprint": 2605888,
+            "stdout_sha256": "20906f772bf0b93e695828b6019fcd7284341cbe95ee2865a6e86b8e400551ed",
+            "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "raw_counter_sha256": "2734ef29706d55dca7aebc23506630dac455093182d8ed7e24a05244c2f97514"
+          },
+          {
+            "repetition": 1,
+            "process_wall_ns": 178509542,
+            "maximum_resident_set_size": 5914624,
+            "instructions_retired": 2796862930,
+            "cycles_elapsed": 539800010,
+            "peak_memory_footprint": 2589504,
+            "stdout_sha256": "20906f772bf0b93e695828b6019fcd7284341cbe95ee2865a6e86b8e400551ed",
+            "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "raw_counter_sha256": "ce8da63311592830865968ff5d787f1bf8faf8792da2ec83f0c2357f6457e402"
+          }
+        ],
+        "median": {
+          "instructions_retired": 2797455116.5,
+          "cycles_elapsed": 542873050.0,
+          "maximum_resident_set_size": 5922816.0,
+          "process_wall_ns": 237500396.0
+        }
+      },
+      "after": {
+        "engine": "after",
+        "samples": [
+          {
+            "repetition": 0,
+            "process_wall_ns": 174741250,
+            "maximum_resident_set_size": 5881856,
+            "instructions_retired": 2789705420,
+            "cycles_elapsed": 532212811,
+            "peak_memory_footprint": 2540352,
+            "stdout_sha256": "20906f772bf0b93e695828b6019fcd7284341cbe95ee2865a6e86b8e400551ed",
+            "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "raw_counter_sha256": "12ca4f7bab58c700b0e7db64731a517f65ea5b8df113425bd2b5a07d9604d0df"
+          },
+          {
+            "repetition": 1,
+            "process_wall_ns": 174460667,
+            "maximum_resident_set_size": 5734400,
+            "instructions_retired": 2789796952,
+            "cycles_elapsed": 532176545,
+            "peak_memory_footprint": 2409344,
+            "stdout_sha256": "20906f772bf0b93e695828b6019fcd7284341cbe95ee2865a6e86b8e400551ed",
+            "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "raw_counter_sha256": "1423803ef6739b9f32351e5f571819b3b08bfce97a8cb6778d54e172b44c713c"
+          }
+        ],
+        "median": {
+          "instructions_retired": 2789751186.0,
+          "cycles_elapsed": 532194678.0,
+          "maximum_resident_set_size": 5808128.0,
+          "process_wall_ns": 174600958.5
+        }
+      },
+      "after_over_before_pct": {
+        "instructions_retired": -0.27539067399368067,
+        "cycles_elapsed": -1.9670108877204329,
+        "maximum_resident_set_size": -1.9363762102351356,
+        "process_wall_ns": -26.483929525742766
+      }
+    }
+  ]
+}

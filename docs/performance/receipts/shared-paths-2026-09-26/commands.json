@@ -1,0 +1,77 @@
+{
+  "commands-gate": [
+    {
+      "name": "fixed-own",
+      "command": ["/opt/homebrew/opt/python@3.14/bin/python3.14","/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/scripts/benchmark/fixed.py","--manifest","/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/docs/performance/probes/fixed/manifest.json","--darwin-counters","--timeout","30","--order","abba-baab","--repeat","4","--engine","baseline=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/build-write-inline/release/qjs","--engine","candidate=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/build-own/release/qjs","--output","/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/fixed-own"],
+      "started_unix": 1790414775.863231,
+      "elapsed_seconds": 33.450918197631836,
+      "exit_code": 0
+    }
+  ],
+  "commands-diagnostic": [
+    {
+      "name": "profile",
+      "command": ["/opt/homebrew/opt/python@3.14/bin/python3.14","/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/scripts/benchmark/profile_v8.py","--source","/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark","--engine","/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/build-profile/release/qjs","--timeout","90","--output","/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/profile"],
+      "elapsed_seconds": 23.347941875457764,
+      "exit_code": 0
+    }
+  ],
+  "commands-matrix": [
+    {
+      "name": "fixed-final",
+      "command": ["/opt/homebrew/opt/python@3.14/bin/python3.14","/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/scripts/benchmark/fixed.py","--manifest","/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/docs/performance/probes/fixed/manifest.json","--darwin-counters","--timeout","30","--order","abba-baab","--repeat","4","--engine","baseline=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/build-write-inline/release/qjs","--engine","candidate=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/build-final/release/qjs","--output","/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/fixed-final"],
+      "started_unix": 1790414954.2892318,
+      "elapsed_seconds": 26.175576210021973,
+      "exit_code": 0
+    },
+    {
+      "name": "fixed-call",
+      "command": ["/opt/homebrew/opt/python@3.14/bin/python3.14","/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/scripts/benchmark/fixed.py","--manifest","/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/docs/performance/probes/fixed/manifest.json","--darwin-counters","--timeout","30","--order","abba-baab","--repeat","4","--engine","baseline=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/build-array/release/qjs","--engine","candidate=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/build-final/release/qjs","--output","/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/fixed-call"],
+      "started_unix": 1790414980.465305,
+      "elapsed_seconds": 24.905431032180786,
+      "exit_code": 0
+    },
+    {
+      "name": "v8-own",
+      "command": ["/opt/homebrew/opt/python@3.14/bin/python3.14","/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/scripts/benchmark/iterate_v8.py","--source","/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark","--baseline","/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/build-write-inline/release/qjs","--candidate","/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/build-own/release/qjs","--darwin-counters","--repeat","2","--order","abba","--plan","/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/freeze-plan.json","--output","/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/v8-own"],
+      "started_unix": 1790415005.3711202,
+      "elapsed_seconds": 119.79580760002136,
+      "exit_code": 0
+    },
+    {
+      "name": "v8-array",
+      "command": ["/opt/homebrew/opt/python@3.14/bin/python3.14","/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/scripts/benchmark/iterate_v8.py","--source","/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark","--baseline","/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/build-own/release/qjs","--candidate","/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/build-array/release/qjs","--darwin-counters","--repeat","2","--order","abba","--plan","/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/freeze-plan.json","--output","/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/v8-array"],
+      "started_unix": 1790415125.1679711,
+      "elapsed_seconds": 122.29366302490234,
+      "exit_code": 0
+    },
+    {
+      "name": "v8-call",
+      "command": ["/opt/homebrew/opt/python@3.14/bin/python3.14","/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/scripts/benchmark/iterate_v8.py","--source","/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark","--baseline","/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/build-array/release/qjs","--candidate","/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/build-final/release/qjs","--darwin-counters","--repeat","2","--order","abba","--plan","/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/freeze-plan.json","--output","/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/v8-call"],
+      "started_unix": 1790415247.4626071,
+      "elapsed_seconds": 118.87319993972778,
+      "exit_code": 0
+    },
+    {
+      "name": "v8-main",
+      "command": ["/opt/homebrew/opt/python@3.14/bin/python3.14","/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/scripts/benchmark/iterate_v8.py","--source","/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark","--baseline","/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-r0/release/qjs","--candidate","/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/build-final/release/qjs","--darwin-counters","--repeat","2","--order","abba","--plan","/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/freeze-plan.json","--output","/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/v8-main"],
+      "started_unix": 1790415366.3367958,
+      "elapsed_seconds": 134.60117626190186,
+      "exit_code": 0
+    }
+  ],
+  "commands-raytrace": [
+    {
+      "name": "raytrace-aa",
+      "command": ["/opt/homebrew/opt/python@3.14/bin/python3.14","/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/scripts/benchmark/fixed.py","--manifest","/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/raytrace-manifest.json","--darwin-counters","--repeat","4","--order","abba-baab","--timeout","30","--engine","baseline=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/build-array/release/qjs","--engine","candidate=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/build-array/release/qjs","--output","/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/raytrace-aa"],
+      "elapsed_seconds": 4.764023065567017,
+      "exit_code": 0
+    },
+    {
+      "name": "raytrace-ab",
+      "command": ["/opt/homebrew/opt/python@3.14/bin/python3.14","/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/scripts/benchmark/fixed.py","--manifest","/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/raytrace-manifest.json","--darwin-counters","--repeat","4","--order","abba-baab","--timeout","30","--engine","baseline=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/build-array/release/qjs","--engine","candidate=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/build-final/release/qjs","--output","/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/raytrace-ab"],
+      "elapsed_seconds": 4.743949890136719,
+      "exit_code": 0
+    }
+  ]
+}

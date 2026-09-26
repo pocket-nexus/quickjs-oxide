@@ -3,11 +3,26 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from fixed import load_workloads
+from fixed import load_workloads, parse_darwin_counters
 from run import digest
 
 
 class ManifestTests(unittest.TestCase):
+    def test_darwin_time_l_counter_fixture(self):
+        raw = ("0.01 real 0.01 user 0.00 sys\n"
+               "       123,456 instructions retired\n"
+               "       9,876 cycles elapsed\n"
+               "       2097152 maximum resident set size\n"
+               "       1048576 peak memory footprint\n")
+        self.assertEqual(parse_darwin_counters(raw), {
+            'instructions_retired': 123456, 'cycles_elapsed': 9876,
+            'maximum_resident_set_size': 2097152, 'peak_memory_footprint': 1048576,
+        })
+        with self.assertRaisesRegex(ValueError, 'missing Darwin counters'):
+            parse_darwin_counters(raw.replace('9,876 cycles elapsed\n', ''))
+        with self.assertRaisesRegex(ValueError, 'must be positive'):
+            parse_darwin_counters(raw.replace('9,876 cycles elapsed', '0 cycles elapsed'))
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -24,7 +39,7 @@ class ManifestTests(unittest.TestCase):
     def test_relocation_preserves_byte_identity(self):
         self.write([self.item])
         result = load_workloads(self.report, self.directory, ['loop'])
-        self.assertEqual(result[0]['path'], str(self.source))
+        self.assertEqual(Path(result[0]['path']), self.source.resolve())
         self.assertEqual(result[0]['expected'], '42\n')
 
     def test_changed_workload_is_rejected(self):

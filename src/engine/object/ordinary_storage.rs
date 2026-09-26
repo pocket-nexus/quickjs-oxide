@@ -6,9 +6,10 @@ use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::atom::{Atom, AtomIdx};
 use crate::engine::heap::runtime::RuntimeState;
-use crate::engine::heap::{ObjectId, ObjectKind, ObjectPayload, PropertySlot};
+use crate::engine::heap::{ObjectId, ObjectKind, ObjectPayload, PropertySlot, RawValue};
 use crate::engine::object::shape::PropertyFlags;
 use crate::engine::object::{ObjectRef, PropertyKey};
+use crate::engine::value::number::operations::Number;
 use crate::engine::value::{JsValue, Value};
 
 /// Affine native payload fact selected together with an own property value.
@@ -91,6 +92,30 @@ fn locate(
         index,
         flags: entry.flags,
     }))
+}
+
+// A materialized Array keeps indexed properties in its ordinary shape and
+// slots. Select a single own data Number without constructing a key,
+// retaining an owner, or walking the prototype chain. Missing and exotic
+// properties must continue through the canonical [[Get]] operation.
+fn materialized_array_own_number(
+    state: &RuntimeState,
+    data: &crate::engine::heap::ObjectData,
+    index: u32,
+) -> Option<Number> {
+    let atom = Atom::from_immediate_integer(index)?;
+    let shape = state.heap.shape(data.shape).ok()?;
+    let slot = shape.find(AtomIdx::from_raw(atom.raw()))? as usize;
+    let number = match data.slots.get(slot)? {
+        PropertySlot::Data(RawValue::Int(value)) => Some(Number::Int(*value)),
+        PropertySlot::Data(RawValue::Float(value)) => Some(Number::Float(*value)),
+        _ => None,
+    }?;
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_execution_event(
+        "array_materialized_own_number_read",
+    );
+    Some(number)
 }
 
 // The shared physical selector used by both single-step Set and the local
@@ -982,6 +1007,7 @@ impl Runtime {
     /// A published same-domain bytecode root owns this linked static atom.
     /// Own-slot classification and projection share the ordinary read kernel;
     /// every decline leaves input owners, lazy properties and prototypes alone.
+    #[cfg(test)]
     pub(crate) fn try_ordinary_field_immediate_read(
         &self,
         base: &JsValue,
@@ -997,54 +1023,74 @@ impl Runtime {
             return None;
         }
         let state = self.0.state.try_borrow().ok()?;
-        if let JsValue::String(id) = base {
-            // The executable owns a same-runtime interned atom; the pinned
-            // spelling has that same canonical identity. No text traversal is
-            // needed for each primitive string length read.
-            if atom
-                != state
-                    .pinned_atoms
-                    .get(crate::engine::atom::pinned::PinnedAtom::Length)
-            {
-                return None;
-            }
-            let length = state.heap.string_fast(*id).len();
+        immediate_field_in_state(&state, base, atom)
+    }
+}
+
+#[cfg(test)]
+fn immediate_field_in_state(state: &RuntimeState, base: &JsValue, atom: Atom) -> Option<JsValue> {
+    field_in_state(state, base, atom, immediate_value_jsvalue)
+}
+
+/// Select an ordinary own data slot once, including at megamorphic sites.
+/// The caller promotes the borrowed slot while this same heap borrow is live.
+/// It has already proved whether consuming `base` can drain storage. Missing,
+/// accessor, lazy and exotic reads still take the canonical driver path.
+fn field_in_state(
+    state: &RuntimeState,
+    base: &JsValue,
+    atom: Atom,
+    promote: impl FnOnce(&RawValue) -> Option<JsValue>,
+) -> Option<JsValue> {
+    if let JsValue::String(id) = base {
+        // The executable owns a same-runtime interned atom; the pinned
+        // spelling has that same canonical identity. No text traversal is
+        // needed for each primitive string length read.
+        if atom
+            != state
+                .pinned_atoms
+                .get(crate::engine::atom::pinned::PinnedAtom::Length)
+        {
+            return None;
+        }
+        let length = state.heap.string_fast(*id).len();
+        return Some(if let Ok(length) = i32::try_from(length) {
+            JsValue::Int(length)
+        } else {
+            JsValue::Float(length as f64)
+        });
+    }
+    let JsValue::Object(object) = base else {
+        return None;
+    };
+    let id = *object;
+    let data = state.heap.object(id).ok()?;
+    if matches!(
+        (data.kind, &data.payload),
+        (ObjectKind::Array, ObjectPayload::Array { .. })
+    ) {
+        let first = state.heap.shape(data.shape).ok()?.entries().first()?;
+        if first.atom == AtomIdx::from_raw(atom.raw()) {
+            let (length, _) = Runtime::array_length_state_in_heap(&state.heap, id, atom).ok()??;
             return Some(if let Ok(length) = i32::try_from(length) {
                 JsValue::Int(length)
             } else {
-                JsValue::Float(length as f64)
+                JsValue::Float(f64::from(length))
             });
         }
-        let JsValue::Object(object) = base else {
-            return None;
-        };
-        let id = *object;
-        let data = state.heap.object(id).ok()?;
-        if matches!(
-            (data.kind, &data.payload),
-            (ObjectKind::Array, ObjectPayload::Array { .. })
-        ) {
-            let first = state.heap.shape(data.shape).ok()?.entries().first()?;
-            if first.atom == AtomIdx::from_raw(atom.raw()) {
-                let (length, _) =
-                    Self::array_length_state_in_heap(&state.heap, id, atom).ok()??;
-                return Some(if let Ok(length) = i32::try_from(length) {
-                    JsValue::Int(length)
-                } else {
-                    JsValue::Float(f64::from(length))
-                });
-            }
-            return None;
-        }
-        if !is_ordinary(data) {
-            return None;
-        }
-        let slot = locate(&state, id, atom).ok()??;
-        let PropertySlot::Data(value) = &data.slots[slot.index] else {
-            return None;
-        };
-        immediate_value_jsvalue(value)
+        return None;
     }
+    if !is_ordinary(data) {
+        return None;
+    }
+    let slot = locate(state, id, atom).ok()??;
+    let PropertySlot::Data(value) = &data.slots[slot.index] else {
+        return None;
+    };
+    promote(value)
+}
+
+impl Runtime {
     /// A published function already owns its static key. Only the selected
     /// result/getter is promoted here; fallback will acquire an owning key.
     #[cfg(test)]
@@ -1162,6 +1208,89 @@ impl Runtime {
 }
 
 impl Runtime {
+    /// Read an own Number from a genuine Array while its base owner remains in
+    /// the frame. Dense elements and materialized data slots qualify; read
+    /// semantics do not depend on a data property's attribute flags. Holes and
+    /// accessors fall back to canonical [[Get]].
+    /// The heap borrow ends before the Copy result leaves.
+    pub(crate) fn peek_dense_number(&self, base: &JsValue, index: u32) -> Option<Number> {
+        let JsValue::Object(id) = base else {
+            return None;
+        };
+        let state = self.0.state.try_borrow().ok()?;
+        let data = state.heap.object(*id).ok()?;
+        if !matches!(data.kind, ObjectKind::Array) {
+            return None;
+        }
+        match &data.payload {
+            ObjectPayload::Array { dense: Some(dense) } => match dense.get(index as usize)? {
+                RawValue::Int(value) => Some(Number::Int(*value)),
+                RawValue::Float(value) => Some(Number::Float(*value)),
+                _ => None,
+            },
+            ObjectPayload::Array { dense: None } => {
+                materialized_array_own_number(&state, data, index)
+            }
+            _ => None,
+        }
+    }
+
+    /// Diagnose a *previously failed* numeric dense read. This performs an
+    /// extra heap borrow only in profiling builds and never changes storage.
+    #[cfg(feature = "profiling")]
+    pub(crate) fn diagnose_dense_number_read_miss(
+        &self,
+        base: &JsValue,
+        index: u32,
+    ) -> &'static str {
+        if !matches!(base, JsValue::Object(_)) {
+            return "base_not_object";
+        }
+        let Ok(state) = self.0.state.try_borrow() else {
+            return "read_borrow_unavailable";
+        };
+        dense_number_miss_in_state(&state, base, index)
+    }
+
+    /// Diagnose a *previously failed* numeric dense write. The mutable
+    /// borrow probe distinguishes storage readiness from an active lease.
+    #[cfg(feature = "profiling")]
+    pub(crate) fn diagnose_dense_number_write_miss(
+        &self,
+        base: &JsValue,
+        index: u32,
+    ) -> &'static str {
+        if !matches!(base, JsValue::Object(_)) {
+            return "base_not_object";
+        }
+        let Ok(state) = self.0.state.try_borrow_mut() else {
+            return "write_borrow_unavailable";
+        };
+        dense_number_miss_in_state(&state, base, index)
+    }
+
+    /// Replace one existing own dense Number under a single heap borrow. A
+    /// dense element has the default writable data descriptor; descriptor
+    /// changes materialize the Array and make this leaf decline. Both the old
+    /// and new values are immediate, so this cannot release an owner, drain
+    /// cleanup, change layout or length, or invoke user code.
+    #[inline]
+    pub(crate) fn try_write_dense_number(&self, base: &JsValue, index: u32, value: Number) -> bool {
+        let JsValue::Object(id) = base else {
+            return false;
+        };
+        let Ok(mut state) = self.0.state.try_borrow_mut() else {
+            return false;
+        };
+        let replacement = match value {
+            Number::Int(number) => RawValue::Int(number),
+            Number::Float(number) => RawValue::Float(number),
+        };
+        state
+            .heap
+            .try_replace_dense_number_value(*id, index, replacement)
+    }
+
     /// Borrow an existing dense own immediate value while proving that the VM
     /// can subsequently release its base operand without draining heap work.
     /// Every decline leaves owners and storage untouched; the general property
@@ -1198,11 +1327,19 @@ impl Runtime {
         }
         let mut state = self.0.state.try_borrow_mut().ok()?;
         let data = state.heap.object(*object).ok()?;
-        if matches!(
-            (data.kind, &data.payload),
-            (ObjectKind::Array, ObjectPayload::Array { .. })
-        ) {
-            return immediate_value_jsvalue(data.dense_array_value(index)?);
+        if matches!(data.kind, ObjectKind::Array) {
+            match &data.payload {
+                ObjectPayload::Array { dense: Some(dense) } => {
+                    return immediate_value_jsvalue(dense.get(index as usize)?);
+                }
+                ObjectPayload::Array { dense: None } => {
+                    return match materialized_array_own_number(&state, data, index)? {
+                        Number::Int(value) => Some(JsValue::Int(value)),
+                        Number::Float(value) => Some(JsValue::Float(value)),
+                    };
+                }
+                _ => {}
+            }
         }
         if !include_typed {
             return None;
@@ -1225,9 +1362,111 @@ impl Runtime {
     }
 }
 
+/// Report the first currently observable guard failure in the same order as
+/// the dense leaf. A later canonical property operation can have additional
+/// semantics (prototype, accessor, etc.); this label is not a unique cause.
+#[cfg(feature = "profiling")]
+fn dense_number_miss_in_state(state: &RuntimeState, base: &JsValue, index: u32) -> &'static str {
+    let JsValue::Object(id) = base else {
+        return "base_not_object";
+    };
+    let Ok(data) = state.heap.object(*id) else {
+        return "object_unavailable";
+    };
+    if !matches!(data.kind, ObjectKind::Array) {
+        return "not_array";
+    }
+    let ObjectPayload::Array { dense } = &data.payload else {
+        return "array_payload_unavailable";
+    };
+    let Some(dense) = dense else {
+        return materialized_number_miss_in_state(state, *id, index);
+    };
+    let Some(index) = usize::try_from(index).ok() else {
+        return "index_unrepresentable";
+    };
+    let Some(value) = dense.get(index) else {
+        let length = match data.slots.first() {
+            Some(PropertySlot::Data(RawValue::Int(length))) if *length >= 0 => Some(*length as u32),
+            Some(PropertySlot::Data(RawValue::Float(length)))
+                if length.is_finite()
+                    && *length >= 0.0
+                    && *length <= f64::from(u32::MAX)
+                    && length.fract() == 0.0 =>
+            {
+                Some(*length as u32)
+            }
+            _ => None,
+        };
+        return match length {
+            Some(length) if (index as u64) < u64::from(length) => "outside_dense_prefix_in_length",
+            Some(_) => "beyond_array_length",
+            None => "array_length_unavailable",
+        };
+    };
+    if matches!(value, RawValue::Int(_) | RawValue::Float(_)) {
+        "dense_ready_after_failure"
+    } else {
+        "dense_non_number"
+    }
+}
+
+/// Refine the representation failure without invoking [[Get]], walking the
+/// prototype chain, interning a key, or retaining a value. These are observed
+/// own-slot states, not claims about why the whole Array stayed materialized.
+#[cfg(feature = "profiling")]
+fn materialized_number_miss_in_state(
+    state: &RuntimeState,
+    object: ObjectId,
+    index: u32,
+) -> &'static str {
+    let Some(atom) = Atom::from_immediate_integer(index) else {
+        return "array_materialized.index_not_immediate";
+    };
+    let slot = match locate(state, object, atom) {
+        Ok(Some(slot)) => slot,
+        Ok(None) => return "array_materialized.missing_own_index",
+        Err(_) => return "array_materialized.layout_unavailable",
+    };
+    let Ok(data) = state.heap.object(object) else {
+        return "array_materialized.layout_unavailable";
+    };
+    match &data.slots[slot.index] {
+        PropertySlot::Accessor { .. } => "array_materialized.own_accessor",
+        PropertySlot::Data(_) if slot.flags != PropertyFlags::data(true, true, true) => {
+            "array_materialized.own_nondefault_descriptor"
+        }
+        PropertySlot::Data(RawValue::Int(_) | RawValue::Float(_)) => {
+            "array_materialized.own_default_number"
+        }
+        PropertySlot::Data(_) => "array_materialized.own_non_number",
+        PropertySlot::VarRef(_) | PropertySlot::AutoInit(_) => {
+            "array_materialized.own_special_slot"
+        }
+    }
+}
+
 #[cfg(test)]
 mod dense_array_read_tests {
     use super::*;
+
+    #[cfg(feature = "profiling")]
+    #[test]
+    fn dense_diagnostic_priority_reports_nonobject_before_borrow() {
+        let runtime = Runtime::new();
+        let base = JsValue::Int(3);
+        let _lease = runtime.0.state.borrow_mut();
+        assert!(runtime.peek_dense_number(&base, 0).is_none());
+        assert!(!runtime.try_write_dense_number(&base, 0, Number::Int(1)));
+        assert_eq!(
+            runtime.diagnose_dense_number_read_miss(&base, 0),
+            "base_not_object"
+        );
+        assert_eq!(
+            runtime.diagnose_dense_number_write_miss(&base, 0),
+            "base_not_object"
+        );
+    }
 
     fn receiver(runtime: &Runtime, expression: &str) -> Value {
         let mut context = runtime.new_context();
@@ -1235,6 +1474,421 @@ mod dense_array_read_tests {
         drop(context);
         runtime.run_gc().unwrap();
         value
+    }
+
+    #[test]
+    fn dense_number_peek_reads_only_existing_numeric_array_elements() {
+        let runtime = Runtime::new();
+        let base = runtime
+            .into_jsvalue(receiver(&runtime, "[7, -0, NaN, 'x']"))
+            .unwrap();
+        let JsValue::Object(id) = &base else {
+            panic!("array");
+        };
+        let count = runtime.0.state.borrow().heap.object_strong_count(*id);
+        assert!(matches!(
+            runtime.peek_dense_number(&base, 0),
+            Some(Number::Int(7))
+        ));
+        assert!(
+            matches!(runtime.peek_dense_number(&base, 1), Some(Number::Float(n)) if n == 0.0 && n.is_sign_negative())
+        );
+        assert!(
+            matches!(runtime.peek_dense_number(&base, 2), Some(Number::Float(n)) if n.is_nan())
+        );
+        for index in [3, 4, 5, u32::MAX] {
+            assert!(runtime.peek_dense_number(&base, index).is_none());
+        }
+        assert_eq!(
+            runtime.0.state.borrow().heap.object_strong_count(*id),
+            count
+        );
+        {
+            let _borrow = runtime.0.state.borrow_mut();
+            assert!(runtime.peek_dense_number(&base, 0).is_none());
+        }
+        runtime.release_jsvalue(base).unwrap();
+    }
+
+    #[test]
+    fn materialized_array_own_numbers_use_the_shared_read_leaf() {
+        let runtime = Runtime::new();
+        let base = runtime
+            .into_jsvalue(receiver(
+                &runtime,
+                "(function(){let a=[];a[5]=5;a[2]=-0;a[4]=NaN;return a})()",
+            ))
+            .unwrap();
+        let JsValue::Object(id) = &base else {
+            panic!("array");
+        };
+        // Canonical GetArrayEl consumes its base, so its read leaf must still
+        // decline the final owner. The borrowed numeric span need not do so.
+        assert!(runtime.try_array_immediate_read(&base, 5).is_none());
+        let keeper = runtime.dup_jsvalue(&base).unwrap();
+        let before = runtime.0.state.borrow().heap.object_strong_count(*id);
+        assert!(matches!(
+            runtime.peek_dense_number(&base, 5),
+            Some(Number::Int(5))
+        ));
+        assert!(matches!(
+            runtime.peek_dense_number(&base, 2),
+            Some(Number::Float(value)) if value == 0.0 && value.is_sign_negative()
+        ));
+        assert!(matches!(
+            runtime.peek_dense_number(&base, 4),
+            Some(Number::Float(value)) if value.is_nan()
+        ));
+        assert!(matches!(
+            runtime.try_array_immediate_read(&base, 5),
+            Some(JsValue::Int(5))
+        ));
+        assert!(matches!(
+            runtime.try_array_immediate_read(&base, 2),
+            Some(JsValue::Float(value)) if value == 0.0 && value.is_sign_negative()
+        ));
+        assert!(runtime.peek_dense_number(&base, 3).is_none());
+        assert!(runtime.try_array_immediate_read(&base, 3).is_none());
+        assert!(runtime.peek_dense_number(&base, u32::MAX).is_none());
+        assert_eq!(
+            runtime.0.state.borrow().heap.object_strong_count(*id),
+            before
+        );
+        runtime.release_jsvalue(base).unwrap();
+        runtime.release_jsvalue(keeper).unwrap();
+    }
+
+    #[test]
+    fn materialized_array_read_checks_each_own_descriptor_and_hole() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let base = runtime
+            .into_jsvalue(
+                context
+                    .eval(
+                        "globalThis.readEffects=0;globalThis.readArray=(function(){\
+                         let a=[3,4];Object.defineProperty(a,'0',{writable:false});\
+                         Object.setPrototypeOf(a,{get 1(){readEffects++;return 19}});return a\
+                         })();readArray",
+                    )
+                    .unwrap(),
+            )
+            .unwrap();
+        assert!(matches!(
+            runtime.peek_dense_number(&base, 0),
+            Some(Number::Int(3))
+        ));
+        assert!(matches!(
+            runtime.try_array_immediate_read(&base, 0),
+            Some(JsValue::Int(3))
+        ));
+        assert!(matches!(
+            runtime.peek_dense_number(&base, 1),
+            Some(Number::Int(4))
+        ));
+        assert!(matches!(
+            runtime.try_array_immediate_read(&base, 1),
+            Some(JsValue::Int(4))
+        ));
+        assert_eq!(context.eval("readEffects").unwrap(), Value::Int(0));
+        assert_eq!(
+            context.eval("delete readArray[1]").unwrap(),
+            Value::Bool(true)
+        );
+        assert!(runtime.peek_dense_number(&base, 1).is_none());
+        assert!(runtime.try_array_immediate_read(&base, 1).is_none());
+        assert_eq!(context.eval("readArray[1]").unwrap(), Value::Int(19));
+        assert_eq!(context.eval("readEffects").unwrap(), Value::Int(1));
+        runtime.release_jsvalue(base).unwrap();
+    }
+
+    #[test]
+    fn materialized_array_read_ignores_data_attributes_but_writes_still_decline() {
+        let runtime = Runtime::new();
+        for source in [
+            "Object.freeze([7])",
+            "Object.defineProperty([7], '0', {writable:false,enumerable:false})",
+            "Object.defineProperty([7], '0', {configurable:false})",
+        ] {
+            let base = runtime.into_jsvalue(receiver(&runtime, source)).unwrap();
+            assert!(matches!(
+                runtime.peek_dense_number(&base, 0),
+                Some(Number::Int(7))
+            ));
+            assert!(!runtime.try_write_dense_number(&base, 0, Number::Int(9)));
+            runtime.release_jsvalue(base).unwrap();
+        }
+    }
+
+    #[test]
+    fn dense_number_peek_declines_slow_exotic_and_foreign_receivers() {
+        for expression in [
+            "[, 1]",
+            "Object.defineProperty([1], '0', {get(){throw 71}})",
+            "new Proxy([1], {get(){throw 72}})",
+            "new Uint8Array([1])",
+            "({0:1,length:1})",
+        ] {
+            let runtime = Runtime::new();
+            let base = runtime
+                .into_jsvalue(receiver(&runtime, expression))
+                .unwrap();
+            assert!(
+                runtime.peek_dense_number(&base, 0).is_none(),
+                "{expression}"
+            );
+            runtime.release_jsvalue(base).unwrap();
+        }
+        let runtime = Runtime::new();
+        let base = runtime.into_jsvalue(receiver(&runtime, "[1]")).unwrap();
+        assert!(Runtime::new().peek_dense_number(&base, 0).is_none());
+        assert!(runtime.peek_dense_number(&JsValue::Int(1), 0).is_none());
+        runtime.release_jsvalue(base).unwrap();
+    }
+
+    #[cfg(feature = "profiling")]
+    #[test]
+    fn reverse_fill_recovers_dense_number_reads_and_writes() {
+        let runtime = Runtime::new();
+        let sequential = runtime
+            .into_jsvalue(receiver(
+                &runtime,
+                "(function(){let a=[];for(let i=0;i<4;i++)a[i]=i;return a})()",
+            ))
+            .unwrap();
+        let reverse = runtime
+            .into_jsvalue(receiver(
+                &runtime,
+                "(function(){let a=[];for(let i=3;i>=0;i--)a[i]=i;return a})()",
+            ))
+            .unwrap();
+        assert!(matches!(
+            runtime.peek_dense_number(&sequential, 3),
+            Some(Number::Int(3))
+        ));
+        assert!(matches!(
+            runtime.peek_dense_number(&reverse, 3),
+            Some(Number::Int(3))
+        ));
+        assert!(runtime.try_write_dense_number(&reverse, 3, Number::Int(7)));
+        assert!(matches!(
+            runtime.peek_dense_number(&reverse, 3),
+            Some(Number::Int(7))
+        ));
+        runtime.release_jsvalue(sequential).unwrap();
+        runtime.release_jsvalue(reverse).unwrap();
+    }
+
+    #[cfg(feature = "profiling")]
+    #[test]
+    fn materialized_miss_probe_observes_own_slots_without_getters_or_owners() {
+        for (source, index, suffix) in [
+            (
+                "(function(){let a=[];a[3]=3;a[1]=1;return a})()",
+                2,
+                "missing_own_index",
+            ),
+            (
+                "Object.defineProperty([1], '0', {get(){throw 71}})",
+                0,
+                "own_accessor",
+            ),
+            (
+                "(function(){let a=[];a[3]=3;a[1]={};return a})()",
+                1,
+                "own_non_number",
+            ),
+            (
+                "(function(){let a=[];a[2147483648]=1;return a})()",
+                2147483648,
+                "index_not_immediate",
+            ),
+        ] {
+            let runtime = Runtime::new();
+            let base = runtime.into_jsvalue(receiver(&runtime, source)).unwrap();
+            let JsValue::Object(id) = &base else {
+                panic!("Array expected")
+            };
+            let before = runtime.0.state.borrow().heap.object_strong_count(*id);
+            assert!(runtime.peek_dense_number(&base, index).is_none());
+            let expected = format!("array_materialized.{suffix}");
+            assert_eq!(
+                runtime.diagnose_dense_number_read_miss(&base, index),
+                expected,
+                "{source}"
+            );
+            assert_eq!(
+                runtime.diagnose_dense_number_write_miss(&base, index),
+                expected,
+                "{source}"
+            );
+            assert_eq!(
+                runtime.0.state.borrow().heap.object_strong_count(*id),
+                before
+            );
+            runtime.release_jsvalue(base).unwrap();
+        }
+
+        let runtime = Runtime::new();
+        let base = runtime
+            .into_jsvalue(receiver(
+                &runtime,
+                "(function(){let a=[];a[3]=3;a[1]=1;return a})()",
+            ))
+            .unwrap();
+        assert!(matches!(
+            runtime.peek_dense_number(&base, 1),
+            Some(Number::Int(1))
+        ));
+        // Writes still require dense storage, so the write diagnostic keeps
+        // describing this materialized own slot as a write miss.
+        assert_eq!(
+            runtime.diagnose_dense_number_write_miss(&base, 1),
+            "array_materialized.own_default_number"
+        );
+        runtime.release_jsvalue(base).unwrap();
+    }
+
+    #[cfg(feature = "profiling")]
+    #[test]
+    fn dense_miss_probe_distinguishes_length_and_element_class() {
+        for (source, index, reason) in [
+            ("new Array(4)", 2, "outside_dense_prefix_in_length"),
+            ("[1]", 2, "beyond_array_length"),
+            ("['x']", 0, "dense_non_number"),
+            ("({0:1})", 0, "not_array"),
+        ] {
+            let runtime = Runtime::new();
+            let base = runtime.into_jsvalue(receiver(&runtime, source)).unwrap();
+            assert!(runtime.peek_dense_number(&base, index).is_none());
+            assert_eq!(
+                runtime.diagnose_dense_number_read_miss(&base, index),
+                reason,
+                "{source}"
+            );
+            runtime.release_jsvalue(base).unwrap();
+        }
+    }
+
+    #[test]
+    fn dense_number_write_overwrites_existing_elements_without_changing_layout_or_owners() {
+        let runtime = Runtime::new();
+        let base = runtime
+            .into_jsvalue(receiver(&runtime, "[7, -0, NaN]"))
+            .unwrap();
+        let JsValue::Object(id) = &base else {
+            panic!("array");
+        };
+        let (shape, length, strong_count) = {
+            let state = runtime.0.state.borrow();
+            let data = state.heap.object(*id).unwrap();
+            (
+                data.shape,
+                data.slots[0].clone(),
+                state.heap.object_strong_count(*id),
+            )
+        };
+        assert!(runtime.try_write_dense_number(&base, 0, Number::Float(-0.0)));
+        assert!(runtime.try_write_dense_number(&base, 1, Number::Int(23)));
+        assert!(runtime.try_write_dense_number(&base, 2, Number::Float(f64::NAN)));
+        assert!(
+            matches!(runtime.peek_dense_number(&base, 0), Some(Number::Float(n)) if n == 0.0 && n.is_sign_negative())
+        );
+        assert!(matches!(
+            runtime.peek_dense_number(&base, 1),
+            Some(Number::Int(23))
+        ));
+        assert!(
+            matches!(runtime.peek_dense_number(&base, 2), Some(Number::Float(n)) if n.is_nan())
+        );
+        let state = runtime.0.state.borrow();
+        let data = state.heap.object(*id).unwrap();
+        assert_eq!(data.shape, shape);
+        assert!(
+            matches!((&data.slots[0], &length), (PropertySlot::Data(RawValue::Int(a)), PropertySlot::Data(RawValue::Int(b))) if a == b)
+        );
+        assert_eq!(state.heap.object_strong_count(*id), strong_count);
+        drop(state);
+        runtime.release_jsvalue(base).unwrap();
+    }
+
+    #[test]
+    fn dense_number_write_allows_readonly_length_and_same_array_source() {
+        let runtime = Runtime::new();
+        let base = runtime
+            .into_jsvalue(receiver(
+                &runtime,
+                "(function(){let a=[3,4];Object.defineProperty(a,'length',{writable:false});return a})()",
+            ))
+            .unwrap();
+        let copied = runtime.peek_dense_number(&base, 0).expect("dense source");
+        assert!(runtime.try_write_dense_number(&base, 1, copied));
+        assert!(matches!(
+            runtime.peek_dense_number(&base, 1),
+            Some(Number::Int(3))
+        ));
+        runtime.release_jsvalue(base).unwrap();
+    }
+
+    #[test]
+    fn dense_number_write_uses_own_element_before_prototype_setter() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let base = runtime
+            .into_jsvalue(
+                context
+                    .eval("var writes=0;var a=[1];Object.setPrototypeOf(a,{set 0(v){writes++}});a")
+                    .unwrap(),
+            )
+            .unwrap();
+        assert!(runtime.try_write_dense_number(&base, 0, Number::Int(9)));
+        assert!(matches!(
+            runtime.peek_dense_number(&base, 0),
+            Some(Number::Int(9))
+        ));
+        assert_eq!(context.eval("writes").unwrap(), Value::Int(0));
+        runtime.release_jsvalue(base).unwrap();
+    }
+
+    #[test]
+    fn dense_number_write_declines_before_changing_nonwritable_or_non_dense_receivers() {
+        for (expression, index) in [
+            ("[,'hole']", 0),
+            ("[1, 'text']", 1),
+            ("Object.defineProperty([1], '0', {writable:false})", 0),
+            ("Object.defineProperty([1], '0', {get(){throw 71}})", 0),
+            ("Object.freeze([1])", 0),
+            ("Object.seal([1])", 0),
+            ("new Proxy([1], {set(){throw 72}})", 0),
+            ("new Uint8Array([1])", 0),
+            ("({0:1,length:1})", 0),
+        ] {
+            let runtime = Runtime::new();
+            let base = runtime
+                .into_jsvalue(receiver(&runtime, expression))
+                .unwrap();
+            assert!(
+                !runtime.try_write_dense_number(&base, index, Number::Int(42)),
+                "{expression}"
+            );
+            runtime.release_jsvalue(base).unwrap();
+        }
+        let runtime = Runtime::new();
+        let base = runtime.into_jsvalue(receiver(&runtime, "[1]")).unwrap();
+        for index in [1, 2, u32::MAX] {
+            assert!(!runtime.try_write_dense_number(&base, index, Number::Int(42)));
+        }
+        assert!(!runtime.try_write_dense_number(&JsValue::Int(1), 0, Number::Int(42)));
+        assert!(!Runtime::new().try_write_dense_number(&base, 0, Number::Int(42)));
+        {
+            let _borrow = runtime.0.state.borrow();
+            assert!(!runtime.try_write_dense_number(&base, 0, Number::Int(42)));
+        }
+        assert!(matches!(
+            runtime.peek_dense_number(&base, 0),
+            Some(Number::Int(1))
+        ));
+        runtime.release_jsvalue(base).unwrap();
     }
 
     #[test]
@@ -1284,11 +1938,10 @@ mod dense_array_read_tests {
     }
 
     #[test]
-    fn dense_array_read_leaf_declines_missing_slow_reference_and_exotic_values() {
+    fn array_read_leaf_declines_missing_reference_and_exotic_values() {
         for expression in [
             "[,1]",
             "Object.defineProperty([1], '0', {get(){throw 71}})",
-            "Object.defineProperty([1], '0', {writable:false})",
             "[{}]",
             "['x']",
             // Short BigInts are edge-free; this case must retain a heap payload.
@@ -1337,7 +1990,7 @@ mod dense_array_read_tests {
     }
 
     #[test]
-    fn dense_array_read_leaf_keeps_frozen_materialized_values_on_canonical_path() {
+    fn array_read_leaf_reads_frozen_materialized_data_without_relaxing_writes() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
         let base = runtime
@@ -1348,7 +2001,15 @@ mod dense_array_read_tests {
             )
             .unwrap();
         runtime.run_gc().unwrap();
-        assert!(runtime.try_dense_array_immediate_read(&base, 0).is_none());
+        assert!(matches!(
+            runtime.try_dense_array_immediate_read(&base, 0),
+            Some(JsValue::Int(7))
+        ));
+        assert!(matches!(
+            runtime.try_dense_array_immediate_read(&base, 1),
+            Some(JsValue::Float(value)) if value == 0.0 && value.is_sign_negative()
+        ));
+        assert!(!runtime.try_write_dense_number(&base, 0, Number::Int(9)));
         assert_eq!(
             context
                 .eval("frozenRead[0] === 7 && 1 / frozenRead[1] === -Infinity")

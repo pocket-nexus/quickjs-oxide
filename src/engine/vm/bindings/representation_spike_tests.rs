@@ -86,9 +86,7 @@ fn a4_eight_byte_direct_value_alone_does_not_shrink_the_slot() {
 fn a4_joint_design_can_pack_kind_and_direct_value_into_one_word() {
     // Optimistic A4 tag budget: nine direct value kinds and five binding kinds
     // must share one tag byte before any payload bits are reserved.
-    const A4_VALUE_KIND_BITS: u32 = 4;
-    const BINDING_KIND_BITS: u32 = 3;
-    const _: () = assert!(A4_VALUE_KIND_BITS + BINDING_KIND_BITS <= u8::BITS);
+    const _: () = assert!(4 + 3 <= u8::BITS);
     assert_eq!(size_of::<PackedBinding>(), 8);
     // A full-range u64 has no niche, so `Option` costs a tag word. An 8-byte
     // slot stride needs a reserved all-zero tag for the empty slot instead.

@@ -1,0 +1,196 @@
+{
+  "schema": "follow-through-array-read-recheck-v1",
+  "scope": "4 valid ABBA samples; same-host interfered; no timing admission; source-layout checker overlapped this short batch",
+  "engines": {
+    "before": {
+      "commit": "8c38bc32a316aa6eb4fdf6540b448d0163770671",
+      "binary_sha256": "9631c36e6e387dd2c3187e9c75169556100a6b50418177e71b514dadd0eaad06",
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-inline/release/qjs"
+    },
+    "after": {
+      "commit": "44f6d340d84727560c2ea7c6f179add3a3863d6e",
+      "binary_sha256": "9a815b7f2607e9aa2474db4ea2bf4ba4a5203a06aa43dca6992d0b8a364b5517",
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/build-plain-fixed/release/qjs"
+    }
+  },
+  "source_files": {
+    "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/array-read-fixed/metadata.json": "b724b4738d7235bb48191853f71e175892501fac0cc14a80a54f229ef269f1e6",
+    "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/array-read-fixed/samples.jsonl": "2cde8ebc66ae2835bebdcbd112727a6b0d505e8607f3b53022722a8d624c07e4",
+    "/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/docs/performance/probes/fixed/array_read.js": "e198b7a4f263a025b296aa6a49d77101603ee7c4ef0370c0cd6963711962b38d"
+  },
+  "raw_samples": [
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/array-read-fixed/raw/array_read-before-0.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-inline/release/qjs",
+        "/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/docs/performance/probes/fixed/array_read.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 85356792,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/array-read-fixed/raw/array_read-before-0.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/array-read-fixed/raw/array_read-before-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/array-read-fixed/raw/array_read-before-0.time-l.txt",
+        "raw_sha256": "64d48f5c9a71ae364206bec96c81592cfa112a1828ca01824cd88070a68a7684",
+        "values": {
+          "maximum_resident_set_size": 6029312,
+          "instructions_retired": 1493223952,
+          "cycles_elapsed": 234097996,
+          "peak_memory_footprint": 2622272
+        }
+      },
+      "case": "array_read",
+      "size": 2000000,
+      "engine": "before",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/array-read-fixed/raw/array_read-after-0.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/build-plain-fixed/release/qjs",
+        "/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/docs/performance/probes/fixed/array_read.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 92801375,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/array-read-fixed/raw/array_read-after-0.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/array-read-fixed/raw/array_read-after-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/array-read-fixed/raw/array_read-after-0.time-l.txt",
+        "raw_sha256": "84aa4eac4a9a8bb663057989eaa437bdd81d31afb6b7eb0b3e8efcf6f9b1cc4a",
+        "values": {
+          "maximum_resident_set_size": 5996544,
+          "instructions_retired": 1472088828,
+          "cycles_elapsed": 233187150,
+          "peak_memory_footprint": 2671424
+        }
+      },
+      "case": "array_read",
+      "size": 2000000,
+      "engine": "after",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/array-read-fixed/raw/array_read-after-1.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/build-plain-fixed/release/qjs",
+        "/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/docs/performance/probes/fixed/array_read.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 94646167,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/array-read-fixed/raw/array_read-after-1.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/array-read-fixed/raw/array_read-after-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/array-read-fixed/raw/array_read-after-1.time-l.txt",
+        "raw_sha256": "506672ae1b70189fbd43238fe7ec4610de01d9cf7859eba230e1d3bcfd0e6272",
+        "values": {
+          "maximum_resident_set_size": 5963776,
+          "instructions_retired": 1465523620,
+          "cycles_elapsed": 227575309,
+          "peak_memory_footprint": 2655104
+        }
+      },
+      "case": "array_read",
+      "size": 2000000,
+      "engine": "after",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/array-read-fixed/raw/array_read-before-1.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-inline/release/qjs",
+        "/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/docs/performance/probes/fixed/array_read.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 96216875,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/array-read-fixed/raw/array_read-before-1.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/array-read-fixed/raw/array_read-before-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/array-read-fixed/raw/array_read-before-1.time-l.txt",
+        "raw_sha256": "4247825b923e31f2e5007ffbd5565dd32170539a887296b4f3e75ae9bf0dd424",
+        "values": {
+          "maximum_resident_set_size": 6012928,
+          "instructions_retired": 1486978778,
+          "cycles_elapsed": 231427060,
+          "peak_memory_footprint": 2605888
+        }
+      },
+      "case": "array_read",
+      "size": 2000000,
+      "engine": "before",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    }
+  ],
+  "values": {
+    "before": {
+      "instructions_retired": [
+        1493223952,
+        1486978778
+      ],
+      "cycles_elapsed": [
+        234097996,
+        231427060
+      ],
+      "maximum_resident_set_size": [
+        6029312,
+        6012928
+      ],
+      "process_wall_ns": [
+        85356792,
+        96216875
+      ]
+    },
+    "after": {
+      "instructions_retired": [
+        1472088828,
+        1465523620
+      ],
+      "cycles_elapsed": [
+        233187150,
+        227575309
+      ],
+      "maximum_resident_set_size": [
+        5996544,
+        5963776
+      ],
+      "process_wall_ns": [
+        92801375,
+        94646167
+      ]
+    }
+  },
+  "after_over_before_pct": {
+    "instructions_retired": -1.429106871531527,
+    "cycles_elapsed": -1.0230592185353826,
+    "maximum_resident_set_size": -0.6802721088435382,
+    "process_wall_ns": 3.2349817553665394
+  },
+  "reason": "Verify removal of extra non-first operand helper call identified in 828bc677. Original 24 samples are retained separately."
+}

@@ -3,6 +3,7 @@
 
 use crate::engine::api::error::Error;
 use crate::engine::code::bytecode::Instruction;
+use crate::engine::code::fusion::{DenseSpanKind, DirectSlot, LocalFusionChoice};
 use crate::engine::heap::{BytecodeConstant, RawValue, SlotReleaseReadiness};
 use crate::engine::value::JsValue;
 use crate::engine::value::number::operations::Number;
@@ -16,6 +17,15 @@ use crate::engine::vm::stack::{RunSlots, copy_value};
 // transfer so the outlined driver bridge keeps its current call footprint.
 // Recheck the stage B measurements before widening any variant.
 const _: () = assert!(std::mem::size_of::<RunExit>() == 16);
+
+/// A published dense flag paired with the first operand already decoded by
+/// the matching GetLocal/GetLocalCheck or GetArg opcode arm. Only these arms
+/// construct it; the dense executor still checks the current binding/value.
+#[derive(Clone, Copy)]
+struct PublishedDenseEntry {
+    kind: DenseSpanKind,
+    first: DirectSlot,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum BindingSource {
@@ -311,6 +321,36 @@ fn primitive_release_owner(value: &JsValue) -> bool {
     immediate(value)
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DirectWriteClass {
+    Number,
+    Ready,
+    NeedsBoundary,
+    Other,
+}
+
+#[inline(always)]
+fn direct_write_class(
+    runtime: &crate::engine::api::runtime::Runtime,
+    binding: &FrameBinding,
+) -> Result<DirectWriteClass, Error> {
+    match binding {
+        FrameBinding::Direct(JsValue::Int(_) | JsValue::Float(_)) => Ok(DirectWriteClass::Number),
+        FrameBinding::Direct(old) => {
+            if runtime
+                .slot_value_release_readiness_jsvalue(old)
+                .map_err(runtime_error_to_vm_error)?
+                == SlotReleaseReadiness::Ready
+            {
+                Ok(DirectWriteClass::Ready)
+            } else {
+                Ok(DirectWriteClass::NeedsBoundary)
+            }
+        }
+        _ => Ok(DirectWriteClass::Other),
+    }
+}
+
 /// Fused "binding read + linked field read": complete the following GetField
 /// against a base object borrowed from a live binding (frame slot, this, or a
 /// captured/global cell). The binding keeps the base alive and neither the IC
@@ -332,9 +372,8 @@ fn borrowed_base_field_read(
     // demand the base-release readiness that canonical droppable-base reads
     // pre-prove. The discarded native selection has no observable effect.
     let mut native = None;
-    let value = runtime
-        .property_ic_read_fast(base, executable, field_pc, key, true, &mut native)
-        .or_else(|| runtime.try_ordinary_field_immediate_read(base, executable, key))?;
+    let value =
+        runtime.property_ic_read_fast(base, executable, field_pc, key, true, &mut native)?;
     #[cfg(feature = "profiling")]
     cold::event("fusion.BorrowedBaseField");
     Some(value)
@@ -350,6 +389,8 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
     let mut slots = transaction.slots();
     let cold = &mut body.owners;
     let runtime = cold.function.runtime();
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_fusion_static(runtime, executable);
     let mut pc = ProgramCounter::new(&mut frame.fault_pc, &mut frame.resume_pc);
     // Preserve the cold path's observation order, but keep this authenticated
     // frame resident. No slot borrow crosses active-PC publication or Drop.
@@ -386,7 +427,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             handled
         }};
     }
-    loop {
+    'execute: loop {
         pc.fault = pc.resume;
         let instruction = executable
             .code
@@ -481,10 +522,11 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 let Some(identity) = frame.property_generation.checked_add(1) else {
                     return Ok(RunExit::SetProperty(Some(*index)));
                 };
-                if !slots.property_ic_write_scalar(runtime, executable, pc.fault, *index)?
-                    && !resident_property!(property::Operation::Write(*index))
-                {
-                    return Ok(RunExit::SetProperty(Some(*index)));
+                match slots.property_ic_write_scalar(runtime, executable, pc.fault, *index)? {
+                    Some(true) => {}
+                    Some(false) => return Ok(RunExit::SetProperty(Some(*index))),
+                    None if resident_property!(property::Operation::Write(*index)) => {}
+                    None => return Ok(RunExit::SetProperty(Some(*index))),
                 }
                 frame.property_generation = identity;
                 true
@@ -510,8 +552,7 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     *index,
                     false,
                     &mut native,
-                )? && !slots.ordinary_field_immediate_read(runtime, executable, *index)?
-                {
+                )? {
                     return Ok(RunExit::GetField {
                         index: *index,
                         keep_receiver: false,
@@ -534,13 +575,10 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         keep_receiver: true,
                     });
                 }
-                let candidate = executable.fusion.method_call(pc.fault).filter(|count| {
-                    slots.has_operand_capacity(*count)
-                        && super::method_arguments::available(
-                            &slots,
-                            &executable.code[pc.fault + 1..pc.fault + count + 1],
-                        )
-                });
+                let candidate = executable
+                    .fusion
+                    .method_call(pc.fault)
+                    .filter(|count| slots.has_operand_capacity(*count));
                 if let Some(count) = candidate {
                     #[cfg(feature = "profiling")]
                     cold::instruction(observed_depth);
@@ -548,11 +586,16 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     for offset in 0..count {
                         pc.fault = start + offset + 1;
                         pc.resume = pc.fault;
-                        let argument = super::method_arguments::argument(
+                        let Some(argument) = super::method_arguments::argument(
                             runtime,
                             &slots,
                             &executable.code[pc.fault],
-                        )?;
+                        )?
+                        else {
+                            // Earlier argument pushes are already canonical;
+                            // resume this non-direct binding at its own PC.
+                            continue 'execute;
+                        };
                         slots.push(argument)?;
                         #[cfg(feature = "profiling")]
                         cold::instruction(observed_depth + offset + 1);
@@ -1322,6 +1365,15 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             | Instruction::SetArg(index)
                 if matches!(slots.parameter(*index)?, FrameBinding::Captured(_)) =>
             {
+                #[cfg(feature = "profiling")]
+                if matches!(instruction, Instruction::GetArg(_)) {
+                    crate::engine::api::profiling::record_fusion_dispatch(
+                        runtime,
+                        executable,
+                        pc.fault,
+                        executable.fusion.entry(pc.fault).has_candidate(),
+                    );
+                }
                 let immediate = if matches!(instruction, Instruction::GetArg(_)) {
                     match slots.parameter(*index)? {
                         FrameBinding::Captured(var_ref) => super::bindings::read_run_cell(
@@ -1390,84 +1442,178 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 });
             }
             Instruction::GetLocal(index) | Instruction::GetLocalCheck(index) => {
-                if let Some(instructions) = executable.fusion.local_add_span(pc.fault) {
-                    // S2/S4: a numeric pair or numeric literal completes
-                    // inside the scalar domain; every other kind keeps the
-                    // outlined primitive-addition bridge.
-                    if fusion::numeric_local_add(&mut slots, executable, pc.fault, *index).is_some()
-                    {
-                        #[cfg(feature = "profiling")]
-                        fusion::record_span(
-                            &executable.code[pc.fault..pc.fault + instructions],
-                            observed_depth,
-                        );
-                        pc.resume = pc.fault + instructions;
-                        continue;
-                    }
-                    let supported = match executable.code.get(pc.fault + 1) {
-                        Some(Instruction::GetLocal(right) | Instruction::GetLocalCheck(right)) => {
-                            slots.local_add_supported(runtime, *index, *right)?
+                let fusion_entry = executable.fusion.entry(pc.fault);
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_fusion_dispatch(
+                    runtime,
+                    executable,
+                    pc.fault,
+                    fusion_entry.has_candidate(),
+                );
+                if !fusion_entry.is_empty() {
+                    match fusion_entry.local_choice() {
+                        LocalFusionChoice::LocalAdd(instructions) => {
+                            // S2/S4: a numeric pair or numeric literal completes
+                            // inside the scalar domain; every other kind keeps the
+                            // outlined primitive-addition bridge.
+                            if fusion::numeric_local_add(&mut slots, executable, pc.fault, *index)
+                                .is_some()
+                            {
+                                #[cfg(feature = "profiling")]
+                                crate::engine::api::profiling::record_fusion_outcome(
+                                    runtime,
+                                    executable,
+                                    pc.fault,
+                                    "local_add",
+                                    None,
+                                );
+                                #[cfg(feature = "profiling")]
+                                fusion::record_span(
+                                    &executable.code[pc.fault..pc.fault + instructions],
+                                    observed_depth,
+                                );
+                                pc.resume = pc.fault + instructions;
+                                continue;
+                            }
+                            #[cfg(feature = "profiling")]
+                            crate::engine::api::profiling::record_fusion_outcome(
+                                runtime,
+                                executable,
+                                pc.fault,
+                                "local_add",
+                                Some("guard"),
+                            );
+                            let supported = match executable.code.get(pc.fault + 1) {
+                                Some(
+                                    Instruction::GetLocal(right)
+                                    | Instruction::GetLocalCheck(right),
+                                ) => slots.local_add_supported(runtime, *index, *right)?,
+                                Some(Instruction::PushConst(constant))
+                                    if matches!(
+                                        executable.constant(*constant),
+                                        Some(BytecodeConstant::Value(RawValue::String(_)))
+                                    ) =>
+                                {
+                                    slots.local_add_constant_supported(runtime, *index)?
+                                }
+                                _ => false,
+                            };
+                            if supported {
+                                return Ok(RunExit::AddLocal);
+                            }
                         }
-                        Some(Instruction::PushConst(constant))
-                            if matches!(
-                                executable.constant(*constant),
-                                Some(BytecodeConstant::Value(RawValue::String(_)))
-                            ) =>
-                        {
-                            slots.local_add_constant_supported(runtime, *index)?
+                        LocalFusionChoice::Update(update) => {
+                            let updated = fusion::update_local(&mut slots, *index, update);
+                            #[cfg(feature = "profiling")]
+                            crate::engine::api::profiling::record_fusion_outcome(
+                                runtime,
+                                executable,
+                                pc.fault,
+                                "update",
+                                match &updated {
+                                    Ok(true) => None,
+                                    Ok(false) => Some("guard"),
+                                    Err(_) => Some("error"),
+                                },
+                            );
+                            if updated? {
+                                #[cfg(feature = "profiling")]
+                                fusion::record_span(
+                                    &executable.code[pc.fault..pc.fault + update.instructions],
+                                    observed_depth,
+                                );
+                                pc.resume = pc.fault + update.instructions;
+                                continue;
+                            }
                         }
-                        _ => false,
-                    };
-                    if supported {
-                        return Ok(RunExit::AddLocal);
-                    }
-                }
-                if let Some(update) = executable.fusion.update(pc.fault) {
-                    if fusion::update_local(&mut slots, *index, update)? {
-                        #[cfg(feature = "profiling")]
-                        fusion::record_span(
-                            &executable.code[pc.fault..pc.fault + update.instructions],
-                            observed_depth,
-                        );
-                        pc.resume = pc.fault + update.instructions;
-                        continue;
-                    }
-                }
-                // S1: two direct producers, one numeric comparison, one
-                // conditional branch. Nothing is pushed or popped, so a guard
-                // miss leaves the canonical span start untouched.
-                if let Some(instructions) = executable.fusion.local_compare_branch(pc.fault) {
-                    if let Some(next) = fusion::local_compare_branch(
-                        &slots,
-                        &executable.code[pc.fault..],
-                        pc.fault,
-                        instructions,
-                    ) {
-                        #[cfg(feature = "profiling")]
-                        fusion::record_span(
-                            &executable.code[pc.fault..pc.fault + instructions],
-                            observed_depth,
-                        );
-                        pc.resume = next;
-                        continue;
-                    }
-                }
-                // S3: one direct object base completes one linked field read
-                // into the numeric accumulator. The location-cache peek is
-                // non-owning; every other shape stays canonical.
-                if let Some(instructions) = executable.fusion.local_field_add_span(pc.fault) {
-                    if fusion::numeric_local_field_add(
-                        &mut slots, runtime, executable, pc.fault, *index,
-                    )
-                    .is_some()
-                    {
-                        #[cfg(feature = "profiling")]
-                        fusion::record_span(
-                            &executable.code[pc.fault..pc.fault + instructions],
-                            observed_depth,
-                        );
-                        pc.resume = pc.fault + instructions;
-                        continue;
+                        // S1: two direct producers, one numeric comparison, one
+                        // conditional branch. Nothing is pushed or popped, so a guard
+                        // miss leaves the canonical span start untouched.
+                        LocalFusionChoice::CompareBranch(instructions) => {
+                            if let Some(next) = fusion::local_compare_branch(
+                                &slots,
+                                &executable.code[pc.fault..],
+                                pc.fault,
+                                instructions,
+                            ) {
+                                #[cfg(feature = "profiling")]
+                                crate::engine::api::profiling::record_fusion_outcome(
+                                    runtime, executable, pc.fault, "compare", None,
+                                );
+                                #[cfg(feature = "profiling")]
+                                fusion::record_span(
+                                    &executable.code[pc.fault..pc.fault + instructions],
+                                    observed_depth,
+                                );
+                                pc.resume = next;
+                                continue;
+                            }
+                            #[cfg(feature = "profiling")]
+                            crate::engine::api::profiling::record_fusion_outcome(
+                                runtime,
+                                executable,
+                                pc.fault,
+                                "compare",
+                                Some("guard"),
+                            );
+                        }
+                        // S3: one direct object base completes one linked field read
+                        // into the numeric accumulator. The location-cache peek is
+                        // non-owning; every other shape stays canonical.
+                        LocalFusionChoice::FieldAdd(instructions) => {
+                            if fusion::numeric_local_field_add(
+                                &mut slots, runtime, executable, pc.fault, *index,
+                            )
+                            .is_some()
+                            {
+                                #[cfg(feature = "profiling")]
+                                crate::engine::api::profiling::record_fusion_outcome(
+                                    runtime,
+                                    executable,
+                                    pc.fault,
+                                    "field_add",
+                                    None,
+                                );
+                                #[cfg(feature = "profiling")]
+                                fusion::record_span(
+                                    &executable.code[pc.fault..pc.fault + instructions],
+                                    observed_depth,
+                                );
+                                pc.resume = pc.fault + instructions;
+                                continue;
+                            }
+                            #[cfg(feature = "profiling")]
+                            crate::engine::api::profiling::record_fusion_outcome(
+                                runtime,
+                                executable,
+                                pc.fault,
+                                "field_add",
+                                Some("guard"),
+                            );
+                        }
+                        LocalFusionChoice::Dense(kind) => {
+                            let entry = PublishedDenseEntry {
+                                kind,
+                                first: DirectSlot::Local(*index),
+                            };
+                            if let Some(end) = fusion::try_numeric_span(
+                                &mut slots,
+                                runtime,
+                                executable,
+                                pc.fault,
+                                entry,
+                                &mut frame.property_generation,
+                            ) {
+                                #[cfg(feature = "profiling")]
+                                fusion::record_span(
+                                    &executable.code[pc.fault..end],
+                                    observed_depth,
+                                );
+                                pc.resume = end;
+                                continue;
+                            }
+                        }
+                        LocalFusionChoice::Canonical => {}
                     }
                 }
                 match slots.local(*index)? {
@@ -1696,38 +1842,35 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             | Instruction::SetLocal(index)
             | Instruction::PutLocalCheck(index)
             | Instruction::SetLocalCheck(index) => {
-                if matches!(slots.local(*index)?, FrameBinding::Direct(old) if runtime.slot_value_release_readiness_jsvalue(old).map_err(runtime_error_to_vm_error)? == SlotReleaseReadiness::Ready)
+                let keep = matches!(
+                    instruction,
+                    Instruction::SetLocal(_) | Instruction::SetLocalCheck(_)
+                );
+                let write_class = direct_write_class(runtime, slots.local(*index)?)?;
+                if write_class == DirectWriteClass::Number
+                    && slots.store_proven_number_operand(DirectSlot::Local(*index), keep)
                 {
-                    let next = if matches!(
-                        instruction,
-                        Instruction::SetLocal(_) | Instruction::SetLocalCheck(_)
-                    ) {
+                    true
+                } else if matches!(
+                    write_class,
+                    DirectWriteClass::Number | DirectWriteClass::Ready
+                ) {
+                    let next = if keep {
                         copy_value(runtime, slots.peek(0)?)?
                     } else {
                         slots.pop()?
                     };
                     let old = slots.replace_local(*index, FrameBinding::Direct(next))?;
-                    release_displaced(runtime, old)?;
-                    true
-                } else if matches!(slots.local(*index)?, FrameBinding::Direct(old) if primitive_release_owner(old))
-                {
-                    let next = if matches!(
-                        instruction,
-                        Instruction::SetLocal(_) | Instruction::SetLocalCheck(_)
-                    ) {
-                        copy_value(runtime, slots.peek(0)?)?
+                    if write_class == DirectWriteClass::Number {
+                        // The authenticated previous binding is an inline Number.
+                        drop(old);
                     } else {
-                        slots.pop()?
-                    };
-                    let old = slots.replace_local(*index, FrameBinding::Direct(next))?;
-                    drop(old);
+                        release_displaced(runtime, old)?;
+                    }
                     true
-                } else if matches!(slots.local(*index)?, FrameBinding::Direct(_)) {
+                } else if write_class == DirectWriteClass::NeedsBoundary {
                     release_outside_slots!({
-                        let next = if matches!(
-                            instruction,
-                            Instruction::SetLocal(_) | Instruction::SetLocalCheck(_)
-                        ) {
+                        let next = if keep {
                             copy_value(runtime, slots.peek(0)?)?
                         } else {
                             slots.pop()?
@@ -1740,6 +1883,32 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 }
             }
             Instruction::GetArg(index) => {
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_fusion_dispatch(
+                    runtime,
+                    executable,
+                    pc.fault,
+                    executable.fusion.entry(pc.fault).has_candidate(),
+                );
+                if let Some(kind) = executable.fusion.dense_span(pc.fault) {
+                    let entry = PublishedDenseEntry {
+                        kind,
+                        first: DirectSlot::Argument(*index),
+                    };
+                    if let Some(end) = fusion::try_numeric_span(
+                        &mut slots,
+                        runtime,
+                        executable,
+                        pc.fault,
+                        entry,
+                        &mut frame.property_generation,
+                    ) {
+                        #[cfg(feature = "profiling")]
+                        fusion::record_span(&executable.code[pc.fault..end], observed_depth);
+                        pc.resume = end;
+                        continue;
+                    }
+                }
                 if let FrameBinding::Direct(value) = slots.parameter(*index)? {
                     let copied = copy_value(runtime, value)?;
                     slots.push(copied)?;
@@ -1749,29 +1918,31 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 }
             }
             Instruction::PutArg(index) | Instruction::SetArg(index) => {
-                if matches!(slots.parameter(*index)?, FrameBinding::Direct(old) if runtime.slot_value_release_readiness_jsvalue(old).map_err(runtime_error_to_vm_error)? == SlotReleaseReadiness::Ready)
+                let keep = matches!(instruction, Instruction::SetArg(_));
+                let write_class = direct_write_class(runtime, slots.parameter(*index)?)?;
+                if write_class == DirectWriteClass::Number
+                    && slots.store_proven_number_operand(DirectSlot::Argument(*index), keep)
                 {
-                    let next = if matches!(instruction, Instruction::SetArg(_)) {
+                    true
+                } else if matches!(
+                    write_class,
+                    DirectWriteClass::Number | DirectWriteClass::Ready
+                ) {
+                    let next = if keep {
                         copy_value(runtime, slots.peek(0)?)?
                     } else {
                         slots.pop()?
                     };
                     let old = slots.replace_parameter(*index, FrameBinding::Direct(next))?;
-                    release_displaced(runtime, old)?;
-                    true
-                } else if matches!(slots.parameter(*index)?, FrameBinding::Direct(old) if primitive_release_owner(old))
-                {
-                    let next = if matches!(instruction, Instruction::SetArg(_)) {
-                        copy_value(runtime, slots.peek(0)?)?
+                    if write_class == DirectWriteClass::Number {
+                        drop(old);
                     } else {
-                        slots.pop()?
-                    };
-                    let old = slots.replace_parameter(*index, FrameBinding::Direct(next))?;
-                    drop(old);
+                        release_displaced(runtime, old)?;
+                    }
                     true
-                } else if matches!(slots.parameter(*index)?, FrameBinding::Direct(_)) {
+                } else if write_class == DirectWriteClass::NeedsBoundary {
                     release_outside_slots!({
-                        let next = if matches!(instruction, Instruction::SetArg(_)) {
+                        let next = if keep {
                             copy_value(runtime, slots.peek(0)?)?
                         } else {
                             slots.pop()?
@@ -2529,15 +2700,17 @@ mod tests {
         let profile = CostProfile::start();
         assert_eq!(context.eval("(function(){var a=[undefined,null,true,42,1.5,-0];if(a[0]!==undefined||a[1]!==null||a[2]!==true||a[3]!==42||a[4]!==1.5||!Object.is(a[5],-0))return 0;try{var x=a[3];throw x}catch(e){return e}})()").unwrap(), Value::Int(42));
         let costs = profile.snapshot();
-        assert!(
-            costs
-                .owned_execution_events
-                .get("array_immediate_read_in_run")
-                .copied()
-                .unwrap_or(0)
-                >= 7,
-            "{costs:?}"
-        );
+        let canonical_reads = costs
+            .owned_execution_events
+            .get("array_immediate_read_in_run")
+            .copied()
+            .unwrap_or(0);
+        let fused_reads = costs
+            .owned_execution_events
+            .get("fusion.DenseRead")
+            .copied()
+            .unwrap_or(0);
+        assert!(canonical_reads + fused_reads >= 7, "{costs:?}");
     }
 
     #[test]
@@ -2927,6 +3100,44 @@ pub(super) fn strict_comparison(
 #[cfg(test)]
 mod resident_semantics {
     use crate::engine::api::{Runtime, Value};
+
+    #[test]
+    fn method_span_resumes_at_later_captured_argument() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(
+            context
+                .eval(
+                    r#"
+                    function call(a) {
+                        let captured = 7;
+                        function read() { return captured; }
+                        return Math.max(a, captured) + read();
+                    }
+                    Math.max;
+                    call(3) === 14 && call(9) === 16 && call(3) === 14
+                    "#,
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+        let callable = runtime
+            .callable_from_value(context.eval("call").unwrap())
+            .unwrap();
+        let crate::engine::vm::call::CallableExecution::Bytecode { bytecode, .. } =
+            runtime.bytecode_for_callable(&callable).unwrap()
+        else {
+            panic!("call was not bytecode");
+        };
+        let executable = runtime.snapshot_function_bytecode(&bytecode).unwrap();
+        assert!(
+            executable
+                .code
+                .iter()
+                .enumerate()
+                .any(|(pc, _)| executable.fusion.method_call(pc) == Some(2))
+        );
+    }
 
     #[test]
     fn resident_add_keeps_default_hint_order_and_errors() {

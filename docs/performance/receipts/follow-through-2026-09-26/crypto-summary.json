@@ -1,0 +1,699 @@
+{
+  "schema": "follow-through-crypto-logical-v1",
+  "scope": "same pinned Crypto fixed driver, one Setup/run/TearDown per Benchmark; logical events only",
+  "comparison_limit": "old Rust 1.96 profiling release versus new Rust 1.88 profiling dev/debug; no timing, owned_instructions, machine instructions, or V8 Score comparison",
+  "identity": {
+    "upstream_commit": "2034d98fc8c5f8044e186267593f5d5ea5232caf",
+    "generated_sha256": "b10ac2a2a6ae96c9b09e513d02da81858377035a21f0559ea6480dc2eefc8bb3",
+    "source_sha256": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af",
+    "base_sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+    "driver_sha256": "e248737222519a73c1a9adc822360f8f5eaf0148afe72532fe679f52c213e6d8",
+    "runner_sha256": "1144e4ff77ca705ac47c3464612d3c5780bfef9e30642a35426a92e99f786186",
+    "old": {
+      "metadata_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-fixed-profile-v2/metadata.json",
+      "metadata_sha256": "79e812ba11e88a232ea58874981a550ddba55977e1688ff7ce1233731dbccffd",
+      "samples_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-fixed-profile-v2/samples.jsonl",
+      "samples_sha256": "2c0fd73f0754708e10a57b1b1c3d0a95a117c526d4df96d81763ccb5da716b3f",
+      "generated_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-fixed-profile-v2/generated/crypto.js",
+      "generated_sha256": "b10ac2a2a6ae96c9b09e513d02da81858377035a21f0559ea6480dc2eefc8bb3",
+      "cost_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-fixed-profile-v2/raw/crypto.cost.jsonl",
+      "cost_sha256": "968d5d91deaca1d95d8d00266bc3ac404eb4471cbff8b068db8c40af8e91de31",
+      "binary_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-profile-v2/release/qjs",
+      "binary_sha256": "2352b3ca0382178a35d1d2d5e1c55b7db1de21098fae455d6647ce2ed1fe6441",
+      "embedded_commit": "b4a5f4469531da44167fb400722c9756b9d71bbc"
+    },
+    "new": {
+      "metadata_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/crypto-profile/metadata.json",
+      "metadata_sha256": "637c67ce4e516825417557e5161d158252190212e95a1a2dd9f64a1190f46a33",
+      "samples_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/crypto-profile/samples.jsonl",
+      "samples_sha256": "07e5d93abe54a45a2bed1fce3c79e67fac567588f8ac7a2057968c4ae1aa5591",
+      "generated_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/crypto-profile/generated/crypto.js",
+      "generated_sha256": "b10ac2a2a6ae96c9b09e513d02da81858377035a21f0559ea6480dc2eefc8bb3",
+      "cost_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/crypto-profile/raw/crypto.cost.jsonl",
+      "cost_sha256": "d8e15cb17f29eec4b66a5c398707264c993af955e707e8c59fffca8fd00f8928",
+      "binary_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-choice-tests/debug/qjs",
+      "binary_sha256": "00d7489eec652fd93e01cecc429f16b72e88f1fcafd0cbe8cb881e68e9ca954b",
+      "embedded_commit": "unavailable"
+    },
+    "old_source_commit_basis": "release build receipt and embedded profile commit",
+    "new_reported_source_commit": "828bc6773a896e5198dbfc1893126e3592b5730c",
+    "new_source_commit_basis": "external plan and recorded build commands; debug CLI has no build receipt or embedded commit",
+    "plan_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/plan.json",
+    "plan_sha256": "6e6e8e498a636bdbb4f716b492bd27fea943430381ab504497d9f2b351fc9c75",
+    "diagnostic_build_log_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/validation/build-diagnostic.log",
+    "diagnostic_build_log_sha256": "1420fad2ba0f735eeb45ded89b5fdc596309772e168cf82aa8b22fcffcdbc823"
+  },
+  "static_functions": {
+    "count": 70,
+    "normalized_equal": true,
+    "normalized_sha256": "7ae5f8a57785ac83fb0948bd1b786ceb456d32171e2599c313354871e067189d",
+    "site_totals": {
+      "direct_local_read_sites": 709,
+      "direct_argument_read_sites": 262,
+      "unfused_read_sites": 828,
+      "dense_candidate_sites": 76,
+      "dense_noncandidate_read_sites": 895
+    }
+  },
+  "record_sets": {
+    "dispatch": {
+      "old_record_count": 774,
+      "new_record_count": 745,
+      "common_keys": 745,
+      "old_only": [
+        {
+          "function": "bnCompareTo",
+          "source": "crypto.js",
+          "definition_line_zero_based": 571,
+          "pc": 43,
+          "kind": null
+        },
+        {
+          "function": "bnToString",
+          "source": "crypto.js",
+          "definition_line_zero_based": 534,
+          "pc": 153,
+          "kind": null
+        },
+        {
+          "function": "bnpAddTo",
+          "source": "crypto.js",
+          "definition_line_zero_based": 1219,
+          "pc": 27,
+          "kind": null
+        },
+        {
+          "function": "bnpAddTo",
+          "source": "crypto.js",
+          "definition_line_zero_based": 1219,
+          "pc": 30,
+          "kind": null
+        },
+        {
+          "function": "bnpAddTo",
+          "source": "crypto.js",
+          "definition_line_zero_based": 1219,
+          "pc": 70,
+          "kind": null
+        },
+        {
+          "function": "bnpAddTo",
+          "source": "crypto.js",
+          "definition_line_zero_based": 1219,
+          "pc": 71,
+          "kind": null
+        },
+        {
+          "function": "bnpDLShiftTo",
+          "source": "crypto.js",
+          "definition_line_zero_based": 603,
+          "pc": 27,
+          "kind": null
+        },
+        {
+          "function": "bnpDivRemTo",
+          "source": "crypto.js",
+          "definition_line_zero_based": 736,
+          "pc": 106,
+          "kind": null
+        },
+        {
+          "function": "bnpDivRemTo",
+          "source": "crypto.js",
+          "definition_line_zero_based": 736,
+          "pc": 127,
+          "kind": null
+        },
+        {
+          "function": "bnpDivRemTo",
+          "source": "crypto.js",
+          "definition_line_zero_based": 736,
+          "pc": 235,
+          "kind": null
+        },
+        {
+          "function": "bnpDivRemTo",
+          "source": "crypto.js",
+          "definition_line_zero_based": 736,
+          "pc": 247,
+          "kind": null
+        },
+        {
+          "function": "bnpDivRemTo",
+          "source": "crypto.js",
+          "definition_line_zero_based": 736,
+          "pc": 249,
+          "kind": null
+        },
+        {
+          "function": "bnpDivRemTo",
+          "source": "crypto.js",
+          "definition_line_zero_based": 736,
+          "pc": 252,
+          "kind": null
+        },
+        {
+          "function": "bnpFromString",
+          "source": "crypto.js",
+          "definition_line_zero_based": 487,
+          "pc": 87,
+          "kind": null
+        },
+        {
+          "function": "bnpLShiftTo",
+          "source": "crypto.js",
+          "definition_line_zero_based": 623,
+          "pc": 57,
+          "kind": null
+        },
+        {
+          "function": "bnpLShiftTo",
+          "source": "crypto.js",
+          "definition_line_zero_based": 623,
+          "pc": 59,
+          "kind": null
+        },
+        {
+          "function": "bnpLShiftTo",
+          "source": "crypto.js",
+          "definition_line_zero_based": 623,
+          "pc": 67,
+          "kind": null
+        },
+        {
+          "function": "bnpLShiftTo",
+          "source": "crypto.js",
+          "definition_line_zero_based": 623,
+          "pc": 69,
+          "kind": null
+        },
+        {
+          "function": "bnpMultiplyTo",
+          "source": "crypto.js",
+          "definition_line_zero_based": 699,
+          "pc": 64,
+          "kind": null
+        },
+        {
+          "function": "bnpRShiftTo",
+          "source": "crypto.js",
+          "definition_line_zero_based": 642,
+          "pc": 48,
+          "kind": null
+        },
+        {
+          "function": "bnpRShiftTo",
+          "source": "crypto.js",
+          "definition_line_zero_based": 642,
+          "pc": 50,
+          "kind": null
+        },
+        {
+          "function": "bnpRShiftTo",
+          "source": "crypto.js",
+          "definition_line_zero_based": 642,
+          "pc": 78,
+          "kind": null
+        },
+        {
+          "function": "bnpRShiftTo",
+          "source": "crypto.js",
+          "definition_line_zero_based": 642,
+          "pc": 80,
+          "kind": null
+        },
+        {
+          "function": "bnpRShiftTo",
+          "source": "crypto.js",
+          "definition_line_zero_based": 642,
+          "pc": 93,
+          "kind": null
+        },
+        {
+          "function": "bnpRShiftTo",
+          "source": "crypto.js",
+          "definition_line_zero_based": 642,
+          "pc": 95,
+          "kind": null
+        },
+        {
+          "function": "bnpSubTo",
+          "source": "crypto.js",
+          "definition_line_zero_based": 662,
+          "pc": 27,
+          "kind": null
+        },
+        {
+          "function": "bnpSubTo",
+          "source": "crypto.js",
+          "definition_line_zero_based": 662,
+          "pc": 30,
+          "kind": null
+        },
+        {
+          "function": "bnpSubTo",
+          "source": "crypto.js",
+          "definition_line_zero_based": 662,
+          "pc": 70,
+          "kind": null
+        },
+        {
+          "function": "bnpSubTo",
+          "source": "crypto.js",
+          "definition_line_zero_based": 662,
+          "pc": 71,
+          "kind": null
+        }
+      ],
+      "new_only": [],
+      "changed_common_records": 17
+    },
+    "sites": {
+      "old_record_count": 120,
+      "new_record_count": 117,
+      "common_keys": 117,
+      "old_only": [
+        {
+          "function": "bnpAddTo",
+          "source": "crypto.js",
+          "definition_line_zero_based": 1219,
+          "pc": 70,
+          "kind": "dense_read"
+        },
+        {
+          "function": "bnpDivRemTo",
+          "source": "crypto.js",
+          "definition_line_zero_based": 736,
+          "pc": 235,
+          "kind": "update"
+        },
+        {
+          "function": "bnpSubTo",
+          "source": "crypto.js",
+          "definition_line_zero_based": 662,
+          "pc": 70,
+          "kind": "dense_read"
+        }
+      ],
+      "new_only": [],
+      "changed_common_records": 39
+    },
+    "callsites": {
+      "old_record_count": 157,
+      "new_record_count": 157,
+      "common_keys": 157,
+      "old_only": [],
+      "new_only": [],
+      "changed_common_records": 0
+    }
+  },
+  "dense": {
+    "old": {
+      "attempts": 2421003,
+      "hits": 929995,
+      "misses": 1491008,
+      "hit_percent": 38.413624435822676,
+      "misses_by_reason": {
+        "array_materialized": 1490963,
+        "beyond_array_length": 41,
+        "dense_non_number": 4
+      },
+      "by_kind": {
+        "dense_read_binary": {
+          "attempts": 793175,
+          "hits": 464034,
+          "misses": 329141
+        },
+        "dense_read_post_update": {
+          "attempts": 744364,
+          "hits": 463618,
+          "misses": 280746
+        },
+        "dense_read": {
+          "attempts": 839026,
+          "hits": 2286,
+          "misses": 836740
+        },
+        "dense_copy": {
+          "attempts": 150,
+          "hits": 0,
+          "misses": 150
+        },
+        "dense_store": {
+          "attempts": 43914,
+          "hits": 13,
+          "misses": 43901
+        },
+        "dense_acc_set_drop": {
+          "attempts": 24,
+          "hits": 0,
+          "misses": 24
+        },
+        "dense_read_index_binary": {
+          "attempts": 200,
+          "hits": 26,
+          "misses": 174
+        },
+        "dense_read_pre_update": {
+          "attempts": 150,
+          "hits": 18,
+          "misses": 132
+        }
+      },
+      "array_storage_dense_recovery": 0,
+      "dense_array_scalar_write_in_run": 3551
+    },
+    "new": {
+      "attempts": 2420979,
+      "hits": 1709482,
+      "misses": 711497,
+      "hit_percent": 70.61118663152386,
+      "misses_by_reason": {
+        "array_materialized": 711446,
+        "beyond_array_length": 47,
+        "dense_non_number": 4
+      },
+      "by_kind": {
+        "dense_read_binary": {
+          "attempts": 793175,
+          "hits": 636573,
+          "misses": 156602
+        },
+        "dense_read_post_update": {
+          "attempts": 744364,
+          "hits": 610774,
+          "misses": 133590
+        },
+        "dense_read": {
+          "attempts": 839002,
+          "hits": 440382,
+          "misses": 398620
+        },
+        "dense_copy": {
+          "attempts": 150,
+          "hits": 0,
+          "misses": 150
+        },
+        "dense_store": {
+          "attempts": 43914,
+          "hits": 21409,
+          "misses": 22505
+        },
+        "dense_acc_set_drop": {
+          "attempts": 24,
+          "hits": 24,
+          "misses": 0
+        },
+        "dense_read_index_binary": {
+          "attempts": 200,
+          "hits": 170,
+          "misses": 30
+        },
+        "dense_read_pre_update": {
+          "attempts": 150,
+          "hits": 150,
+          "misses": 0
+        }
+      },
+      "array_storage_dense_recovery": 60,
+      "dense_array_scalar_write_in_run": 430245
+    },
+    "delta": {
+      "attempts": -24,
+      "hits": 779487,
+      "misses": -779511,
+      "array_materialized_misses": -779517,
+      "recovery_events": 60,
+      "scalar_writes": 426694
+    }
+  },
+  "largest_dense_site_hit_changes": [
+    {
+      "function": "am3",
+      "source": "crypto.js",
+      "definition_line_zero_based": 392,
+      "pc": 51,
+      "kind": "dense_read",
+      "old_attempts": 744364,
+      "new_attempts": 744364,
+      "old_hits": 0,
+      "new_hits": 388695,
+      "hit_delta": 388695,
+      "old_misses": {
+        "array_materialized": 744364
+      },
+      "new_misses": {
+        "array_materialized": 355669
+      }
+    },
+    {
+      "function": "am3",
+      "source": "crypto.js",
+      "definition_line_zero_based": 392,
+      "pc": 20,
+      "kind": "dense_read_binary",
+      "old_attempts": 744364,
+      "new_attempts": 744364,
+      "old_hits": 463618,
+      "new_hits": 610774,
+      "hit_delta": 147156,
+      "old_misses": {
+        "array_materialized": 280746
+      },
+      "new_misses": {
+        "array_materialized": 133590
+      }
+    },
+    {
+      "function": "am3",
+      "source": "crypto.js",
+      "definition_line_zero_based": 392,
+      "pc": 26,
+      "kind": "dense_read_post_update",
+      "old_attempts": 744364,
+      "new_attempts": 744364,
+      "old_hits": 463618,
+      "new_hits": 610774,
+      "hit_delta": 147156,
+      "old_misses": {
+        "array_materialized": 280746
+      },
+      "new_misses": {
+        "array_materialized": 133590
+      }
+    },
+    {
+      "function": "bnpSquareTo",
+      "source": "crypto.js",
+      "definition_line_zero_based": 715,
+      "pc": 24,
+      "kind": "dense_store",
+      "old_attempts": 39672,
+      "new_attempts": 39672,
+      "old_hits": 0,
+      "new_hits": 19552,
+      "hit_delta": 19552,
+      "old_misses": {
+        "array_materialized": 39667,
+        "beyond_array_length": 5
+      },
+      "new_misses": {
+        "array_materialized": 20114,
+        "beyond_array_length": 6
+      }
+    },
+    {
+      "function": "montReduce",
+      "source": "crypto.js",
+      "definition_line_zero_based": 867,
+      "pc": 92,
+      "kind": "dense_read",
+      "old_attempts": 23751,
+      "new_attempts": 23751,
+      "old_hits": 0,
+      "new_hits": 12245,
+      "hit_delta": 12245,
+      "old_misses": {
+        "array_materialized": 23751
+      },
+      "new_misses": {
+        "array_materialized": 11506
+      }
+    },
+    {
+      "function": "montReduce",
+      "source": "crypto.js",
+      "definition_line_zero_based": 867,
+      "pc": 34,
+      "kind": "dense_read_binary",
+      "old_attempts": 23751,
+      "new_attempts": 23751,
+      "old_hits": 0,
+      "new_hits": 12245,
+      "hit_delta": 12245,
+      "old_misses": {
+        "array_materialized": 23751
+      },
+      "new_misses": {
+        "array_materialized": 11506
+      }
+    },
+    {
+      "function": "montReduce",
+      "source": "crypto.js",
+      "definition_line_zero_based": 867,
+      "pc": 48,
+      "kind": "dense_read_binary",
+      "old_attempts": 23751,
+      "new_attempts": 23751,
+      "old_hits": 0,
+      "new_hits": 12245,
+      "hit_delta": 12245,
+      "old_misses": {
+        "array_materialized": 23751
+      },
+      "new_misses": {
+        "array_materialized": 11506
+      }
+    },
+    {
+      "function": "bnpDRShiftTo",
+      "source": "crypto.js",
+      "definition_line_zero_based": 614,
+      "pc": 23,
+      "kind": "dense_read",
+      "old_attempts": 23748,
+      "new_attempts": 23748,
+      "old_hits": 0,
+      "new_hits": 12244,
+      "hit_delta": 12244,
+      "old_misses": {
+        "array_materialized": 23748
+      },
+      "new_misses": {
+        "array_materialized": 11504
+      }
+    },
+    {
+      "function": "bnpSquareTo",
+      "source": "crypto.js",
+      "definition_line_zero_based": 715,
+      "pc": 50,
+      "kind": "dense_read",
+      "old_attempts": 18807,
+      "new_attempts": 18807,
+      "old_hits": 0,
+      "new_hits": 9503,
+      "hit_delta": 9503,
+      "old_misses": {
+        "array_materialized": 18807
+      },
+      "new_misses": {
+        "array_materialized": 9304
+      }
+    },
+    {
+      "function": "bnpSquareTo",
+      "source": "crypto.js",
+      "definition_line_zero_based": 715,
+      "pc": 73,
+      "kind": "dense_read",
+      "old_attempts": 18807,
+      "new_attempts": 18807,
+      "old_hits": 0,
+      "new_hits": 9503,
+      "hit_delta": 9503,
+      "old_misses": {
+        "array_materialized": 18807
+      },
+      "new_misses": {
+        "array_materialized": 9304
+      }
+    },
+    {
+      "function": "bnpMultiplyTo",
+      "source": "crypto.js",
+      "definition_line_zero_based": 699,
+      "pc": 63,
+      "kind": "dense_read",
+      "old_attempts": 3875,
+      "new_attempts": 3875,
+      "old_hits": 38,
+      "new_hits": 3875,
+      "hit_delta": 3837,
+      "old_misses": {
+        "array_materialized": 3837
+      },
+      "new_misses": {}
+    },
+    {
+      "function": "bnpMultiplyTo",
+      "source": "crypto.js",
+      "definition_line_zero_based": 699,
+      "pc": 34,
+      "kind": "dense_store",
+      "old_attempts": 3874,
+      "new_attempts": 3874,
+      "old_hits": 0,
+      "new_hits": 1709,
+      "hit_delta": 1709,
+      "old_misses": {
+        "array_materialized": 3842,
+        "beyond_array_length": 32
+      },
+      "new_misses": {
+        "array_materialized": 2133,
+        "beyond_array_length": 32
+      }
+    }
+  ],
+  "omissions": {
+    "old": {
+      "fusion": {
+        "static_functions": 0,
+        "dispatch_events": 0,
+        "outcome_events": 0,
+        "callsite_events": 0
+      },
+      "vm_phases": {
+        "bytecode.prepare": 0,
+        "native.prepare": 1073
+      }
+    },
+    "new": {
+      "fusion": {
+        "static_functions": 0,
+        "dispatch_events": 0,
+        "outcome_events": 0,
+        "callsite_events": 0
+      },
+      "vm_phases": {
+        "bytecode.prepare": 0,
+        "native.prepare": 1073
+      }
+    }
+  },
+  "callsites": {
+    "old": {
+      "sites": 157,
+      "calls": 85340,
+      "object_callees": 85340,
+      "nonobject_callees": 0,
+      "callee_identity_changes": 3,
+      "distinct_callees_observed": 160,
+      "distinct_overflow_sites": 0,
+      "scope": "ordinary-driver-enter-selected-only; other call and construct paths are excluded"
+    },
+    "new": {
+      "sites": 157,
+      "calls": 85340,
+      "object_callees": 85340,
+      "nonobject_callees": 0,
+      "callee_identity_changes": 3,
+      "distinct_callees_observed": 160,
+      "distinct_overflow_sites": 0,
+      "scope": "ordinary-driver-enter-selected-only; other call and construct paths are excluded"
+    },
+    "normalized_records_equal": true
+  }
+}

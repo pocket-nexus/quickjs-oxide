@@ -125,6 +125,13 @@ fn compiler_vm_cost_report_labels_the_execution_path_and_failures() {
     }
     assert!(costs.contains("\"lowered_functions\":2"));
     assert!(costs.contains("\"phase_totals_additive\":false"));
+    assert!(costs.contains("\"fusion_diagnostics\":{\"basis\":"));
+    assert!(costs.contains("\"static_noncandidate_visits\":"));
+    assert!(costs.contains("\"dense_candidate_sites\":"));
+    assert!(costs.contains("\"function_name\":"));
+    assert!(costs.contains("\"definition_line_zero_based\":"));
+    assert!(costs.contains("\"callee_identity_changes\":"));
+    assert!(costs.contains("\"omitted\":{\"static_functions\":0"));
     let failed = run(&["-d", "--profile-json", "-e", "let = ;"]);
     assert!(!failed.status.success());
     let report = String::from_utf8(failed.stderr).unwrap();

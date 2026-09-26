@@ -1,0 +1,229 @@
+{
+  "schema": "oxide-entry-choice-validation-v1",
+  "series_root": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3",
+  "identity_boundary": {
+    "full_test262": "Frozen d6a168e2 integrated-src; engine execution patch was integrated, fixture revision and later profiling label fix were not in this worktree.",
+    "full_profiling_and_tools": "b59331bc integrated root; 2134 lib and 6 CLI tests plus Rust 1.88 Clippy and fmt completed before b4a5f446.",
+    "profiling_label_fix": "b4a5f446 changed diagnostic priority; two focused tests passed. No full 2134-test replay is claimed for this later commit.",
+    "inline_candidate": "Frozen measured candidate 8c38bc32a316aa6eb4fdf6540b448d0163770671 changes one inline annotation; cherry-picked into this experimental branch as 9df1969f. The earlier full Test262 gate remains d6a168e2. Later CI on PR head 945d485d includes the annotation and profiling-label changes, with the merge checkout tree verified equal to that head."
+  },
+  "runs": [
+    {
+      "id": "fixed_probe_publication",
+      "source_commit": "b59331bc21674bcfc74349e785888718d2f4d699",
+      "command": "cargo test --lib fixed_plain_read_probes_have_distinct_published_plan_states -j 2",
+      "cwd": "/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide",
+      "exit_code": 0,
+      "result": {
+        "passed": 1,
+        "failed": 0,
+        "assertions": "published no_plan=None; flag0=Some with zero flags at hot-loop GetLocal PCs"
+      },
+      "log": null,
+      "evidence_note": "Task tool output only; no durable stdout log was captured."
+    },
+    {
+      "id": "profiling_lib_full",
+      "source_commit": "b59331bc21674bcfc74349e785888718d2f4d699",
+      "command": "cargo test --locked -p quickjs-oxide --lib --features profiling -j 2 -- --test-threads=4",
+      "cwd": "/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide",
+      "exit_code": 0,
+      "result": {
+        "passed": 2134,
+        "failed": 0,
+        "ignored": 0
+      },
+      "log": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/validation/integrated-profiling-lib-b59331bc.log",
+        "sha256": "5dbde93d74784f10c57fb38f09f3686b01ffe78c0b761f0c58877604011b2104"
+      }
+    },
+    {
+      "id": "profiling_cli",
+      "source_commit": "b59331bc21674bcfc74349e785888718d2f4d699",
+      "command": "cargo test --locked -p quickjs-oxide-cli --features profiling --test profiling -j 2",
+      "cwd": "/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide",
+      "exit_code": 0,
+      "result": {
+        "passed": 6,
+        "failed": 0,
+        "ignored": 0
+      },
+      "log": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/validation/integrated-profiling-cli-b59331bc.log",
+        "sha256": "3beccf89933bb1cb3024dd39ca178a42232ce2009cc5e04c28332ddd327a6325"
+      }
+    },
+    {
+      "id": "clippy_default",
+      "source_commit": "b59331bc21674bcfc74349e785888718d2f4d699",
+      "command": "cargo +1.88.0 clippy --locked --workspace --all-targets -j 2 -- -D warnings",
+      "cwd": "/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide",
+      "exit_code": 0,
+      "result": {
+        "status": "passed"
+      },
+      "log": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/validation/integrated-clippy-default-b59331bc.log",
+        "sha256": "5e478b12db8d7ced83adc5be03e0e2ac7c13bdd1b78534bec519f0dc6d20a0b8"
+      }
+    },
+    {
+      "id": "clippy_profiling",
+      "source_commit": "b59331bc21674bcfc74349e785888718d2f4d699",
+      "command": "cargo +1.88.0 clippy --locked --workspace --all-targets --features profiling -j 2 -- -D warnings",
+      "cwd": "/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide",
+      "exit_code": 0,
+      "result": {
+        "status": "passed"
+      },
+      "log": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/validation/integrated-clippy-profiling-b59331bc.log",
+        "sha256": "ea611b529d8f39c4545e765dcb602059934467ca52cca3e5cea0f17368934145"
+      }
+    },
+    {
+      "id": "rustfmt",
+      "source_commit": "b59331bc21674bcfc74349e785888718d2f4d699",
+      "command": "cargo +1.88.0 fmt --all -- --check",
+      "cwd": "/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide",
+      "exit_code": 0,
+      "result": {
+        "status": "passed"
+      },
+      "log": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/validation/integrated-fmt-b59331bc.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "evidence_note": "Empty stdout/stderr on successful format check; empty-file SHA-256 is intentional."
+    },
+    {
+      "id": "test262_full",
+      "source_commit": "d6a168e29d0d0a45cd49a0b9c1545122c73a8afa",
+      "source_worktree": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/integrated-src",
+      "command": "TEST262_WORKERS=2 CARGO_BUILD_JOBS=2 ./scripts/test262/test-test262.sh --full > SERIES/integrated-test262-full.log 2>&1",
+      "cwd": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/integrated-src",
+      "exit_code": 0,
+      "result": {
+        "total_variants": 102037,
+        "eligible": 80060,
+        "passes": 80010,
+        "frozen_outcome_vector_match": true,
+        "note": "80010 passes of 80060 eligible is the pinned vector; the remaining outcomes are retained in the report, not silently counted as passing."
+      },
+      "engine_semantics_sha256": "6b8feeacef64ef26b778633d59be8c8c06f759f8584f1eacccc1e0976adf6981",
+      "runner_binary_sha256": "bb86d9d80dc4bdc367d6bd766d6599058108869dc4c4c4cd33de590c191c8466",
+      "log": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/integrated-test262-full.log",
+        "sha256": "79525ab55eae97c94008298ebe896728ecbce728be87c97aa1ae444f99dc11d6"
+      },
+      "reports": [
+        {
+          "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/integrated-src/target/test262-full.tsv",
+          "sha256": "631a9679e32ea25f4731ad54614c25564b152cd93f61d424b37d73114637107d"
+        },
+        {
+          "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/integrated-src/target/test262-full.jsonl",
+          "sha256": "65e3ba1f6fe14e4d21423735d3fbfbf67eec8c75a3c47d8493918bfe8692cfaf"
+        }
+      ]
+    },
+    {
+      "id": "dense_diagnostic_priority_targeted",
+      "source_commit": "b4a5f4469531da44167fb400722c9756b9d71bbc",
+      "command": "cargo +1.88.0 test --locked --lib --features profiling -j 2 dense_diagnostic_priority_ > /Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/validation/diagnostic-priority-b4a5.log 2>&1",
+      "cwd": "/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide",
+      "exit_code": 0,
+      "result": {
+        "passed": 2,
+        "failed": 0,
+        "ignored": 0,
+        "tests": [
+          "dense_diagnostic_priority_reports_nonobject_before_borrow",
+          "dense_diagnostic_priority_reports_binding_before_index"
+        ]
+      },
+      "log": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/validation/diagnostic-priority-b4a5.log",
+        "sha256": "06838b5ba57d5919ac14cf9469adaf748ddea82eb0eb881e8d11f4ba9bc1a84e"
+      },
+      "evidence_note": "The initial focused run and this logged replay both exited 0 with 2/2 tests passing; the replay log is retained here."
+    },
+    {
+      "id": "python_benchmark_tools",
+      "source_identity": "root working tree before b59331bc; the log does not bind a commit",
+      "command": "python3 -m unittest discover -s scripts/benchmark -p 'test_*.py'",
+      "command_identity_note": "Command follows scripts/benchmark/README.md; stdout log does not itself print the invocation.",
+      "cwd": "/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide",
+      "exit_code": 0,
+      "result": {
+        "passed": 37,
+        "failed": 0
+      },
+      "log": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/validation/python-final.log",
+        "sha256": "1d1df07544bf8f34cdc288ba07278cf8b7d812d305ba9f82f74dbff43c2a72cf"
+      }
+    },
+    {
+      "id": "source_layout",
+      "source_commit": "b4a5f4469531da44167fb400722c9756b9d71bbc",
+      "command": "python3 scripts/checks/check-source-layout.py",
+      "cwd": "/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide",
+      "exit_code": 0,
+      "result": {
+        "reachable_rust_files": 625,
+        "status": "passed"
+      },
+      "log": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/validation/source-layout-final.log",
+        "sha256": "9e10450f3002996e591a06b4c63933522f7ba8e229c7927afbfa151585c708dd"
+      }
+    },
+    {
+      "id": "github_ci_945d485d",
+      "source_commit": "945d485dc10142df8345325bd1638ca2b9914b5d",
+      "actual_checkout_commit": "4bb6e870260aa62c7dae249d101b7bea61e5b146",
+      "actual_checkout_tree": "5e0e5e46a21d882e5a3d5e27ab2687f4bc398654",
+      "checkout_tree_equals_pr_head": true,
+      "event": "pull_request",
+      "run_url": "https://github.com/pocket-nexus/quickjs-oxide/actions/runs/36214372192",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "name": "fast",
+          "conclusion": "success",
+          "url": "https://github.com/pocket-nexus/quickjs-oxide/actions/runs/36214372192/job/108327292631"
+        },
+        {
+          "name": "test262-focused",
+          "conclusion": "success",
+          "url": "https://github.com/pocket-nexus/quickjs-oxide/actions/runs/36214372192/job/108327292764"
+        },
+        {
+          "name": "test262-full",
+          "conclusion": "skipped",
+          "url": "https://github.com/pocket-nexus/quickjs-oxide/actions/runs/36214372192/job/108327293126"
+        },
+        {
+          "name": "quickjs-differential",
+          "conclusion": "skipped",
+          "url": "https://github.com/pocket-nexus/quickjs-oxide/actions/runs/36214372192/job/108327293237"
+        }
+      ],
+      "scope": "fast and test262-focused passed. fast includes workspace all-target tests, CLI profiling and selected profiling library tests, doc tests, test262-host tests, Clippy, formatting and architecture/tool checks. quickjs-differential and full Test262 were skipped by workflow conditions; do not count them as passed. No full profiling-library replay is claimed by this CI job.",
+      "metadata": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/validation/ci-945d485d.json",
+        "sha256": "b2678444b8a15bb400e3e916b6f0ccddf23e0a7c9027730acaea98279328f555"
+      },
+      "log": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/validation/ci-945d485d.log",
+        "sha256": "1bcd8ce96dc1544c5cfef4a3931f18710aeb5571cce4c0911ef6b9b65ead381a"
+      },
+      "merge_commit_metadata": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/validation/ci-merge-4bb6e870.json",
+        "sha256": "4b7cc785c606f0672ef3b8fb27f7579fd840689e75bc751d01917dd977945313"
+      }
+    }
+  ]
+}

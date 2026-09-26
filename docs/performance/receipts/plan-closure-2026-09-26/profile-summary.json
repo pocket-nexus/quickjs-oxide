@@ -1,0 +1,951 @@
+{
+  "array_transition_comparison": {
+    "after": {
+      "all_status_ok": true,
+      "commit": "5e3dedc9e3bfd717fe50f7187d08db1247c224d0",
+      "engine_sha256": "47960a9d98b8c6f8741874838ec7512af66c8b4270abfbec43bcbe87e365d53d",
+      "generated_sha256": {
+        "crypto": "b10ac2a2a6ae96c9b09e513d02da81858377035a21f0559ea6480dc2eefc8bb3",
+        "deltablue": "da98c0aa05bb2ef053b3ddfb836523527246b9c5dfe78123ffb96a48978821e3",
+        "richards": "cd82e8b3816a4596645ccc11380ea3cd158f0dc93143a22c807bcacfbc73e286"
+      },
+      "iterations_per_benchmark": 1,
+      "results_sha256": "9774c31d294979913a09cc23bd4b4c5b794dc4ec8625d9b96409038940d51834"
+    },
+    "before": {
+      "all_status_ok": true,
+      "commit": "8525105dadad68f1e4113b8b42d7bbffa69a53b6",
+      "engine_sha256": "4152b1cf1dd5b68b2bf45379d985e5b7aa6350bcf9cf66c3ebfdd5ab6a323fd2",
+      "generated_sha256": {
+        "crypto": "b10ac2a2a6ae96c9b09e513d02da81858377035a21f0559ea6480dc2eefc8bb3",
+        "deltablue": "da98c0aa05bb2ef053b3ddfb836523527246b9c5dfe78123ffb96a48978821e3",
+        "richards": "cd82e8b3816a4596645ccc11380ea3cd158f0dc93143a22c807bcacfbc73e286"
+      },
+      "iterations_per_benchmark": 1,
+      "results_sha256": "2e241f3220229f143abb30d4c5de311c34bfda068b758860f3ec211da21f0e9a"
+    },
+    "cases": {
+      "crypto": {
+        "events": {
+          "array_storage_dense_materialization": 66,
+          "array_storage_dense_materialization_gap_write": 66,
+          "array_storage_dense_recovery": 60,
+          "array_storage_dense_recovery_enter": 60
+        },
+        "fusion_omitted": {
+          "callsite_events": 0,
+          "dispatch_events": 0,
+          "outcome_events": 0,
+          "static_functions": 0
+        },
+        "materialized_misses": 711446,
+        "materialized_reasons": {
+          "array_materialized.missing_own_index": 1208,
+          "array_materialized.own_default_number": 710004,
+          "array_materialized.own_non_number": 234
+        },
+        "previous_existing_events": {
+          "array_storage_dense_recovery": 60
+        },
+        "raw_sha256": "1e046a30bebf419e62f6b074ab2f96e3cd68dcc97b476278a8b551e69ba94137"
+      },
+      "deltablue": {
+        "events": {},
+        "fusion_omitted": {
+          "callsite_events": 0,
+          "dispatch_events": 0,
+          "outcome_events": 0,
+          "static_functions": 0
+        },
+        "materialized_misses": 0,
+        "materialized_reasons": {},
+        "previous_existing_events": {
+          "array_storage_dense_recovery": 0
+        },
+        "raw_sha256": "95f15e5fa36a9179d8c7f5436fa51d495486618f0013da2cf523d59e1d6374ab"
+      },
+      "richards": {
+        "events": {},
+        "fusion_omitted": {
+          "callsite_events": 0,
+          "dispatch_events": 0,
+          "outcome_events": 0,
+          "static_functions": 0
+        },
+        "materialized_misses": 0,
+        "materialized_reasons": {},
+        "previous_existing_events": {
+          "array_storage_dense_recovery": 0
+        },
+        "raw_sha256": "528230ea359da2efa1a324fc00d7c85773bd03fd9a04efd45b3128b9d7c04e81"
+      }
+    },
+    "scope": "Profiling-build logical events; no object identity or causal PC linkage"
+  },
+  "cases": {
+    "crypto": {
+      "case": "crypto",
+      "identity": {
+        "cost_schema": "oxide-compile-vm-cost-v1",
+        "embedded_commit": "5e3dedc9e3bfd717fe50f7187d08db1247c224d0",
+        "engine_sha256": "47960a9d98b8c6f8741874838ec7512af66c8b4270abfbec43bcbe87e365d53d",
+        "fixed_iterations_per_benchmark": 1,
+        "generated_sha256": "b10ac2a2a6ae96c9b09e513d02da81858377035a21f0559ea6480dc2eefc8bb3",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/raw/crypto.cost.jsonl",
+        "raw_sha256": "1e046a30bebf419e62f6b074ab2f96e3cd68dcc97b476278a8b551e69ba94137"
+      },
+      "materialized": {
+        "by_function": [
+          {
+            "bytecode_id": 1438814044161,
+            "definition_column": 1,
+            "definition_line": 393,
+            "filename": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/generated/crypto.js",
+            "function_name": "am3",
+            "misses": 622849,
+            "reasons": {
+              "array_materialized.own_default_number": 622849
+            },
+            "runtime_id": 1
+          },
+          {
+            "bytecode_id": 1533303324673,
+            "definition_column": 1,
+            "definition_line": 716,
+            "filename": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/generated/crypto.js",
+            "function_name": "bnpSquareTo",
+            "misses": 39232,
+            "reasons": {
+              "array_materialized.missing_own_index": 293,
+              "array_materialized.own_default_number": 38939
+            },
+            "runtime_id": 1
+          },
+          {
+            "bytecode_id": 1589137899521,
+            "definition_column": 1,
+            "definition_line": 868,
+            "filename": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/generated/crypto.js",
+            "function_name": "montReduce",
+            "misses": 34518,
+            "reasons": {
+              "array_materialized.own_default_number": 34518
+            },
+            "runtime_id": 1
+          },
+          {
+            "bytecode_id": 1511828488193,
+            "definition_column": 1,
+            "definition_line": 615,
+            "filename": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/generated/crypto.js",
+            "function_name": "bnpDRShiftTo",
+            "misses": 11504,
+            "reasons": {
+              "array_materialized.own_default_number": 11504
+            },
+            "runtime_id": 1
+          },
+          {
+            "bytecode_id": 1529008357377,
+            "definition_column": 1,
+            "definition_line": 700,
+            "filename": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/generated/crypto.js",
+            "function_name": "bnpMultiplyTo",
+            "misses": 2133,
+            "reasons": {
+              "array_materialized.missing_own_index": 575,
+              "array_materialized.own_default_number": 1558
+            },
+            "runtime_id": 1
+          },
+          {
+            "bytecode_id": 1494648619009,
+            "definition_column": 1,
+            "definition_line": 572,
+            "filename": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/generated/crypto.js",
+            "function_name": "bnCompareTo",
+            "misses": 596,
+            "reasons": {
+              "array_materialized.own_default_number": 596
+            },
+            "runtime_id": 1
+          },
+          {
+            "bytecode_id": 1855425871873,
+            "definition_column": 1,
+            "definition_line": 1383,
+            "filename": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/generated/crypto.js",
+            "function_name": "bnModPow",
+            "misses": 234,
+            "reasons": {
+              "array_materialized.own_non_number": 234
+            },
+            "runtime_id": 1
+          },
+          {
+            "bytecode_id": 1507533520897,
+            "definition_column": 1,
+            "definition_line": 604,
+            "filename": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/generated/crypto.js",
+            "function_name": "bnpDLShiftTo",
+            "misses": 207,
+            "reasons": {
+              "array_materialized.missing_own_index": 207
+            },
+            "runtime_id": 1
+          },
+          {
+            "bytecode_id": 1460288880641,
+            "definition_column": 1,
+            "definition_line": 465,
+            "filename": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/generated/crypto.js",
+            "function_name": "bnpCopyTo",
+            "misses": 164,
+            "reasons": {
+              "array_materialized.missing_own_index": 124,
+              "array_materialized.own_default_number": 40
+            },
+            "runtime_id": 1
+          },
+          {
+            "bytecode_id": 1516123455489,
+            "definition_column": 1,
+            "definition_line": 624,
+            "filename": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/generated/crypto.js",
+            "function_name": "bnpLShiftTo",
+            "misses": 9,
+            "reasons": {
+              "array_materialized.missing_own_index": 9
+            },
+            "runtime_id": 1
+          }
+        ],
+        "by_pc": [
+          {
+            "bytecode_id": 1438814044161,
+            "definition_column": 1,
+            "definition_line": 393,
+            "filename": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/generated/crypto.js",
+            "function_name": "am3",
+            "kinds": [
+              "dense_read"
+            ],
+            "misses": 355669,
+            "pc": 51,
+            "reasons": {
+              "array_materialized.own_default_number": 355669
+            },
+            "runtime_id": 1
+          },
+          {
+            "bytecode_id": 1438814044161,
+            "definition_column": 1,
+            "definition_line": 393,
+            "filename": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/generated/crypto.js",
+            "function_name": "am3",
+            "kinds": [
+              "dense_read_binary"
+            ],
+            "misses": 133590,
+            "pc": 20,
+            "reasons": {
+              "array_materialized.own_default_number": 133590
+            },
+            "runtime_id": 1
+          },
+          {
+            "bytecode_id": 1438814044161,
+            "definition_column": 1,
+            "definition_line": 393,
+            "filename": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/generated/crypto.js",
+            "function_name": "am3",
+            "kinds": [
+              "dense_read_post_update"
+            ],
+            "misses": 133590,
+            "pc": 26,
+            "reasons": {
+              "array_materialized.own_default_number": 133590
+            },
+            "runtime_id": 1
+          },
+          {
+            "bytecode_id": 1533303324673,
+            "definition_column": 1,
+            "definition_line": 716,
+            "filename": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/generated/crypto.js",
+            "function_name": "bnpSquareTo",
+            "kinds": [
+              "dense_store"
+            ],
+            "misses": 20114,
+            "pc": 24,
+            "reasons": {
+              "array_materialized.missing_own_index": 293,
+              "array_materialized.own_default_number": 19821
+            },
+            "runtime_id": 1
+          },
+          {
+            "bytecode_id": 1589137899521,
+            "definition_column": 1,
+            "definition_line": 868,
+            "filename": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/generated/crypto.js",
+            "function_name": "montReduce",
+            "kinds": [
+              "dense_read_binary"
+            ],
+            "misses": 11506,
+            "pc": 34,
+            "reasons": {
+              "array_materialized.own_default_number": 11506
+            },
+            "runtime_id": 1
+          },
+          {
+            "bytecode_id": 1589137899521,
+            "definition_column": 1,
+            "definition_line": 868,
+            "filename": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/generated/crypto.js",
+            "function_name": "montReduce",
+            "kinds": [
+              "dense_read_binary"
+            ],
+            "misses": 11506,
+            "pc": 48,
+            "reasons": {
+              "array_materialized.own_default_number": 11506
+            },
+            "runtime_id": 1
+          },
+          {
+            "bytecode_id": 1589137899521,
+            "definition_column": 1,
+            "definition_line": 868,
+            "filename": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/generated/crypto.js",
+            "function_name": "montReduce",
+            "kinds": [
+              "dense_read"
+            ],
+            "misses": 11506,
+            "pc": 92,
+            "reasons": {
+              "array_materialized.own_default_number": 11506
+            },
+            "runtime_id": 1
+          },
+          {
+            "bytecode_id": 1511828488193,
+            "definition_column": 1,
+            "definition_line": 615,
+            "filename": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/generated/crypto.js",
+            "function_name": "bnpDRShiftTo",
+            "kinds": [
+              "dense_read"
+            ],
+            "misses": 11504,
+            "pc": 23,
+            "reasons": {
+              "array_materialized.own_default_number": 11504
+            },
+            "runtime_id": 1
+          },
+          {
+            "bytecode_id": 1533303324673,
+            "definition_column": 1,
+            "definition_line": 716,
+            "filename": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/generated/crypto.js",
+            "function_name": "bnpSquareTo",
+            "kinds": [
+              "dense_read"
+            ],
+            "misses": 9304,
+            "pc": 50,
+            "reasons": {
+              "array_materialized.own_default_number": 9304
+            },
+            "runtime_id": 1
+          },
+          {
+            "bytecode_id": 1533303324673,
+            "definition_column": 1,
+            "definition_line": 716,
+            "filename": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/generated/crypto.js",
+            "function_name": "bnpSquareTo",
+            "kinds": [
+              "dense_read"
+            ],
+            "misses": 9304,
+            "pc": 73,
+            "reasons": {
+              "array_materialized.own_default_number": 9304
+            },
+            "runtime_id": 1
+          },
+          {
+            "bytecode_id": 1529008357377,
+            "definition_column": 1,
+            "definition_line": 700,
+            "filename": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/generated/crypto.js",
+            "function_name": "bnpMultiplyTo",
+            "kinds": [
+              "dense_store"
+            ],
+            "misses": 2133,
+            "pc": 34,
+            "reasons": {
+              "array_materialized.missing_own_index": 575,
+              "array_materialized.own_default_number": 1558
+            },
+            "runtime_id": 1
+          },
+          {
+            "bytecode_id": 1494648619009,
+            "definition_column": 1,
+            "definition_line": 572,
+            "filename": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/generated/crypto.js",
+            "function_name": "bnCompareTo",
+            "kinds": [
+              "dense_read"
+            ],
+            "misses": 596,
+            "pc": 39,
+            "reasons": {
+              "array_materialized.own_default_number": 596
+            },
+            "runtime_id": 1
+          },
+          {
+            "bytecode_id": 1533303324673,
+            "definition_column": 1,
+            "definition_line": 716,
+            "filename": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/generated/crypto.js",
+            "function_name": "bnpSquareTo",
+            "kinds": [
+              "dense_read"
+            ],
+            "misses": 510,
+            "pc": 138,
+            "reasons": {
+              "array_materialized.own_default_number": 510
+            },
+            "runtime_id": 1
+          },
+          {
+            "bytecode_id": 1507533520897,
+            "definition_column": 1,
+            "definition_line": 604,
+            "filename": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/generated/crypto.js",
+            "function_name": "bnpDLShiftTo",
+            "kinds": [
+              "dense_store"
+            ],
+            "misses": 207,
+            "pc": 52,
+            "reasons": {
+              "array_materialized.missing_own_index": 207
+            },
+            "runtime_id": 1
+          },
+          {
+            "bytecode_id": 1855425871873,
+            "definition_column": 1,
+            "definition_line": 1383,
+            "filename": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/generated/crypto.js",
+            "function_name": "bnModPow",
+            "kinds": [
+              "dense_read"
+            ],
+            "misses": 170,
+            "pc": 319,
+            "reasons": {
+              "array_materialized.own_non_number": 170
+            },
+            "runtime_id": 1
+          },
+          {
+            "bytecode_id": 1460288880641,
+            "definition_column": 1,
+            "definition_line": 465,
+            "filename": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/generated/crypto.js",
+            "function_name": "bnpCopyTo",
+            "kinds": [
+              "dense_copy"
+            ],
+            "misses": 145,
+            "pc": 21,
+            "reasons": {
+              "array_materialized.missing_own_index": 124,
+              "array_materialized.own_default_number": 21
+            },
+            "runtime_id": 1
+          },
+          {
+            "bytecode_id": 1855425871873,
+            "definition_column": 1,
+            "definition_line": 1383,
+            "filename": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/generated/crypto.js",
+            "function_name": "bnModPow",
+            "kinds": [
+              "dense_read_index_binary"
+            ],
+            "misses": 30,
+            "pc": 135,
+            "reasons": {
+              "array_materialized.own_non_number": 30
+            },
+            "runtime_id": 1
+          },
+          {
+            "bytecode_id": 1855425871873,
+            "definition_column": 1,
+            "definition_line": 1383,
+            "filename": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/generated/crypto.js",
+            "function_name": "bnModPow",
+            "kinds": [
+              "dense_read"
+            ],
+            "misses": 30,
+            "pc": 140,
+            "reasons": {
+              "array_materialized.own_non_number": 30
+            },
+            "runtime_id": 1
+          },
+          {
+            "bytecode_id": 1460288880641,
+            "definition_column": 1,
+            "definition_line": 465,
+            "filename": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/generated/crypto.js",
+            "function_name": "bnpCopyTo",
+            "kinds": [
+              "dense_read"
+            ],
+            "misses": 19,
+            "pc": 23,
+            "reasons": {
+              "array_materialized.own_default_number": 19
+            },
+            "runtime_id": 1
+          },
+          {
+            "bytecode_id": 1516123455489,
+            "definition_column": 1,
+            "definition_line": 624,
+            "filename": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/generated/crypto.js",
+            "function_name": "bnpLShiftTo",
+            "kinds": [
+              "dense_store"
+            ],
+            "misses": 9,
+            "pc": 106,
+            "reasons": {
+              "array_materialized.missing_own_index": 9
+            },
+            "runtime_id": 1
+          },
+          {
+            "bytecode_id": 1855425871873,
+            "definition_column": 1,
+            "definition_line": 1383,
+            "filename": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/generated/crypto.js",
+            "function_name": "bnModPow",
+            "kinds": [
+              "dense_read"
+            ],
+            "misses": 2,
+            "pc": 115,
+            "reasons": {
+              "array_materialized.own_non_number": 2
+            },
+            "runtime_id": 1
+          },
+          {
+            "bytecode_id": 1855425871873,
+            "definition_column": 1,
+            "definition_line": 1383,
+            "filename": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/generated/crypto.js",
+            "function_name": "bnModPow",
+            "kinds": [
+              "dense_read"
+            ],
+            "misses": 2,
+            "pc": 263,
+            "reasons": {
+              "array_materialized.own_non_number": 2
+            },
+            "runtime_id": 1
+          }
+        ],
+        "fusion_omitted": {
+          "callsite_events": 0,
+          "dispatch_events": 0,
+          "outcome_events": 0,
+          "static_functions": 0
+        },
+        "reason_counts": {
+          "array_materialized.missing_own_index": 1208,
+          "array_materialized.own_default_number": 710004,
+          "array_materialized.own_non_number": 234
+        },
+        "reason_percent_of_materialized": {
+          "array_materialized.missing_own_index": 0.16979503714969232,
+          "array_materialized.own_default_number": 99.79731420234283,
+          "array_materialized.own_non_number": 0.03289076050747351
+        },
+        "refined_misses": 711446,
+        "site_entries_with_materialized_miss": 22,
+        "total_misses": 711446,
+        "unmapped_site_entries": 0,
+        "unrefined_legacy_misses": 0
+      },
+      "ordinary": {
+        "by_argument_count": {
+          "args0": 4211,
+          "args1": 3819,
+          "args2": 5622,
+          "args3": 207,
+          "args4plus": 66403
+        },
+        "by_call_form": {
+          "function": 3450,
+          "method": 76812
+        },
+        "callsite_observed_calls": 85340,
+        "callsite_scope": "ordinary-driver-enter-selected-only; other call and construct paths are excluded",
+        "direct_entry_calls": 85340,
+        "direct_entry_sampled_calls": 1373,
+        "install_attempt_total": 80262,
+        "ordinary_auth_cache_hit": 80198,
+        "ordinary_authenticated": 65,
+        "ordinary_return_direct": 80262
+      },
+      "sampled_phases": {
+        "direct.prepare.sampled": {
+          "attempts": 1373,
+          "exclusive_median_ns_stored": 708,
+          "exclusive_p90_ns_stored_nearest_rank": 1333,
+          "exclusive_total_ns_sampled_entries": 1212108,
+          "inclusive_median_ns_stored": 917,
+          "inclusive_p90_ns_stored_nearest_rank": 1625,
+          "inclusive_total_ns_sampled_entries": 1707696,
+          "omitted_samples": 0,
+          "sample_limit": 4096,
+          "stored_samples": 1373
+        },
+        "direct.select.sampled": {
+          "attempts": 1373,
+          "exclusive_median_ns_stored": 42,
+          "exclusive_p90_ns_stored_nearest_rank": 83,
+          "exclusive_total_ns_sampled_entries": 75738,
+          "inclusive_median_ns_stored": 42,
+          "inclusive_p90_ns_stored_nearest_rank": 83,
+          "inclusive_total_ns_sampled_entries": 75738,
+          "omitted_samples": 0,
+          "sample_limit": 4096,
+          "stored_samples": 1373
+        },
+        "ordinary.authenticate.sampled": {
+          "attempts": 1294,
+          "exclusive_median_ns_stored": 83.0,
+          "exclusive_p90_ns_stored_nearest_rank": 125,
+          "exclusive_total_ns_sampled_entries": 250158,
+          "inclusive_median_ns_stored": 83.0,
+          "inclusive_p90_ns_stored_nearest_rank": 125,
+          "inclusive_total_ns_sampled_entries": 250158,
+          "omitted_samples": 0,
+          "sample_limit": 4096,
+          "stored_samples": 1294
+        },
+        "ordinary.install.sampled": {
+          "attempts": 1294,
+          "exclusive_median_ns_stored": 417.0,
+          "exclusive_p90_ns_stored_nearest_rank": 625,
+          "exclusive_total_ns_sampled_entries": 708359,
+          "inclusive_median_ns_stored": 1000.0,
+          "inclusive_p90_ns_stored_nearest_rank": 1291,
+          "inclusive_total_ns_sampled_entries": 1512313,
+          "omitted_samples": 0,
+          "sample_limit": 4096,
+          "stored_samples": 1294
+        },
+        "ordinary.install.slots.sampled": {
+          "attempts": 1294,
+          "exclusive_median_ns_stored": 583.0,
+          "exclusive_p90_ns_stored_nearest_rank": 708,
+          "exclusive_total_ns_sampled_entries": 803954,
+          "inclusive_median_ns_stored": 583.0,
+          "inclusive_p90_ns_stored_nearest_rank": 708,
+          "inclusive_total_ns_sampled_entries": 803954,
+          "omitted_samples": 0,
+          "sample_limit": 4096,
+          "stored_samples": 1294
+        },
+        "ordinary.validate.sampled": {
+          "attempts": 1294,
+          "exclusive_median_ns_stored": 83.0,
+          "exclusive_p90_ns_stored_nearest_rank": 166,
+          "exclusive_total_ns_sampled_entries": 169692,
+          "inclusive_median_ns_stored": 83.0,
+          "inclusive_p90_ns_stored_nearest_rank": 166,
+          "inclusive_total_ns_sampled_entries": 169692,
+          "omitted_samples": 0,
+          "sample_limit": 4096,
+          "stored_samples": 1294
+        }
+      }
+    },
+    "deltablue": {
+      "case": "deltablue",
+      "identity": {
+        "cost_schema": "oxide-compile-vm-cost-v1",
+        "embedded_commit": "5e3dedc9e3bfd717fe50f7187d08db1247c224d0",
+        "engine_sha256": "47960a9d98b8c6f8741874838ec7512af66c8b4270abfbec43bcbe87e365d53d",
+        "fixed_iterations_per_benchmark": 1,
+        "generated_sha256": "da98c0aa05bb2ef053b3ddfb836523527246b9c5dfe78123ffb96a48978821e3",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/raw/deltablue.cost.jsonl",
+        "raw_sha256": "95f15e5fa36a9179d8c7f5436fa51d495486618f0013da2cf523d59e1d6374ab"
+      },
+      "materialized": {
+        "by_function": [],
+        "by_pc": [],
+        "fusion_omitted": {
+          "callsite_events": 0,
+          "dispatch_events": 0,
+          "outcome_events": 0,
+          "static_functions": 0
+        },
+        "reason_counts": {},
+        "reason_percent_of_materialized": {},
+        "refined_misses": 0,
+        "site_entries_with_materialized_miss": 0,
+        "total_misses": 0,
+        "unmapped_site_entries": 0,
+        "unrefined_legacy_misses": 0
+      },
+      "ordinary": {
+        "by_argument_count": {
+          "args0": 74226,
+          "args1": 32600,
+          "args2": 4243,
+          "args3": 0,
+          "args4plus": 0
+        },
+        "by_call_form": {
+          "function": 8,
+          "method": 111061
+        },
+        "callsite_observed_calls": 115452,
+        "callsite_scope": "ordinary-driver-enter-selected-only; other call and construct paths are excluded",
+        "direct_entry_calls": 115452,
+        "direct_entry_sampled_calls": 1836,
+        "install_attempt_total": 111069,
+        "ordinary_auth_cache_hit": 111817,
+        "ordinary_authenticated": 66,
+        "ordinary_return_direct": 111069
+      },
+      "sampled_phases": {
+        "direct.prepare.sampled": {
+          "attempts": 1836,
+          "exclusive_median_ns_stored": 457.0,
+          "exclusive_p90_ns_stored_nearest_rank": 958,
+          "exclusive_total_ns_sampled_entries": 1253743,
+          "inclusive_median_ns_stored": 583.0,
+          "inclusive_p90_ns_stored_nearest_rank": 1292,
+          "inclusive_total_ns_sampled_entries": 1584546,
+          "omitted_samples": 0,
+          "sample_limit": 4096,
+          "stored_samples": 1836
+        },
+        "direct.select.sampled": {
+          "attempts": 1786,
+          "exclusive_median_ns_stored": 42.0,
+          "exclusive_p90_ns_stored_nearest_rank": 83,
+          "exclusive_total_ns_sampled_entries": 76348,
+          "inclusive_median_ns_stored": 42.0,
+          "inclusive_p90_ns_stored_nearest_rank": 83,
+          "inclusive_total_ns_sampled_entries": 76348,
+          "omitted_samples": 0,
+          "sample_limit": 4096,
+          "stored_samples": 1786
+        },
+        "ordinary.authenticate.sampled": {
+          "attempts": 1767,
+          "exclusive_median_ns_stored": 42,
+          "exclusive_p90_ns_stored_nearest_rank": 166,
+          "exclusive_total_ns_sampled_entries": 143906,
+          "inclusive_median_ns_stored": 42,
+          "inclusive_p90_ns_stored_nearest_rank": 166,
+          "inclusive_total_ns_sampled_entries": 143906,
+          "omitted_samples": 0,
+          "sample_limit": 4096,
+          "stored_samples": 1767
+        },
+        "ordinary.install.sampled": {
+          "attempts": 1767,
+          "exclusive_median_ns_stored": 332,
+          "exclusive_p90_ns_stored_nearest_rank": 708,
+          "exclusive_total_ns_sampled_entries": 730096,
+          "inclusive_median_ns_stored": 542,
+          "inclusive_p90_ns_stored_nearest_rank": 1208,
+          "inclusive_total_ns_sampled_entries": 1294065,
+          "omitted_samples": 0,
+          "sample_limit": 4096,
+          "stored_samples": 1767
+        },
+        "ordinary.install.slots.sampled": {
+          "attempts": 1767,
+          "exclusive_median_ns_stored": 250,
+          "exclusive_p90_ns_stored_nearest_rank": 500,
+          "exclusive_total_ns_sampled_entries": 563969,
+          "inclusive_median_ns_stored": 250,
+          "inclusive_p90_ns_stored_nearest_rank": 500,
+          "inclusive_total_ns_sampled_entries": 563969,
+          "omitted_samples": 0,
+          "sample_limit": 4096,
+          "stored_samples": 1767
+        },
+        "ordinary.validate.sampled": {
+          "attempts": 1767,
+          "exclusive_median_ns_stored": 42,
+          "exclusive_p90_ns_stored_nearest_rank": 125,
+          "exclusive_total_ns_sampled_entries": 110549,
+          "inclusive_median_ns_stored": 42,
+          "inclusive_p90_ns_stored_nearest_rank": 125,
+          "inclusive_total_ns_sampled_entries": 110549,
+          "omitted_samples": 0,
+          "sample_limit": 4096,
+          "stored_samples": 1767
+        }
+      }
+    },
+    "richards": {
+      "case": "richards",
+      "identity": {
+        "cost_schema": "oxide-compile-vm-cost-v1",
+        "embedded_commit": "5e3dedc9e3bfd717fe50f7187d08db1247c224d0",
+        "engine_sha256": "47960a9d98b8c6f8741874838ec7512af66c8b4270abfbec43bcbe87e365d53d",
+        "fixed_iterations_per_benchmark": 1,
+        "generated_sha256": "cd82e8b3816a4596645ccc11380ea3cd158f0dc93143a22c807bcacfbc73e286",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/raw/richards.cost.jsonl",
+        "raw_sha256": "528230ea359da2efa1a324fc00d7c85773bd03fd9a04efd45b3128b9d7c04e81"
+      },
+      "materialized": {
+        "by_function": [],
+        "by_pc": [],
+        "fusion_omitted": {
+          "callsite_events": 0,
+          "dispatch_events": 0,
+          "outcome_events": 0,
+          "static_functions": 0
+        },
+        "reason_counts": {},
+        "reason_percent_of_materialized": {},
+        "refined_misses": 0,
+        "site_entries_with_materialized_miss": 0,
+        "total_misses": 0,
+        "unmapped_site_entries": 0,
+        "unrefined_legacy_misses": 0
+      },
+      "ordinary": {
+        "by_argument_count": {
+          "args0": 26233,
+          "args1": 11902,
+          "args2": 2322,
+          "args3": 5,
+          "args4plus": 8
+        },
+        "by_call_form": {
+          "function": 2,
+          "method": 40468
+        },
+        "callsite_observed_calls": 40472,
+        "callsite_scope": "ordinary-driver-enter-selected-only; other call and construct paths are excluded",
+        "direct_entry_calls": 40472,
+        "direct_entry_sampled_calls": 632,
+        "install_attempt_total": 40470,
+        "ordinary_auth_cache_hit": 40441,
+        "ordinary_authenticated": 30,
+        "ordinary_return_direct": 40470
+      },
+      "sampled_phases": {
+        "direct.prepare.sampled": {
+          "attempts": 632,
+          "exclusive_median_ns_stored": 417.0,
+          "exclusive_p90_ns_stored_nearest_rank": 585,
+          "exclusive_total_ns_sampled_entries": 331484,
+          "inclusive_median_ns_stored": 584.0,
+          "inclusive_p90_ns_stored_nearest_rank": 792,
+          "inclusive_total_ns_sampled_entries": 528754,
+          "omitted_samples": 0,
+          "sample_limit": 4096,
+          "stored_samples": 632
+        },
+        "direct.select.sampled": {
+          "attempts": 632,
+          "exclusive_median_ns_stored": 42.0,
+          "exclusive_p90_ns_stored_nearest_rank": 42,
+          "exclusive_total_ns_sampled_entries": 24750,
+          "inclusive_median_ns_stored": 42.0,
+          "inclusive_p90_ns_stored_nearest_rank": 42,
+          "inclusive_total_ns_sampled_entries": 24750,
+          "omitted_samples": 0,
+          "sample_limit": 4096,
+          "stored_samples": 632
+        },
+        "ordinary.authenticate.sampled": {
+          "attempts": 632,
+          "exclusive_median_ns_stored": 83.0,
+          "exclusive_p90_ns_stored_nearest_rank": 125,
+          "exclusive_total_ns_sampled_entries": 136390,
+          "inclusive_median_ns_stored": 83.0,
+          "inclusive_p90_ns_stored_nearest_rank": 125,
+          "inclusive_total_ns_sampled_entries": 136390,
+          "omitted_samples": 0,
+          "sample_limit": 4096,
+          "stored_samples": 632
+        },
+        "ordinary.install.sampled": {
+          "attempts": 632,
+          "exclusive_median_ns_stored": 333.0,
+          "exclusive_p90_ns_stored_nearest_rank": 375,
+          "exclusive_total_ns_sampled_entries": 249914,
+          "inclusive_median_ns_stored": 583.0,
+          "inclusive_p90_ns_stored_nearest_rank": 750,
+          "inclusive_total_ns_sampled_entries": 437080,
+          "omitted_samples": 0,
+          "sample_limit": 4096,
+          "stored_samples": 632
+        },
+        "ordinary.install.slots.sampled": {
+          "attempts": 632,
+          "exclusive_median_ns_stored": 250.0,
+          "exclusive_p90_ns_stored_nearest_rank": 375,
+          "exclusive_total_ns_sampled_entries": 187166,
+          "inclusive_median_ns_stored": 250.0,
+          "inclusive_p90_ns_stored_nearest_rank": 375,
+          "inclusive_total_ns_sampled_entries": 187166,
+          "omitted_samples": 0,
+          "sample_limit": 4096,
+          "stored_samples": 632
+        },
+        "ordinary.validate.sampled": {
+          "attempts": 632,
+          "exclusive_median_ns_stored": 42.0,
+          "exclusive_p90_ns_stored_nearest_rank": 84,
+          "exclusive_total_ns_sampled_entries": 36130,
+          "inclusive_median_ns_stored": 42.0,
+          "inclusive_p90_ns_stored_nearest_rank": 84,
+          "inclusive_total_ns_sampled_entries": 36130,
+          "omitted_samples": 0,
+          "sample_limit": 4096,
+          "stored_samples": 632
+        }
+      }
+    }
+  },
+  "measurement_scope": "profiling-only logical counts and sampled phase timing; no plain-build time or V8 Score inference",
+  "profile_results": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/profile-final/results.json",
+  "results_sha256": "9774c31d294979913a09cc23bd4b4c5b794dc4ec8625d9b96409038940d51834",
+  "schema": "oxide-plan-closure-profile-analysis-v1"
+}

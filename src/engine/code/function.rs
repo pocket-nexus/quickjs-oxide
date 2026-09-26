@@ -224,9 +224,11 @@ impl TryFrom<PrimitiveValue> for UnlinkedConstant {
 /// Mutable compiler output which has not entered a runtime domain yet.
 ///
 /// The draft owns its vectors, but its fields stay private.  Publication
-/// consumes the whole value through [`Self::into_parts`], verifies it, interns
-/// runtime atoms, recursively publishes child functions, retains all outgoing
-/// edges transactionally, and only then returns an engine `FunctionBytecodeRef`.
+/// consumes the whole value through [`Self::into_parts`], checks selected
+/// published metadata, interns runtime atoms, recursively publishes child
+/// functions, retains all outgoing edges transactionally, and only then
+/// returns an engine `FunctionBytecodeRef`. The compiler validates bytecode
+/// stack flow during lowering.
 /// Published bytecode therefore has no mutation path back to this draft.
 #[derive(Debug)]
 pub struct UnlinkedFunction {

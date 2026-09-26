@@ -1626,12 +1626,22 @@ mod tests {
             else {
                 panic!("expected private identity owner")
             };
-            names.push(*atom_index);
+            // Promote the frame's borrowed private atom to an independent
+            // owner before tearing down the execution. The next root query
+            // cannot start while this execution is active, and raw AtomIdx
+            // slots may be reused after their final owner is released.
+            let atom = runtime.0.state.borrow().atoms.brand(*atom_index).unwrap();
+            names.push(
+                crate::engine::object::PrivateNameRef::from_borrowed_atom(runtime.clone(), atom)
+                    .unwrap(),
+            );
             assert_eq!(frame.resume_pc, pc + 1);
             drop(execution);
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
-        assert_ne!(names[0], names[1]);
+        assert_ne!(names[0].atom(), names[1].atom());
+        drop(names);
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
     #[test]

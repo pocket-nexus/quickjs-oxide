@@ -1,0 +1,246 @@
+{
+  "method": "llvm-nm -n symbols; llvm-objdump --disassemble-symbols, --no-symbolize-operands; adjacent symbol extent is layout bound, not exact function size",
+  "tools": {
+    "llvm-nm": [
+      "llvm-nm, compatible with GNU nm",
+      "Homebrew LLVM version 23.1.1"
+    ],
+    "llvm-objdump": [
+      "Homebrew LLVM version 23.1.1",
+      "  Optimized build."
+    ]
+  },
+  "before": {
+    "binary": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-inline/release/qjs",
+    "sha256": "9631c36e6e387dd2c3187e9c75169556100a6b50418177e71b514dadd0eaad06",
+    "symbols": {
+      "run": {
+        "symbol": "__ZN13quickjs_oxide6engine2vm3run3run17h7ab689084215b178E",
+        "start": "0x100412e10",
+        "next_symbol": "0x100417f2c",
+        "adjacent_symbol_extent_bytes": 20764,
+        "disassembly_sha256": "aaf912429addb400ea796105df8a9a2ffa226d0dd15646e076480c959cf7bdb8"
+      },
+      "dense_try_numeric_span": {
+        "symbol": "__ZN13quickjs_oxide6engine2vm3run6fusion5dense16try_numeric_span17haa5a102d5d50a5daE",
+        "start": "0x10041fa54",
+        "next_symbol": "0x1004205b0",
+        "adjacent_symbol_extent_bytes": 2908,
+        "disassembly_sha256": "222667ce34c125c235dbb276cf4f91052649e1d0e6dbb3be624e8268c8d8f862"
+      },
+      "dense_read_slot_number": {
+        "symbol": "__ZN13quickjs_oxide6engine2vm3run6fusion5dense16read_slot_number17h82252756bddb7d63E",
+        "start": "0x100426668",
+        "next_symbol": "0x100426768",
+        "adjacent_symbol_extent_bytes": 256,
+        "disassembly_sha256": "66429af5b59c1598a4448be3f4faf58fa0f56e3b7b27c4e39b867c20145cfe94"
+      },
+      "dense_read_number": {
+        "symbol": "__ZN13quickjs_oxide6engine2vm3run6fusion5dense11read_number17h88ab45f672729705E",
+        "start": "0x100426768",
+        "next_symbol": "0x10042692c",
+        "adjacent_symbol_extent_bytes": 452,
+        "disassembly_sha256": "83651829eb717c7527d9975ac96e7d1706da02d7dc772552db654df8b1199d8e"
+      },
+      "dense_peek_number": {
+        "symbol": "__ZN13quickjs_oxide6engine2vm3run6fusion5dense11peek_number17h07ef3310b199d73bE",
+        "start": "0x10042692c",
+        "next_symbol": "0x100426b10",
+        "adjacent_symbol_extent_bytes": 484,
+        "disassembly_sha256": "5968f4f7cd6c609b897926f2f4057897e7941e47e488c3c3189600b027dd5c64"
+      },
+      "dense_peek_proven_number": {
+        "status": "no separate symbol"
+      },
+      "driver_push_frame": {
+        "symbol": "__ZN13quickjs_oxide6engine2vm6driver10push_frame17hbff5456092aa8a95E",
+        "start": "0x100164364",
+        "next_symbol": "0x100164704",
+        "adjacent_symbol_extent_bytes": 928,
+        "disassembly_sha256": "98dfc73f2977102d9583d5e8180a2a5926211a91eeb8b088d62f82aa4d904893"
+      },
+      "stack_push_frame_storage": {
+        "symbol": "__ZN13quickjs_oxide6engine2vm5stack9SlotStore18push_frame_storage17hda384878adfc73f3E",
+        "start": "0x1003ff610",
+        "next_symbol": "0x1004007dc",
+        "adjacent_symbol_extent_bytes": 4556,
+        "disassembly_sha256": "210d66b0a2c92b88b503b8e7a5c88006a1be3da3f46e4adb3de5bc684bb1c8ae"
+      },
+      "ordinary_install": {
+        "symbol": "__ZN13quickjs_oxide6engine2vm4call8ordinary12OrdinaryCall7install17h388cece8b4c3ff16E",
+        "start": "0x10041a200",
+        "next_symbol": "0x10041b104",
+        "adjacent_symbol_extent_bytes": 3844,
+        "disassembly_sha256": "c35d544c5a35eea9583c9fad5c5c0efeb974fb2f5a467ef0f8e30173994bf94e"
+      },
+      "validate_ordinary_call_operands": {
+        "status": "no separate symbol"
+      }
+    },
+    "build_receipt": {
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-inline/release/qjs.build.json",
+      "sha256": "c8ec3c2454c9b3ccf57a823a798e5e21d3002a5e2ffd1b763f092d9fe60d1404",
+      "source_commit": "8c38bc32a316aa6eb4fdf6540b448d0163770671",
+      "mode": "plain",
+      "features": []
+    }
+  },
+  "after": {
+    "binary": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/build-plain/release/qjs",
+    "sha256": "d7773f5378af6e2f850172133d5c180d1f3261331ecbdb6684588951b3b026f9",
+    "symbols": {
+      "run": {
+        "symbol": "__ZN13quickjs_oxide6engine2vm3run3run17h7ab689084215b178E",
+        "start": "0x100414910",
+        "next_symbol": "0x100419a44",
+        "adjacent_symbol_extent_bytes": 20788,
+        "disassembly_sha256": "68f0a12c3a7ad499dfea561c67c368e8ff5967536a6ebc6bce1b11fec681986c"
+      },
+      "dense_try_numeric_span": {
+        "symbol": "__ZN13quickjs_oxide6engine2vm3run6fusion5dense16try_numeric_span17h8675d6d4453668feE",
+        "start": "0x1004216ac",
+        "next_symbol": "0x10042235c",
+        "adjacent_symbol_extent_bytes": 3248,
+        "disassembly_sha256": "20117fd510b2ec8d02408c743a753b64bb34b350bb2f6f037ec6803654c8e463"
+      },
+      "dense_read_slot_number": {
+        "status": "no separate symbol"
+      },
+      "dense_read_number": {
+        "symbol": "__ZN13quickjs_oxide6engine2vm3run6fusion5dense11read_number17h88ab45f672729705E",
+        "start": "0x100428414",
+        "next_symbol": "0x1004285d8",
+        "adjacent_symbol_extent_bytes": 452,
+        "disassembly_sha256": "a1f0d280b648b135409af9085e6245d557a2949b041f5e7e7f974f5bd3898bd6"
+      },
+      "dense_peek_number": {
+        "symbol": "__ZN13quickjs_oxide6engine2vm3run6fusion5dense11peek_number17h07ef3310b199d73bE",
+        "start": "0x100429178",
+        "next_symbol": "0x1004291fc",
+        "adjacent_symbol_extent_bytes": 132,
+        "disassembly_sha256": "a4a97b7d610b943b8afebec9eed17b3a7622df6cb8a617ada0e86f973ad2fd7f"
+      },
+      "dense_peek_proven_number": {
+        "symbol": "__ZN13quickjs_oxide6engine2vm3run6fusion5dense18peek_proven_number17h32fd994e0eb0b830E",
+        "start": "0x1004285d8",
+        "next_symbol": "0x100428780",
+        "adjacent_symbol_extent_bytes": 424,
+        "disassembly_sha256": "fad83df53c77f458add6221fb2d100058ec5aa901e7cec758dae3c6322021218"
+      },
+      "driver_push_frame": {
+        "symbol": "__ZN13quickjs_oxide6engine2vm6driver10push_frame17hbff5456092aa8a95E",
+        "start": "0x100165f68",
+        "next_symbol": "0x100166308",
+        "adjacent_symbol_extent_bytes": 928,
+        "disassembly_sha256": "45cc33c7258c0c3838a3804b83d7a234ca508a34fc952be3c44e2e5da05df28f"
+      },
+      "stack_push_frame_storage": {
+        "symbol": "__ZN13quickjs_oxide6engine2vm5stack9SlotStore18push_frame_storage17hda384878adfc73f3E",
+        "start": "0x100401110",
+        "next_symbol": "0x1004022dc",
+        "adjacent_symbol_extent_bytes": 4556,
+        "disassembly_sha256": "af3eb80aceebfc3c4d409b0382984c469dde2dc4b62c34be13268edeff76c686"
+      },
+      "ordinary_install": {
+        "symbol": "__ZN13quickjs_oxide6engine2vm4call8ordinary12OrdinaryCall7install17h07471ad20c11add2E",
+        "start": "0x10041bd88",
+        "next_symbol": "0x10041cc30",
+        "adjacent_symbol_extent_bytes": 3752,
+        "disassembly_sha256": "8a760ecf12cbedbbbe109faf04840d9611c33e80459637fadc8ad2ff8f3f28e8"
+      },
+      "validate_ordinary_call_operands": {
+        "symbol": "__ZN13quickjs_oxide6engine2vm5stack6window16FrameTransaction31validate_ordinary_call_operands17ha05b1c639cdc9088E",
+        "start": "0x10041bc00",
+        "next_symbol": "0x10041bd34",
+        "adjacent_symbol_extent_bytes": 308,
+        "disassembly_sha256": "cb4b2b8d8451b0bb167560d63ab64c5edc7dce3c1dcec1d4872a178d68249ade"
+      }
+    },
+    "build_receipt": {
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/build-plain/release/qjs.build.json",
+      "sha256": "ffbd5b688374d84de1d660f730b70e576e53d37c17bd2ce79e38900de15439b3",
+      "source_commit": "828bc6773a896e5198dbfc1893126e3592b5730c",
+      "mode": "plain",
+      "features": []
+    }
+  },
+  "fixed": {
+    "binary": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/build-plain-fixed/release/qjs",
+    "sha256": "9a815b7f2607e9aa2474db4ea2bf4ba4a5203a06aa43dca6992d0b8a364b5517",
+    "symbols": {
+      "run": {
+        "symbol": "__ZN13quickjs_oxide6engine2vm3run3run17h7ab689084215b178E",
+        "start": "0x100414910",
+        "next_symbol": "0x100419a44",
+        "adjacent_symbol_extent_bytes": 20788,
+        "disassembly_sha256": "2bf89759389fc40f484109bd42e05de0d6e61fe61c2a9338e920ab7979b18dd6"
+      },
+      "dense_try_numeric_span": {
+        "symbol": "__ZN13quickjs_oxide6engine2vm3run6fusion5dense16try_numeric_span17h8675d6d4453668feE",
+        "start": "0x1004216ac",
+        "next_symbol": "0x1004223dc",
+        "adjacent_symbol_extent_bytes": 3376,
+        "disassembly_sha256": "2cca756dc7969dab9a61da1f7c58c1773cb37bdb579888c0a1eb0ce171bcac91"
+      },
+      "dense_read_slot_number": {
+        "status": "no separate symbol"
+      },
+      "dense_read_number": {
+        "symbol": "__ZN13quickjs_oxide6engine2vm3run6fusion5dense11read_number17h88ab45f672729705E",
+        "start": "0x100428494",
+        "next_symbol": "0x100428658",
+        "adjacent_symbol_extent_bytes": 452,
+        "disassembly_sha256": "e088db468c4805e62ec99139f9edad1b23272e00c3de52546891fafddc1c78c6"
+      },
+      "dense_peek_number": {
+        "symbol": "__ZN13quickjs_oxide6engine2vm3run6fusion5dense11peek_number17h07ef3310b199d73bE",
+        "start": "0x100429224",
+        "next_symbol": "0x1004292f8",
+        "adjacent_symbol_extent_bytes": 212,
+        "disassembly_sha256": "b41d0a0982c945763d4f7c05c3b1c0da72fb0dcce8e418ec7f8f40df45ed957a"
+      },
+      "dense_peek_proven_number": {
+        "symbol": "__ZN13quickjs_oxide6engine2vm3run6fusion5dense18peek_proven_number17h32fd994e0eb0b830E",
+        "start": "0x100428658",
+        "next_symbol": "0x1004286e8",
+        "adjacent_symbol_extent_bytes": 144,
+        "disassembly_sha256": "e2cfef0de764f784a751534f1fbcbd8afbec8713b58f219c8fe632642484469d"
+      },
+      "driver_push_frame": {
+        "symbol": "__ZN13quickjs_oxide6engine2vm6driver10push_frame17hbff5456092aa8a95E",
+        "start": "0x100165f68",
+        "next_symbol": "0x100166308",
+        "adjacent_symbol_extent_bytes": 928,
+        "disassembly_sha256": "233a1dfef47d9dc16e81890025103f8032718d164825c32aec3eff4b9ed6c4ce"
+      },
+      "stack_push_frame_storage": {
+        "symbol": "__ZN13quickjs_oxide6engine2vm5stack9SlotStore18push_frame_storage17hda384878adfc73f3E",
+        "start": "0x100401110",
+        "next_symbol": "0x1004022dc",
+        "adjacent_symbol_extent_bytes": 4556,
+        "disassembly_sha256": "988612ef3625fda32a7e76ce0563cda148f484fb2325240ac32b5493427968a4"
+      },
+      "ordinary_install": {
+        "symbol": "__ZN13quickjs_oxide6engine2vm4call8ordinary12OrdinaryCall7install17h07471ad20c11add2E",
+        "start": "0x10041bd88",
+        "next_symbol": "0x10041cc30",
+        "adjacent_symbol_extent_bytes": 3752,
+        "disassembly_sha256": "131666782b72d106bdc87caa91d918c4033b33f98692842726424b34bcebe5be"
+      },
+      "validate_ordinary_call_operands": {
+        "symbol": "__ZN13quickjs_oxide6engine2vm5stack6window16FrameTransaction31validate_ordinary_call_operands17ha05b1c639cdc9088E",
+        "start": "0x10041bc00",
+        "next_symbol": "0x10041bd34",
+        "adjacent_symbol_extent_bytes": 308,
+        "disassembly_sha256": "8ab787365bafc5c596ea0845c038decf7fcb651cd0ee40d04fbff0b3bd2df1e2"
+      }
+    },
+    "build_receipt": {
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/build-plain-fixed/release/qjs.build.json",
+      "sha256": "c92bff9471c96b035978988ba9fe2ad8665a47cc2c0f2b43db721d2869b771de",
+      "source_commit": "44f6d340d84727560c2ea7c6f179add3a3863d6e",
+      "mode": "plain",
+      "features": []
+    }
+  }
+}

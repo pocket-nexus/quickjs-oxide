@@ -1,0 +1,148 @@
+{
+  "method": "llvm-nm -n; llvm-objdump --disassemble-symbols=... --no-symbolize-operands; next symbol is a layout bound, not necessarily exact function size",
+  "tools": {
+    "llvm-nm": [
+      "llvm-nm, compatible with GNU nm",
+      "Homebrew LLVM version 23.1.1"
+    ],
+    "llvm-objdump": [
+      "Homebrew LLVM version 23.1.1",
+      "  Optimized build."
+    ]
+  },
+  "sides": {
+    "before": {
+      "binary_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/build-plain-fixed/release/qjs",
+      "binary_sha256": "9a815b7f2607e9aa2474db4ea2bf4ba4a5203a06aa43dca6992d0b8a364b5517",
+      "build_receipt_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/build-plain-fixed/release/qjs.build.json",
+      "build_receipt_sha256": "c92bff9471c96b035978988ba9fe2ad8665a47cc2c0f2b43db721d2869b771de",
+      "source_commit": "44f6d340d84727560c2ea7c6f179add3a3863d6e",
+      "mode": "plain",
+      "features": [],
+      "build_exit_code": 0,
+      "nm_sha256": "33538c423edb51c9cadb0867bac8ee956a8249877917368c04b41834a7000974",
+      "dense_symbols": [
+        {
+          "address": "0x1004216ac",
+          "name": "__ZN13quickjs_oxide6engine2vm3run6fusion5dense16try_numeric_span17h8675d6d4453668feE"
+        },
+        {
+          "address": "0x100428494",
+          "name": "__ZN13quickjs_oxide6engine2vm3run6fusion5dense11read_number17h88ab45f672729705E"
+        },
+        {
+          "address": "0x100428658",
+          "name": "__ZN13quickjs_oxide6engine2vm3run6fusion5dense18peek_proven_number17h32fd994e0eb0b830E"
+        },
+        {
+          "address": "0x1004286e8",
+          "name": "__ZN13quickjs_oxide6engine2vm3run6fusion5dense19apply_number_binary17he4cf5df110e6ed69E"
+        },
+        {
+          "address": "0x100429224",
+          "name": "__ZN13quickjs_oxide6engine2vm3run6fusion5dense11peek_number17h07ef3310b199d73bE"
+        }
+      ],
+      "targets": {
+        "dense_try_numeric_span": {
+          "symbol": "__ZN13quickjs_oxide6engine2vm3run6fusion5dense16try_numeric_span17h8675d6d4453668feE",
+          "start": "0x1004216ac",
+          "next_symbol": "0x1004223dc",
+          "adjacent_symbol_extent_bytes": 3376,
+          "disassembly_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-cost-follow-up/codegen-dense/before/dense_try_numeric_span.disasm.txt",
+          "disassembly_sha256": "2cca756dc7969dab9a61da1f7c58c1773cb37bdb579888c0a1eb0ce171bcac91"
+        },
+        "run": {
+          "symbol": "__ZN13quickjs_oxide6engine2vm3run3run17h7ab689084215b178E",
+          "start": "0x100414910",
+          "next_symbol": "0x100419a44",
+          "adjacent_symbol_extent_bytes": 20788,
+          "disassembly_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-cost-follow-up/codegen-dense/before/run.disasm.txt",
+          "disassembly_sha256": "2bf89759389fc40f484109bd42e05de0d6e61fe61c2a9338e920ab7979b18dd6"
+        }
+      }
+    },
+    "after": {
+      "binary_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-cost-follow-up/build-plain/release/qjs",
+      "binary_sha256": "b241d0252cfe19d54b18843ae106f91c4cb66f2d7f462f120ce21e2d643f3573",
+      "build_receipt_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-cost-follow-up/build-plain/release/qjs.build.json",
+      "build_receipt_sha256": "469a6befb0fe6344739d60f5a8bff697d82b190bc81ee4a8a2e849dcadd64fb3",
+      "source_commit": "c7fb5b69d88bb5e6170fab3b8af5a3062fd4cb72",
+      "mode": "plain",
+      "features": [],
+      "build_exit_code": 0,
+      "nm_sha256": "24beafdd6f36a139a583bf74037a68cccc1fc2a874b1f130ac325dab800f40ed",
+      "dense_symbols": [
+        {
+          "address": "0x1004214ec",
+          "name": "__ZN13quickjs_oxide6engine2vm3run6fusion5dense16try_numeric_span17h8675d6d4453668feE"
+        },
+        {
+          "address": "0x100428390",
+          "name": "__ZN13quickjs_oxide6engine2vm3run6fusion5dense11read_number17h88ab45f672729705E"
+        },
+        {
+          "address": "0x100428554",
+          "name": "__ZN13quickjs_oxide6engine2vm3run6fusion5dense19apply_number_binary17he4cf5df110e6ed69E"
+        },
+        {
+          "address": "0x100428f4c",
+          "name": "__ZN13quickjs_oxide6engine2vm3run6fusion5dense11peek_number17h07ef3310b199d73bE"
+        },
+        {
+          "address": "0x100429190",
+          "name": "__ZN13quickjs_oxide6engine2vm3run6fusion5dense18peek_proven_number17h32fd994e0eb0b830E"
+        }
+      ],
+      "targets": {
+        "dense_try_numeric_span": {
+          "symbol": "__ZN13quickjs_oxide6engine2vm3run6fusion5dense16try_numeric_span17h8675d6d4453668feE",
+          "start": "0x1004214ec",
+          "next_symbol": "0x1004222d8",
+          "adjacent_symbol_extent_bytes": 3564,
+          "disassembly_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-cost-follow-up/codegen-dense/after/dense_try_numeric_span.disasm.txt",
+          "disassembly_sha256": "6291db8cb98d91ed46af8f1e62c2e6753e395e5d54483ad0079bb063d54f3eb9"
+        },
+        "run": {
+          "symbol": "__ZN13quickjs_oxide6engine2vm3run3run17h7ab689084215b178E",
+          "start": "0x100414750",
+          "next_symbol": "0x100419884",
+          "adjacent_symbol_extent_bytes": 20788,
+          "disassembly_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-cost-follow-up/codegen-dense/after/run.disasm.txt",
+          "disassembly_sha256": "ca478c1352911b40d48dad285d6dc4825586e06bccb7f0b14383370b83dd8708"
+        }
+      }
+    }
+  },
+  "observed": {
+    "old_update_opcode_tag_loads": [
+      "0x100421b6c (float Number)",
+      "0x100421d3c (int Number)"
+    ],
+    "new_update_kind_direction_selection": [
+      "0x100421a98..0x100421ab0 (kind 14/4/3 comparisons)",
+      "0x100421ab4..0x100421ac8 (float direction select)",
+      "0x100421bd4..0x100421c64 (int update and overflow direction select)"
+    ],
+    "new_third_instruction_tag_load_outside_update_branch": "0x100421fcc",
+    "old_third_instruction_tag_load_outside_update_branch": "0x1004220d8",
+    "frame_bytes_before_after": [
+      352,
+      352
+    ],
+    "run_call_sites_before": [
+      "0x100414d30",
+      "0x100416fa0"
+    ],
+    "run_call_sites_after": [
+      "0x100414b70",
+      "0x100416de0"
+    ],
+    "dense_symbol_count_before_after": [
+      5,
+      5
+    ],
+    "claim": "Update direction is selected from published kind; no code[2] opcode tag read occurs on the update path. Other kind comparisons and dynamic guards remain.",
+    "limits": "Plain release static ARM64 disassembly only; both commits differ in additional array/call code; no timing or retired-instruction improvement follows from this disassembly alone."
+  }
+}

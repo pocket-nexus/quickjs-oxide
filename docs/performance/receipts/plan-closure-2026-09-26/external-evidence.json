@@ -1,0 +1,226 @@
+[
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/accepted-gate-batch.json",
+    "sha256": "bb5b582a63801d8651ebd4ec1d3a32a6f321625d7bbe19a972349c32368db24b"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/build-batch.json",
+    "sha256": "14e078b78f69753b221c071a00cef5d94f3b9fcc7c3714d2068279169b8a54c0"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/candidate-batch.json",
+    "sha256": "d19927a8580f7ac5e3ee602f8499dd28b25ac246ea6b735ba9b7041b03b9cd3c"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/entry-read-gate-batch.json",
+    "sha256": "4a51393e8bb07655dc3ead083f4cd81669b60a7eceda920b03c704924b074ba6"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/final-gate-batch.json",
+    "sha256": "641588e048dafa69ce6f5f44fbfe929f076e1ab6229059e45351c799d6e30a58"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/measurement-batch.json",
+    "sha256": "89a9808dea49e47b7d197b95ccedf92d85e1e850e80935e06d2d25331f2f5d76"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/read-current-gate-batch.json",
+    "sha256": "586420734c9515d9adb99e37794a85e2300adc0a5f3d20a40e46d64de55aec91"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/read-current-matrix-batch.json",
+    "sha256": "0e5f8732693c50e4eacb5c37b6dd72d5a8a32dd1adca00a9228a4fc4a7a91304"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/read-gate-batch.json",
+    "sha256": "4c6b92841435d8c557693104d102f14540da44619abeea338fc5df612bd29101"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/receiver-gate-batch.json",
+    "sha256": "4ef3c9e2a3ce1604404cfef164774da2b1f2d77c84fa27c6e647bede422d26cc"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/settled-gate-batch.json",
+    "sha256": "2de2445b79e096c7b7258a044ac3d61497cbf39c1e9f94e2f818920beba8077d"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/shipping-gate-batch.json",
+    "sha256": "c61f7e3b5955d022145d2639ab5c04be771cce6d01cadd2aec14579790147fc8"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/write-inline-gate-batch.json",
+    "sha256": "cba99c2cf64d7898bd5b7d13c99a18b4c5f1f313d4dd34135794869991de98c3"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/write-inline-matrix-batch.json",
+    "sha256": "acb6e142b4b2e5483efe5a08e6b1f796618abdcaea2c4f2528e5d222a7deef52"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/accepted-parent-gate-summary.json",
+    "sha256": "2bb81f6bd06e0dfee5ac0e468e7e49b6e01e75d07b934478a2f3f589a8261c0c"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/candidate-pairs-summary.json",
+    "sha256": "9f0bae2841a1f99aae11e519d2c399a26fc56c6b31b0c292f5d8ecdca09ed0aa"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/entry-read-object-gate-summary.json",
+    "sha256": "a3093df1aac64e9e45ef8111bed0163b98bb608712cafe585a5735f3d8579d76"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/entry-read-parent-gate-summary.json",
+    "sha256": "71d0dc05b34c83aa2062afe8806ef2f03bcb19d0713ac48d580a93f01d455798"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/final-parent-gate-summary.json",
+    "sha256": "7d764689a781dde16bc7336fdd2fd1571d38b13226bcf863ba6bb32ae22b369d"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/final-validation-summary.json",
+    "sha256": "6cc31735e86e019457e05d4bf98f706a697bbbe5f5ebcec06ee6d29b1f09a2a6"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/object-split-summary.json",
+    "sha256": "b1625117c13dd42ca120a53d186dc5bdcb73c27d72ed6d1dcaf4420f062d4b86"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/read-current-fixed-summary.json",
+    "sha256": "5fd6f41ea162e16db1a26937cfba71c2421fcad530ab34790b276031423dd363"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/read-current-parent-gate-summary.json",
+    "sha256": "a393d1088f09ad0b56f007c01e0e6eebfc6c0b5509630dd9cb9c8635e1cc8f53"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/read-parent-gate-summary.json",
+    "sha256": "d8a75a8d5c687d60eeae9323e28613560ff4b8dbee0856068d53c3a1866e16e3"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/receiver-entry-gate-summary.json",
+    "sha256": "4e5d20f6c46aa2f59a2adcc2a9ebd2148a5d5d56d1f7450c3452c4013a24f724"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/settled-parent-gate-summary.json",
+    "sha256": "4c95aca6b11d37cc4d0c26c605ab8ad93ef5ebf03552749ac481960256b9bf77"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/shipping-parent-gate-summary.json",
+    "sha256": "bbe8b9c4f09ac4bd9252f944cc1b8d5695c120bcfe953f257a356f17295ed444"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/validation-summary.json",
+    "sha256": "b1cc5230a8a58d41ea99f970e6eb34f415b9b280ca02eda84e7801c686c30c3d"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/write-inline-fixed-summary.json",
+    "sha256": "53cd9f7ddac0aa80128d292bf6f01b26847cd532b6842e6e50b5f386da0caef0"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/write-inline-parent-gate-summary.json",
+    "sha256": "c68dba11ee7a9fcfef325e53dc40c13464eb7f2e37fd532d082740a00436187e"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/bounded-runner-review.md",
+    "sha256": "e0e8ea7f56633f4e585c511b9f6cba6b344884778eab379c582665ccb4bfee96"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/final-correctness-review.md",
+    "sha256": "045a718449d7476939ab7c39426e4fbb7018dc4210677d95871e5f924524832c"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/object-split-review.md",
+    "sha256": "08fc95a9e41cc541451d552c814142d64211fcd910c9e15b10cbe4e8c3d75741"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/measure_accepted.py",
+    "sha256": "2805f2e44ff396be6ddab2a574318b69dec09188c8080329148b51fdbb42af2f"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/measure_batch.py",
+    "sha256": "3d60947078dfc14c31294ac5ec53f2fa673d74435414fca2f68f8f84b3bf10e5"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/measure_candidates.py",
+    "sha256": "e831820dbbe59da4ad99d71cc59f8c42550acb04fb5a2e8f6899e47b7dedd807"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/measure_entry_read.py",
+    "sha256": "b9bdc801f44828e3ff48cfe101ce13672160cb91feb72fa56654c33eeddaa820"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/measure_final.py",
+    "sha256": "29ceb72f56e8d676ca8ff8a0f8dd0881f815107e809b49e1afbbdd46b7ce48dc"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/measure_read.py",
+    "sha256": "f36f8233fc328e106d9cb1e70acad878b1064b356c1c1236e09f9a73a0b02b4f"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/measure_read_current.py",
+    "sha256": "a2ca3f88b482d3835d8d8375c9276be581c6ac0f68c47b46115195e05f89fca9"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/measure_settled.py",
+    "sha256": "274e4e3147a93fc31bcf8183ddb569ba10c29602bae88caeffd826b3073ef23e"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/measure_shipping.py",
+    "sha256": "3be4e0d5a70d1940692b43a30c62646bb53ebfa7827e7701c88b6214e68c715f"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/measure_write_inline.py",
+    "sha256": "0152505cf912e7b261a04f1aced986f22a78c0a8cf563d66dc03d18ee1778567"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/analyze.py",
+    "sha256": "11b96ab3688485cddc636ea4c5f821ccaab4099bfce89dedf8bafd3cbecfdbf2"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/analyze_fixed_closure.py",
+    "sha256": "5aea32f3dd2362e18b62ebbfd8d32378d1dc60a3a2f3ea309a907256d1c3f4cb"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/analyze_profile_closure.py",
+    "sha256": "6f74234bf5b85a898556c70a25fc7a7ffd69dbe58b19e09c6a2955b487377808"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/summarize_pairs.py",
+    "sha256": "63d3386d7a16546e4bec6e84cc3a78f5af149d72be41a7e8c5bfe3e1b73e6849"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/entry-read-tests.log",
+    "sha256": "309a7df2fd3db32266b0db7ea74494d5f5891948cc428723a5d04fd8b7512de4"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/read-current-tests.log",
+    "sha256": "4e4bb63a549ad3f62392d57c4d6e39bd2281423628607c6ea2f61d323a8e1c17"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/read-inline-tests.log",
+    "sha256": "ea3151be3d531d4eb52c8d79996e0572d5aac719f67ecf2b823f09312b79d6a7"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/write-inline-tests.log",
+    "sha256": "4b5577d432330eda0985748acbd94f36a1c0d04be8827e38310c8d1fd6ea1b0a"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/entry-read-clippy.log",
+    "sha256": "80442660aee487fb7fe39e265742bfddd0547c75c535dc7bf3bffcd210a1f0f9"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/read-current-clippy.log",
+    "sha256": "4c5d8eac5614f4522a3546e5bb27361af761d2bb8f582f861ec752be9b591cba"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/read-inline-clippy.log",
+    "sha256": "3657491ebac76740459a2f37965ce969a7ceee21e3698bc68cdfd4d3b82df4eb"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/write-inline-clippy.log",
+    "sha256": "bc3155df1c8b8cbf0aa0ea9eb5d8243612629d5dbf9b15e9fd19c6b3613c3297"
+  },
+  {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/read-current-batch-stop.json",
+    "sha256": "330a6225e2542de1878ee539e4db96f44fc8a4a6ce52ebd04e956f38ee93fdb8"
+  }
+]

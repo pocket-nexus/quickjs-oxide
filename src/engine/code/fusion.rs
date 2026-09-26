@@ -1,4 +1,7 @@
-//! Authenticated execution spans over canonical, verified instruction PCs.
+//! Authenticated execution spans over canonical instruction PCs. Compiler
+//! lowering verifies stack flow; publication checks selected metadata, while
+//! the matcher itself checks each span's shape, stack contract and interior
+//! control-flow entries. Internal drafts have no general publication verifier.
 //!
 //! The published bytecode and its source/relocation tables are never rewritten.
 //! A span is entered only at its first instruction, contains no external entry,
@@ -9,15 +12,122 @@ use super::function::metadata::{ClosureVariableKind, VariableDefinition};
 use crate::engine::heap::{BytecodeConstant, RawValue};
 use std::rc::Rc;
 
+mod dense;
+#[cfg(test)]
+pub(crate) use dense::with_dense_candidates_disabled;
+pub(crate) use dense::{DenseSpanKind, DirectSlot, NumericSource};
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct FusionPlan(Option<Rc<[u8]>>);
 
+/// One flag load shared by all fusion candidates at a local-read PC.
 #[derive(Clone, Copy)]
+pub(crate) struct FusionEntry(u8);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LocalFusionChoice {
+    Canonical,
+    LocalAdd(usize),
+    Update(UpdateLocal),
+    CompareBranch(usize),
+    FieldAdd(usize),
+    Dense(DenseSpanKind),
+}
+
+impl FusionEntry {
+    /// Most local reads in a function with some fusion have no candidate at
+    /// their own PC. Give that case one explicit exit before classifying the
+    /// published flag.
+    #[inline(always)]
+    pub(crate) fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// Exactly one published candidate may start at a local-read PC. Dynamic
+    /// guards still run in the selected handler and decline to canonical code.
+    #[inline]
+    pub(crate) fn local_choice(self) -> LocalFusionChoice {
+        use LocalFusionChoice as Choice;
+        match self.0 {
+            35 | 128 | 130 => Choice::LocalAdd(4),
+            36 | 129 | 131 => Choice::LocalAdd(5),
+            flag if flag & 16 != 0 => Choice::Update(UpdateLocal::from_flag(flag)),
+            33 => Choice::CompareBranch(4),
+            34 => Choice::CompareBranch(5),
+            37 => Choice::FieldAdd(5),
+            38 => Choice::FieldAdd(6),
+            1..=15 => DenseSpanKind::from_flag(self.0)
+                .map(Choice::Dense)
+                .unwrap_or(Choice::Canonical),
+            _ => Choice::Canonical,
+        }
+    }
+
+    #[inline]
+    #[cfg(feature = "profiling")]
+    pub(crate) fn has_candidate(self) -> bool {
+        self.0 != 0
+    }
+
+    #[inline]
+    pub(crate) fn dense_span(self) -> Option<DenseSpanKind> {
+        DenseSpanKind::from_flag(self.0)
+    }
+
+    #[inline]
+    #[cfg(test)]
+    pub(crate) fn update(self) -> Option<UpdateLocal> {
+        let flag = self.0;
+        (flag & 16 != 0).then_some(UpdateLocal::from_flag(flag))
+    }
+
+    #[inline]
+    #[cfg(test)]
+    pub(crate) fn local_compare_branch(self) -> Option<usize> {
+        match self.0 {
+            33 => Some(4),
+            34 => Some(5),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn local_add_span(self) -> Option<usize> {
+        match self.0 {
+            35 | 128 | 130 => Some(4),
+            36 | 129 | 131 => Some(5),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    #[cfg(test)]
+    pub(crate) fn local_field_add_span(self) -> Option<usize> {
+        match self.0 {
+            37 => Some(5),
+            38 => Some(6),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct UpdateLocal {
     pub increment: bool,
     pub postfix: bool,
     pub discard: bool,
     pub instructions: usize,
+}
+
+impl UpdateLocal {
+    const fn from_flag(flag: u8) -> Self {
+        Self {
+            increment: flag & 1 != 0,
+            postfix: flag & 2 != 0,
+            discard: flag & 4 != 0,
+            instructions: if flag & 8 != 0 { 4 } else { 3 },
+        }
+    }
 }
 
 impl FusionPlan {
@@ -53,6 +163,17 @@ impl FusionPlan {
         let mut any = false;
         for pc in 0..code.len() {
             let rest = &code[pc..];
+            // Dense publication already authenticated the whole span, including
+            // interior entries. A match supersedes the legacy candidate at this
+            // PC, so do not build and authenticate that unused candidate too.
+            if let Some(kind) = dense::candidate(rest, locals, constants, &entries[pc..]) {
+                if flags.is_empty() {
+                    flags.resize(code.len(), 0);
+                }
+                flags[pc] = kind as u8;
+                any = true;
+                continue;
+            }
             let update = match rest {
                 [
                     Instruction::GetLocal(index) | Instruction::GetLocalCheck(index),
@@ -269,7 +390,7 @@ impl FusionPlan {
                 ] => Some((33, 4)),
                 _ => None,
             };
-            let candidate = local_compare
+            let old_candidate = local_compare
                 .or(method)
                 .or(local_field_add)
                 .or(local_add_const)
@@ -312,7 +433,7 @@ impl FusionPlan {
                     }
                     _ => None,
                 });
-            if let Some((flag, length)) = candidate {
+            if let Some((flag, length)) = old_candidate {
                 // The folded S1 Goto is an authenticated span tail: it may be
                 // entered canonically on its own, so it is exempt from the
                 // interior-entry rule.
@@ -341,15 +462,20 @@ impl FusionPlan {
             .copied()
             .unwrap_or(0)
     }
+    #[inline(always)]
+    pub(crate) fn entry(&self, pc: usize) -> FusionEntry {
+        FusionEntry(self.flag(pc))
+    }
+    // This lookup is on every direct local/argument read in `run`. Keeping it
+    // outlined adds a call and caller spills even when no dense span exists.
+    #[inline(always)]
+    pub(crate) fn dense_span(&self, pc: usize) -> Option<DenseSpanKind> {
+        self.entry(pc).dense_span()
+    }
     #[inline]
+    #[cfg(test)]
     pub(crate) fn update(&self, pc: usize) -> Option<UpdateLocal> {
-        let flag = self.flag(pc);
-        (flag & 16 != 0).then_some(UpdateLocal {
-            increment: flag & 1 != 0,
-            postfix: flag & 2 != 0,
-            discard: flag & 4 != 0,
-            instructions: if flag & 8 != 0 { 4 } else { 3 },
-        })
+        self.entry(pc).update()
     }
     #[inline]
     pub(crate) fn compare_branch(&self, pc: usize) -> bool {
@@ -359,12 +485,9 @@ impl FusionPlan {
     /// is structural; the runtime guard requires both bindings to be direct
     /// numbers, so captured, TDZ and non-number operands fall back canonically.
     #[inline]
+    #[cfg(test)]
     pub(crate) fn local_compare_branch(&self, pc: usize) -> Option<usize> {
-        match self.flag(pc) {
-            33 => Some(4),
-            34 => Some(5),
-            _ => None,
-        }
+        self.entry(pc).local_compare_branch()
     }
     #[inline]
     pub(crate) fn add_store(&self, pc: usize) -> bool {
@@ -380,23 +503,16 @@ impl FusionPlan {
     /// numeric-literal writeback shares this span entry so each `GetLocal`
     /// pays one flag load for both shapes.
     pub(crate) fn local_add_span(&self, pc: usize) -> Option<usize> {
-        match self.flag(pc) {
-            35 | 128 | 130 => Some(4),
-            36 | 129 | 131 => Some(5),
-            _ => None,
-        }
+        self.entry(pc).local_add_span()
     }
     /// S3 `producer(acc); producer(base); GetField(key); Add; store(acc)[; Drop]`
     /// span length. Admission is structural; the runtime guard requires a
     /// direct number accumulator, a direct object base and a location-cache
     /// hit whose stored value is an immediate number.
     #[inline]
+    #[cfg(test)]
     pub(crate) fn local_field_add_span(&self, pc: usize) -> Option<usize> {
-        match self.flag(pc) {
-            37 => Some(5),
-            38 => Some(6),
-            _ => None,
-        }
+        self.entry(pc).local_field_add_span()
     }
     /// Constant-left (prepend) LocalAdd span length. Admission is structural;
     /// the runtime still proves the constant is a String and the local is a
@@ -464,6 +580,73 @@ mod tests {
             kind: ClosureVariableKind::Normal,
         }
     }
+
+    #[test]
+    fn fixed_plain_read_probes_have_distinct_published_plan_states() {
+        use crate::engine::api::Runtime;
+
+        for (name, source, expects_plan) in [
+            (
+                "fusion_no_plan",
+                include_str!("../../../docs/performance/probes/fixed/fusion_no_plan.js"),
+                false,
+            ),
+            (
+                "fusion_flag0",
+                include_str!("../../../docs/performance/probes/fixed/fusion_flag0.js"),
+                true,
+            ),
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let root = context.compile(source).unwrap();
+            let work = runtime.test_child_function_bytecode(&root, 0).unwrap();
+            let published = runtime.snapshot_function_bytecode(&work).unwrap();
+            assert_eq!(published.fusion.0.is_some(), expects_plan, "{name}");
+
+            let (loop_start, loop_end) = published
+                .code
+                .iter()
+                .enumerate()
+                .find_map(|(pc, instruction)| match instruction {
+                    Instruction::Goto(target) if (*target as usize) < pc => {
+                        Some((*target as usize, pc))
+                    }
+                    _ => None,
+                })
+                .expect("probe must contain a backward loop edge");
+            let loop_reads: Vec<_> = (loop_start..loop_end)
+                .filter(|&pc| {
+                    matches!(
+                        published.code[pc],
+                        Instruction::GetLocal(_) | Instruction::GetLocalCheck(_)
+                    )
+                })
+                .collect();
+            assert!(!loop_reads.is_empty(), "{name}: no local read in hot loop");
+            assert!(
+                loop_reads
+                    .iter()
+                    .all(|&pc| published.fusion.entry(pc).is_empty()),
+                "{name}: hot loop acquired a fusion candidate"
+            );
+
+            let candidates: Vec<_> = (0..published.code.len())
+                .filter(|&pc| !published.fusion.entry(pc).is_empty())
+                .collect();
+            if expects_plan {
+                assert!(!candidates.is_empty(), "{name}");
+                assert!(candidates.iter().all(|&pc| pc < loop_start), "{name}");
+                assert!(candidates.iter().any(|&pc| matches!(
+                    published.fusion.entry(pc).local_choice(),
+                    LocalFusionChoice::LocalAdd(_)
+                )));
+            } else {
+                assert!(candidates.is_empty(), "{name}");
+            }
+        }
+    }
+
     #[test]
     fn local_add_span_rejects_intermediate_entries_and_other_targets() {
         use Instruction::*;
@@ -506,6 +689,67 @@ mod tests {
         assert_eq!(
             FusionPlan::build(&code, &[local(false), local(false)], &[]).local_add_span(0),
             None
+        );
+    }
+
+    #[test]
+    fn local_choice_keeps_plain_reads_canonical_inside_a_fused_function() {
+        use Instruction::*;
+        let code = [
+            GetLocal(0),
+            PushI32(1),
+            Add,
+            PutLocal(0),
+            GetLocal(1),
+            GetLocal(0),
+            Inc,
+            PutLocal(0),
+            GetLocal(1),
+            Return,
+        ];
+        let plan = FusionPlan::build(&code, &[local(false), local(false)], &[]);
+        assert_eq!(plan.entry(0).local_choice(), LocalFusionChoice::LocalAdd(4));
+        assert!(plan.entry(4).is_empty());
+        assert_eq!(plan.entry(4).local_choice(), LocalFusionChoice::Canonical);
+        assert!(matches!(
+            plan.entry(5).local_choice(),
+            LocalFusionChoice::Update(UpdateLocal {
+                increment: true,
+                postfix: false,
+                discard: true,
+                instructions: 3,
+            })
+        ));
+        assert!(plan.entry(8).is_empty());
+        assert_eq!(plan.entry(8).local_choice(), LocalFusionChoice::Canonical);
+
+        let compare = [GetLocal(0), GetLocal(1), Lt, IfFalse(4), ReturnUndefined];
+        assert_eq!(
+            FusionPlan::build(&compare, &[local(false), local(false)], &[])
+                .entry(0)
+                .local_choice(),
+            LocalFusionChoice::CompareBranch(4)
+        );
+        let field = [
+            GetLocal(0),
+            GetLocal(1),
+            GetField(0),
+            Add,
+            PutLocal(0),
+            ReturnUndefined,
+        ];
+        assert_eq!(
+            FusionPlan::build(&field, &[local(false), local(false)], &[])
+                .entry(0)
+                .local_choice(),
+            LocalFusionChoice::FieldAdd(5)
+        );
+        let dense = [GetLocal(0), GetArg(0), GetArrayEl, Return];
+        assert_eq!(
+            FusionPlan::build(&dense, &[local(false)], &[])
+                .entry(0)
+                .local_choice(),
+            LocalFusionChoice::Dense(DenseSpanKind::Read)
         );
     }
 

@@ -19,6 +19,7 @@ pub(crate) enum SlotReleaseReadiness {
 }
 
 impl Heap {
+    #[cfg(test)]
     pub(crate) fn slot_object_release_readiness(
         &self,
         object: super::ObjectId,

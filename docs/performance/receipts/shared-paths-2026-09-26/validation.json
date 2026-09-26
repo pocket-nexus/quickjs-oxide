@@ -1,0 +1,24 @@
+{
+  "checks": [
+    {
+      "command": "cargo +1.88.0 test --locked --lib --features profiling -j 2",
+      "source_commit": "e2cbe966",
+      "exit_code": 0,
+      "log": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/test-verified.log",
+      "log_sha256": "f3d1991c3c101d4d302f3a9d212908b380c5174829041b98084ccb07f267b84b",
+      "tail": ["test engine::vm::native_stack::tests::generator_delegation_reaches_the_portable_floor_and_recovers_after_overflow ... ok","test source::unicode::normalize::tests::exhaustive_table_readers_match_pinned_quickjs_c_fingerprints ... ok","","test result: ok. 2167 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 30.23s",""]
+    },
+    {
+      "command": "cargo +1.88.0 clippy --locked --workspace --all-targets --features profiling -j 2 -- -D warnings",
+      "source_commit": "e2cbe966",
+      "exit_code": 0,
+      "log": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/clippy-verified.log",
+      "log_sha256": "40f2bf156cff3cfc8bcfe0cfe2f779db393b585c7ecd22760313935cd40a6205",
+      "tail": ["    Checking quickjs-oxide-web-host v0.0.1 (/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/adapters/web)","    Checking quickjs-oxide-web v0.0.1 (/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/apps/web)","    Checking quickjs-oxide-cli v0.0.1 (/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/apps/cli)","    Checking quickjs-oxide-test262 v0.0.1 (/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/conformance/test262)","    Finished `dev` profile [unoptimized + debuginfo] target(s) in 45.15s"]
+    }
+  ],
+  "format_check": "cargo +1.88.0 fmt --all -- --check: passed",
+  "source_layout": "626 reachable Rust files: passed",
+  "test262_full": "not rerun for this source",
+  "github_ci": "check separately after push"
+}

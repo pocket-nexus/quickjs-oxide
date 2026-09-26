@@ -1,0 +1,44 @@
+{
+  "pairs": [
+    {
+      "name": "raytrace-aa",
+      "source": "raytrace-aa/results.json",
+      "sha256": "a591e2c29e74a9180ab3183e4fb561666c5cd6620888e45dae80615bb599fdd7",
+      "metric": "whole process; fixed work; not original V8 Score",
+      "interference": "Other same-host workloads were allowed; our engines ran serially outside our builds.",
+      "engines": {
+        "baseline": {
+          "sha256": "b7fbc1f993bac566e5b5c6a72f5b175f1c3ab21e505e595d78327352a53d2ec2",
+          "commit": "af5b59026a741dc7a6d6a4b3836e4ecceb11e893"
+        },
+        "candidate": {
+          "sha256": "b7fbc1f993bac566e5b5c6a72f5b175f1c3ab21e505e595d78327352a53d2ec2",
+          "commit": "af5b59026a741dc7a6d6a4b3836e4ecceb11e893"
+        }
+      },
+      "cases": [
+        {"case":"raytrace","metrics":{"instructions_retired":{"engines":{"baseline":{"n":4,"median":7138265757.5,"min":7134058433,"max":7143370807},"candidate":{"n":4,"median":7135297476.5,"min":7134690848,"max":7135920819}},"candidate_change_pct":-0.04158266308426084,"candidate_minus_baseline":-2968281.0},"cycles_elapsed":{"engines":{"baseline":{"n":4,"median":1739909131.0,"min":1733264897,"max":1745945242},"candidate":{"n":4,"median":1733899844.0,"min":1728629260,"max":1748783506}},"candidate_change_pct":-0.3453793587798626,"candidate_minus_baseline":-6009287.0},"maximum_resident_set_size":{"engines":{"baseline":{"n":4,"median":9945088.0,"min":9912320,"max":9977856},"candidate":{"n":4,"median":9904128.0,"min":9879552,"max":9945088}},"candidate_change_pct":-0.4118616144975329,"candidate_minus_baseline":-40960.0},"peak_memory_footprint":{"engines":{"baseline":{"n":4,"median":5727104.0,"min":5686144,"max":5751744},"candidate":{"n":4,"median":5677984.0,"min":5669760,"max":5718912}},"candidate_change_pct":-0.8576760610598311,"candidate_minus_baseline":-49120.0},"process_wall_ns":{"engines":{"baseline":{"n":4,"median":565094416.5,"min":562506667,"max":566909791},"candidate":{"n":4,"median":563564187.5,"min":561798750,"max":569738083}},"candidate_change_pct":-0.27079173945439017,"candidate_minus_baseline":-1530229.0}}}
+      ]
+    },
+    {
+      "name": "raytrace-ab",
+      "source": "raytrace-ab/results.json",
+      "sha256": "6bdca54bce29fcf3aaf3dc2c0428666819a9aec1d40d9379ef7b155530007429",
+      "metric": "whole process; fixed work; not original V8 Score",
+      "interference": "Other same-host workloads were allowed; our engines ran serially outside our builds.",
+      "engines": {
+        "baseline": {
+          "sha256": "b7fbc1f993bac566e5b5c6a72f5b175f1c3ab21e505e595d78327352a53d2ec2",
+          "commit": "af5b59026a741dc7a6d6a4b3836e4ecceb11e893"
+        },
+        "candidate": {
+          "sha256": "1b57d826084757e2e9090fa3a45312601fd777bee85d9ce2e1b7a8dff47b0f6f",
+          "commit": "ae81f0907bed190e021dbab2560ec0a25d420a82"
+        }
+      },
+      "cases": [
+        {"case":"raytrace","metrics":{"instructions_retired":{"engines":{"baseline":{"n":4,"median":7136938892.0,"min":7134497487,"max":7141842188},"candidate":{"n":4,"median":7121511822.5,"min":7121341399,"max":7129528583}},"candidate_change_pct":-0.2161580718771816,"candidate_minus_baseline":-15427069.5},"cycles_elapsed":{"engines":{"baseline":{"n":4,"median":1740292373.0,"min":1731431727,"max":1745311780},"candidate":{"n":4,"median":1727285274.0,"min":1721757066,"max":1736889611}},"candidate_change_pct":-0.7474088378366939,"candidate_minus_baseline":-13007099.0},"maximum_resident_set_size":{"engines":{"baseline":{"n":4,"median":9969664.0,"min":9895936,"max":10010624},"candidate":{"n":4,"median":9863168.0,"min":9830400,"max":9895936}},"candidate_change_pct":-1.0682004930156141,"candidate_minus_baseline":-106496.0},"peak_memory_footprint":{"engines":{"baseline":{"n":4,"median":5743488.0,"min":5669760,"max":5784448},"candidate":{"n":4,"median":5636992.0,"min":5604224,"max":5669760}},"candidate_change_pct":-1.8542042744757237,"candidate_minus_baseline":-106496.0},"process_wall_ns":{"engines":{"baseline":{"n":4,"median":564559104.0,"min":561982333,"max":566995417},"candidate":{"n":4,"median":562056708.5,"min":559450084,"max":567616041}},"candidate_change_pct":-0.4432477454123229,"candidate_minus_baseline":-2502395.5}}}
+      ]
+    }
+  ]
+}

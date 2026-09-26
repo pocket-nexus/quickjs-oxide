@@ -1,0 +1,827 @@
+{
+  "schema": "oxide-v8-fixed-iteration-freeze-v1",
+  "source": {
+    "repository": {
+      "commit": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD"
+        ],
+        "exit_code": 0,
+        "stdout": "2034d98fc8c5f8044e186267593f5d5ea5232caf",
+        "stderr": ""
+      },
+      "tree": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD^{tree}"
+        ],
+        "exit_code": 0,
+        "stdout": "4e86354f280d1a62a27e85b784bd17194694a9c7",
+        "stderr": ""
+      },
+      "top_level": {
+        "command": [
+          "git",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "exit_code": 0,
+        "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark",
+        "stderr": ""
+      },
+      "status": {
+        "command": [
+          "git",
+          "status",
+          "--porcelain"
+        ],
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    "expected_commit": "2034d98fc8c5f8044e186267593f5d5ea5232caf",
+    "root": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark",
+    "files": {
+      "base.js": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark/v8-v7/base.js",
+        "sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51"
+      },
+      "richards.js": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark/v8-v7/richards.js",
+        "sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11"
+      },
+      "deltablue.js": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark/v8-v7/deltablue.js",
+        "sha256": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9"
+      },
+      "crypto.js": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark/v8-v7/crypto.js",
+        "sha256": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af"
+      },
+      "raytrace.js": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark/v8-v7/raytrace.js",
+        "sha256": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb"
+      },
+      "earley-boyer.js": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark/v8-v7/earley-boyer.js",
+        "sha256": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01"
+      },
+      "regexp.js": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark/v8-v7/regexp.js",
+        "sha256": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602"
+      },
+      "splay.js": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark/v8-v7/splay.js",
+        "sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d"
+      },
+      "navier-stokes.js": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark/v8-v7/navier-stokes.js",
+        "sha256": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84"
+      },
+      "run.js": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark/v8-v7/run.js",
+        "sha256": "f13e44c0c4c70a9eb7bdab79956cab9faf59be8b9bec97f98f21548e01d9f938"
+      }
+    }
+  },
+  "tooling": {
+    "iterate_v8.py": {
+      "path": "/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/scripts/benchmark/iterate_v8.py",
+      "sha256": "5abd0cb82d0f13ff03101731754e29778a990e13b635c4b3029854210bb79cff"
+    },
+    "profile_v8.py": {
+      "path": "/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/scripts/benchmark/profile_v8.py",
+      "sha256": "1144e4ff77ca705ac47c3464612d3c5780bfef9e30642a35426a92e99f786186"
+    },
+    "run.py": {
+      "path": "/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/scripts/benchmark/run.py",
+      "sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5"
+    },
+    "fixed.py": {
+      "path": "/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/scripts/benchmark/fixed.py",
+      "sha256": "8a852679221202ae6d3dac1e02b295368a79529a3e0c32e51fd6b914e5d4b425"
+    }
+  },
+  "calibration_baseline": {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-parent/release/qjs",
+    "sha256": "4fbc635f3f8d02a9e29fec39f568177742d5a3f1d5dee0de845ef29c92215a9a",
+    "version": {
+      "command": [
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-parent/release/qjs",
+        "--version"
+      ],
+      "exit_code": 0,
+      "stdout": "quickjs-oxide 0.0.1 (QuickJS 2026-06-04 compatibility target)",
+      "stderr": ""
+    },
+    "build": {
+      "schema": "oxide-build-v2",
+      "mode": "plain",
+      "vm_configuration": "stack-vm",
+      "features": [],
+      "commit": "29560e08e37e7e3465fb355be5641b26da374576",
+      "source": {
+        "commit": {
+          "command": [
+            "git",
+            "rev-parse",
+            "HEAD"
+          ],
+          "exit_code": 0,
+          "stdout": "29560e08e37e7e3465fb355be5641b26da374576",
+          "stderr": ""
+        },
+        "tree": {
+          "command": [
+            "git",
+            "rev-parse",
+            "HEAD^{tree}"
+          ],
+          "exit_code": 0,
+          "stdout": "8bcfd3ede3ddbf198d1d0041e41462fcb4b3cd97",
+          "stderr": ""
+        },
+        "top_level": {
+          "command": [
+            "git",
+            "rev-parse",
+            "--show-toplevel"
+          ],
+          "exit_code": 0,
+          "stdout": "/private/tmp/quickjs-oxide-baseline-29560e08",
+          "stderr": ""
+        },
+        "status": {
+          "command": [
+            "git",
+            "status",
+            "--porcelain"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": ""
+        }
+      },
+      "binary_sha256": "4fbc635f3f8d02a9e29fec39f568177742d5a3f1d5dee0de845ef29c92215a9a",
+      "tooling": {
+        "repository": {
+          "commit": {
+            "command": [
+              "git",
+              "rev-parse",
+              "HEAD"
+            ],
+            "exit_code": 0,
+            "stdout": "b42652f8a31240feebd247b8a730b58a6b9a4921",
+            "stderr": ""
+          },
+          "tree": {
+            "command": [
+              "git",
+              "rev-parse",
+              "HEAD^{tree}"
+            ],
+            "exit_code": 0,
+            "stdout": "2ad4224dacdcf3a722f0c05c9ee242fd089e8a34",
+            "stderr": ""
+          },
+          "top_level": {
+            "command": [
+              "git",
+              "rev-parse",
+              "--show-toplevel"
+            ],
+            "exit_code": 0,
+            "stdout": "/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide",
+            "stderr": ""
+          },
+          "status": {
+            "command": [
+              "git",
+              "status",
+              "--porcelain"
+            ],
+            "exit_code": 0,
+            "stdout": "M apps/cli/src/profiling.rs\n M apps/cli/tests/profiling.rs\n M docs/performance/measurement.md\n M scripts/benchmark/README.md\n M scripts/benchmark/build.py\n M scripts/benchmark/fixed.py\n M scripts/benchmark/run.py\n M scripts/benchmark/test_fixed.py\n M scripts/benchmark/test_run.py\n M src/engine/api/profiling.rs\n M src/engine/api/profiling/cost.rs\n M src/engine/code/fusion.rs\n M src/engine/vm/driver/ordinary.rs\n M src/engine/vm/run.rs\n M src/engine/vm/run/fusion/dense.rs\n?? scripts/benchmark/test_build.py\n?? src/engine/api/profiling/cost/sites.rs",
+            "stderr": ""
+          }
+        },
+        "build_py_sha256": "fc8392a9d26290a6095742b2ab4cb45f5ab37b964c9daa51d22f7088259b1f50",
+        "run_py_sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5"
+      },
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--release",
+        "--verbose",
+        "-p",
+        "quickjs-oxide-cli",
+        "--no-default-features",
+        "--target-dir",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-parent",
+        "--jobs",
+        "2"
+      ],
+      "cwd": "/private/tmp/quickjs-oxide-baseline-29560e08",
+      "exit_code": 0,
+      "stdout": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-parent/release/qjs.build.stdout.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "stderr": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-parent/release/qjs.build.stderr.log",
+        "sha256": "55d350a5163a8007fdac95b309ce4c9c95dd7c510bae70c1d054132a1c719205"
+      },
+      "rustc": {
+        "command": [
+          "rustc",
+          "-vV"
+        ],
+        "exit_code": 0,
+        "stdout": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2",
+        "stderr": ""
+      },
+      "cargo": {
+        "command": [
+          "cargo",
+          "-V"
+        ],
+        "exit_code": 0,
+        "stdout": "cargo 1.96.0 (30a34c682 2026-05-25)",
+        "stderr": ""
+      },
+      "cargo_toml_sha256": "14f5e4d4f172150d6c212b61871da24a4e5b26e34e363f6de2a7f250bbe6e48d",
+      "cargo_lock_sha256": "c26c9f1999da579c0d1176c62981afa716ea998949a8dd15b1365f85b66944e3",
+      "release_profile": {
+        "manifest": {
+          "lto": "\"fat\"",
+          "codegen-units": "1"
+        },
+        "environment_overrides": {},
+        "cargo_config_sha256": {},
+        "qjs_rustc_invocation": {
+          "command": "rustc --crate-name qjs --edition=2024 apps/cli/src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C opt-level=3 -C lto=fat -C codegen-units=1 '--warn=clippy::all' --forbid=unsafe_code --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values(\"default\", \"profiling\", \"test262-host\"))' -C metadata=f318d7eac3aa0c1d -C extra-filename=-3cfe3c105f2435ac --out-dir /Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-parent/release/deps -C strip=debuginfo -L dependency=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-parent/release/deps --extern quickjs_oxide=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-parent/release/deps/libquickjs_oxide-e0446d572207f926.rlib --extern quickjs_oxide_host=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-parent/release/deps/libquickjs_oxide_host-78c1c28f3dc115b8.rlib",
+          "crate": "qjs",
+          "codegen": {
+            "opt-level": "3",
+            "lto": "fat",
+            "codegen-units": "1"
+          },
+          "target": null
+        },
+        "observed_rustc_compilations": 9,
+        "observed_codegen_groups": [
+          {
+            "target": null,
+            "codegen": {},
+            "crates": [
+              "autocfg",
+              "build_script_build"
+            ]
+          },
+          {
+            "target": null,
+            "codegen": {
+              "opt-level": "3",
+              "codegen-units": "1"
+            },
+            "crates": [
+              "tz",
+              "num_traits",
+              "num_integer",
+              "num_bigint",
+              "quickjs_oxide",
+              "quickjs_oxide_host"
+            ]
+          },
+          {
+            "target": null,
+            "codegen": {
+              "opt-level": "3",
+              "lto": "fat",
+              "codegen-units": "1"
+            },
+            "crates": [
+              "qjs"
+            ]
+          }
+        ]
+      },
+      "target": {
+        "requested_triple": null,
+        "rustc_host": "aarch64-apple-darwin",
+        "observed_triple": null,
+        "observed_target_cpu": null,
+        "observed_target_feature": null
+      },
+      "commit_environment": "29560e08e37e7e3465fb355be5641b26da374576"
+    }
+  },
+  "pilot": [
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-richards.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-parent/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/generated/pilot/richards.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 53291959,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-richards.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-richards.stderr",
+      "case": "richards",
+      "phase": "pilot",
+      "repetition": 0,
+      "engine": "baseline",
+      "generated_sha256": "bdf504be4914a4b9096ff203e1053c37800484e7b5cfad57cc9f046dafb150d5",
+      "status": "ok",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-richards.time-l.txt",
+        "raw_sha256": "cd9ff5cdce01624c5aa91dc0d5a0842ff54dc6ef8123f909ddabd787c3d0d396",
+        "values": {
+          "maximum_resident_set_size": 8044544,
+          "instructions_retired": 652971894,
+          "cycles_elapsed": 155290503,
+          "peak_memory_footprint": 4162432
+        }
+      }
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-deltablue.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-parent/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/generated/pilot/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 83543542,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-deltablue.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-deltablue.stderr",
+      "case": "deltablue",
+      "phase": "pilot",
+      "repetition": 0,
+      "engine": "baseline",
+      "generated_sha256": "613412ebe97ae0a87a7c5c3eadb1e6e0b6900376dc3b14c73f2cce564ac9bcdf",
+      "status": "ok",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-deltablue.time-l.txt",
+        "raw_sha256": "441beed0a3cf3731690676e2a1cd416f28fd36c5210b6e2e34d9ae2e0a52f5ee",
+        "values": {
+          "maximum_resident_set_size": 9093120,
+          "instructions_retired": 1062752017,
+          "cycles_elapsed": 246496974,
+          "peak_memory_footprint": 5030784
+        }
+      }
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-crypto.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-parent/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/generated/pilot/crypto.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1264967125,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-crypto.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-crypto.stderr",
+      "case": "crypto",
+      "phase": "pilot",
+      "repetition": 0,
+      "engine": "baseline",
+      "generated_sha256": "a5b78df12c7f677163b8ee06a5e3e4990eebe22e4ddd8a6354e21beabe7d2367",
+      "status": "ok",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-crypto.time-l.txt",
+        "raw_sha256": "583cc7bebf5a0a83eacd0e75274e741ab349694332052e79f6ccc463341de868",
+        "values": {
+          "maximum_resident_set_size": 11943936,
+          "instructions_retired": 17127416963,
+          "cycles_elapsed": 3781726457,
+          "peak_memory_footprint": 7816064
+        }
+      }
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-raytrace.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-parent/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/generated/pilot/raytrace.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 570039292,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-raytrace.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-raytrace.stderr",
+      "case": "raytrace",
+      "phase": "pilot",
+      "repetition": 0,
+      "engine": "baseline",
+      "generated_sha256": "3163f4f20297282de55dab21979b898363cd5dea62e027f8f945f7c27c6b8fee",
+      "status": "ok",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-raytrace.time-l.txt",
+        "raw_sha256": "a9aecd9edf264b32d4a23f842c853629871e2be9922e1d4f536608e2bee0724a",
+        "values": {
+          "maximum_resident_set_size": 9830400,
+          "instructions_retired": 7182190373,
+          "cycles_elapsed": 1738918575,
+          "peak_memory_footprint": 5604224
+        }
+      }
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-earley-boyer.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-parent/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/generated/pilot/earley-boyer.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1870010875,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-earley-boyer.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-earley-boyer.stderr",
+      "case": "earley-boyer",
+      "phase": "pilot",
+      "repetition": 0,
+      "engine": "baseline",
+      "generated_sha256": "04fe426bcb8b907a041e3b47c9541b790537d0ce78f82cfc4734e3b16adf8453",
+      "status": "ok",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-earley-boyer.time-l.txt",
+        "raw_sha256": "24def7f9efe75a33480cfade06a1702d347f685afca97fcfea4512df5aeaa0aa",
+        "values": {
+          "maximum_resident_set_size": 51183616,
+          "instructions_retired": 24870910584,
+          "cycles_elapsed": 5636991075,
+          "peak_memory_footprint": 46990336
+        }
+      }
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-regexp.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-parent/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/generated/pilot/regexp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1862574750,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-regexp.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-regexp.stderr",
+      "case": "regexp",
+      "phase": "pilot",
+      "repetition": 0,
+      "engine": "baseline",
+      "generated_sha256": "d42b37d8c3bbe312642b9bb0e9f1b915cdff24eb4ea3f3cd427d670518968ca0",
+      "status": "ok",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-regexp.time-l.txt",
+        "raw_sha256": "17d1d3386f9e16d83619957474beee65e9117b892a3849a1f272296bbf090b99",
+        "values": {
+          "maximum_resident_set_size": 18612224,
+          "instructions_retired": 25669925651,
+          "cycles_elapsed": 5683165066,
+          "peak_memory_footprint": 14009216
+        }
+      }
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-splay.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-parent/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/generated/pilot/splay.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1713067708,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-splay.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-splay.stderr",
+      "case": "splay",
+      "phase": "pilot",
+      "repetition": 0,
+      "engine": "baseline",
+      "generated_sha256": "19de2183858c01c551e5fe37d128fbab631389b869cad190bba61c8854b4ec1f",
+      "status": "ok",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-splay.time-l.txt",
+        "raw_sha256": "065279edc7bf012624349fc15c998f5c44fc2a2a562bd6518a6f9b668b7f05d6",
+        "values": {
+          "maximum_resident_set_size": 537509888,
+          "instructions_retired": 22026711583,
+          "cycles_elapsed": 5215062307,
+          "peak_memory_footprint": 533923904
+        }
+      }
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-navier-stokes.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-parent/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/generated/pilot/navier-stokes.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 357697000,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-navier-stokes.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-navier-stokes.stderr",
+      "case": "navier-stokes",
+      "phase": "pilot",
+      "repetition": 0,
+      "engine": "baseline",
+      "generated_sha256": "831d2c9d36e65a4f788bbf6a28dbd3850d09fd0570088e97c2f6b41dd7f56563",
+      "status": "ok",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-navier-stokes.time-l.txt",
+        "raw_sha256": "3e4a8d3277af34f2d2fe98b322b3c456b965507de6a88c97c17dca3ab3b047e3",
+        "values": {
+          "maximum_resident_set_size": 10993664,
+          "instructions_retired": 5239062975,
+          "cycles_elapsed": 1064299557,
+          "peak_memory_footprint": 7029632
+        }
+      }
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-combined.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-parent/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/generated/pilot/combined.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 7786370792,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-combined.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-combined.stderr",
+      "case": "combined",
+      "phase": "pilot",
+      "repetition": 0,
+      "engine": "baseline",
+      "generated_sha256": "3388757f648d00195f122df6cf91db27438c81955a1d85794a2fa3134bec74fd",
+      "status": "ok",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/raw/pilot-combined.time-l.txt",
+        "raw_sha256": "bd4dc1e0e58ed29e8967f37a312280f59f79902d2bcb12b8c8dcc125cc542452",
+        "values": {
+          "maximum_resident_set_size": 551845888,
+          "instructions_retired": 103283755451,
+          "cycles_elapsed": 23386565696,
+          "peak_memory_footprint": 547326080
+        }
+      }
+    }
+  ],
+  "pilot_wall_ns": {
+    "richards": 53291959,
+    "deltablue": 83543542,
+    "crypto": 1264967125,
+    "raytrace": 570039292,
+    "earley-boyer": 1870010875,
+    "regexp": 1862574750,
+    "splay": 1713067708,
+    "navier-stokes": 357697000,
+    "combined": 7786370792
+  },
+  "target_seconds": 0.1,
+  "runs_per_suite": {
+    "richards": 1,
+    "deltablue": 1,
+    "crypto": 1,
+    "raytrace": 1,
+    "earley-boyer": 1,
+    "regexp": 1,
+    "splay": 1,
+    "navier-stokes": 1
+  },
+  "warmup_per_benchmark": 0,
+  "estimated_formal_ns": 124492504344,
+  "workloads": [
+    {
+      "case": "richards",
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/generated/final/richards.js",
+      "sha256": "bdf504be4914a4b9096ff203e1053c37800484e7b5cfad57cc9f046dafb150d5",
+      "base_sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+      "body_sha256": {
+        "richards": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11"
+      },
+      "driver_sha256": "a17ae038f8efc23860a44eb2f38a83ed8d7ecad7cda269e7138cd416a4af576d",
+      "runs_per_suite": {
+        "richards": 1
+      },
+      "warmup_per_benchmark": 0,
+      "expected_stdout": "__oxide_v8_fixed_iteration_complete__:richards:1:1\n",
+      "suite_order": [
+        "richards"
+      ]
+    },
+    {
+      "case": "deltablue",
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/generated/final/deltablue.js",
+      "sha256": "613412ebe97ae0a87a7c5c3eadb1e6e0b6900376dc3b14c73f2cce564ac9bcdf",
+      "base_sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+      "body_sha256": {
+        "deltablue": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9"
+      },
+      "driver_sha256": "ce708cb4f6904b58645ba673da857d545ccb4a41ab590773c8407787cddead80",
+      "runs_per_suite": {
+        "deltablue": 1
+      },
+      "warmup_per_benchmark": 0,
+      "expected_stdout": "__oxide_v8_fixed_iteration_complete__:deltablue:1:1\n",
+      "suite_order": [
+        "deltablue"
+      ]
+    },
+    {
+      "case": "crypto",
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/generated/final/crypto.js",
+      "sha256": "a5b78df12c7f677163b8ee06a5e3e4990eebe22e4ddd8a6354e21beabe7d2367",
+      "base_sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+      "body_sha256": {
+        "crypto": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af"
+      },
+      "driver_sha256": "26bad6fde0b5b38379e6ae7cac0059158f03f16800677086d4e084422b837314",
+      "runs_per_suite": {
+        "crypto": 1
+      },
+      "warmup_per_benchmark": 0,
+      "expected_stdout": "__oxide_v8_fixed_iteration_complete__:crypto:1:2\n",
+      "suite_order": [
+        "crypto"
+      ]
+    },
+    {
+      "case": "raytrace",
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/generated/final/raytrace.js",
+      "sha256": "3163f4f20297282de55dab21979b898363cd5dea62e027f8f945f7c27c6b8fee",
+      "base_sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+      "body_sha256": {
+        "raytrace": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb"
+      },
+      "driver_sha256": "dec870e5d701f60aa1de007e31c84149a4623dca15dc99079de9905c461c158c",
+      "runs_per_suite": {
+        "raytrace": 1
+      },
+      "warmup_per_benchmark": 0,
+      "expected_stdout": "__oxide_v8_fixed_iteration_complete__:raytrace:1:1\n",
+      "suite_order": [
+        "raytrace"
+      ]
+    },
+    {
+      "case": "earley-boyer",
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/generated/final/earley-boyer.js",
+      "sha256": "04fe426bcb8b907a041e3b47c9541b790537d0ce78f82cfc4734e3b16adf8453",
+      "base_sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+      "body_sha256": {
+        "earley-boyer": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01"
+      },
+      "driver_sha256": "481192a1edeaa70dccf4c6d51657738426ebbc32c8ca0f2bfd134e4217e00c5b",
+      "runs_per_suite": {
+        "earley-boyer": 1
+      },
+      "warmup_per_benchmark": 0,
+      "expected_stdout": "__oxide_v8_fixed_iteration_complete__:earley-boyer:1:2\n",
+      "suite_order": [
+        "earley-boyer"
+      ]
+    },
+    {
+      "case": "regexp",
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/generated/final/regexp.js",
+      "sha256": "d42b37d8c3bbe312642b9bb0e9f1b915cdff24eb4ea3f3cd427d670518968ca0",
+      "base_sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+      "body_sha256": {
+        "regexp": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602"
+      },
+      "driver_sha256": "de09769d1d3750b523f5448aed3c5b71d3b093f7637a3327935b3be07bc3a0d8",
+      "runs_per_suite": {
+        "regexp": 1
+      },
+      "warmup_per_benchmark": 0,
+      "expected_stdout": "__oxide_v8_fixed_iteration_complete__:regexp:1:1\n",
+      "suite_order": [
+        "regexp"
+      ]
+    },
+    {
+      "case": "splay",
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/generated/final/splay.js",
+      "sha256": "19de2183858c01c551e5fe37d128fbab631389b869cad190bba61c8854b4ec1f",
+      "base_sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+      "body_sha256": {
+        "splay": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d"
+      },
+      "driver_sha256": "8ca073d5cdd3a68491b6c45658b15e39c8af1fe71e8b759d33d577c45032945b",
+      "runs_per_suite": {
+        "splay": 1
+      },
+      "warmup_per_benchmark": 0,
+      "expected_stdout": "__oxide_v8_fixed_iteration_complete__:splay:1:1\n",
+      "suite_order": [
+        "splay"
+      ]
+    },
+    {
+      "case": "navier-stokes",
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/generated/final/navier-stokes.js",
+      "sha256": "831d2c9d36e65a4f788bbf6a28dbd3850d09fd0570088e97c2f6b41dd7f56563",
+      "base_sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+      "body_sha256": {
+        "navier-stokes": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84"
+      },
+      "driver_sha256": "2a20d5bff7d212c953258cb605dacd3fb8ccd62eff0b9fabe22e2dcd7c4f1eb8",
+      "runs_per_suite": {
+        "navier-stokes": 1
+      },
+      "warmup_per_benchmark": 0,
+      "expected_stdout": "__oxide_v8_fixed_iteration_complete__:navier-stokes:1:1\n",
+      "suite_order": [
+        "navier-stokes"
+      ]
+    },
+    {
+      "case": "combined",
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/v8-read-current-parent/generated/final/combined.js",
+      "sha256": "3388757f648d00195f122df6cf91db27438c81955a1d85794a2fa3134bec74fd",
+      "base_sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+      "body_sha256": {
+        "richards": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11",
+        "deltablue": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9",
+        "crypto": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af",
+        "raytrace": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb",
+        "earley-boyer": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01",
+        "regexp": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602",
+        "splay": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d",
+        "navier-stokes": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84"
+      },
+      "driver_sha256": "cb02a3fcd0d726819132fdfce6b2806ccd515afe105904ab57015cb648228109",
+      "runs_per_suite": {
+        "richards": 1,
+        "deltablue": 1,
+        "crypto": 1,
+        "raytrace": 1,
+        "earley-boyer": 1,
+        "regexp": 1,
+        "splay": 1,
+        "navier-stokes": 1
+      },
+      "warmup_per_benchmark": 0,
+      "expected_stdout": "__oxide_v8_fixed_iteration_complete__:combined:8:10\n",
+      "suite_order": [
+        "richards",
+        "deltablue",
+        "crypto",
+        "raytrace",
+        "earley-boyer",
+        "regexp",
+        "splay",
+        "navier-stokes"
+      ]
+    }
+  ],
+  "order": "abba",
+  "repeats_per_engine_per_phase": 2,
+  "meaning": "fixed iteration work frozen before A/A and A/B; not original V8 Score"
+}

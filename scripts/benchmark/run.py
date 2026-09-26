@@ -16,6 +16,7 @@ import threading
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
+V8_V7_SOURCE_COMMIT = "2034d98fc8c5f8044e186267593f5d5ea5232caf"
 LOAD = re.compile(r"load\('([^']+)'\);")
 MICROBENCH_CLOCK_PREFIX = (
     "// Identical host clock adaptation; benchmark bodies below are unchanged.\n"
@@ -38,7 +39,26 @@ def command_output(command, cwd=None):
 
 def git_metadata(path):
     return {"commit": command_output(["git", "rev-parse", "HEAD"], path),
+            "tree": command_output(["git", "rev-parse", "HEAD^{tree}"], path),
+            "top_level": command_output(["git", "rev-parse", "--show-toplevel"], path),
             "status": command_output(["git", "status", "--porcelain"], path)}
+
+
+def paired_order(names, repetition, strategy):
+    """Choose one half of an ABBA/BAAB block for two engine comparisons."""
+    if len(names) != 2 or strategy not in ("abba", "baab", "abba-baab"):
+        raise ValueError("paired order requires two engines and abba, baab or abba-baab")
+    reverse_first = strategy == "baab" or (strategy == "abba-baab" and repetition // 2 % 2 == 1)
+    reverse = reverse_first == (repetition % 2 == 0)
+    return list(reversed(names)) if reverse else list(names)
+
+
+def validate_paired_order(names, repeat, strategy):
+    if strategy == "default":
+        return
+    block_repetitions = 4 if strategy == "abba-baab" else 2
+    if len(names) != 2 or repeat % block_repetitions:
+        raise ValueError(f"{strategy} requires two engines and repeat divisible by {block_repetitions}")
 
 
 def binary_metadata(path):
@@ -68,17 +88,41 @@ def machine_metadata():
         path = Path(f"/sys/devices/system/cpu/cpu{cpu_id}/cpufreq/scaling_governor")
         if path.is_file():
             governors[str(cpu_id)] = path.read_text().strip()
+    try:
+        load_average = list(os.getloadavg())
+    except (AttributeError, OSError):
+        load_average = None
+    macos = None
+    if platform.system() == "Darwin":
+        brand = command_output(["sysctl", "-n", "machdep.cpu.brand_string"])
+        memory = command_output(["sysctl", "-n", "hw.memsize"])
+        cpu = brand["stdout"] if brand["exit_code"] == 0 else None
+        macos = {"physical_memory_bytes": int(memory["stdout"]) if memory["exit_code"] == 0 and memory["stdout"].isdigit() else None,
+                 "power_settings": command_output(["pmset", "-g", "custom"]),
+                 "power_source": command_output(["pmset", "-g", "batt"]),
+                 "vm_stat": command_output(["vm_stat"])}
     return {"platform": platform.platform(), "machine": platform.machine(), "cpu": cpu,
             "logical_cpus": os.cpu_count(), "python": platform.python_version(),
-            "cpu_affinity": affinity, "scaling_governors": governors,
+            "cpu_affinity": affinity, "scaling_governors": governors, "load_average": load_average,
+            "macos": macos,
             "runner_sha256": digest(__file__), "repository": git_metadata(ROOT)}
 
 
-def prepare_v8(source, cases):
+def prepare_v8(source, cases, expected_commit=V8_V7_SOURCE_COMMIT):
     """Match scripts/build.ts: inline load() for all, base+case+runner for each suite."""
     source = source.resolve()
     if source.is_relative_to(ROOT):
         raise ValueError("js-engine-benchmark must be checked out outside quickjs-oxide")
+    repository = git_metadata(source)
+    if (repository["commit"]["exit_code"] != 0 or repository["tree"]["exit_code"] != 0
+            or repository["top_level"]["exit_code"] != 0
+            or Path(repository["top_level"]["stdout"]).resolve() != source):
+        raise ValueError("js-engine-benchmark source must be a Git checkout root")
+    if repository["commit"]["stdout"] != expected_commit:
+        raise ValueError(f"js-engine-benchmark source must be pinned to {expected_commit}")
+    tracked_status = command_output(["git", "status", "--porcelain", "--untracked-files=no"], source)
+    if tracked_status["exit_code"] != 0 or tracked_status["stdout"]:
+        raise ValueError("js-engine-benchmark tracked source has local changes")
     code_root = source / "v8-v7"
     run = (code_root / "run.js").read_text()
     loads = list(LOAD.finditer(run))
@@ -112,7 +156,7 @@ def prepare_v8(source, cases):
         if not names or len(set(names)) != len(names):
             raise ValueError(f"cannot identify unique expected suite scores for {case}")
         workloads.append({"case": case, "path": str(path), "args": [], "sha256": digest(path), "expected": names})
-    return workloads, {"repository": git_metadata(source), "source": str(source),
+    return workloads, {"repository": repository, "expected_commit": expected_commit, "source": str(source),
                        "files": {name: digest(code_root / name) for name in contents},
                        "run_js_sha256": digest(code_root / "run.js"),
                        "adaptation": "only upstream scripts/build.ts load inlining and standalone concatenation; no benchmark-body or timing changes",
@@ -276,14 +320,20 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--suite", choices=["v8-v7", "microbench"], required=True)
     parser.add_argument("--source", type=Path, required=True, help="external checkout, or pinned microbench.js")
+    parser.add_argument("--v8-source-commit", default=V8_V7_SOURCE_COMMIT,
+                        help="full pinned V8 checkout commit; change only for a new documented series")
     parser.add_argument("--engine", action="append", required=True, help="NAME=/absolute/path/to/qjs (repeat for comparison)")
     parser.add_argument("--case", action="append", dest="cases")
     parser.add_argument("--repeat", type=int, default=3)
+    parser.add_argument("--order", choices=["default", "abba", "baab", "abba-baab"], default="default",
+                        help="two-engine balanced order; default preserves alternating engine order")
     parser.add_argument("--timeout", type=float, default=120, help="seconds per case and process")
     parser.add_argument("--output", type=Path, required=True, help="new result directory")
     args = parser.parse_args()
     if args.repeat < 1 or not math.isfinite(args.timeout) or args.timeout <= 0:
         parser.error("repeat and timeout must be positive and finite")
+    if args.suite == "v8-v7" and not re.fullmatch(r"[0-9a-f]{40}", args.v8_source_commit):
+        parser.error("--v8-source-commit must be a full lowercase 40-character SHA")
     engines = {}
     for item in args.engine:
         name, sep, path = item.partition("=")
@@ -293,9 +343,13 @@ def main():
         if not binary.is_file() or not os.access(binary, os.X_OK):
             parser.error(f"engine is not an executable file: {binary}")
         engines[name] = binary
-    prepare = prepare_v8 if args.suite == "v8-v7" else prepare_microbench
     try:
-        workloads, source = prepare(args.source, args.cases)
+        validate_paired_order(list(engines), args.repeat, args.order)
+    except ValueError as error:
+        parser.error(str(error))
+    try:
+        workloads, source = (prepare_v8(args.source, args.cases, args.v8_source_commit)
+                             if args.suite == "v8-v7" else prepare_microbench(args.source, args.cases))
     except (ValueError, OSError) as error:
         parser.error(str(error))
     output = args.output.resolve()
@@ -303,15 +357,22 @@ def main():
     (output / "raw").mkdir()
     metadata = {"schema": "oxide-benchmark-v1", "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "suite": args.suite, "machine": machine_metadata(), "source": source, "workloads": workloads,
-                "repeat": args.repeat, "timeout_seconds": args.timeout, "order": "serial, alternating per repetition",
+                "repeat": args.repeat, "timeout_seconds": args.timeout,
+                "order": "serial, alternating per repetition" if args.order == "default" else f"serial {args.order} blocks",
+                "order_strategy": args.order,
                 "instrumentation": "off (no -d/-T)", "engines": {name: binary_metadata(path) for name, path in engines.items()}}
     (output / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
     samples = []
     with (output / "samples.jsonl").open("w") as journal:
         for workload in workloads:
             for iteration in range(args.repeat):
-                order = list(engines) if iteration % 2 == 0 else list(reversed(engines))
+                order = (list(engines) if iteration % 2 == 0 else list(reversed(engines))) if args.order == "default" \
+                    else paired_order(list(engines), iteration, args.order)
                 for name in order:
+                    if digest(workload["path"]) != workload["sha256"]:
+                        raise ValueError(f"workload changed during measurement: {workload['case']}")
+                    if digest(engines[name]) != metadata["engines"][name]["sha256"]:
+                        raise ValueError(f"engine changed during measurement: {name}")
                     prefix = output / "raw" / f"{workload['case']}-{name}-{iteration}"
                     command = [str(engines[name]), workload["path"], *workload["args"]]
                     sample = run_sample(command, output, prefix, args.timeout)

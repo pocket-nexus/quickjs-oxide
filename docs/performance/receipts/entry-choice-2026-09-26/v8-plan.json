@@ -1,0 +1,184 @@
+{
+  "scope": "V8 resource-cap amendment before any fiveway candidate V8 samples. Preserve original raw AA output; no benchmark body, warmup, minimum iterations, scoring, engine, repetition, or order changes. Timings and scores are same-host interfered observations.",
+  "original_plan": {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/experiment-plan-v2.json",
+    "sha256": "e1fdb8822baf65dc8d9082a05ca592cd769d4919399b36886607e79e496fac12"
+  },
+  "resource_amendment": {
+    "utc": "2026-09-26T03:34:58.033384+00:00",
+    "reason": "Resource-cap amendment before any fiveway candidate V8 sampling: observed isolated durations already sum above the original 180 second combined timeout; increase uniform future timeout to 900 seconds, preserving all original samples. Complete AA case groups retained, unfinished case group restarted in a new directory.",
+    "old_timeout_seconds": 180,
+    "new_timeout_seconds": 900,
+    "stopped_orchestrator_and_runner": {
+      "56295": "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python /Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/run-plan-v2.py fixed-final-b37 fixed-final-r0 v8-aa v8-fiveway",
+      "43382": "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python /Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/scripts/benchmark/run.py --suite v8-v7 --source /Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark --repeat 4 --timeout 180 --output /Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa --engine current=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs --engine again=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs --order abba-baab --case richards --case deltablue --case crypto --case raytrace --case earley-boyer --case regexp --case splay --case navier-stokes --case all"
+    },
+    "aborted_active_processes": [
+      {
+        "pid": 72476,
+        "elapsed": "00:03",
+        "command": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs /Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark/dist/quickjs-oxide/earley-boyer.js"
+      }
+    ],
+    "completed_journal_samples": 36,
+    "journal_sha256": "c8906ee0903e1702cf7a9ed50ff80bb9b7ecc46c807ee9f226248931274ddc22",
+    "metadata_sha256": "5e394cb18268ee465105bd82bc50d468b6ece22da2ecbfe686d491ce45125901",
+    "completed_cases": [
+      "richards",
+      "deltablue",
+      "crypto",
+      "raytrace"
+    ],
+    "partial_cases": [
+      "earley-boyer"
+    ]
+  },
+  "resource_amendment_artifact": {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-resource-amendment.json",
+    "sha256": "df4191328a011c6ff3f657381e008670f5c69b6f90ace8a37154b60b08815b32"
+  },
+  "revised_plan": {
+    "scope": "Own measurements run serially after own correctness/build work. User explicitly requested continued sampling while other same-host jobs may run. Treat wall time, cycles and V8 Score as interfered observations, not clean-host performance admission. Keep hashes, correctness, retired instruction evidence and A/A variation separate.",
+    "created_utc": "2026-09-26T03:35:39.997350+00:00",
+    "amends": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/experiment-plan-v2.json",
+    "resource_amendment": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-resource-amendment.json",
+    "reason": "Observed complete isolated groups already imply combined 180s is insufficient. Future AA incomplete groups and all fiveway comparisons use timeout900 before any candidate fiveway result, with original benchmark timing/body/score and repeat/order unchanged. Original partial AA retained; no score-based exclusions.",
+    "steps": [
+      {
+        "name": "v8-aa-continuation",
+        "command": [
+          "/opt/homebrew/opt/python@3.14/bin/python3.14",
+          "/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/scripts/benchmark/run.py",
+          "--suite",
+          "v8-v7",
+          "--source",
+          "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark",
+          "--repeat",
+          "4",
+          "--timeout",
+          "900",
+          "--output",
+          "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation",
+          "--engine",
+          "current=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs",
+          "--engine",
+          "again=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs",
+          "--order",
+          "abba-baab",
+          "--case",
+          "earley-boyer",
+          "--case",
+          "regexp",
+          "--case",
+          "splay",
+          "--case",
+          "navier-stokes",
+          "--case",
+          "all"
+        ]
+      },
+      {
+        "name": "v8-fiveway",
+        "command": [
+          "/opt/homebrew/opt/python@3.14/bin/python3.14",
+          "/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/scripts/benchmark/run.py",
+          "--suite",
+          "v8-v7",
+          "--source",
+          "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark",
+          "--repeat",
+          "6",
+          "--timeout",
+          "900",
+          "--output",
+          "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-fiveway",
+          "--engine",
+          "b37=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-b37/release/qjs",
+          "--engine",
+          "r0=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-r0/release/qjs",
+          "--engine",
+          "parent=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-parent/release/qjs",
+          "--engine",
+          "current=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs",
+          "--engine",
+          "inline=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-inline/release/qjs",
+          "--case",
+          "richards",
+          "--case",
+          "deltablue",
+          "--case",
+          "crypto",
+          "--case",
+          "raytrace",
+          "--case",
+          "earley-boyer",
+          "--case",
+          "regexp",
+          "--case",
+          "splay",
+          "--case",
+          "navier-stokes",
+          "--case",
+          "all"
+        ]
+      }
+    ]
+  },
+  "revised_plan_artifact": {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/experiment-plan-v3.json",
+    "sha256": "816ccb7ffe1d568a75247bc725b78681d4b4974f5836234e60accd0c0cdf2beb"
+  },
+  "effective_aa": {
+    "retained_complete_cases": [
+      "richards",
+      "deltablue",
+      "crypto",
+      "raytrace"
+    ],
+    "retained_samples": 32,
+    "restarted_cases": [
+      "earley-boyer",
+      "regexp",
+      "splay",
+      "navier-stokes",
+      "all"
+    ],
+    "new_samples_planned": 40,
+    "extra_original_completed_samples_retained_but_not_pooled": 4,
+    "aborted_process_count": 1,
+    "actual_completed_samples": 48
+  },
+  "fiveway_samples_planned": 270,
+  "user_stop": {
+    "utc": "2026-09-26T04:01:23.627728+00:00",
+    "reason": "User explicitly requested finishing RegExp and stopping this benchmark, then continuing implementation/reporting. No further V8 sampling is authorized in this task.",
+    "user_instruction": "先把 RegExp 跑了就不要跑这个 benchmark 了太浪费时间了，可以继续推进了",
+    "completed_continuation_samples": 16,
+    "regexp_samples": 8,
+    "journal_sha256": "2df5db74dd5422737c63a7435553312d7697c913b587bed751fd807ab260f38e",
+    "metadata_sha256": "678f541f311612afce5ae0f746e3176e695e87f6b9b13393b42fc90052692114",
+    "boundary_processes_aborted": [
+      {
+        "pid": 85053,
+        "elapsed": "00:00",
+        "command": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs /Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark/dist/quickjs-oxide/splay.js"
+      }
+    ],
+    "cancelled_cases": [
+      "splay",
+      "navier-stokes",
+      "all"
+    ],
+    "cancelled_stage": "v8-fiveway",
+    "stopped_pids": [
+      74333,
+      74355
+    ]
+  },
+  "user_stop_artifact": {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-user-stop.json",
+    "sha256": "77b2826768414aaa0400ef3ddf8830cb060e11e5e4885ca1e4d96e02e70704b5"
+  },
+  "final_status": "User cancelled remaining V8 sampling after RegExp. Six complete baseline A/A groups remain; no candidate V8 comparison or combined Score was measured.",
+  "fiveway_samples_completed": 0
+}
