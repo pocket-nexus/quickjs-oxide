@@ -469,6 +469,33 @@ mod local_add_tests {
     }
 
     #[test]
+    fn checked_local_add_read_keeps_both_tdz_error_points() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(
+            context
+                .eval(
+                    r#"(()=>{
+                function left() { value=value+1; let value=0; }
+                function right() { let value=1; value=value+later; let later=2; }
+                let errors=0;
+                try { left(); } catch(error) {
+                    if(!(error instanceof ReferenceError)) return false;
+                    errors++;
+                }
+                try { right(); } catch(error) {
+                    if(!(error instanceof ReferenceError)) return false;
+                    errors++;
+                }
+                return errors===2;
+            })()"#,
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+    }
+
+    #[test]
     fn numeric_literal_and_pair_accumulators_match_canonical_results() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
