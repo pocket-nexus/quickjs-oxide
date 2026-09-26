@@ -11,7 +11,7 @@ impl SlotStore {
         function: &crate::engine::object::ObjectRef,
         function_name: Option<u16>,
         observes_arguments: bool,
-    ) -> Result<(FrameWindow, crate::engine::vm::CallInput), Error> {
+    ) -> Result<FrameWindow, Error> {
         self.check_current(parent)?;
         if parent.id != checked.window_id || parent.depth != checked.depth {
             return Err(Error::internal(
@@ -107,26 +107,14 @@ impl SlotStore {
             };
             self.slots[parameters_end + index] = Some(binding);
         }
-        // All allocation and retain failures have completed. The checked
-        // receiver moves into CallInput as the same owner edge: no duplicate
-        // and no release. No fallible work may follow this transfer.
-        let receiver = if method {
-            let Some(FrameBinding::Direct(receiver)) = self.slots[start - 2].take() else {
-                unreachable!("validated ordinary receiver must be direct")
-            };
-            receiver
-        } else {
-            JsValue::Undefined
-        };
-        let input = crate::engine::vm::CallInput::new(runtime, receiver, JsValue::Undefined, None);
         for index in 0..count {
             self.slots[base + index] = self.slots[start + index].take();
         }
-        let Some(FrameBinding::Direct(JsValue::Object(callee))) = self.slots[start - 1].take()
-        else {
-            unreachable!("authenticated ordinary callee must be a direct object")
-        };
-        runtime.release_object_handle(callee);
+        for index in start - 1 - usize::from(method)..start {
+            if let Some(binding) = self.slots[index].take() {
+                release_binding(runtime, binding)?;
+            }
+        }
         parent.depth -= consumed;
         self.active_end = end;
         let id = self.next_window;
@@ -144,12 +132,9 @@ impl SlotStore {
                 count: self.slots.len() - initialized,
                 high_water: self.slots.len(),
             });
-            // The callee is cleared; a method receiver changes owners.
-            record_owned_storage(Cost::Clear(1));
+            record_owned_storage(Cost::Clear(consumed - count));
             record_owned_storage(Cost::Initialize(end - base));
-            record_owned_storage(Cost::Move(
-                count + parameter_count + local_count + usize::from(method),
-            ));
+            record_owned_storage(Cost::Move(count + parameter_count + local_count));
             self.record_occupancy();
             crate::engine::api::profiling::record_call_preparation(
                 parameter_count,
@@ -172,20 +157,17 @@ impl SlotStore {
                 );
             }
         }
-        Ok((
-            FrameWindow {
-                owner: self.owner.clone(),
-                id,
-                base,
-                original_end,
-                parameters_end,
-                locals_end,
-                end,
-                depth: 0,
-                actual_count: count,
-            },
-            input,
-        ))
+        Ok(FrameWindow {
+            owner: self.owner.clone(),
+            id,
+            base,
+            original_end,
+            parameters_end,
+            locals_end,
+            end,
+            depth: 0,
+            actual_count: count,
+        })
     }
 }
 
@@ -235,7 +217,7 @@ mod tests {
             )
             .unwrap();
         let checked = checked_operands(&mut slots, &mut parent, 1, false);
-        let (child, input) = slots
+        let child = slots
             .push_ordinary_frame(
                 &runtime,
                 &executable.frame_layout(),
@@ -246,7 +228,6 @@ mod tests {
                 false,
             )
             .unwrap();
-        drop(input);
         assert!(child.original_arguments().is_empty());
         assert_eq!(slots.actual_argument_count(&child).unwrap(), 1);
         assert!(matches!(
@@ -269,7 +250,7 @@ mod tests {
             .push(&mut parent, JsValue::Object(marker.into_handle()))
             .unwrap();
         let checked = checked_operands(&mut slots, &mut parent, 1, false);
-        let (child, input) = slots
+        let child = slots
             .push_ordinary_frame(
                 &runtime,
                 &executable.frame_layout(),
@@ -280,7 +261,6 @@ mod tests {
                 false,
             )
             .unwrap();
-        drop(input);
         assert_eq!(child.original_arguments().len(), 1);
         let replaced = slots
             .replace_parameter(&child, 0, FrameBinding::Direct(JsValue::Undefined))
@@ -348,7 +328,7 @@ mod tests {
     }
 
     #[test]
-    fn method_receiver_owner_moves_to_call_input_until_frame_teardown() {
+    fn method_receiver_copy_survives_operand_release_until_input_teardown() {
         let runtime = Runtime::new();
         let context = runtime.new_context();
         let function = runtime.new_object(None).unwrap();
@@ -377,7 +357,18 @@ mod tests {
             Ok(1)
         );
         let checked = checked_operands(&mut slots, &mut parent, 0, true);
-        let (child, input) = slots
+        let receiver = copy_value(&runtime, slots.peek(&parent, 1).unwrap()).unwrap();
+        let input = crate::engine::vm::CallInput::new(&runtime, receiver, JsValue::Undefined, None);
+        assert_eq!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(receiver_id),
+            Ok(2)
+        );
+        let child = slots
             .push_ordinary_frame(
                 &runtime,
                 &executable.frame_layout(),
@@ -443,6 +434,18 @@ mod tests {
             .unwrap();
         let end = slots.active_end;
         let checked = checked_operands(&mut slots, &mut parent, 2, true);
+        let receiver_copy = copy_value(&runtime, slots.peek(&parent, 3).unwrap()).unwrap();
+        let input =
+            crate::engine::vm::CallInput::new(&runtime, receiver_copy, JsValue::Undefined, None);
+        assert_eq!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(receiver_id),
+            Ok(2)
+        );
         assert!(
             slots
                 .push_ordinary_frame(
@@ -459,6 +462,16 @@ mod tests {
         assert_eq!(slots.active_end, end);
         assert_eq!(slots.depth(&parent), 4);
         assert!(slots.slots[end..].iter().all(Option::is_none));
+        assert_eq!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(receiver_id),
+            Ok(2)
+        );
+        drop(input);
         assert_eq!(
             runtime
                 .0

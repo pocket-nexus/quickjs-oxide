@@ -49,7 +49,6 @@ pub(in crate::engine::vm) struct CheckedOrdinaryCallOperands {
     pub(super) has_non_scalar_argument: bool,
 }
 
-#[cfg(feature = "profiling")]
 impl CheckedOrdinaryCallOperands {
     pub(in crate::engine::vm) fn count(&self) -> usize {
         self.count

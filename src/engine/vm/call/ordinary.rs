@@ -286,10 +286,10 @@ impl OrdinaryCall {
         let _timer =
             crate::engine::api::profiling::PhaseTimer::start_vm_sampled("ordinary.install.sampled");
         use crate::engine::vm::frame::{Frame, ReturnOwner, ReturnTarget, ReturnValue};
+        let count = checked.count();
+        let method = checked.method();
         #[cfg(feature = "profiling")]
         {
-            let count = checked.count();
-            let method = checked.method();
             use crate::engine::api::profiling::record_owned_execution_event as record;
             record(if method {
                 "ordinary_install.method"
@@ -312,6 +312,22 @@ impl OrdinaryCall {
             .fault_pc
             .checked_add(1)
             .ok_or_else(|| Error::internal("call resume PC overflow"))?;
+        let receiver = if method {
+            crate::engine::vm::stack::copy_value(
+                runtime,
+                execution.slots.peek(&frame.window, count + 1)?,
+            )?
+        } else {
+            crate::engine::value::JsValue::Undefined
+        };
+        // The following flag, frame, and slot preparations can fail. Hold the
+        // copied receiver edge until the child frame takes CallInput.
+        let input = crate::engine::vm::CallInput::new(
+            runtime,
+            receiver,
+            crate::engine::value::JsValue::Undefined,
+            None,
+        );
         let (flags, flag_bytes) = if self.executable.has_captured_locals {
             execution
                 .call_storage
@@ -322,7 +338,7 @@ impl OrdinaryCall {
         let prepared = execution.frames.prepare_push()?;
         let mut prepared = prepared;
         let frame = prepared.current_mut(parent)?;
-        let (window, input) = {
+        let window = {
             #[cfg(feature = "profiling")]
             let _timer = crate::engine::api::profiling::PhaseTimer::start_vm_sampled(
                 "ordinary.install.slots.sampled",
