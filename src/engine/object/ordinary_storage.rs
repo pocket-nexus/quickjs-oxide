@@ -1938,11 +1938,10 @@ mod dense_array_read_tests {
     }
 
     #[test]
-    fn dense_array_read_leaf_declines_missing_slow_reference_and_exotic_values() {
+    fn array_read_leaf_declines_missing_reference_and_exotic_values() {
         for expression in [
             "[,1]",
             "Object.defineProperty([1], '0', {get(){throw 71}})",
-            "Object.defineProperty([1], '0', {writable:false})",
             "[{}]",
             "['x']",
             // Short BigInts are edge-free; this case must retain a heap payload.

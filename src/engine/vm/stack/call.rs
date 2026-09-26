@@ -223,11 +223,13 @@ mod tests {
         executable.metadata.max_stack = 1;
         executable.metadata.local_count = 2;
         executable.local_definitions = std::rc::Rc::from([definition; 2]);
+        let mut caller = PublishedFunctionSnapshot::empty_for_test(context.realm);
+        caller.metadata.max_stack = 1;
         let mut slots = SlotStore::new(16);
         let mut parent = slots
             .push_frame(
                 &runtime,
-                &executable.frame_layout(),
+                &caller.frame_layout(),
                 storage(vec![JsValue::Object(function.clone().into_handle())]),
             )
             .unwrap();
