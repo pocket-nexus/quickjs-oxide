@@ -123,6 +123,44 @@ are described below; total call allocations, total retain/release activity and
 compiler peak memory remain unavailable.
 Without the `profiling` feature, compiler and interpreter hooks are compiled out.
 
+### 候选跨度与调用点逻辑诊断
+
+`oxide-compile-vm-cost-v1.fusion_diagnostics` 是逻辑事件计数，不采样耗时。
+`functions` 仅登记该收集区间**实际进入执行帧**的已发布函数，并不枚举所有
+编译或发布的函数。`runtime_id` 与 `bytecode_id`（槽位及发布代数）共同标识
+一次 Runtime 内的不可变函数；再加规范字节码 `pc` 才是候选或调用点位置。
+这些数字不能跨独立运行直接当作相同函数的 ID。函数清单还复制源码
+`function_name`、`filename` 与零基定义行列；剥离 debug 数据、匿名函数或
+诊断时暂时无法借用 Runtime 时，对应字段为 `null`。这些文本是独立副本，
+不保留 JS 字符串、Atom 或字节码 owner。
+
+| 字段 | 口径 |
+| --- | --- |
+| `functions[].unfused_read_sites` | 已执行函数中，静态没有任何 fusion flag 的直接 local/argument 读取 PC 数；每个函数登记一次。 |
+| `functions[].dense_candidate_sites` / `dense_noncandidate_read_sites` | 直接读取 PC 中发布了 dense span / 未发布 dense span 的静态数量。后者可以仍有其他 fusion 候选。 |
+| `dispatch[].visits` / `static_noncandidate_visits` | 每个直接读取 PC 的动态访问次数，及其中静态 fusion flag 为零的访问次数；用于量化查询无候选位置的频率。 |
+| `sites[].attempts`, `hits`, `misses` | 每个已发布候选起始 PC 的尝试、完成和未完成结果；保留的记录满足 `attempts = hits + sum(misses)`。普通 `guard` 和 dense 的动态失败均回到规范指令起点。`error` 是候选执行时的异常终止，**不表示回退**。 |
+| `callsites[]` | 仅覆盖普通驱动器 `enter_selected` 入口观察到的 callee；不是所有 call、construct 或 native 再入口的总账。`callee_identity_changes` 只比较连续的 Object callee 身份，非 Object 会断开连续序列。 |
+
+Dense 失败标签只描述**先前 leaf 失败后、再次只读观察到的首个不满足条件**，
+不声称它是唯一原因，也不改变规范执行。`source` 指发布形状或常量不可用；
+`binding` 指直接槽不可读；`non_number` 指数值源类型；`index` 指索引不是
+非负 Int。数组探针进一步区分 `base_not_object`、`not_array`、
+`array_materialized`（Array 已转普通属性表示）、`outside_dense_prefix_in_length`
+（逻辑 length 内但不在连续 dense 前缀）、`beyond_array_length`、
+`dense_non_number` 与读写借用不可用。`room` 指虚拟操作数峰值无法容纳。
+诊断探针的观察时间晚于原始失败；若状态不再吻合，则报告
+`dense_ready_after_failure` 或较保守的 `commit`/`generation` 等标签。
+顺序填充通常保留 dense 前缀，反向从高索引填充会转成普通属性表示；
+两者不能合并归因为“缓存未命中”。
+
+每类 per-PC map 最多记录 16384 个位置，函数清单最多 4096 项，
+`omitted` 分别计数超限事件。每个调用点只保存最近 callee 身份及最多
+四个不同的非 owning ObjectId；`distinct_callees_observed` 在四个以内精确，
+`distinct_overflow=true` 后仅是下界。没有任何 callee owner 被诊断保留。
+此构建的额外 map、分类借用和 JSON 写入会影响运行时间；正式性能比较
+应使用无 `profiling` 特性的 plain 构建及独立 A/B 测量。
+
 ## Disable and measure overhead
 
 Remove `-d/-T` to disable collection. For a binary with the feature compiled out:

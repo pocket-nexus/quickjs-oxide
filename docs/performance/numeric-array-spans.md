@@ -189,7 +189,7 @@ impl Runtime {
 }
 ```
 
-peek 的实现主体冻结如下（导入复用该模块已有类型）：
+当次 peek 的实现主体如下（导入复用该模块已有类型）：
 
 ```rust
 let JsValue::Object(id) = base else { return None; };
@@ -245,9 +245,11 @@ match source {
 
 `index_from_number` 只做 `Number::Int(i) if i >= 0 => Some(i as u32)`，其余 None。`apply_number_binary` 精确复用 Number::add/sub/mul/div/int32；BitAnd/Or/Xor 用 int32 结果；Shl 用 i32::wrapping_shl(rhs.int32() as u32 & 31)，Sar 用有符号右移，Shr 先转 u32 再右移、以 `Number::compact(f64::from(result))` 返回。其余指令 None。禁止饱和 ToInt32、f64::mul_add 或重关联。不要把该 helper 注入旧 binary/S1–S4，避免给非目标指令改 codegen。
 
-## 4. 逐函数改造与发布认证
+## 4. 当次逐函数改造与发布认证
 
-| 函数／文件 | 唯一允许的改动 |
+下表复原这次候选用于隔离变量的修改范围，不限制新方案重新划分执行核心或改变内部接口。
+
+| 函数／文件 | 当次候选的改动范围 |
 | --- | --- |
 | `code/fusion.rs::FusionPlan::build` | 签名仍为 `(code, locals, constants)`；调用新 dense::candidate，优先选择已通过 entry 检查的候选；原 matcher/编码保留 |
 | `code/fusion/dense.rs::candidate` | 实现 §1 表，最长优先；对每个候选检查整个 `entries[1..len]`，失败继续找更短候选 |
@@ -273,7 +275,7 @@ let candidate = dense_candidate.or(old_candidate);
 
 新 matcher 内对每个长度执行 `entries.get(1..length)?` 检查后才返回；外层既有 entry 检查仍可保留，新 flags 不享受 flag34 的特殊处理。NumericSource/DirectSlot 的解码只匹配表内固定位置的 Instruction enum 字段，无位域 word 解码，无通用 bytecode evaluator。
 
-构建器优先级冻结为：A3/A2/A1/A0 → W1/W2/W3/W0 → R4 → R2/R3/R1 → R0 → 原候选链。先验证一个长候选的 entries，再考虑选择，**不能先 `.or` 选中长候选、最后检查失败就把同 PC 可行的短候选丢掉**。只有旧 S1 flag34 的 Goto 保留原有特殊 entry 豁免；新跨度无任何豁免。
+当次构建器优先级为：A3/A2/A1/A0 → W1/W2/W3/W0 → R4 → R2/R3/R1 → R0 → 原候选链。先验证一个长候选的 entries，再考虑选择，**不能先 `.or` 选中长候选、最后检查失败就把同 PC 可行的短候选丢掉**。只有旧 S1 flag34 的 Goto 保留原有特殊 entry 豁免；新跨度无任何豁免。
 
 发布期以 `Instruction::stack_contract()` 从相对深度 0 执行每个候选，断言无下溢、peak/delta 与 §1.2 一致；任何失败不发布新 flag。写 target 的 local metadata 必须可写 Normal；参数写仅来自已验证 PutArg/SetArg 并在运行期拒绝 Captured。构建阶段不猜类型、不执行用户程序。
 
@@ -340,7 +342,7 @@ PutArrayEl 在 run 中原本递增 property_generation；融合跳过 opcode 不
 
 read/acc/update 的所有 mutable slot 操作都在唯一 commit 内；W 的唯一 heap 提交之后再无可失败步骤。新形态不得跨越已提交状态后重新从跨度首 PC 回落。需要多次 store 或捕获写的长块不在本版范围。
 
-## 7. 必须落实到测试名称的验收
+## 7. 当次落实到测试名称的验收
 
 | 测试 | 必须断言 |
 | --- | --- |

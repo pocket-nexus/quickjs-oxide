@@ -1585,6 +1585,9 @@ mod tests {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
         let mut names = Vec::new();
+        // AtomIdx is a raw slot index, so the first identity must remain
+        // owned while the second is allocated; reclaimed slots may be reused.
+        let mut executions = Vec::new();
         for _ in 0..2 {
             let entry = entry(
                 &runtime,
@@ -1628,10 +1631,13 @@ mod tests {
             };
             names.push(*atom_index);
             assert_eq!(frame.resume_pc, pc + 1);
-            drop(execution);
-            assert!(runtime.0.state.borrow().active_frames.is_empty());
+            executions.push(execution);
         }
         assert_ne!(names[0], names[1]);
+        while let Some(execution) = executions.pop() {
+            drop(execution);
+        }
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
 
     #[test]

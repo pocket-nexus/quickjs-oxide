@@ -26,6 +26,12 @@ pub(crate) struct FusionEntry(u8);
 
 impl FusionEntry {
     #[inline]
+    #[cfg(feature = "profiling")]
+    pub(crate) fn has_candidate(self) -> bool {
+        self.0 != 0
+    }
+
+    #[inline]
     pub(crate) fn dense_span(self) -> Option<DenseSpanKind> {
         DenseSpanKind::from_flag(self.0)
     }

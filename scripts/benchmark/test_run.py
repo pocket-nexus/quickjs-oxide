@@ -12,6 +12,54 @@ spec.loader.exec_module(runner)
 
 
 class Results(unittest.TestCase):
+    def test_macos_machine_metadata_is_read_only_and_specific(self):
+        def command_output(command, _cwd=None):
+            values = {("sysctl", "-n", "machdep.cpu.brand_string"): "Apple M1",
+                      ("sysctl", "-n", "hw.memsize"): "17179869184",
+                      ("pmset", "-g", "custom"): "AC Power:\n lowpowermode 0",
+                      ("pmset", "-g", "batt"): "Now drawing from 'AC Power'",
+                      ("vm_stat",): "Pages free: 100."}
+            return {"exit_code": 0, "stdout": values[tuple(command)], "stderr": "", "command": command}
+
+        with mock.patch.object(runner.platform, "system", return_value="Darwin"), \
+             mock.patch.object(runner, "command_output", side_effect=command_output), \
+             mock.patch.object(runner, "git_metadata", return_value={}), \
+             mock.patch.object(runner.os, "getloadavg", return_value=(1.0, 2.0, 3.0)):
+            result = runner.machine_metadata()
+        self.assertEqual(result["cpu"], "Apple M1")
+        self.assertEqual(result["macos"]["physical_memory_bytes"], 17179869184)
+        self.assertIn("lowpowermode 0", result["macos"]["power_settings"]["stdout"])
+        self.assertEqual(result["load_average"], [1.0, 2.0, 3.0])
+
+    def test_explicit_paired_orders_are_balanced(self):
+        engines = ["base", "candidate"]
+        self.assertEqual([name for repetition in range(4)
+                          for name in runner.paired_order(engines, repetition, "abba-baab")],
+                         ["base", "candidate", "candidate", "base",
+                          "candidate", "base", "base", "candidate"])
+        self.assertEqual([name for repetition in range(2)
+                          for name in runner.paired_order(engines, repetition, "baab")],
+                         ["candidate", "base", "base", "candidate"])
+        for names, repeat, mode in [(engines, 3, "abba"), (engines, 2, "abba-baab"),
+                                    (["one"], 2, "abba")]:
+            with self.subTest(names=names, repeat=repeat, mode=mode), self.assertRaises(ValueError):
+                runner.validate_paired_order(names, repeat, mode)
+
+    def test_v8_source_must_match_full_clean_pin(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            metadata = {"commit": {"exit_code": 0, "stdout": "0" * 40},
+                        "tree": {"exit_code": 0, "stdout": "1" * 40},
+                        "top_level": {"exit_code": 0, "stdout": str(source)}}
+            with mock.patch.object(runner, "git_metadata", return_value=metadata):
+                with self.assertRaisesRegex(ValueError, "must be pinned"):
+                    runner.prepare_v8(source, [])
+            metadata["commit"]["stdout"] = runner.V8_V7_SOURCE_COMMIT
+            with mock.patch.object(runner, "git_metadata", return_value=metadata), \
+                 mock.patch.object(runner, "command_output", return_value={"exit_code": 0, "stdout": " M v8-v7/run.js"}):
+                with self.assertRaisesRegex(ValueError, "tracked source"):
+                    runner.prepare_v8(source, [])
+
     def test_swallowed_failure_is_not_a_score(self):
         for output in ["Richards: Error: failed\n", "Score: 123\n", "Richards: 123\nScore: 0\n", "Richards: 2\nRichards: 3\nScore: 4\n"]:
             with self.assertRaises(ValueError):

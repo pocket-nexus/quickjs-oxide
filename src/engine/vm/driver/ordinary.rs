@@ -44,6 +44,15 @@ pub(super) fn enter_selected(
     let frame = execution.frames.current_mut(id)?;
     let count = usize::from(count);
     let depth = execution.slots.depth(&frame.window);
+    #[cfg(feature = "profiling")]
+    let profile_pc = frame.fault_pc;
+    #[cfg(feature = "profiling")]
+    let profile_body = &mut *frame.cold;
+    #[cfg(feature = "profiling")]
+    let mut transaction = execution
+        .slots
+        .frame_transaction(&mut profile_body.window)?;
+    #[cfg(not(feature = "profiling"))]
     let mut transaction = execution.slots.frame_transaction(&mut frame.window)?;
     transaction.peek(count + usize::from(method))?;
     enum Prepared {
@@ -60,6 +69,13 @@ pub(super) fn enter_selected(
             return Ok(Entry::General);
         }
         let linked = transaction.peek(count)?;
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_callsite_callee(
+            runtime,
+            &profile_body.executable,
+            profile_pc,
+            linked,
+        );
         let Some((callable, selected)) =
             crate::engine::vm::frames::NativeClassification::promote_linked(
                 runtime, selected, linked,
@@ -75,6 +91,13 @@ pub(super) fn enter_selected(
         Prepared::Native(callable, selected)
     } else {
         let callable_value = transaction.peek(count)?;
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_callsite_callee(
+            runtime,
+            &profile_body.executable,
+            profile_pc,
+            callable_value,
+        );
         let selection_result = DirectSelection::select_jsvalue(runtime, callable_value);
         if matches!(selection_result, Ok(DirectSelection::General)) {
             return Ok(Entry::General);

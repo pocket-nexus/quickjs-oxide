@@ -50,21 +50,29 @@ Node, when present, independently checks every generated workload at small sizes
 its absence skips only that check. Repeat a CLI smoke run against Oxide as well.
 
 These tools orchestrate external workloads; they do not vendor benchmark code.
-Use Python 3.10+ on a Unix host. Run timing and heavier validation on PocketLab,
-serially, without competing builds or tests. `run.py` uses process-group timeout
+Use Python 3.10+ on a Unix host. Run timing serially, without competing builds
+or tests. Compare both sides of one series on the same machine with the same
+toolchain and configuration; use a new series for another machine. `run.py` uses process-group timeout
 cleanup; Windows process management is not implemented by this runner.
 
 ## Prepare binaries with provenance
 
-Commit implementation changes first. Build on the measurement host:
+Commit implementation changes first. Build on the chosen measurement host:
 
 ```sh
 python3 scripts/benchmark/build.py --jobs 2
 ```
 
-This builds ordinary and profiling release CLIs in separate target directories,
-embeds the source commit in profiling reports, and writes `qjs.build.json`
-receipts with compiler versions, command, flags and binary hash. The benchmark
+This builds ordinary and profiling release CLIs in separate target directories.
+Use `--plain-only` or `--profile-only` when only one is needed. To build a
+historical clean worktree with the current tooling, pass `--repo` and a distinct
+target directory, such as `--plain-target /tmp/oxide-base-build`. The receipt
+records source and tooling identities separately, snapshots the build/runner
+scripts, and rejects a build whose source or tool scripts change while Cargo
+runs. It records the release profile and overrides, actual qjs/dependency rustc
+flags for crates Cargo recompiles, and paths/hashes of complete build
+stdout/stderr logs. The source commit is embedded in profiling
+reports. The benchmark
 runner verifies matching receipts when present. External engines without a
 receipt are identified by binary hash/version output; attach their compiler
 and build configuration separately when publishing comparisons.
@@ -90,39 +98,17 @@ rebuilds from existing raw profiles. Ordinary release builds also take
 `lto = "fat"` and `codegen-units = 1` from `[profile.release]`; comparisons
 must use the same flags on both sides.
 
-Protocol for comparisons during staged performance work (revised 2026-09-22):
-
-- Comparisons use the release profile as shipped: **fat LTO with
-  `codegen-units = 1`** (the `[profile.release]` defaults), identical flags on
-  both sides, no PGO and no `profiling` feature. Baselines must be rebuilt with
-  these flags before comparing. Record the source revision, toolchain, target,
-  effective flags, and binary/workload hashes for both sides; a historical
-  LTO-off binary is not a valid denominator for a current stage comparison.
-- Rationale for the revision: the earlier LTO-off/CGU=16 protocol was meant to
-  keep regressions visible, but measured practice showed CGU partitioning
-  itself injects ±5–10% layout noise (cross-module inlining flips on unrelated
-  edits), and it diverges from the shipped configuration. Stage A records up to
-  §8.12 used the old protocol; those series stay valid against their own
-  LTO-off baselines and must not be mixed with LTO-on numbers.
-- Each stage is compared twice: against the previous stage and against the
-  saved baseline. Identify both baseline source revisions explicitly. If the
-  post-E saved baseline includes stage A, also retain a separate comparison to
-  pre-A `85afd564`, rebuilt with the same fat LTO/CGU1/no-PGO flags, to track
-  unresolved stage A regressions. Improvements over post-E do not by themselves
-  close those regressions.
-- Per-stage PGO retraining is **not** required; at the close of each major stage
-  a full LTO+PGO check (both sides independently retrained with the same training
-  workloads) is recommended. Report it separately; PGO gains cannot offset
-  regressions in the ordinary no-PGO release gate.
-- Cross-protocol comparisons are accepted for cumulative, user-facing deltas;
-  label the build protocol of both sides. They must not be used for stage
-  acceptance or to attribute performance changes to a code change.
+The current source identities, build protocol, A/A and A/B design, and cumulative
+regression rules live in [the performance measurement protocol](../../docs/performance/measurement.md).
+Older stage A/post-E/pre-A series have their own historical identity; do not
+combine their absolute measurements with the current B37/R0/Parent series.
 
 ## External V8 v7 suite
 
 ```sh
 # A sibling checkout, outside quickjs-oxide; record/fix its commit for repeats.
 git clone https://github.com/ahaoboy/js-engine-benchmark.git ../js-engine-benchmark
+git -C ../js-engine-benchmark checkout 2034d98fc8c5f8044e186267593f5d5ea5232caf
 # Use the project's existing, pinned QuickJS oracle builder if needed.
 reference=$(./scripts/quickjs/build-quickjs-oracle.sh)
 
@@ -132,7 +118,12 @@ python3 scripts/benchmark/run.py --suite v8-v7 \
   --repeat 3 --timeout 120 --output target/benchmark-v8-v7
 ```
 
-The runner generates bundles under the external checkout's
+`run.py` requires that pinned V8 checkout with no tracked local changes.
+Use `--v8-source-commit` only to start an explicitly documented new series.
+For two-engine comparisons, `--order abba`, `--order baab`, or
+`--order abba-baab` selects complete balanced blocks; repeat must be divisible
+by two or four respectively. The default preserves the previous alternating
+order. The runner generates bundles under the external checkout's
 `dist/quickjs-oxide`, following its `scripts/build.ts` algorithm: inline `load`
 calls for the complete suite, or concatenate `base.js`, one suite and the
 unchanged runner for isolated cases. It does not change benchmark bodies or
@@ -149,6 +140,34 @@ both the source commit and generated workload hashes: upstream can change.
 The original suite reports scores, not ns/op. Require every expected suite score
 and a valid aggregate `Score` even if the engine exits zero: its error callback
 can swallow failures. Internal assertions remain the original suite's checks.
+
+### Fixed V8 function and callsite diagnostic
+
+```sh
+python3 scripts/benchmark/profile_v8.py \
+  --source ../js-engine-benchmark \
+  --engine "$PWD/target/profile-feature/release/qjs" \
+  --iterations 1 --output /tmp/oxide-v8-fixed-profile
+```
+
+`profile_v8.py` uses the same pinned external source and checks its original
+Benchmark declarations against the expected names and counts for all eight
+subtests. It writes `base.js` plus one unchanged subtest body plus a marked
+driver to the requested output directory outside both repositories. The driver
+calls each Benchmark's `Setup`, `run` and `TearDown` a fixed number of times;
+it does not invoke V8's adaptive `RunSuites`. This is a coverage diagnostic,
+**not a V8 Score or a timing comparison**. Use `--case` repeatedly for a subset.
+
+Each fresh process runs `-d --profile-json` with a separate profile output file.
+The runner requires the exact completion marker, zero exit, empty script stderr,
+one valid compile/VM cost record from a profiling build, and the reported
+omission fields. `metadata.json` records pinned source and individual file
+hashes, generated workload and driver hashes, binary/build receipt, machine,
+and runner identity. `samples.jsonl` and `results.json` retain exact commands,
+raw stdout/stderr/profile JSON paths and hashes, completion status, function/PC
+and callsite entry counts, and any diagnostic omissions. The CLI's callsite
+scope covers selected ordinary driver entry only; it excludes other call and
+construct paths, so a zero count is not evidence that JavaScript did no calls.
 
 ## Pinned QuickJS microbench
 
@@ -259,10 +278,16 @@ Scaling workloads also cover Array/TypedArray integer reads and writes, repeated
 ## Replay the fixed-work matrix
 
 `fixed.py` replays the workload manifest in the final data-structure report.
-It checks every source hash before measuring, rotates engine order, retains raw
+It checks every source hash before measuring, rotates engine order by default,
+and accepts the same balanced `--order` modes as `run.py`. It retains raw
 outputs and rejects nonempty stderr. `--workload-dir` relocates existing files;
 it never regenerates or silently changes third-party workloads. Reconstruct
 missing files using the recipe in the fixed-work report, then verify the hashes.
+On macOS, `--darwin-counters` wraps each sample with
+`/usr/bin/time -l -o <raw-file>` and records its whole-process retired
+instructions, elapsed cycles, maximum resident set size and peak memory
+footprint. Missing fields invalidate the counter measurement while preserving
+the program's stdout/stderr and the raw time output.
 
 ```sh
 python3 scripts/benchmark/fixed.py \

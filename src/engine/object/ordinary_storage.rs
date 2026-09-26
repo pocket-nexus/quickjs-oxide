@@ -1190,6 +1190,34 @@ impl Runtime {
         }
     }
 
+    /// Diagnose a *previously failed* numeric dense read. This performs an
+    /// extra heap borrow only in profiling builds and never changes storage.
+    #[cfg(feature = "profiling")]
+    pub(crate) fn diagnose_dense_number_read_miss(
+        &self,
+        base: &JsValue,
+        index: u32,
+    ) -> &'static str {
+        let Ok(state) = self.0.state.try_borrow() else {
+            return "read_borrow_unavailable";
+        };
+        dense_number_miss_in_state(&state, base, index)
+    }
+
+    /// Diagnose a *previously failed* numeric dense write. The mutable
+    /// borrow probe distinguishes storage readiness from an active lease.
+    #[cfg(feature = "profiling")]
+    pub(crate) fn diagnose_dense_number_write_miss(
+        &self,
+        base: &JsValue,
+        index: u32,
+    ) -> &'static str {
+        let Ok(state) = self.0.state.try_borrow_mut() else {
+            return "write_borrow_unavailable";
+        };
+        dense_number_miss_in_state(&state, base, index)
+    }
+
     /// Replace one existing own dense Number under a single heap borrow. A
     /// dense element has the default writable data descriptor; descriptor
     /// changes materialize the Array and make this leaf decline. Both the old
@@ -1275,6 +1303,55 @@ impl Runtime {
     }
 }
 
+/// Report the first currently observable guard failure in the same order as
+/// the dense leaf. A later canonical property operation can have additional
+/// semantics (prototype, accessor, etc.); this label is not a unique cause.
+#[cfg(feature = "profiling")]
+fn dense_number_miss_in_state(state: &RuntimeState, base: &JsValue, index: u32) -> &'static str {
+    let JsValue::Object(id) = base else {
+        return "base_not_object";
+    };
+    let Ok(data) = state.heap.object(*id) else {
+        return "object_unavailable";
+    };
+    if !matches!(data.kind, ObjectKind::Array) {
+        return "not_array";
+    }
+    let ObjectPayload::Array { dense } = &data.payload else {
+        return "array_payload_unavailable";
+    };
+    let Some(dense) = dense else {
+        return "array_materialized";
+    };
+    let Some(index) = usize::try_from(index).ok() else {
+        return "index_unrepresentable";
+    };
+    let Some(value) = dense.get(index) else {
+        let length = match data.slots.first() {
+            Some(PropertySlot::Data(RawValue::Int(length))) if *length >= 0 => Some(*length as u32),
+            Some(PropertySlot::Data(RawValue::Float(length)))
+                if length.is_finite()
+                    && *length >= 0.0
+                    && *length <= f64::from(u32::MAX)
+                    && length.fract() == 0.0 =>
+            {
+                Some(*length as u32)
+            }
+            _ => None,
+        };
+        return match length {
+            Some(length) if (index as u64) < u64::from(length) => "outside_dense_prefix_in_length",
+            Some(_) => "beyond_array_length",
+            None => "array_length_unavailable",
+        };
+    };
+    if matches!(value, RawValue::Int(_) | RawValue::Float(_)) {
+        "dense_ready_after_failure"
+    } else {
+        "dense_non_number"
+    }
+}
+
 #[cfg(test)]
 mod dense_array_read_tests {
     use super::*;
@@ -1347,6 +1424,61 @@ mod dense_array_read_tests {
         assert!(Runtime::new().peek_dense_number(&base, 0).is_none());
         assert!(runtime.peek_dense_number(&JsValue::Int(1), 0).is_none());
         runtime.release_jsvalue(base).unwrap();
+    }
+
+    #[cfg(feature = "profiling")]
+    #[test]
+    fn reverse_fill_materializes_array_while_sequential_fill_stays_dense() {
+        let runtime = Runtime::new();
+        let sequential = runtime
+            .into_jsvalue(receiver(
+                &runtime,
+                "(function(){let a=[];for(let i=0;i<4;i++)a[i]=i;return a})()",
+            ))
+            .unwrap();
+        let reverse = runtime
+            .into_jsvalue(receiver(
+                &runtime,
+                "(function(){let a=[];for(let i=3;i>=0;i--)a[i]=i;return a})()",
+            ))
+            .unwrap();
+        assert!(matches!(
+            runtime.peek_dense_number(&sequential, 3),
+            Some(Number::Int(3))
+        ));
+        assert!(runtime.peek_dense_number(&reverse, 3).is_none());
+        assert_eq!(
+            runtime.diagnose_dense_number_read_miss(&reverse, 3),
+            "array_materialized"
+        );
+        assert!(!runtime.try_write_dense_number(&reverse, 3, Number::Int(7)));
+        assert_eq!(
+            runtime.diagnose_dense_number_write_miss(&reverse, 3),
+            "array_materialized"
+        );
+        runtime.release_jsvalue(sequential).unwrap();
+        runtime.release_jsvalue(reverse).unwrap();
+    }
+
+    #[cfg(feature = "profiling")]
+    #[test]
+    fn dense_miss_probe_distinguishes_length_and_element_class() {
+        for (source, index, reason) in [
+            ("new Array(4)", 2, "outside_dense_prefix_in_length"),
+            ("[1]", 2, "beyond_array_length"),
+            ("['x']", 0, "dense_non_number"),
+            ("({0:1})", 0, "not_array"),
+        ] {
+            let runtime = Runtime::new();
+            let base = runtime.into_jsvalue(receiver(&runtime, source)).unwrap();
+            assert!(runtime.peek_dense_number(&base, index).is_none());
+            assert_eq!(
+                runtime.diagnose_dense_number_read_miss(&base, index),
+                reason,
+                "{source}"
+            );
+            runtime.release_jsvalue(base).unwrap();
+        }
     }
 
     #[test]

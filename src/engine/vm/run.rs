@@ -380,6 +380,8 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
     let mut slots = transaction.slots();
     let cold = &mut body.owners;
     let runtime = cold.function.runtime();
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_fusion_static(runtime, executable);
     let mut pc = ProgramCounter::new(&mut frame.fault_pc, &mut frame.resume_pc);
     // Preserve the cold path's observation order, but keep this authenticated
     // frame resident. No slot borrow crosses active-PC publication or Drop.
@@ -1354,6 +1356,15 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             | Instruction::SetArg(index)
                 if matches!(slots.parameter(*index)?, FrameBinding::Captured(_)) =>
             {
+                #[cfg(feature = "profiling")]
+                if matches!(instruction, Instruction::GetArg(_)) {
+                    crate::engine::api::profiling::record_fusion_dispatch(
+                        runtime,
+                        executable,
+                        pc.fault,
+                        executable.fusion.entry(pc.fault).has_candidate(),
+                    );
+                }
                 let immediate = if matches!(instruction, Instruction::GetArg(_)) {
                     match slots.parameter(*index)? {
                         FrameBinding::Captured(var_ref) => super::bindings::read_run_cell(
@@ -1423,12 +1434,27 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             }
             Instruction::GetLocal(index) | Instruction::GetLocalCheck(index) => {
                 let fusion_entry = executable.fusion.entry(pc.fault);
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_fusion_dispatch(
+                    runtime,
+                    executable,
+                    pc.fault,
+                    fusion_entry.has_candidate(),
+                );
                 if let Some(instructions) = fusion_entry.local_add_span() {
                     // S2/S4: a numeric pair or numeric literal completes
                     // inside the scalar domain; every other kind keeps the
                     // outlined primitive-addition bridge.
                     if fusion::numeric_local_add(&mut slots, executable, pc.fault, *index).is_some()
                     {
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_fusion_outcome(
+                            runtime,
+                            executable,
+                            pc.fault,
+                            "local_add",
+                            None,
+                        );
                         #[cfg(feature = "profiling")]
                         fusion::record_span(
                             &executable.code[pc.fault..pc.fault + instructions],
@@ -1437,6 +1463,14 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         pc.resume = pc.fault + instructions;
                         continue;
                     }
+                    #[cfg(feature = "profiling")]
+                    crate::engine::api::profiling::record_fusion_outcome(
+                        runtime,
+                        executable,
+                        pc.fault,
+                        "local_add",
+                        Some("guard"),
+                    );
                     let supported = match executable.code.get(pc.fault + 1) {
                         Some(Instruction::GetLocal(right) | Instruction::GetLocalCheck(right)) => {
                             slots.local_add_supported(runtime, *index, *right)?
@@ -1456,7 +1490,20 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     }
                 }
                 if let Some(update) = fusion_entry.update() {
-                    if fusion::update_local(&mut slots, *index, update)? {
+                    let updated = fusion::update_local(&mut slots, *index, update);
+                    #[cfg(feature = "profiling")]
+                    crate::engine::api::profiling::record_fusion_outcome(
+                        runtime,
+                        executable,
+                        pc.fault,
+                        "update",
+                        match &updated {
+                            Ok(true) => None,
+                            Ok(false) => Some("guard"),
+                            Err(_) => Some("error"),
+                        },
+                    );
+                    if updated? {
                         #[cfg(feature = "profiling")]
                         fusion::record_span(
                             &executable.code[pc.fault..pc.fault + update.instructions],
@@ -1477,6 +1524,10 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         instructions,
                     ) {
                         #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_fusion_outcome(
+                            runtime, executable, pc.fault, "compare", None,
+                        );
+                        #[cfg(feature = "profiling")]
                         fusion::record_span(
                             &executable.code[pc.fault..pc.fault + instructions],
                             observed_depth,
@@ -1484,6 +1535,14 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         pc.resume = next;
                         continue;
                     }
+                    #[cfg(feature = "profiling")]
+                    crate::engine::api::profiling::record_fusion_outcome(
+                        runtime,
+                        executable,
+                        pc.fault,
+                        "compare",
+                        Some("guard"),
+                    );
                 }
                 // S3: one direct object base completes one linked field read
                 // into the numeric accumulator. The location-cache peek is
@@ -1495,6 +1554,14 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     .is_some()
                     {
                         #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_fusion_outcome(
+                            runtime,
+                            executable,
+                            pc.fault,
+                            "field_add",
+                            None,
+                        );
+                        #[cfg(feature = "profiling")]
                         fusion::record_span(
                             &executable.code[pc.fault..pc.fault + instructions],
                             observed_depth,
@@ -1502,6 +1569,14 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                         pc.resume = pc.fault + instructions;
                         continue;
                     }
+                    #[cfg(feature = "profiling")]
+                    crate::engine::api::profiling::record_fusion_outcome(
+                        runtime,
+                        executable,
+                        pc.fault,
+                        "field_add",
+                        Some("guard"),
+                    );
                 }
                 if let Some(kind) = fusion_entry.dense_span() {
                     if let Some(end) = fusion::try_numeric_span(
@@ -1785,6 +1860,13 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 }
             }
             Instruction::GetArg(index) => {
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_fusion_dispatch(
+                    runtime,
+                    executable,
+                    pc.fault,
+                    executable.fusion.entry(pc.fault).has_candidate(),
+                );
                 if let Some(kind) = executable.fusion.dense_span(pc.fault) {
                     if let Some(end) = fusion::try_numeric_span(
                         &mut slots,

@@ -1,7 +1,7 @@
 # 改善实施设计与切片
 
 > 实施状态（2026-09-25）：A 的紧凑错误载体、B 的 P2／P3／P4 共 13 种跨度及其 matcher、存储原语和两个 `run` 入口已提交。四个完整真实内核的发布后 dump 在[收据](receipts/all-dense-6db6bfb0/README.md)中，共有 25 个已发布站点。以下保存当次候选的职责与边界，用于复核历史实现；后续优化可依据新证据调整内部表示和 API，代码状态以实际提交为准。
-> #41 在 R0 上的 cycles、错误分配和 RSS 回退见[复验收据](receipts/gates-2026-09-25/README.md)。当次实施按用户要求完成既定代码，并记录、归因未达性能门禁的结果。[组合版的四方正式 benchmark、profile 和代码审查](receipts/fourway-2026-09-25/README.md)已完成。
+> #41 在 R0 上的 cycles、错误分配和 RSS 回退见[复验收据](receipts/gates-2026-09-25/README.md)。当次实施按维护者当时的要求完成既定代码，并记录、归因未达性能门禁的结果；这不要求后续候选在测量否定后继续实施。[组合版的四方正式 benchmark、profile 和代码审查](receipts/fourway-2026-09-25/README.md)已完成。
 > 调用与检查重排未纳入这 13 种跨度的已实现范围；当时列为条件项。
 
 <a id="a-error"></a>

@@ -112,6 +112,67 @@ fn store_matches(instruction: &Instruction, slot: DirectSlot, keep: bool) -> boo
     }
 }
 
+#[cfg(feature = "profiling")]
+fn kind_name(kind: DenseSpanKind) -> &'static str {
+    match kind {
+        DenseSpanKind::Read => "dense_read",
+        DenseSpanKind::ReadIndexBinary => "dense_read_index_binary",
+        DenseSpanKind::ReadPostUpdate => "dense_read_post_update",
+        DenseSpanKind::ReadPreUpdate => "dense_read_pre_update",
+        DenseSpanKind::ReadBinary => "dense_read_binary",
+        DenseSpanKind::AccPut => "dense_acc_put",
+        DenseSpanKind::AccSetDrop => "dense_acc_set_drop",
+        DenseSpanKind::AccIndexPut => "dense_acc_index_put",
+        DenseSpanKind::AccIndexSetDrop => "dense_acc_index_set_drop",
+        DenseSpanKind::Store => "dense_store",
+        DenseSpanKind::Copy => "dense_copy",
+        DenseSpanKind::StoreBinary => "dense_store_binary",
+        DenseSpanKind::UpdateElement => "dense_update_element",
+    }
+}
+
+/// Classify only after the original read has failed. The published source
+/// shape is static; a missing direct binding and a non-Number value are the
+/// two dynamic failures that matter for this probe.
+#[cfg(feature = "profiling")]
+fn read_miss(
+    slots: &RunSlots<'_>,
+    executable: &PublishedFunctionSnapshot,
+    instruction: &Instruction,
+) -> &'static str {
+    match numeric_source(instruction) {
+        None => "source",
+        Some(NumericSource::Slot(slot)) => match slots.direct_value(slot) {
+            None => "binding",
+            Some(_) => "non_number",
+        },
+        Some(NumericSource::Constant(index)) => match executable.constant(index) {
+            None => "source",
+            Some(_) => "non_number",
+        },
+        Some(NumericSource::I32(_)) => "source",
+    }
+}
+
+#[cfg(feature = "profiling")]
+fn peek_miss(
+    slots: &RunSlots<'_>,
+    runtime: &Runtime,
+    base: &Instruction,
+    key: Number,
+) -> &'static str {
+    let Some(index) = index_from_number(key) else {
+        return "index";
+    };
+    let Some(slot) = direct_slot(base) else {
+        return "source";
+    };
+    let Some(base) = slots.direct_value(slot) else {
+        return "binding";
+    };
+    runtime.diagnose_dense_number_read_miss(base, index)
+}
+
 /// A miss leaves the complete canonical span available at its original PC.
 #[inline(never)]
 pub(in crate::engine::vm::run) fn try_numeric_span(
@@ -122,8 +183,29 @@ pub(in crate::engine::vm::run) fn try_numeric_span(
     kind: DenseSpanKind,
     property_generation: &mut u64,
 ) -> Option<usize> {
-    let end = pc.checked_add(kind.len())?;
-    let code = executable.code.get(pc..end)?;
+    macro_rules! miss {
+        ($reason:expr) => {{
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_fusion_outcome(
+                runtime,
+                executable,
+                pc,
+                kind_name(kind),
+                Some($reason),
+            );
+            return None;
+        }};
+    }
+    macro_rules! take {
+        ($value:expr, $reason:expr) => {{
+            match $value {
+                Some(value) => value,
+                None => miss!($reason),
+            }
+        }};
+    }
+    let end = take!(pc.checked_add(kind.len()), "source");
+    let code = take!(executable.code.get(pc..end), "source");
     match kind {
         DenseSpanKind::Read
         | DenseSpanKind::ReadIndexBinary
@@ -132,17 +214,41 @@ pub(in crate::engine::vm::run) fn try_numeric_span(
         | DenseSpanKind::ReadBinary => {
             let (value, update) = match kind {
                 DenseSpanKind::Read => {
-                    let key = read_number(slots, executable, &code[1])?;
-                    (peek_number(slots, runtime, &code[0], key)?, None)
+                    let key = take!(
+                        read_number(slots, executable, &code[1]),
+                        read_miss(slots, executable, &code[1])
+                    );
+                    (
+                        take!(
+                            peek_number(slots, runtime, &code[0], key),
+                            peek_miss(slots, runtime, &code[0], key)
+                        ),
+                        None,
+                    )
                 }
                 DenseSpanKind::ReadIndexBinary => {
-                    let left = read_number(slots, executable, &code[1])?;
-                    let right = read_number(slots, executable, &code[2])?;
-                    let key = apply_number_binary(&code[3], left, right)?;
-                    (peek_number(slots, runtime, &code[0], key)?, None)
+                    let left = take!(
+                        read_number(slots, executable, &code[1]),
+                        read_miss(slots, executable, &code[1])
+                    );
+                    let right = take!(
+                        read_number(slots, executable, &code[2]),
+                        read_miss(slots, executable, &code[2])
+                    );
+                    let key = take!(apply_number_binary(&code[3], left, right), "source");
+                    (
+                        take!(
+                            peek_number(slots, runtime, &code[0], key),
+                            peek_miss(slots, runtime, &code[0], key)
+                        ),
+                        None,
+                    )
                 }
                 DenseSpanKind::ReadPostUpdate | DenseSpanKind::ReadPreUpdate => {
-                    let (slot, old) = read_slot_number(slots, &code[1])?;
+                    let (slot, old) = take!(
+                        read_slot_number(slots, &code[1]),
+                        read_miss(slots, executable, &code[1])
+                    );
                     let postfix = kind == DenseSpanKind::ReadPostUpdate;
                     let increment = matches!(code[2], Instruction::PostInc | Instruction::Inc);
                     debug_assert!(matches!(
@@ -154,29 +260,51 @@ pub(in crate::engine::vm::run) fn try_numeric_span(
                     let next = old.update(increment);
                     let key = if postfix { old } else { next };
                     (
-                        peek_number(slots, runtime, &code[0], key)?,
+                        take!(
+                            peek_number(slots, runtime, &code[0], key),
+                            peek_miss(slots, runtime, &code[0], key)
+                        ),
                         Some(NumberUpdate { slot, value: next }),
                     )
                 }
                 DenseSpanKind::ReadBinary => {
-                    let key = read_number(slots, executable, &code[1])?;
-                    let read = peek_number(slots, runtime, &code[0], key)?;
-                    let right = read_number(slots, executable, &code[3])?;
-                    (apply_number_binary(&code[4], read, right)?, None)
+                    let key = take!(
+                        read_number(slots, executable, &code[1]),
+                        read_miss(slots, executable, &code[1])
+                    );
+                    let read = take!(
+                        peek_number(slots, runtime, &code[0], key),
+                        peek_miss(slots, runtime, &code[0], key)
+                    );
+                    let right = take!(
+                        read_number(slots, executable, &code[3]),
+                        read_miss(slots, executable, &code[3])
+                    );
+                    (
+                        take!(apply_number_binary(&code[4], read, right), "source"),
+                        None,
+                    )
                 }
                 _ => unreachable!(),
             };
             if !slots.try_commit_proven_number(NumericDestination::Push, value, update, kind.peak())
             {
-                return None;
+                miss!(if slots.numeric_span_room(kind.peak()) {
+                    "commit"
+                } else {
+                    "room"
+                });
             }
         }
         DenseSpanKind::AccPut
         | DenseSpanKind::AccSetDrop
         | DenseSpanKind::AccIndexPut
         | DenseSpanKind::AccIndexSetDrop => {
-            let (DirectSlot::Local(acc_index), acc) = read_slot_number(slots, &code[0])? else {
-                return None;
+            let (DirectSlot::Local(acc_index), acc) = take!(
+                read_slot_number(slots, &code[0]),
+                read_miss(slots, executable, &code[0])
+            ) else {
+                miss!("source");
             };
             let indexed = matches!(
                 kind,
@@ -187,11 +315,20 @@ pub(in crate::engine::vm::run) fn try_numeric_span(
                 DenseSpanKind::AccSetDrop | DenseSpanKind::AccIndexSetDrop
             );
             let key = if indexed {
-                let left = read_number(slots, executable, &code[2])?;
-                let right = read_number(slots, executable, &code[3])?;
-                apply_number_binary(&code[4], left, right)?
+                let left = take!(
+                    read_number(slots, executable, &code[2]),
+                    read_miss(slots, executable, &code[2])
+                );
+                let right = take!(
+                    read_number(slots, executable, &code[3]),
+                    read_miss(slots, executable, &code[3])
+                );
+                take!(apply_number_binary(&code[4], left, right), "source")
             } else {
-                read_number(slots, executable, &code[2])?
+                take!(
+                    read_number(slots, executable, &code[2]),
+                    read_miss(slots, executable, &code[2])
+                )
             };
             let read_pc = if indexed { 5 } else { 3 };
             let store_pc = if indexed { 7 } else { 5 };
@@ -202,14 +339,21 @@ pub(in crate::engine::vm::run) fn try_numeric_span(
                 DirectSlot::Local(acc_index),
                 kept
             ));
-            let read = peek_number(slots, runtime, &code[1], key)?;
+            let read = take!(
+                peek_number(slots, runtime, &code[1], key),
+                peek_miss(slots, runtime, &code[1], key)
+            );
             if !slots.try_commit_proven_number(
                 NumericDestination::Local(acc_index),
                 acc.add(read),
                 None,
                 kind.peak(),
             ) {
-                return None;
+                miss!(if slots.numeric_span_room(kind.peak()) {
+                    "commit"
+                } else {
+                    "room"
+                });
             }
         }
         DenseSpanKind::Store
@@ -217,52 +361,94 @@ pub(in crate::engine::vm::run) fn try_numeric_span(
         | DenseSpanKind::StoreBinary
         | DenseSpanKind::UpdateElement => {
             if !slots.numeric_span_room(kind.peak()) {
-                return None;
+                miss!("room");
             }
-            let next_generation = property_generation.checked_add(1)?;
+            let next_generation = take!(property_generation.checked_add(1), "generation");
             let (base_slot, key, value) = match kind {
                 DenseSpanKind::Store => (
-                    direct_slot(&code[0])?,
-                    read_number(slots, executable, &code[1])?,
-                    read_number(slots, executable, &code[2])?,
+                    take!(direct_slot(&code[0]), "source"),
+                    take!(
+                        read_number(slots, executable, &code[1]),
+                        read_miss(slots, executable, &code[1])
+                    ),
+                    take!(
+                        read_number(slots, executable, &code[2]),
+                        read_miss(slots, executable, &code[2])
+                    ),
                 ),
                 DenseSpanKind::Copy => {
-                    let source_key = read_number(slots, executable, &code[3])?;
-                    let value = peek_number(slots, runtime, &code[2], source_key)?;
+                    let source_key = take!(
+                        read_number(slots, executable, &code[3]),
+                        read_miss(slots, executable, &code[3])
+                    );
+                    let value = take!(
+                        peek_number(slots, runtime, &code[2], source_key),
+                        peek_miss(slots, runtime, &code[2], source_key)
+                    );
                     (
-                        direct_slot(&code[0])?,
-                        read_number(slots, executable, &code[1])?,
+                        take!(direct_slot(&code[0]), "source"),
+                        take!(
+                            read_number(slots, executable, &code[1]),
+                            read_miss(slots, executable, &code[1])
+                        ),
                         value,
                     )
                 }
                 DenseSpanKind::StoreBinary => {
-                    let left = read_number(slots, executable, &code[2])?;
-                    let right = read_number(slots, executable, &code[3])?;
+                    let left = take!(
+                        read_number(slots, executable, &code[2]),
+                        read_miss(slots, executable, &code[2])
+                    );
+                    let right = take!(
+                        read_number(slots, executable, &code[3]),
+                        read_miss(slots, executable, &code[3])
+                    );
                     (
-                        direct_slot(&code[0])?,
-                        read_number(slots, executable, &code[1])?,
-                        apply_number_binary(&code[4], left, right)?,
+                        take!(direct_slot(&code[0]), "source"),
+                        take!(
+                            read_number(slots, executable, &code[1]),
+                            read_miss(slots, executable, &code[1])
+                        ),
+                        take!(apply_number_binary(&code[4], left, right), "source"),
                     )
                 }
                 DenseSpanKind::UpdateElement => {
-                    let key = read_number(slots, executable, &code[1])?;
-                    let old = peek_number(slots, runtime, &code[0], key)?;
-                    let right = read_number(slots, executable, &code[3])?;
+                    let key = take!(
+                        read_number(slots, executable, &code[1]),
+                        read_miss(slots, executable, &code[1])
+                    );
+                    let old = take!(
+                        peek_number(slots, runtime, &code[0], key),
+                        peek_miss(slots, runtime, &code[0], key)
+                    );
+                    let right = take!(
+                        read_number(slots, executable, &code[3]),
+                        read_miss(slots, executable, &code[3])
+                    );
                     (
-                        direct_slot(&code[0])?,
+                        take!(direct_slot(&code[0]), "source"),
                         key,
-                        apply_number_binary(&code[4], old, right)?,
+                        take!(apply_number_binary(&code[4], old, right), "source"),
                     )
                 }
                 _ => unreachable!(),
             };
-            let base = slots.direct_value(base_slot)?;
-            if !runtime.try_write_dense_number(base, index_from_number(key)?, value) {
-                return None;
+            let base = take!(slots.direct_value(base_slot), "binding");
+            let index = take!(index_from_number(key), "index");
+            if !runtime.try_write_dense_number(base, index, value) {
+                miss!(runtime.diagnose_dense_number_write_miss(base, index));
             }
             *property_generation = next_generation;
         }
     }
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_fusion_outcome(
+        runtime,
+        executable,
+        pc,
+        kind_name(kind),
+        None,
+    );
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_execution_event(match kind {
         DenseSpanKind::Read => "fusion.DenseRead",
@@ -481,6 +667,32 @@ mod tests {
             }
         }
         assert!(missing.is_empty(), "{}", missing.join("\n"));
+    }
+
+    #[cfg(feature = "profiling")]
+    #[test]
+    fn dense_miss_diagnostic_preserves_post_increment_and_getter_order() {
+        use crate::engine::api::profiling::CostProfile;
+
+        let source = "(function(){let a=[0],n=0;Object.defineProperty(a,0,{get(){n++;return 7}});function f(a,i){let v=a[i++];return i*100+v}return f(a,0)+n})()";
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let profile = CostProfile::start();
+        let fused = context.eval(source).unwrap();
+        let costs = profile.snapshot();
+        let canonical = {
+            let runtime = Runtime::new();
+            with_dense_candidates_disabled(|| runtime.new_context().eval(source)).unwrap()
+        };
+        assert_eq!(fused, Value::Int(108));
+        assert_eq!(fused, canonical);
+        assert!(
+            costs.fusion_sites.iter().any(|(key, cost)| {
+                key.kind == "dense_read_post_update"
+                    && cost.misses.get("array_materialized").copied().unwrap_or(0) > 0
+            }),
+            "{costs:?}"
+        );
     }
 
     #[cfg(feature = "profiling")]
