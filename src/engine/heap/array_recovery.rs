@@ -44,35 +44,6 @@ impl Heap {
                 ));
             }
 
-            let mut selected = Vec::new();
-            if selected.try_reserve_exact(source.entries().len()).is_err() {
-                return Ok(None);
-            }
-            selected.resize(source.entries().len(), false);
-            for (index, &slot_index) in indexed_slots.iter().enumerate() {
-                if slot_index >= selected.len() || selected[slot_index] {
-                    return Err(HeapError::Invariant(
-                        "dense recovery has a missing or duplicate index slot",
-                    ));
-                }
-                let entry = &source.entries()[slot_index];
-                let Some(index) = u32::try_from(index).ok() else {
-                    return Err(HeapError::Invariant("dense recovery index exceeds Uint32"));
-                };
-                if entry.atom.immediate_integer() != Some(index)
-                    || entry.flags != PropertyFlags::data(true, true, true)
-                    || !matches!(
-                        object.slots.get(slot_index),
-                        Some(PropertySlot::Data(value)) if is_map_storable_value(value)
-                    )
-                {
-                    return Err(HeapError::Invariant(
-                        "dense recovery index is not default own data",
-                    ));
-                }
-                selected[slot_index] = true;
-            }
-
             let mut named_indices = Vec::new();
             if named_indices
                 .try_reserve_exact(replacement.entries().len())
@@ -80,20 +51,27 @@ impl Heap {
             {
                 return Ok(None);
             }
+            // A shape has unique atoms. Matching each immediate index to its
+            // numeric position in `indexed_slots` proves the mapping is unique;
+            // the expected named count below proves no index was omitted.
+            // Validate both kinds in logical order, including dictionary order,
+            // without an extra selected-slot bitmap or a second shape scan.
             for slot_index in source.ordered_indices() {
-                if !selected[slot_index] {
-                    if source.entries()[slot_index]
-                        .atom
-                        .immediate_integer()
-                        .is_some()
+                let entry = &source.entries()[slot_index];
+                if let Some(index) = entry.atom.immediate_integer() {
+                    if indexed_slots.get(index as usize) != Some(&slot_index)
+                        || entry.flags != PropertyFlags::data(true, true, true)
+                        || !matches!(
+                            object.slots.get(slot_index),
+                            Some(PropertySlot::Data(value)) if is_map_storable_value(value)
+                        )
                     {
                         return Err(HeapError::Invariant(
-                            "dense recovery left an indexed property in the named shape",
+                            "dense recovery index is not default own data at its mapped slot",
                         ));
                     }
-                    if replacement.entries().get(named_indices.len())
-                        != source.entries().get(slot_index)
-                    {
+                } else {
+                    if replacement.entries().get(named_indices.len()) != Some(entry) {
                         return Err(HeapError::Invariant(
                             "dense recovery changed named property order or flags",
                         ));
@@ -333,8 +311,57 @@ mod tests {
             ObjectPayload::Array { dense: None }
         ));
 
+        // The mapping names indices zero and one, but the source also has two.
+        // The single-pass validation must reject that surplus index before
+        // changing the shape or moving any value.
+        let extra_source = heap
+            .allocate_shape(
+                Shape::new(None, [entry(index(2)), entry(index(1)), entry(index(0))]).unwrap(),
+            )
+            .unwrap();
+        let extra_replacement = heap
+            .allocate_shape(Shape::new(None, [entry(AtomIdx::from_raw(4))]).unwrap())
+            .unwrap();
+        let extra_array = slow_array(
+            &mut heap,
+            extra_source,
+            vec![
+                PropertySlot::Data(RawValue::Int(2)),
+                PropertySlot::Data(RawValue::Int(1)),
+                PropertySlot::Data(RawValue::Int(0)),
+            ],
+        );
+        let source_count = heap.shape_strong_count(extra_source).unwrap();
+        let replacement_count = heap.shape_strong_count(extra_replacement).unwrap();
+        assert!(
+            heap.recover_array_dense_shape(extra_array, extra_replacement, &[2, 1])
+                .is_err()
+        );
+        let object = heap.object(extra_array).unwrap();
+        assert_eq!(object.shape, extra_source);
+        assert!(matches!(
+            object.payload,
+            ObjectPayload::Array { dense: None }
+        ));
+        assert!(matches!(
+            object.slots.as_slice(),
+            [
+                PropertySlot::Data(RawValue::Int(2)),
+                PropertySlot::Data(RawValue::Int(1)),
+                PropertySlot::Data(RawValue::Int(0))
+            ]
+        ));
+        assert_eq!(heap.shape_strong_count(extra_source), Ok(source_count));
+        assert_eq!(
+            heap.shape_strong_count(extra_replacement),
+            Ok(replacement_count)
+        );
+
+        heap.release_object(extra_array).unwrap();
         heap.release_object(special_array).unwrap();
         heap.release_object(array).unwrap();
+        heap.release_shape(extra_source).unwrap();
+        heap.release_shape(extra_replacement).unwrap();
         heap.release_shape(special).unwrap();
         heap.release_shape(source).unwrap();
         heap.release_shape(replacement).unwrap();

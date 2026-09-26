@@ -45,13 +45,24 @@ impl Runtime {
                 return Ok(false);
             }
             indexed_slots.resize(length, usize::MAX);
+            // A complete payload uses exactly `length` index slots. Any
+            // additional slot must stay in the replacement named shape.
+            let named_count = data.slots.len() - length;
             let mut entries = Vec::new();
-            if entries.try_reserve_exact(data.slots.len()).is_err() {
+            if entries.try_reserve_exact(named_count).is_err() {
                 return Ok(false);
             }
             for slot in shape.ordered_indices() {
                 let entry = &shape.entries()[slot];
-                if let Some(index) = state.atoms.array_index(state.atoms.brand(entry.atom)?)? {
+                // Immediate indices are self-validating. Other atoms still go
+                // through the table so large decimal Array indices are not
+                // mistaken for named properties.
+                let index = if let Some(index) = entry.atom.immediate_integer() {
+                    Some(index)
+                } else {
+                    state.atoms.array_index(state.atoms.brand(entry.atom)?)?
+                };
+                if let Some(index) = index {
                     let index = index as usize;
                     if index >= length
                         || entry.flags != PropertyFlags::data(true, true, true)
@@ -66,6 +77,11 @@ impl Runtime {
                     }
                     indexed_slots[index] = slot;
                 } else {
+                    // More names than this bound proves an index is missing;
+                    // decline before push rather than allocate implicitly.
+                    if entries.len() == named_count {
+                        return Ok(false);
+                    }
                     entries.push(*entry);
                 }
             }
