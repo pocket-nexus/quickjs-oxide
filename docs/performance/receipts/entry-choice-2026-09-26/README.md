@@ -18,13 +18,15 @@
 | Entry choice 固定负载受测产物 | `315035b5dba805b033dad5187d187b360e39ceff` |
 | 本轮集成版 plain 构建 | `d6a168e2` |
 
-普通计时构建为 release、fat LTO、CGU=1，无 PGO/profiling。诊断构建另存，逻辑事件不作为普通版耗时或 Score。macOS 原生 `/usr/bin/time -l` 在此主机提供整进程退休指令、cycles、最大 RSS 和 peak footprint；不是 Linux `perf ...:u` 的用户态专用口径。Instruments 的采样与 bottleneck 指标另行保留，不能把百分比当作机制收益上界。
+普通计时构建为 release、fat LTO、CGU=1，无 PGO/profiling。诊断构建另存，逻辑事件不作为普通版耗时或 Score。macOS 原生 `/usr/bin/time -l` 在此主机提供整进程退休指令、cycles、最大 RSS 和 peak footprint；不是 Linux `perf ...:u` 的用户态专用口径。Instruments CPU Counters 的初步能力探针因时间限制终止、目标收到 SIGKILL，仅作为工具能力记录；它不能支持任何缓存、分支预测或瓶颈比例结论。
 
 Current 和 Parent 构建启动于工具完善期间，完整 Cargo verbose 日志保留了实际 rustc 命令和参数，但其旧版 receipt 中的 tooling hash 是构建结束时观察，不能证明进程加载的脚本版本。后续构建工具在启动时冻结脚本快照并在结束时校验；这项边界不改变前两份干净源码、完整编译命令与二进制的身份。
 
 ## 初始机器码证据与候选边界
 
 ARM64 普通版中，整个函数没有融合计划时已有一次跳转进入普通路径。存在其他融合站点、当前 GetLocal 的 flag 为零时，仍执行多个 selector 的条件分支。候选保留原 u8 sidecar、canonical 指令和 PC，仅把互斥的五类候选改成一次选择，并显式绕过零 flag；Number 未命中后的字符串 Add 桥和动态回落维持原有顺序。不能由源码 if 数量直接推导机器指令收益，后续以受测产物的反汇编核对。
+
+实际反汇编中，计划存在且 GetLocal flag=0 的准入路径从 10 条条件分支加 1 条无条件分支变为 5 条条件分支；`run::run` 按下一个符号估计的布局范围为 20,680→20,704 字节，栈帧仍为 `0x780`。这不是零分支，也不是预测失败次数。Current 与加入诊断后的普通构建、Choice 与 `d6a168e2` 集成后的普通构建，各自比较的 `run` 及七个融合 helper 的地址与指令字均完全相同；后一对 `run` 为 5,176 条 ARM64 指令。该检查覆盖八个选定符号，不声称整二进制相同。原始反汇编与比较 JSON 位于上述外部目录的 `series/codegen-{current,instrumentation,choice,integrated}`。
 
 ## 结果
 
