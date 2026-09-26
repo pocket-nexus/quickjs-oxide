@@ -349,7 +349,6 @@ impl OrdinaryCall {
                 &mut frame.window,
                 checked,
                 &self.function,
-                self.executable.metadata.function_name_local,
                 self.executable.observes_arguments,
             )?
         };

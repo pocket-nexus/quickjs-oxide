@@ -1,7 +1,6 @@
 //! Fresh ordinary entry; restore/materialized entry stays in stack.rs.
 use super::*;
 impl SlotStore {
-    #[allow(clippy::too_many_arguments)]
     pub(in crate::engine::vm) fn push_ordinary_frame(
         &mut self,
         runtime: &Runtime,
@@ -9,7 +8,6 @@ impl SlotStore {
         parent: &mut FrameWindow,
         checked: CheckedOrdinaryCallOperands,
         function: &crate::engine::object::ObjectRef,
-        function_name: Option<u16>,
         observes_arguments: bool,
     ) -> Result<FrameWindow, Error> {
         self.check_current(parent)?;
@@ -31,6 +29,7 @@ impl SlotStore {
         let keep_originals = observes_arguments || checked.has_non_scalar_argument;
         let parameter_count = layout.argument_slots(count);
         let local_count = layout.locals().len();
+        let function_name = layout.function_name_local();
         if function_name.is_some_and(|i| usize::from(i) >= local_count) {
             return Err(Error::internal("function-name local is outside the frame"));
         }
@@ -89,23 +88,31 @@ impl SlotStore {
         for index in original_end + count..parameters_end {
             self.slots[index] = Some(FrameBinding::Direct(JsValue::Undefined));
         }
-        for (index, definition) in layout.locals().iter().enumerate() {
-            let binding = match super::super::call::prepare::initial_local_binding(
-                runtime,
-                definition.is_lexical,
-                function_name == Some(index as u16),
-                function,
-            ) {
-                Ok(binding) => binding,
-                Err(error) => {
-                    // Parameters and preceding locals were installed only in
-                    // the unpublished suffix. The caller still owns every
-                    // outgoing operand, including the method receiver.
-                    let _ = self.clear_unpublished(runtime, original_end..parameters_end + index);
-                    return Err(runtime_error_to_vm_error(error));
-                }
-            };
-            self.slots[parameters_end + index] = Some(binding);
+        if layout.plain_local_initializers() {
+            // Every initial value is edge-free and identical. The immutable
+            // published fact removes per-local lexical/name classification and
+            // the fallible binding constructor from ordinary call entry.
+            self.slots[parameters_end..locals_end]
+                .fill_with(|| Some(FrameBinding::Direct(JsValue::Undefined)));
+        } else {
+            for (index, definition) in layout.locals().iter().enumerate() {
+                let binding = match super::super::call::prepare::initial_local_binding(
+                    runtime,
+                    definition.is_lexical,
+                    function_name == Some(index as u16),
+                    function,
+                ) {
+                    Ok(binding) => binding,
+                    Err(error) => {
+                        // Parameters and preceding locals were installed only in
+                        // the unpublished suffix. The caller still owns every
+                        // outgoing operand, including the method receiver.
+                        let _ = self.clear_unpublished(runtime, original_end..parameters_end + index);
+                        return Err(runtime_error_to_vm_error(error));
+                    }
+                };
+                self.slots[parameters_end + index] = Some(binding);
+            }
         }
         for index in 0..count {
             self.slots[base + index] = self.slots[start + index].take();
@@ -198,6 +205,89 @@ mod tests {
             operands: values,
         }
     }
+
+    #[test]
+    fn ordinary_local_initialization_uses_published_plain_fact_and_preserves_tdz() {
+        let runtime = Runtime::new();
+        let context = runtime.new_context();
+        let function = runtime.new_object(None).unwrap();
+        let definition = VariableDefinition {
+            name: None,
+            is_lexical: false,
+            is_const: false,
+            is_parameter_initializer: false,
+            kind: ClosureVariableKind::Normal,
+        };
+        let mut executable = PublishedFunctionSnapshot::empty_for_test(context.realm);
+        executable.metadata.max_stack = 1;
+        executable.metadata.local_count = 2;
+        executable.local_definitions = std::rc::Rc::from([definition; 2]);
+        let mut slots = SlotStore::new(16);
+        let mut parent = slots
+            .push_frame(
+                &runtime,
+                &executable.frame_layout(),
+                storage(vec![JsValue::Object(function.clone().into_handle())]),
+            )
+            .unwrap();
+        assert!(executable.frame_layout().plain_local_initializers());
+        let checked = checked_operands(&mut slots, &mut parent, 0, false);
+        let child = slots
+            .push_ordinary_frame(
+                &runtime,
+                &executable.frame_layout(),
+                &mut parent,
+                checked,
+                &function,
+                false,
+            )
+            .unwrap();
+        assert!(matches!(
+            slots.local(&child, 0).unwrap(),
+            FrameBinding::Direct(JsValue::Undefined)
+        ));
+        assert!(matches!(
+            slots.local(&child, 1).unwrap(),
+            FrameBinding::Direct(JsValue::Undefined)
+        ));
+        slots.clear_frame(&runtime, child).unwrap();
+
+        // A synthetic snapshot may change definitions between test calls. Its
+        // test-only layout derives the fact again, so a lexical local cannot
+        // accidentally enter the bulk Undefined initialization path.
+        executable.local_definitions = std::rc::Rc::from([
+            definition,
+            VariableDefinition {
+                is_lexical: true,
+                ..definition
+            },
+        ]);
+        assert!(!executable.frame_layout().plain_local_initializers());
+        slots
+            .push(&mut parent, JsValue::Object(function.clone().into_handle()))
+            .unwrap();
+        let checked = checked_operands(&mut slots, &mut parent, 0, false);
+        let child = slots
+            .push_ordinary_frame(
+                &runtime,
+                &executable.frame_layout(),
+                &mut parent,
+                checked,
+                &function,
+                false,
+            )
+            .unwrap();
+        assert!(matches!(
+            slots.local(&child, 0).unwrap(),
+            FrameBinding::Direct(JsValue::Undefined)
+        ));
+        assert!(matches!(
+            slots.local(&child, 1).unwrap(),
+            FrameBinding::Uninitialized
+        ));
+        slots.clear_frame(&runtime, child).unwrap();
+        slots.clear_frame(&runtime, parent).unwrap();
+    }
     #[test]
     fn scalar_elision_preserves_arity_but_reference_originals_survive_parameter_writes() {
         let runtime = Runtime::new();
@@ -224,7 +314,6 @@ mod tests {
                 &mut parent,
                 checked,
                 &function,
-                None,
                 false,
             )
             .unwrap();
@@ -257,7 +346,6 @@ mod tests {
                 &mut parent,
                 checked,
                 &function,
-                None,
                 false,
             )
             .unwrap();
@@ -310,7 +398,6 @@ mod tests {
                     &mut parent,
                     checked,
                     &function,
-                    None,
                     false
                 )
                 .is_err()
@@ -375,7 +462,6 @@ mod tests {
                 &mut parent,
                 checked,
                 &function,
-                None,
                 false,
             )
             .unwrap();
@@ -454,7 +540,6 @@ mod tests {
                     &mut parent,
                     checked,
                     &function,
-                    None,
                     false,
                 )
                 .is_err()
@@ -546,7 +631,6 @@ mod tests {
                 &mut parent,
                 checked,
                 &stale_function,
-                callee_layout.metadata.function_name_local,
                 false,
             )
             .err()
@@ -625,7 +709,6 @@ mod tests {
                 &mut parent,
                 checked,
                 &function,
-                None,
                 false,
             )
             .err()
