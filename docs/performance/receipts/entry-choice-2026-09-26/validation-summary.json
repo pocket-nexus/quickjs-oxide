@@ -5,7 +5,7 @@
     "full_test262": "Frozen d6a168e2 integrated-src; engine execution patch was integrated, fixture revision and later profiling label fix were not in this worktree.",
     "full_profiling_and_tools": "b59331bc integrated root; 2134 lib and 6 CLI tests plus Rust 1.88 Clippy and fmt completed before b4a5f446.",
     "profiling_label_fix": "b4a5f446 changed diagnostic priority; two focused tests passed. No full 2134-test replay is claimed for this later commit.",
-    "inline_candidate": "8c38bc32a316aa6eb4fdf6540b448d0163770671 is a separate annotation experiment and is not integrated into the main candidate or covered by these full gates."
+    "inline_candidate": "Frozen measured candidate 8c38bc32a316aa6eb4fdf6540b448d0163770671 changes one inline annotation; cherry-picked into this experimental branch as 9df1969f. The earlier full Test262 gate remains d6a168e2. Later CI on PR head 945d485d includes the annotation and profiling-label changes, with the merge checkout tree verified equal to that head."
   },
   "runs": [
     {
@@ -178,6 +178,51 @@
       "log": {
         "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/validation/source-layout-final.log",
         "sha256": "9e10450f3002996e591a06b4c63933522f7ba8e229c7927afbfa151585c708dd"
+      }
+    },
+    {
+      "id": "github_ci_945d485d",
+      "source_commit": "945d485dc10142df8345325bd1638ca2b9914b5d",
+      "actual_checkout_commit": "4bb6e870260aa62c7dae249d101b7bea61e5b146",
+      "actual_checkout_tree": "5e0e5e46a21d882e5a3d5e27ab2687f4bc398654",
+      "checkout_tree_equals_pr_head": true,
+      "event": "pull_request",
+      "run_url": "https://github.com/pocket-nexus/quickjs-oxide/actions/runs/36214372192",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "name": "fast",
+          "conclusion": "success",
+          "url": "https://github.com/pocket-nexus/quickjs-oxide/actions/runs/36214372192/job/108327292631"
+        },
+        {
+          "name": "test262-focused",
+          "conclusion": "success",
+          "url": "https://github.com/pocket-nexus/quickjs-oxide/actions/runs/36214372192/job/108327292764"
+        },
+        {
+          "name": "test262-full",
+          "conclusion": "skipped",
+          "url": "https://github.com/pocket-nexus/quickjs-oxide/actions/runs/36214372192/job/108327293126"
+        },
+        {
+          "name": "quickjs-differential",
+          "conclusion": "skipped",
+          "url": "https://github.com/pocket-nexus/quickjs-oxide/actions/runs/36214372192/job/108327293237"
+        }
+      ],
+      "scope": "fast and test262-focused passed. fast includes workspace all-target tests, CLI profiling and selected profiling library tests, doc tests, test262-host tests, Clippy, formatting and architecture/tool checks. quickjs-differential and full Test262 were skipped by workflow conditions; do not count them as passed. No full profiling-library replay is claimed by this CI job.",
+      "metadata": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/validation/ci-945d485d.json",
+        "sha256": "b2678444b8a15bb400e3e916b6f0ccddf23e0a7c9027730acaea98279328f555"
+      },
+      "log": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/validation/ci-945d485d.log",
+        "sha256": "1bcd8ce96dc1544c5cfef4a3931f18710aeb5571cce4c0911ef6b9b65ead381a"
+      },
+      "merge_commit_metadata": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/validation/ci-merge-4bb6e870.json",
+        "sha256": "4b7cc785c606f0672ef3b8fb27f7579fd840689e75bc751d01917dd977945313"
       }
     }
   ]

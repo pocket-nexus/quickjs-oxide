@@ -131,5 +131,8 @@ Crypto 的静态原因链也已核对：BigInteger 的 fresh Array 从空 dense 
 | `b59331bc` | Rust 1.88 workspace default 与 profiling 的全 targets Clippy `-D warnings`、`cargo +1.88.0 fmt --all -- --check` | 均退出 0。 |
 | profiling 标签修正 `b4a5f446` | `dense_diagnostic_priority_` 两项定向测试 | 初次与保存日志的回放均为 2/2 通过。此前的 2,134 项全量测试没有覆盖这次后续修正。 |
 | 工具检查 | benchmark Python 单测、源码布局检查 | 分别 37/37 通过、625 个可达 Rust 文件通过。Python 日志未自证执行时的精确 Git 提交。 |
+| PR head `945d485d`，CI checkout `4bb6e870` | 远端 fast 与 test262-focused | 均通过。核对两个提交的 Git tree 均为 `5e0e5e46a21d882e5a3d5e27ab2687f4bc398654`，因此该 CI 覆盖已集成的内联注解及诊断修正。fast 包括 workspace 全 targets、CLI profiling、部分 profiling 库测试、doc／host 测试、Clippy、格式与架构／工具检查；不冒充全量 profiling 库回放。 |
 
 另行构建的 inline 候选 `8c38bc32` 仅改变一个内联注解，已以 `9df1969f` 并入当前实验分支；上述全量测试不覆盖它。完整 Test262 使用冻结的 `d6a168e2` 工作树，后续探针、诊断标签及内联注解提交不在该全量结果中。受测候选的固定矩阵输出校验另见各测量收据，不冒充最新 HEAD 的全量 Test262。
+
+后续 [CI run 36214372192](https://github.com/pocket-nexus/quickjs-oxide/actions/runs/36214372192) 覆盖了包含该注解的 PR tree。该次 `test262-full` 与 `quickjs-differential` 按 workflow 条件跳过，不计为通过；完整日志、实际 checkout 提交与 tree 对照已留入 validation summary。
