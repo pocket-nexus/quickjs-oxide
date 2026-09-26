@@ -24,6 +24,7 @@ use crate::engine::compiler::lexer::Punctuator;
 use crate::engine::compiler::lexer::Token;
 use crate::engine::compiler::parser::context::ForIterationKind;
 use crate::engine::compiler::parser::context::Parser;
+use std::cell::Cell;
 
 /// Upper bound on memoized entries. A probe that scans a giant region (say a
 /// whole array literal looking for its initializer) stops caching past this
@@ -39,6 +40,10 @@ pub(in crate::engine::compiler) struct LookaheadCache<'source> {
     entries: Vec<LookaheadEntry<'source>>,
     /// `entries[..base]` are invalidated and await compaction.
     base: usize,
+    /// Probes and committed parsing usually consume consecutive entries.
+    /// Remember the last hit so those scans do not binary-search the entire
+    /// window for every token. This is only a hint; every hit checks its key.
+    cursor: Cell<usize>,
     // One result per probe family is enough for adjacent grammar consumers.
     // These bounded summaries are pure functions of offset/context and never
     // evict token entries or grow with source length.
@@ -72,10 +77,26 @@ impl<'source> LookaheadCache<'source> {
 
     fn peek(&self, start: usize, goal: LexicalGoal, context: LexContext) -> Option<Token<'source>> {
         let key = (start, goal, context);
+        for index in [
+            self.cursor.get().saturating_add(1),
+            self.cursor.get(),
+            self.base,
+        ] {
+            if index < self.base {
+                continue;
+            }
+            if let Some(entry) = self.entries.get(index) {
+                if (entry.start, entry.goal, entry.context) == key {
+                    self.cursor.set(index);
+                    return Some(entry.token);
+                }
+            }
+        }
         let index = self
             .active()
             .binary_search_by(|entry| (entry.start, entry.goal, entry.context).cmp(&key))
             .ok()?;
+        self.cursor.set(self.base + index);
         Some(self.active()[index].token)
     }
 
@@ -90,9 +111,16 @@ impl<'source> LookaheadCache<'source> {
             return;
         }
         let key = (start, goal, context);
-        let index = self
+        let index = if self
             .active()
-            .partition_point(|entry| (entry.start, entry.goal, entry.context) < key);
+            .last()
+            .is_none_or(|entry| (entry.start, entry.goal, entry.context) < key)
+        {
+            self.active().len()
+        } else {
+            self.active()
+                .partition_point(|entry| (entry.start, entry.goal, entry.context) < key)
+        };
         self.entries.insert(
             self.base + index,
             LookaheadEntry {
@@ -102,6 +130,7 @@ impl<'source> LookaheadCache<'source> {
                 token,
             },
         );
+        self.cursor.set(self.base + index);
     }
 
     /// Drops entries that start at or after `start`, used when a goal or
@@ -114,8 +143,16 @@ impl<'source> LookaheadCache<'source> {
     /// Drops entries that start before `start`, keeping only the region the
     /// parser has not committed past.
     fn invalidate_before(&mut self, start: usize) {
+        if self
+            .active()
+            .first()
+            .is_none_or(|entry| entry.start >= start)
+        {
+            return;
+        }
         self.base += self.active().partition_point(|entry| entry.start < start);
         if self.base >= COMPACT_MIN_PREFIX && self.base >= self.entries.len() - self.base {
+            self.cursor.set(self.cursor.get().saturating_sub(self.base));
             self.entries.drain(..self.base);
             self.base = 0;
         }
@@ -353,5 +390,42 @@ mod tests {
             cache.peek(COMPACT_MIN_PREFIX, LexicalGoal::Div, context),
             Some(beta)
         );
+    }
+
+    #[test]
+    fn sequential_hint_checks_context_after_insert_and_compaction() {
+        let mut lexer = Lexer::new("yield /x/");
+        let identifier = lexer.next_token().unwrap();
+        let context = LexContext::default();
+        let strict = LexContext {
+            strict: true,
+            ..context
+        };
+        lexer.seek(identifier.span.start);
+        lexer.set_context(strict);
+        let keyword = lexer.next_token().unwrap();
+        let mut cache = LookaheadCache::default();
+        for offset in 0..256 {
+            cache.insert(offset, LexicalGoal::Div, context, identifier);
+        }
+        for offset in 128..256 {
+            assert_eq!(
+                cache.peek(offset, LexicalGoal::Div, context),
+                Some(identifier)
+            );
+        }
+        cache.insert(200, LexicalGoal::Div, strict, keyword);
+        cache.invalidate_before(129);
+        for offset in (129..256).rev() {
+            assert_eq!(
+                cache.peek(offset, LexicalGoal::Div, context),
+                Some(identifier)
+            );
+        }
+        assert_eq!(cache.peek(200, LexicalGoal::Div, strict), Some(keyword));
+        assert_eq!(cache.peek(200, LexicalGoal::RegExp, strict), None);
+        cache.invalidate_from(200);
+        assert_eq!(cache.peek(200, LexicalGoal::Div, strict), None);
+        assert_eq!(cache.peek(199, LexicalGoal::Div, context), Some(identifier));
     }
 }
