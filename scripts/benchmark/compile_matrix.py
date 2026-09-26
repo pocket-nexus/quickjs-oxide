@@ -137,10 +137,13 @@ def complete_geomeans(ratios, engines, workloads):
     return aggregates
 
 
-def write_report(output, results, ratios, metric, engines, aggregates):
+def write_report(output, results, ratios, metric, engines, aggregates, boundary):
+    construction = ("Parser/interner construction is included; no runtime or context is created. "
+                    if boundary == "complete-syntax-parser-with-initialization"
+                    else "Runtime/Context construction is excluded. ")
     lines = [f"# Front-end {metric} matrix", "",
              "Each sample is one fresh process; the probe prints exactly one ns line. "
-             "Runtime/Context construction, source I/O and teardown are excluded. "
+             + construction + "Source I/O and teardown are excluded. "
              "Ratios are reference_ns / engine_ns; >1 means the engine is faster than the reference.",
              "", "| Case | Bytes | Engine | Runs | Median ns | MB/s |", "| --- | ---: | --- | ---: | ---: | ---: |"]
     for group in sorted(results, key=lambda item: (item["case"], engines.index(item["engine"]))):
@@ -243,7 +246,7 @@ def main():
     aggregates = complete_geomeans(ratios, list(engines), workloads)
     (output / "results.json").write_text(json.dumps({**metadata, "samples": samples, "summary": results,
                                                      "ratios": ratios, "complete_geomeans": aggregates}, indent=2) + "\n")
-    write_report(output, results, ratios, args.metric, list(engines), aggregates)
+    write_report(output, results, ratios, args.metric, list(engines), aggregates, metadata["boundary"])
     print(output / "report.md")
     return 0 if all(sample["status"] == "ok" for sample in samples) else 1
 
