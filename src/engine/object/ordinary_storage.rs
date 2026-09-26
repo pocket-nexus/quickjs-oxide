@@ -1327,7 +1327,7 @@ fn dense_number_miss_in_state(state: &RuntimeState, base: &JsValue, index: u32) 
         return "array_payload_unavailable";
     };
     let Some(dense) = dense else {
-        return "array_materialized";
+        return materialized_number_miss_in_state(state, *id, index);
     };
     let Some(index) = usize::try_from(index).ok() else {
         return "index_unrepresentable";
@@ -1355,6 +1355,41 @@ fn dense_number_miss_in_state(state: &RuntimeState, base: &JsValue, index: u32) 
         "dense_ready_after_failure"
     } else {
         "dense_non_number"
+    }
+}
+
+/// Refine the representation failure without invoking [[Get]], walking the
+/// prototype chain, interning a key, or retaining a value. These are observed
+/// own-slot states, not claims about why the whole Array stayed materialized.
+#[cfg(feature = "profiling")]
+fn materialized_number_miss_in_state(
+    state: &RuntimeState,
+    object: ObjectId,
+    index: u32,
+) -> &'static str {
+    let Some(atom) = Atom::from_immediate_integer(index) else {
+        return "array_materialized.index_not_immediate";
+    };
+    let slot = match locate(state, object, atom) {
+        Ok(Some(slot)) => slot,
+        Ok(None) => return "array_materialized.missing_own_index",
+        Err(_) => return "array_materialized.layout_unavailable",
+    };
+    let Ok(data) = state.heap.object(object) else {
+        return "array_materialized.layout_unavailable";
+    };
+    match &data.slots[slot.index] {
+        PropertySlot::Accessor { .. } => "array_materialized.own_accessor",
+        PropertySlot::Data(_) if slot.flags != PropertyFlags::data(true, true, true) => {
+            "array_materialized.own_nondefault_descriptor"
+        }
+        PropertySlot::Data(RawValue::Int(_) | RawValue::Float(_)) => {
+            "array_materialized.own_default_number"
+        }
+        PropertySlot::Data(_) => "array_materialized.own_non_number",
+        PropertySlot::VarRef(_) | PropertySlot::AutoInit(_) => {
+            "array_materialized.own_special_slot"
+        }
     }
 }
 
@@ -1481,6 +1516,67 @@ mod dense_array_read_tests {
         ));
         runtime.release_jsvalue(sequential).unwrap();
         runtime.release_jsvalue(reverse).unwrap();
+    }
+
+    #[cfg(feature = "profiling")]
+    #[test]
+    fn materialized_miss_probe_observes_own_slots_without_getters_or_owners() {
+        for (source, index, suffix) in [
+            (
+                "(function(){let a=[];a[3]=3;a[1]=1;return a})()",
+                1,
+                "own_default_number",
+            ),
+            (
+                "(function(){let a=[];a[3]=3;a[1]=1;return a})()",
+                2,
+                "missing_own_index",
+            ),
+            (
+                "Object.defineProperty([1], '0', {writable:false})",
+                0,
+                "own_nondefault_descriptor",
+            ),
+            (
+                "Object.defineProperty([1], '0', {get(){throw 71}})",
+                0,
+                "own_accessor",
+            ),
+            (
+                "(function(){let a=[];a[3]=3;a[1]={};return a})()",
+                1,
+                "own_non_number",
+            ),
+            (
+                "(function(){let a=[];a[2147483648]=1;return a})()",
+                2147483648,
+                "index_not_immediate",
+            ),
+        ] {
+            let runtime = Runtime::new();
+            let base = runtime.into_jsvalue(receiver(&runtime, source)).unwrap();
+            let JsValue::Object(id) = &base else {
+                panic!("Array expected")
+            };
+            let before = runtime.0.state.borrow().heap.object_strong_count(*id);
+            assert!(runtime.peek_dense_number(&base, index).is_none());
+            let expected = format!("array_materialized.{suffix}");
+            assert_eq!(
+                runtime.diagnose_dense_number_read_miss(&base, index),
+                expected,
+                "{source}"
+            );
+            assert_eq!(
+                runtime.diagnose_dense_number_write_miss(&base, index),
+                expected,
+                "{source}"
+            );
+            assert_eq!(
+                runtime.0.state.borrow().heap.object_strong_count(*id),
+                before
+            );
+            runtime.release_jsvalue(base).unwrap();
+        }
     }
 
     #[cfg(feature = "profiling")]

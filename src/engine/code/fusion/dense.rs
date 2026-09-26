@@ -42,8 +42,8 @@ pub(crate) enum NumericSource {
 pub(crate) enum DenseSpanKind {
     Read = 1,
     ReadIndexBinary = 2,
-    ReadPostUpdate = 3,
-    ReadPreUpdate = 4,
+    ReadPostInc = 3,
+    ReadPreInc = 4,
     ReadBinary = 5,
     AccPut = 6,
     AccSetDrop = 7,
@@ -53,6 +53,8 @@ pub(crate) enum DenseSpanKind {
     Copy = 11,
     StoreBinary = 12,
     UpdateElement = 13,
+    ReadPostDec = 14,
+    ReadPreDec = 15,
 }
 
 impl DenseSpanKind {
@@ -60,8 +62,10 @@ impl DenseSpanKind {
         match self {
             Self::Read => 3,
             Self::ReadIndexBinary
-            | Self::ReadPostUpdate
-            | Self::ReadPreUpdate
+            | Self::ReadPostInc
+            | Self::ReadPreInc
+            | Self::ReadPostDec
+            | Self::ReadPreDec
             | Self::ReadBinary => 5,
             Self::AccPut | Self::Store => 6,
             Self::AccSetDrop => 7,
@@ -72,8 +76,12 @@ impl DenseSpanKind {
 
     pub(crate) const fn peak(self) -> u8 {
         match self {
-            Self::Read | Self::ReadPreUpdate | Self::ReadBinary => 2,
-            Self::ReadIndexBinary | Self::ReadPostUpdate | Self::AccPut | Self::AccSetDrop => 3,
+            Self::Read | Self::ReadPreInc | Self::ReadPreDec | Self::ReadBinary => 2,
+            Self::ReadIndexBinary
+            | Self::ReadPostInc
+            | Self::ReadPostDec
+            | Self::AccPut
+            | Self::AccSetDrop => 3,
             Self::AccIndexPut
             | Self::AccIndexSetDrop
             | Self::Store
@@ -87,8 +95,10 @@ impl DenseSpanKind {
         match self {
             Self::Read
             | Self::ReadIndexBinary
-            | Self::ReadPostUpdate
-            | Self::ReadPreUpdate
+            | Self::ReadPostInc
+            | Self::ReadPreInc
+            | Self::ReadPostDec
+            | Self::ReadPreDec
             | Self::ReadBinary => 1,
             _ => 0,
         }
@@ -98,8 +108,8 @@ impl DenseSpanKind {
         match flag {
             1 => Some(Self::Read),
             2 => Some(Self::ReadIndexBinary),
-            3 => Some(Self::ReadPostUpdate),
-            4 => Some(Self::ReadPreUpdate),
+            3 => Some(Self::ReadPostInc),
+            4 => Some(Self::ReadPreInc),
             5 => Some(Self::ReadBinary),
             6 => Some(Self::AccPut),
             7 => Some(Self::AccSetDrop),
@@ -109,6 +119,8 @@ impl DenseSpanKind {
             11 => Some(Self::Copy),
             12 => Some(Self::StoreBinary),
             13 => Some(Self::UpdateElement),
+            14 => Some(Self::ReadPostDec),
+            15 => Some(Self::ReadPreDec),
             _ => None,
         }
     }
@@ -234,22 +246,18 @@ fn matches_shape(
                 && code.get(3).is_some_and(index_binary)
                 && is(4, &Instruction::GetArrayEl)
         }
-        DenseSpanKind::ReadPostUpdate | DenseSpanKind::ReadPreUpdate => {
+        DenseSpanKind::ReadPostInc
+        | DenseSpanKind::ReadPreInc
+        | DenseSpanKind::ReadPostDec
+        | DenseSpanKind::ReadPreDec => {
             let Some(slot) = code.get(1).and_then(|i| direct_slot(i, locals)) else {
                 return false;
             };
             let (operation, put) = match kind {
-                DenseSpanKind::ReadPostUpdate => (
-                    matches!(
-                        code.get(2),
-                        Some(Instruction::PostInc | Instruction::PostDec)
-                    ),
-                    true,
-                ),
-                DenseSpanKind::ReadPreUpdate => (
-                    matches!(code.get(2), Some(Instruction::Inc | Instruction::Dec)),
-                    false,
-                ),
+                DenseSpanKind::ReadPostInc => (is(2, &Instruction::PostInc), true),
+                DenseSpanKind::ReadPreInc => (is(2, &Instruction::Inc), false),
+                DenseSpanKind::ReadPostDec => (is(2, &Instruction::PostDec), true),
+                DenseSpanKind::ReadPreDec => (is(2, &Instruction::Dec), false),
                 _ => unreachable!(),
             };
             operation
@@ -357,9 +365,9 @@ pub(super) fn candidate(
     if DISABLE_CANDIDATES.with(std::cell::Cell::get) {
         return None;
     }
-    // Ordinary bytecode PCs must not test thirteen candidate shapes.
+    // Ordinary bytecode PCs must not test dense candidate shapes.
     let first = direct_slot(rest.first()?, locals)?;
-    const PRIORITY: [DenseSpanKind; 13] = [
+    const PRIORITY: [DenseSpanKind; 15] = [
         DenseSpanKind::AccIndexSetDrop,
         DenseSpanKind::AccIndexPut,
         DenseSpanKind::AccSetDrop,
@@ -369,8 +377,10 @@ pub(super) fn candidate(
         DenseSpanKind::UpdateElement,
         DenseSpanKind::Store,
         DenseSpanKind::ReadBinary,
-        DenseSpanKind::ReadPostUpdate,
-        DenseSpanKind::ReadPreUpdate,
+        DenseSpanKind::ReadPostInc,
+        DenseSpanKind::ReadPostDec,
+        DenseSpanKind::ReadPreInc,
+        DenseSpanKind::ReadPreDec,
         DenseSpanKind::ReadIndexBinary,
         DenseSpanKind::Read,
     ];
@@ -403,7 +413,7 @@ mod tests {
 
     #[test]
     fn dense_flags_do_not_alias_legacy_accessors() {
-        for flag in 1..=13 {
+        for flag in 1..=15 {
             let kind = DenseSpanKind::from_flag(flag).expect("reserved dense flag");
             assert_eq!(kind as u8, flag);
             assert_eq!(flag & 16, 0);
@@ -418,14 +428,14 @@ mod tests {
             assert!(plan.const_add_span(0).is_none());
             assert!(plan.method_call(0).is_none());
         }
-        for flag in [0, 14, 15, 16, 32, 34, 38, 64, 65, 128, 160, 167] {
+        for flag in [0, 16, 32, 34, 38, 64, 65, 128, 160, 167] {
             assert_eq!(DenseSpanKind::from_flag(flag), None);
         }
     }
 
     #[test]
     fn dense_manifest_matches_stack_contracts() {
-        let cases: [(DenseSpanKind, Vec<Instruction>); 13] = [
+        let cases: [(DenseSpanKind, Vec<Instruction>); 15] = [
             (
                 DenseSpanKind::Read,
                 vec![GetLocal(0), GetArg(0), GetArrayEl],
@@ -435,12 +445,20 @@ mod tests {
                 vec![GetLocal(0), GetArg(0), PushI32(1), Add, GetArrayEl],
             ),
             (
-                DenseSpanKind::ReadPostUpdate,
+                DenseSpanKind::ReadPostInc,
                 vec![GetLocal(0), GetArg(0), PostInc, PutArg(0), GetArrayEl],
             ),
             (
-                DenseSpanKind::ReadPreUpdate,
+                DenseSpanKind::ReadPreInc,
                 vec![GetLocal(0), GetArg(0), Inc, SetArg(0), GetArrayEl],
+            ),
+            (
+                DenseSpanKind::ReadPostDec,
+                vec![GetLocal(0), GetArg(0), PostDec, PutArg(0), GetArrayEl],
+            ),
+            (
+                DenseSpanKind::ReadPreDec,
+                vec![GetLocal(0), GetArg(0), Dec, SetArg(0), GetArrayEl],
             ),
             (
                 DenseSpanKind::ReadBinary,
@@ -675,7 +693,7 @@ mod tests {
         ];
         assert_eq!(
             FusionPlan::build(&post, &locals, &constants).dense_span(0),
-            Some(DenseSpanKind::ReadPostUpdate)
+            Some(DenseSpanKind::ReadPostInc)
         );
         for wrong_store in [PutArg(0), SetLocal(1), PutLocal(0), PutLocal(1)] {
             let code = [GetArg(0), GetArg(1), PostInc, wrong_store, GetArrayEl];
@@ -688,7 +706,7 @@ mod tests {
         let pre = [GetArg(0), GetArg(1), Inc, SetArg(1), GetArrayEl];
         assert_eq!(
             FusionPlan::build(&pre, &locals, &constants).dense_span(0),
-            Some(DenseSpanKind::ReadPreUpdate)
+            Some(DenseSpanKind::ReadPreInc)
         );
         let mut const_local = locals;
         const_local[1].is_const = true;
@@ -754,5 +772,59 @@ mod tests {
             Some(DenseSpanKind::ReadBinary),
             "GetArrayEl cannot stand in for W3's GetArrayEl3"
         );
+    }
+
+    #[test]
+    fn dense_update_direction_is_published_only_for_the_authenticated_shape() {
+        let locals = [local(ClosureVariableKind::Normal); 2];
+        for (kind, update, store, wrong_store, wrong_mode) in [
+            (
+                DenseSpanKind::ReadPostInc,
+                PostInc,
+                PutArg(1),
+                PutArg(0),
+                SetArg(1),
+            ),
+            (
+                DenseSpanKind::ReadPreInc,
+                Inc,
+                SetArg(1),
+                SetArg(0),
+                PutArg(1),
+            ),
+            (
+                DenseSpanKind::ReadPostDec,
+                PostDec,
+                PutArg(1),
+                PutArg(0),
+                SetArg(1),
+            ),
+            (
+                DenseSpanKind::ReadPreDec,
+                Dec,
+                SetArg(1),
+                SetArg(0),
+                PutArg(1),
+            ),
+        ] {
+            let correct = [GetArg(0), GetArg(1), update.clone(), store.clone(), GetArrayEl];
+            assert_eq!(
+                FusionPlan::build(&correct, &locals, &[]).dense_span(0),
+                Some(kind),
+                "{correct:?}"
+            );
+            for invalid in [
+                [GetArg(0), GetArg(1), update.clone(), wrong_store, GetArrayEl],
+                [GetArg(0), GetArg(1), update.clone(), wrong_mode, GetArrayEl],
+                [GetArg(0), GetArg(1), update, store.clone(), GetArrayEl3],
+                [GetArg(0), GetArg(1), PushI32(1), store, GetArrayEl],
+            ] {
+                assert_eq!(
+                    FusionPlan::build(&invalid, &locals, &[]).dense_span(0),
+                    None,
+                    "incorrect direction or writeback {invalid:?}"
+                );
+            }
+        }
     }
 }

@@ -128,8 +128,8 @@ fn kind_name(kind: DenseSpanKind) -> &'static str {
     match kind {
         DenseSpanKind::Read => "dense_read",
         DenseSpanKind::ReadIndexBinary => "dense_read_index_binary",
-        DenseSpanKind::ReadPostUpdate => "dense_read_post_update",
-        DenseSpanKind::ReadPreUpdate => "dense_read_pre_update",
+        DenseSpanKind::ReadPostInc | DenseSpanKind::ReadPostDec => "dense_read_post_update",
+        DenseSpanKind::ReadPreInc | DenseSpanKind::ReadPreDec => "dense_read_pre_update",
         DenseSpanKind::ReadBinary => "dense_read_binary",
         DenseSpanKind::AccPut => "dense_acc_put",
         DenseSpanKind::AccSetDrop => "dense_acc_set_drop",
@@ -224,8 +224,10 @@ pub(in crate::engine::vm::run) fn try_numeric_span(
     match kind {
         DenseSpanKind::Read
         | DenseSpanKind::ReadIndexBinary
-        | DenseSpanKind::ReadPostUpdate
-        | DenseSpanKind::ReadPreUpdate
+        | DenseSpanKind::ReadPostInc
+        | DenseSpanKind::ReadPreInc
+        | DenseSpanKind::ReadPostDec
+        | DenseSpanKind::ReadPreDec
         | DenseSpanKind::ReadBinary => {
             let (value, update) = match kind {
                 DenseSpanKind::Read => {
@@ -259,17 +261,26 @@ pub(in crate::engine::vm::run) fn try_numeric_span(
                         None,
                     )
                 }
-                DenseSpanKind::ReadPostUpdate | DenseSpanKind::ReadPreUpdate => {
+                DenseSpanKind::ReadPostInc
+                | DenseSpanKind::ReadPreInc
+                | DenseSpanKind::ReadPostDec
+                | DenseSpanKind::ReadPreDec => {
                     let (slot, old) = take!(
                         read_slot_number(slots, &code[1]),
                         read_miss(slots, executable, &code[1])
                     );
-                    let postfix = kind == DenseSpanKind::ReadPostUpdate;
-                    let increment = matches!(code[2], Instruction::PostInc | Instruction::Inc);
+                    let postfix = matches!(
+                        kind,
+                        DenseSpanKind::ReadPostInc | DenseSpanKind::ReadPostDec
+                    );
+                    let increment =
+                        matches!(kind, DenseSpanKind::ReadPostInc | DenseSpanKind::ReadPreInc);
                     debug_assert!(matches!(
-                        (&code[2], postfix),
-                        (Instruction::PostInc | Instruction::PostDec, true)
-                            | (Instruction::Inc | Instruction::Dec, false)
+                        (kind, &code[2]),
+                        (DenseSpanKind::ReadPostInc, Instruction::PostInc)
+                            | (DenseSpanKind::ReadPreInc, Instruction::Inc)
+                            | (DenseSpanKind::ReadPostDec, Instruction::PostDec)
+                            | (DenseSpanKind::ReadPreDec, Instruction::Dec)
                     ));
                     debug_assert!(store_matches(&code[3], slot, !postfix));
                     let next = old.update(increment);
@@ -471,8 +482,8 @@ pub(in crate::engine::vm::run) fn try_numeric_span(
     crate::engine::api::profiling::record_owned_execution_event(match kind {
         DenseSpanKind::Read => "fusion.DenseRead",
         DenseSpanKind::ReadIndexBinary => "fusion.DenseReadIndexBinary",
-        DenseSpanKind::ReadPostUpdate => "fusion.DenseReadPostUpdate",
-        DenseSpanKind::ReadPreUpdate => "fusion.DenseReadPreUpdate",
+        DenseSpanKind::ReadPostInc | DenseSpanKind::ReadPostDec => "fusion.DenseReadPostUpdate",
+        DenseSpanKind::ReadPreInc | DenseSpanKind::ReadPreDec => "fusion.DenseReadPreUpdate",
         DenseSpanKind::ReadBinary => "fusion.DenseReadBinary",
         DenseSpanKind::AccPut => "fusion.DenseAccPut",
         DenseSpanKind::AccSetDrop => "fusion.DenseAccSetDrop",
@@ -536,7 +547,7 @@ mod tests {
         store.clear_frame(&runtime, window).unwrap();
     }
 
-    const ALL_KINDS: [(&str, i32, &str); 13] = [
+    const ALL_KINDS: [(&str, i32, &str); 15] = [
         (
             "(function(a,i){return a[i]})([11],0)",
             11,
@@ -555,6 +566,16 @@ mod tests {
         (
             "(function(a,i){var v=a[++i];return v+i})([11,22],0)",
             23,
+            "fusion.DenseReadPreUpdate",
+        ),
+        (
+            "(function(a,i){var v=a[i--];return v+i})([11,22],1)",
+            22,
+            "fusion.DenseReadPostUpdate",
+        ),
+        (
+            "(function(a,i){var v=a[--i];return v+i})([11,22],1)",
+            11,
             "fusion.DenseReadPreUpdate",
         ),
         (
@@ -624,6 +645,8 @@ mod tests {
             "(function(a,i){return a[i+1]})([11,22],0)",
             "(function(a,i){var v=a[i++];return v+i})([11,22],0)",
             "(function(a,i){var v=a[++i];return v+i})([11,22],0)",
+            "(function(a,i){var v=a[i--];return v+i})([11,22],1)",
+            "(function(a,i){var v=a[--i];return v+i})([11,22],1)",
             "(function(a,i){return a[i]>>>1})([-1],0)",
             "(function(a,i){return a[i]+1})([2147483647],0)",
             "(function(a,i){return Object.is(a[i]*1,-0)})([-0],0)",
@@ -637,6 +660,8 @@ mod tests {
             "(function(a,i,v){a[i]+=v;return a[i]})([11],0,11)",
             "(function(){let i=0,n=0,a=[];Object.defineProperty(a,0,{get(){n++;throw 7}});try{a[i++]}catch(e){}return i*10+n})()",
             "(function(){let i=0,n=0,a=[0];Object.defineProperty(a,1,{get(){n++;throw 7}});try{a[++i]}catch(e){}return i*10+n})()",
+            "(function(){let i=1,n=0,a=[];Object.defineProperty(a,1,{get(){n++;throw 7}});try{a[i--]}catch(e){}return i*10+n})()",
+            "(function(){let i=1,n=0,a=[];Object.defineProperty(a,0,{get(){n++;throw 7}});try{a[--i]}catch(e){}return i*10+n})()",
             "(function(){'use strict';let a=[1];Object.defineProperty(a,0,{writable:false});try{a[0]=2}catch(e){return a[0]}return 99})()",
             "(function(){let a=[1];Object.defineProperty(a,'length',{writable:false});a[0]=2;return a[0]})()",
             "(function(){let n=0,a=new Proxy([1],{set(t,k,v){n++;return Reflect.set(t,k,v)}});a[0]=2;return n*10+a[0]})()",
@@ -772,28 +797,95 @@ mod tests {
 
     #[cfg(feature = "profiling")]
     #[test]
-    fn dense_miss_diagnostic_preserves_post_increment_and_getter_order() {
+    fn dense_miss_diagnostic_preserves_all_update_directions_and_getter_order() {
         use crate::engine::api::profiling::CostProfile;
 
-        let source = "(function(){let a=[0],n=0;Object.defineProperty(a,0,{get(){n++;return 7}});function f(a,i){let v=a[i++];return i*100+v}return f(a,0)+n})()";
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        let profile = CostProfile::start();
-        let fused = context.eval(source).unwrap();
-        let costs = profile.snapshot();
-        let canonical = {
+        for (source, expected, kind) in [
+            (
+                "(function(){let a=[0,0,0],n=0;Object.defineProperty(a,0,{get(){n++;return 7}});function f(a,i){let v=a[i++];return i*100+v}return f(a,0)+n})()",
+                108,
+                "dense_read_post_update",
+            ),
+            (
+                "(function(){let a=[0,0,0],n=0;Object.defineProperty(a,1,{get(){n++;return 7}});function f(a,i){let v=a[++i];return i*100+v}return f(a,0)+n})()",
+                108,
+                "dense_read_pre_update",
+            ),
+            (
+                "(function(){let a=[0,0,0],n=0;Object.defineProperty(a,2,{get(){n++;return 7}});function f(a,i){let v=a[i--];return i*100+v}return f(a,2)+n})()",
+                108,
+                "dense_read_post_update",
+            ),
+            (
+                "(function(){let a=[0,0,0],n=0;Object.defineProperty(a,0,{get(){n++;return 7}});function f(a,i){let v=a[--i];return i*100+v}return f(a,1)+n})()",
+                8,
+                "dense_read_pre_update",
+            ),
+        ] {
             let runtime = Runtime::new();
-            with_dense_candidates_disabled(|| runtime.new_context().eval(source)).unwrap()
-        };
-        assert_eq!(fused, Value::Int(108));
-        assert_eq!(fused, canonical);
-        assert!(
-            costs.fusion_sites.iter().any(|(key, cost)| {
-                key.kind == "dense_read_post_update"
-                    && cost.misses.get("array_materialized").copied().unwrap_or(0) > 0
-            }),
-            "{costs:?}"
-        );
+            let mut context = runtime.new_context();
+            let profile = CostProfile::start();
+            let fused = context.eval(source).unwrap();
+            let costs = profile.snapshot();
+            let canonical = {
+                let runtime = Runtime::new();
+                with_dense_candidates_disabled(|| runtime.new_context().eval(source)).unwrap()
+            };
+            assert_eq!(fused, Value::Int(expected), "{source}");
+            assert_eq!(fused, canonical, "{source}");
+            assert!(
+                costs.fusion_sites.iter().any(|(key, cost)| {
+                    key.kind == kind
+                        && cost
+                            .misses
+                            .get("array_materialized.own_accessor")
+                            .copied()
+                            .unwrap_or(0)
+                            > 0
+                }),
+                "{source}: {costs:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn dense_update_fallback_preserves_tdz_and_captured_binding_semantics() {
+        #[cfg(feature = "profiling")]
+        use crate::engine::api::profiling::CostProfile;
+
+        for (source, expected) in [
+            (
+                "(function(){let i=1;try{a[i--];return 0}catch(e){return e.name==='ReferenceError'&&i===1?42:0}let a=[11,22]})()",
+                42,
+            ),
+            (
+                "(function(){let a=[11,22],i=1;function hold(){return a}let v=a[i--];return v+i+hold()[0]})()",
+                33,
+            ),
+        ] {
+            let runtime = Runtime::new();
+            #[cfg(feature = "profiling")]
+            let profile = CostProfile::start();
+            let fused = runtime.new_context().eval(source).unwrap();
+            #[cfg(feature = "profiling")]
+            {
+                let costs = profile.snapshot();
+                assert!(
+                    costs.fusion_sites.iter().any(|(key, cost)| {
+                        key.kind == "dense_read_post_update"
+                            && cost.misses.get("binding").copied().unwrap_or(0) > 0
+                    }),
+                    "expected a published update span to fall back at its first binding: {source}: {costs:?}"
+                );
+            }
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+            let runtime = Runtime::new();
+            let canonical =
+                with_dense_candidates_disabled(|| runtime.new_context().eval(source)).unwrap();
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+            assert_eq!(fused, Value::Int(expected), "{source}");
+            assert_eq!(fused, canonical, "{source}");
+        }
     }
 
     #[cfg(feature = "profiling")]

@@ -146,12 +146,20 @@ Dense 失败标签只描述**先前 leaf 失败后、再次只读观察到的首
 不声称它是唯一原因，也不改变规范执行。`source` 指发布形状或常量不可用；
 `binding` 指直接槽不可读；`non_number` 指数值源类型；`index` 指索引不是
 非负 Int。数组探针进一步区分 `base_not_object`、`not_array`、
-`array_materialized`（Array 已转普通属性表示）、`outside_dense_prefix_in_length`
+`array_materialized.*`（Array 已转普通属性表示）、`outside_dense_prefix_in_length`
 （逻辑 length 内但不在连续 dense 前缀）、`beyond_array_length`、
 `dense_non_number` 与读写借用不可用。`room` 指虚拟操作数峰值无法容纳。
 诊断探针的观察时间晚于原始失败；若状态不再吻合，则报告
 `dense_ready_after_failure` 或较保守的 `commit`/`generation` 等标签。
-顺序填充通常保留 dense 前缀，反向从高索引填充会转成普通属性表示；
+`array_materialized.*` 在同一次借用内进一步只读查询当前 own slot：
+`own_default_number`、`own_nondefault_descriptor`、`own_non_number`、
+`own_accessor`、`own_special_slot`、`missing_own_index`。超出 immediate atom
+范围或布局不可读分别记为 `index_not_immediate`、`layout_unavailable`，不为诊断
+创建 atom。它不调用 getter、不查原型、不扫描整张数组，也不解释整个数组为什么
+仍为普通表示。与旧收据的 `array_materialized` 比较时，应汇总此前缀下所有标签；
+每次失败仍只记一个标签，不能把聚合值再次加到 attempts。
+顺序填充通常保留 dense 前缀，反向从高索引填充会转成普通属性表示；完整的默认
+索引集合若在新增索引 0 时符合恢复策略，可以重新转回 dense。
 两者不能合并归因为“缓存未命中”。
 
 每类 per-PC map 最多记录 16384 个位置，函数清单最多 4096 项，

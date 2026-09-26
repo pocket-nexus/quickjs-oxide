@@ -56,7 +56,7 @@ impl FusionEntry {
             34 => Choice::CompareBranch(5),
             37 => Choice::FieldAdd(5),
             38 => Choice::FieldAdd(6),
-            1..=13 => DenseSpanKind::from_flag(self.0)
+            1..=15 => DenseSpanKind::from_flag(self.0)
                 .map(Choice::Dense)
                 .unwrap_or(Choice::Canonical),
             _ => Choice::Canonical,
