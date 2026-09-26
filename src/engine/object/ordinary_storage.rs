@@ -1198,6 +1198,9 @@ impl Runtime {
         base: &JsValue,
         index: u32,
     ) -> &'static str {
+        if !matches!(base, JsValue::Object(_)) {
+            return "base_not_object";
+        }
         let Ok(state) = self.0.state.try_borrow() else {
             return "read_borrow_unavailable";
         };
@@ -1212,6 +1215,9 @@ impl Runtime {
         base: &JsValue,
         index: u32,
     ) -> &'static str {
+        if !matches!(base, JsValue::Object(_)) {
+            return "base_not_object";
+        }
         let Ok(state) = self.0.state.try_borrow_mut() else {
             return "write_borrow_unavailable";
         };
@@ -1355,6 +1361,24 @@ fn dense_number_miss_in_state(state: &RuntimeState, base: &JsValue, index: u32) 
 #[cfg(test)]
 mod dense_array_read_tests {
     use super::*;
+
+    #[cfg(feature = "profiling")]
+    #[test]
+    fn dense_diagnostic_priority_reports_nonobject_before_borrow() {
+        let runtime = Runtime::new();
+        let base = JsValue::Int(3);
+        let _lease = runtime.0.state.borrow_mut();
+        assert!(runtime.peek_dense_number(&base, 0).is_none());
+        assert!(!runtime.try_write_dense_number(&base, 0, Number::Int(1)));
+        assert_eq!(
+            runtime.diagnose_dense_number_read_miss(&base, 0),
+            "base_not_object"
+        );
+        assert_eq!(
+            runtime.diagnose_dense_number_write_miss(&base, 0),
+            "base_not_object"
+        );
+    }
 
     fn receiver(runtime: &Runtime, expression: &str) -> Value {
         let mut context = runtime.new_context();

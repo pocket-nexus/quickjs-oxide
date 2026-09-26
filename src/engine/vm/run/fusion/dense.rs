@@ -161,14 +161,14 @@ fn peek_miss(
     base: &Instruction,
     key: Number,
 ) -> &'static str {
-    let Some(index) = index_from_number(key) else {
-        return "index";
-    };
     let Some(slot) = direct_slot(base) else {
         return "source";
     };
     let Some(base) = slots.direct_value(slot) else {
         return "binding";
+    };
+    let Some(index) = index_from_number(key) else {
+        return "index";
     };
     runtime.diagnose_dense_number_read_miss(base, index)
 }
@@ -472,6 +472,51 @@ pub(in crate::engine::vm::run) fn try_numeric_span(
 mod tests {
     use crate::engine::api::{Runtime, Value};
     use crate::engine::code::fusion::with_dense_candidates_disabled;
+
+    #[cfg(feature = "profiling")]
+    #[test]
+    fn dense_diagnostic_priority_reports_binding_before_index() {
+        use crate::engine::code::bytecode::Instruction;
+        use crate::engine::code::function::metadata::{ClosureVariableKind, VariableDefinition};
+        use crate::engine::code::runtime::PublishedFunctionSnapshot;
+        use crate::engine::vm::bindings::FrameBinding;
+        use crate::engine::vm::stack::{FrameStorage, SlotStore};
+        use std::rc::Rc;
+
+        let runtime = Runtime::new();
+        let context = runtime.new_context();
+        let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
+        owner.metadata.local_count = 1;
+        owner.metadata.max_stack = 1;
+        owner.local_definitions = Rc::from([VariableDefinition {
+            name: None,
+            is_lexical: false,
+            is_const: false,
+            is_parameter_initializer: false,
+            kind: ClosureVariableKind::Normal,
+        }]);
+        let mut store = SlotStore::new(8);
+        let mut window = store
+            .push_frame(
+                &runtime,
+                &owner.frame_layout(),
+                FrameStorage {
+                    original_arguments: Vec::new(),
+                    parameters: Vec::new(),
+                    locals: vec![FrameBinding::Uninitialized],
+                    operands: Vec::new(),
+                },
+            )
+            .unwrap();
+        {
+            let slots = store.run_window(&mut window).unwrap();
+            let base = Instruction::GetLocal(0);
+            let key = super::Number::Int(-1);
+            assert!(super::peek_number(&slots, &runtime, &base, key).is_none());
+            assert_eq!(super::peek_miss(&slots, &runtime, &base, key), "binding");
+        }
+        store.clear_frame(&runtime, window).unwrap();
+    }
 
     const ALL_KINDS: [(&str, i32, &str); 13] = [
         (

@@ -138,8 +138,8 @@ Without the `profiling` feature, compiler and interpreter hooks are compiled out
 | --- | --- |
 | `functions[].unfused_read_sites` | 已执行函数中，静态没有任何 fusion flag 的直接 local/argument 读取 PC 数；每个函数登记一次。 |
 | `functions[].dense_candidate_sites` / `dense_noncandidate_read_sites` | 直接读取 PC 中发布了 dense span / 未发布 dense span 的静态数量。后者可以仍有其他 fusion 候选。 |
-| `dispatch[].visits` / `static_noncandidate_visits` | 每个直接读取 PC 的动态访问次数，及其中静态 fusion flag 为零的访问次数；用于量化查询无候选位置的频率。 |
-| `sites[].attempts`, `hits`, `misses` | 每个已发布候选起始 PC 的尝试、完成和未完成结果；保留的记录满足 `attempts = hits + sum(misses)`。普通 `guard` 和 dense 的动态失败均回到规范指令起点。`error` 是候选执行时的异常终止，**不表示回退**。 |
+| `dispatch[].visits` / `static_noncandidate_visits` | 每个直接读取 PC 的动态访问次数，及其中静态 fusion flag 为零的访问次数；用于量化查询无候选位置的频率。捕获参数的 `GetArg` 在提前处理分支也计入 dispatch。 |
+| `sites[].attempts`, `hits`, `misses` | 每个已发布候选起始 PC **实际进入候选处理器**的尝试、完成和未完成结果；保留的记录满足 `attempts = hits + sum(misses)`。捕获参数的 `GetArg` 在提前处理分支只计 dispatch，不进入 dense 候选，因此不计入这里的 attempts。普通 `guard` 和 dense 的动态失败均回到规范指令起点。`error` 是候选执行时的异常终止，**不表示回退**。 |
 | `callsites[]` | 仅覆盖普通驱动器 `enter_selected` 入口观察到的 callee；不是所有 call、construct 或 native 再入口的总账。`callee_identity_changes` 只比较连续的 Object callee 身份，非 Object 会断开连续序列。 |
 
 Dense 失败标签只描述**先前 leaf 失败后、再次只读观察到的首个不满足条件**，
@@ -155,7 +155,9 @@ Dense 失败标签只描述**先前 leaf 失败后、再次只读观察到的首
 两者不能合并归因为“缓存未命中”。
 
 每类 per-PC map 最多记录 16384 个位置，函数清单最多 4096 项，
-`omitted` 分别计数超限事件。每个调用点只保存最近 callee 身份及最多
+`omitted` 分别计数超限事件。其中 `omitted.static_functions` 计数函数清单
+满额后被拒绝的**登记尝试**；同一未登记函数每次进入帧都可能再次增加，
+不能将它解释为不同函数数目。每个调用点只保存最近 callee 身份及最多
 四个不同的非 owning ObjectId；`distinct_callees_observed` 在四个以内精确，
 `distinct_overflow=true` 后仅是下界。没有任何 callee owner 被诊断保留。
 此构建的额外 map、分类借用和 JSON 写入会影响运行时间；正式性能比较
