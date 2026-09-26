@@ -186,7 +186,7 @@ impl<'source> Parser<'source> {
         part: &TemplatePart<'source>,
         span: Span,
     ) -> Result<Option<JsString>, Error> {
-        if part.invalid_escape.is_some() {
+        if part.invalid_escape {
             return Ok(None);
         }
         let value = self

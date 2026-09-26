@@ -477,16 +477,15 @@ pub struct TemplateEscapeError {
 pub struct TemplatePart<'a> {
     /// Source between delimiters, before escape processing.
     pub raw: &'a str,
-    /// A malformed escape keeps tagged templates observing an undefined
-    /// cooked text while untagged templates reject it; the cooked value is
-    /// re-derived from the source on demand.
-    pub invalid_escape: Option<TemplateEscapeError>,
+    /// Tagged templates observe undefined cooked text. Only an untagged error
+    /// path materializes the full diagnostic using `template_escape_error`;
+    /// carrying its span and message here would widen every ordinary token.
+    pub invalid_escape: bool,
     pub kind: TemplatePartKind,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RegExpLiteral<'a> {
-    pub raw: &'a str,
     pub pattern: &'a str,
     pub flags: &'a str,
 }
@@ -1329,7 +1328,13 @@ impl<'a> Lexer<'a> {
         }
         let mut raw_value = Utf16Sink::new(lexer.string_limit);
         let mut no_cooked: Option<ValidateSink> = None;
-        lexer.scan_template_with_sinks(initial, false, &mut raw_value, &mut no_cooked)?;
+        lexer.scan_template_with_sinks(
+            initial,
+            false,
+            &mut raw_value,
+            &mut no_cooked,
+            &mut None,
+        )?;
         Ok(raw_value.into_js_string())
     }
 
@@ -1347,12 +1352,38 @@ impl<'a> Lexer<'a> {
         }
         let mut raw_value = ValidateSink::new(lexer.string_limit);
         let mut cooked = Some(Utf16Sink::new(lexer.string_limit));
-        let token = lexer.scan_template_with_sinks(initial, false, &mut raw_value, &mut cooked)?;
+        let token = lexer.scan_template_with_sinks(
+            initial,
+            false,
+            &mut raw_value,
+            &mut cooked,
+            &mut None,
+        )?;
         let TokenKind::Template(part) = token.kind else {
             unreachable!("template scan must return a template token");
         };
-        debug_assert!(part.invalid_escape.is_none());
+        debug_assert!(!part.invalid_escape);
         Ok(cooked.expect("cooked sink present").into_js_string())
+    }
+
+    /// Recover the first malformed escape's exact diagnostic on the cold
+    /// untagged-template error path. Start at the saved token position, keeping
+    /// source carriers, CRLF rules and the original string limit intact.
+    pub fn template_escape_error(
+        &self,
+        start: Position,
+        initial: bool,
+    ) -> Result<Option<TemplateEscapeError>, LexError> {
+        let mut lexer = self.clone();
+        lexer.seek(start);
+        if !initial {
+            lexer.bump_char();
+        }
+        let mut raw = ValidateSink::new(lexer.string_limit);
+        let mut cooked = Some(ValidateSink::new(lexer.string_limit));
+        let mut invalid = None;
+        lexer.scan_template_with_sinks(initial, false, &mut raw, &mut cooked, &mut invalid)?;
+        Ok(invalid)
     }
 
     fn scan_identifier_escape(&mut self) -> Result<u32, LexError> {
@@ -1943,7 +1974,13 @@ impl<'a> Lexer<'a> {
     ) -> Result<Token<'a>, LexError> {
         let mut raw_value = ValidateSink::new(self.string_limit);
         let mut cooked = Some(ValidateSink::new(self.string_limit));
-        self.scan_template_with_sinks(initial, line_terminator_before, &mut raw_value, &mut cooked)
+        self.scan_template_with_sinks(
+            initial,
+            line_terminator_before,
+            &mut raw_value,
+            &mut cooked,
+            &mut None,
+        )
     }
 
     fn scan_template_with_sinks(
@@ -1952,6 +1989,7 @@ impl<'a> Lexer<'a> {
         line_terminator_before: bool,
         raw_value: &mut impl StringSink,
         cooked: &mut Option<impl StringSink>,
+        invalid_escape: &mut Option<TemplateEscapeError>,
     ) -> Result<Token<'a>, LexError> {
         let start = if initial {
             self.current_position()
@@ -1977,7 +2015,6 @@ impl<'a> Lexer<'a> {
             self.bump_char();
         }
         let raw_start = self.offset;
-        let mut invalid_escape = None;
 
         loop {
             if self.invalid_source_byte_at(self.offset) {
@@ -2002,7 +2039,7 @@ impl<'a> Lexer<'a> {
                 return Ok(Token {
                     kind: TokenKind::Template(TemplatePart {
                         raw: &self.source[raw_start..raw_end],
-                        invalid_escape,
+                        invalid_escape: invalid_escape.is_some(),
                         kind,
                     }),
                     span: Span::new(start, self.current_position()),
@@ -2022,7 +2059,7 @@ impl<'a> Lexer<'a> {
                 return Ok(Token {
                     kind: TokenKind::Template(TemplatePart {
                         raw: &self.source[raw_start..raw_end],
-                        invalid_escape,
+                        invalid_escape: invalid_escape.is_some(),
                         kind,
                     }),
                     span: Span::new(start, self.current_position()),
@@ -2063,7 +2100,7 @@ impl<'a> Lexer<'a> {
                     }
                     Err(error) => {
                         if invalid_escape.is_none() {
-                            invalid_escape = Some(TemplateEscapeError {
+                            *invalid_escape = Some(TemplateEscapeError {
                                 message: error.message,
                                 span: error.span,
                             });
@@ -2120,7 +2157,6 @@ impl<'a> Lexer<'a> {
         start: Position,
         line_terminator_before: bool,
     ) -> Result<Token<'a>, LexError> {
-        let raw_start = self.offset;
         debug_assert_eq!(self.peek_char(), Some('/'));
         self.bump_char();
         let pattern_start = self.offset;
@@ -2191,7 +2227,6 @@ impl<'a> Lexer<'a> {
 
         Ok(Token {
             kind: TokenKind::RegExp(RegExpLiteral {
-                raw: &self.source[raw_start..self.offset],
                 pattern: &self.source[pattern_start..pattern_end],
                 flags: &self.source[flags_start..self.offset],
             }),
@@ -3256,7 +3291,10 @@ mod tests {
             TokenKind::RegExp(literal) => {
                 assert_eq!(literal.pattern, r"a[\/]b+");
                 assert_eq!(literal.flags, "gim");
-                assert_eq!(literal.raw, r"/a[\/]b+/gim");
+                assert_eq!(
+                    &regexp.source()[token.span.start.byte_offset..token.span.end.byte_offset],
+                    r"/a[\/]b+/gim"
+                );
             }
             other => panic!("expected regular expression, got {other:?}"),
         }
@@ -3628,10 +3666,41 @@ mod tests {
             panic!("expected template");
         };
         assert_eq!(part.kind, TemplatePartKind::NoSubstitution);
-        let invalid = part.invalid_escape.expect("invalid escape metadata");
+        assert!(part.invalid_escape);
+        let invalid = lexer
+            .template_escape_error(token.span.start, true)
+            .unwrap()
+            .expect("invalid escape metadata");
         assert_eq!(
             invalid.message,
             "malformed escape sequence in string literal"
+        );
+    }
+
+    #[test]
+    fn cold_template_diagnostics_keep_multiline_positions() {
+        let source = format!("`{}\r\né\\u{{x}}`", "a".repeat(8192));
+        let lexer = Lexer::new(&source);
+        let token = lexer.clone().next_token().unwrap();
+        let TokenKind::Template(part) = token.kind else {
+            panic!("expected template")
+        };
+        assert!(part.invalid_escape);
+        let error = lexer
+            .template_escape_error(token.span.start, true)
+            .unwrap()
+            .unwrap();
+        assert_eq!(error.span.start, Position::new(8197, 2, 2));
+        assert_eq!(error.span.end, Position::new(8200, 2, 5));
+    }
+
+    #[test]
+    fn cold_template_errors_do_not_widen_ordinary_tokens() {
+        assert!(std::mem::size_of::<Token<'_>>() <= 80);
+        eprintln!(
+            "Token={} TokenKind={}",
+            std::mem::size_of::<Token<'_>>(),
+            std::mem::size_of::<TokenKind<'_>>()
         );
     }
 
@@ -3643,8 +3712,17 @@ mod tests {
         };
         assert_eq!(part.kind, TemplatePartKind::NoSubstitution);
         assert_eq!(part.raw, "\\x");
-        assert!(part.invalid_escape.is_some());
-        assert_eq!(part.invalid_escape.unwrap().span.start.column, 2);
+        assert!(part.invalid_escape);
+        assert_eq!(
+            Lexer::new("`\\x`")
+                .template_escape_error(token.span.start, true)
+                .unwrap()
+                .unwrap()
+                .span
+                .start
+                .column,
+            2
+        );
 
         let mut lexer = Lexer::new("`\\x${value}`");
         let head_token = lexer.next_token().unwrap();
@@ -3661,7 +3739,7 @@ mod tests {
                 .unwrap(),
             "\\x"
         );
-        assert!(head.invalid_escape.is_some());
+        assert!(head.invalid_escape);
 
         assert!(matches!(
             lexer.next_token().unwrap().kind,
@@ -3706,7 +3784,7 @@ mod tests {
                 .unwrap(),
             "tail\\x"
         );
-        assert!(tail.invalid_escape.is_some());
+        assert!(tail.invalid_escape);
     }
 
     #[test]
