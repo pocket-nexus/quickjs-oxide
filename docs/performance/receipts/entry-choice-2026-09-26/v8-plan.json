@@ -145,7 +145,40 @@
     ],
     "new_samples_planned": 40,
     "extra_original_completed_samples_retained_but_not_pooled": 4,
-    "aborted_process_count": 1
+    "aborted_process_count": 1,
+    "actual_completed_samples": 48
   },
-  "fiveway_samples_planned": 270
+  "fiveway_samples_planned": 270,
+  "user_stop": {
+    "utc": "2026-09-26T04:01:23.627728+00:00",
+    "reason": "User explicitly requested finishing RegExp and stopping this benchmark, then continuing implementation/reporting. No further V8 sampling is authorized in this task.",
+    "user_instruction": "先把 RegExp 跑了就不要跑这个 benchmark 了太浪费时间了，可以继续推进了",
+    "completed_continuation_samples": 16,
+    "regexp_samples": 8,
+    "journal_sha256": "2df5db74dd5422737c63a7435553312d7697c913b587bed751fd807ab260f38e",
+    "metadata_sha256": "678f541f311612afce5ae0f746e3176e695e87f6b9b13393b42fc90052692114",
+    "boundary_processes_aborted": [
+      {
+        "pid": 85053,
+        "elapsed": "00:00",
+        "command": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs /Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark/dist/quickjs-oxide/splay.js"
+      }
+    ],
+    "cancelled_cases": [
+      "splay",
+      "navier-stokes",
+      "all"
+    ],
+    "cancelled_stage": "v8-fiveway",
+    "stopped_pids": [
+      74333,
+      74355
+    ]
+  },
+  "user_stop_artifact": {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-user-stop.json",
+    "sha256": "77b2826768414aaa0400ef3ddf8830cb060e11e5e4885ca1e4d96e02e70704b5"
+  },
+  "final_status": "User cancelled remaining V8 sampling after RegExp. Six complete baseline A/A groups remain; no candidate V8 comparison or combined Score was measured.",
+  "fiveway_samples_completed": 0
 }
