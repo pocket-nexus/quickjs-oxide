@@ -19,12 +19,13 @@ from pathlib import Path
 from run import ROOT, binary_metadata, command_output, digest, machine_metadata, run_sample
 
 METRICS = ("compile", "parse")
-VERSION_MAGIC = {"oxide-compile-probe": "oxide", "quickjs-compile-probe": "quickjs",
+VERSION_MAGIC = {"oxide-parse-probe": "oxide-parser", "boa-parse-probe": "boa-parser",
+                 "oxide-compile-probe": "oxide", "quickjs-compile-probe": "quickjs",
                  "boa-compile-probe": "boa"}
 NODE_VERSION = re.compile(r"v\d+\.\d+\.\d+")
 NODE_PROBE = ROOT / "scripts/benchmark/probes/node_compile_probe.mjs"
 OUTPUT_LINE = {"compile": re.compile(r"compile_ns:(\d+)\n"), "parse": re.compile(r"parse_ns:(\d+)\n")}
-UNSUPPORTED_METRIC = {"oxide": ("parse",), "quickjs": ("parse",)}
+UNSUPPORTED_METRIC = {"oxide-parser": ("compile",), "boa-parser": ("compile",), "oxide": ("parse",), "quickjs": ("parse",)}
 
 
 def classify(version_text):
@@ -124,10 +125,25 @@ def summarize(samples, engines, workloads):
     return results, ratios
 
 
-def write_report(output, results, ratios, metric, engines):
+def complete_geomeans(ratios, engines, workloads):
+    """Only a complete, fixed corpus qualifies; never average a surviving subset."""
+    expected = {workload["case"] for workload in workloads}
+    aggregates = []
+    for engine in engines[1:]:
+        selected = [ratio for ratio in ratios if ratio["engine"] == engine]
+        if len(selected) == len(expected) and {item["case"] for item in selected} == expected:
+            aggregates.append(dict(engine=engine, reference=engines[0], cases=len(expected),
+                                   ratio=math.exp(statistics.mean(math.log(item["ratio"]) for item in selected))))
+    return aggregates
+
+
+def write_report(output, results, ratios, metric, engines, aggregates, boundary):
+    construction = ("Parser/interner construction is included; no runtime or context is created. "
+                    if boundary == "complete-syntax-parser-with-initialization"
+                    else "Runtime/Context construction is excluded. ")
     lines = [f"# Front-end {metric} matrix", "",
              "Each sample is one fresh process; the probe prints exactly one ns line. "
-             "Runtime/Context construction, source I/O and teardown are excluded. "
+             + construction + "Source I/O and teardown are excluded. "
              "Ratios are reference_ns / engine_ns; >1 means the engine is faster than the reference.",
              "", "| Case | Bytes | Engine | Runs | Median ns | MB/s |", "| --- | ---: | --- | ---: | ---: | ---: |"]
     for group in sorted(results, key=lambda item: (item["case"], engines.index(item["engine"]))):
@@ -142,6 +158,10 @@ def write_report(output, results, ratios, metric, engines):
         lines.extend(["", f"Speed relative to {engines[0]} (only cases fully successful on both engines):", ""])
         for ratio in ratios:
             lines.append(f"- {ratio['case']}/{ratio['engine']}: {ratio['ratio']:.4g}×")
+    if aggregates:
+        lines.extend(["", "Geometric means over the complete selected corpus:", ""])
+        for aggregate in aggregates:
+            lines.append(f"- {aggregate['engine']}: {aggregate['ratio']:.4g}× {aggregate['reference']} ({aggregate['cases']} cases)")
     lines.extend(["", "Failed, incomplete and timed-out samples stay visible and are excluded from ratios. "
                       "This report never infers a whole-engine score from a subset.", ""])
     (output / "report.md").write_text("\n".join(lines))
@@ -178,6 +198,10 @@ def main():
             parser.error(f"{name}: {error}")
         if args.metric in UNSUPPORTED_METRIC.get(engine_types[name], ()):
             parser.error(f"{name}: {engine_types[name]} has no public {args.metric}-only entry point")
+    parser_types = {"oxide-parser", "boa-parser"}
+    if any(kind in parser_types for kind in engine_types.values()) and not all(
+            kind in parser_types for kind in engine_types.values()):
+        parser.error("parser-only probes cannot be mixed with parse+scope or compile probes")
     if "node" in engine_types.values() and not NODE_PROBE.is_file():
         parser.error(f"missing node probe: {NODE_PROBE}")
     try:
@@ -191,7 +215,9 @@ def main():
     (output / "raw").mkdir()
     metadata = {"schema": "oxide-compile-matrix-v1",
                 "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                "metric": args.metric, "goal": "script", "repeat": args.repeat, "timeout_seconds": args.timeout,
+                "metric": args.metric, "goal": "script",
+                "boundary": "complete-syntax-parser-with-initialization" if all(
+                    kind in parser_types for kind in engine_types.values()) else "engine-public-api", "repeat": args.repeat, "timeout_seconds": args.timeout,
                 "order": "serial, alternating per repetition", "instrumentation": "off (no profiling flags)",
                 "machine": machine_metadata(), "corpus": str(args.corpus.resolve()), "workloads": workloads,
                 "engines": {name: {"type": engine_types[name], **binary_metadata(path)}
@@ -217,9 +243,10 @@ def main():
                     journal.flush()
                     print(f"{workload['case']} {name} #{iteration + 1}: {status}", flush=True)
     results, ratios = summarize(samples, list(engines), workloads)
+    aggregates = complete_geomeans(ratios, list(engines), workloads)
     (output / "results.json").write_text(json.dumps({**metadata, "samples": samples, "summary": results,
-                                                     "ratios": ratios}, indent=2) + "\n")
-    write_report(output, results, ratios, args.metric, list(engines))
+                                                     "ratios": ratios, "complete_geomeans": aggregates}, indent=2) + "\n")
+    write_report(output, results, ratios, args.metric, list(engines), aggregates, metadata["boundary"])
     print(output / "report.md")
     return 0 if all(sample["status"] == "ok" for sample in samples) else 1
 

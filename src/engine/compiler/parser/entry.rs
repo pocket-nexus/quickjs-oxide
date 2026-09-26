@@ -251,10 +251,14 @@ impl<'source> Parser<'source> {
             &mut names,
         )?;
         let mut parser = Self {
+            token_context: (
+                lexer.context(),
+                crate::engine::compiler::lexer::LexicalGoal::Div,
+            ),
             lexer,
             names,
-            tokens: vec![first_token],
-            cursor: 0,
+            token: first_token,
+            previous_end: None,
             current_function: 0,
             in_mode: InMode::Allow,
             anonymous_function_definition: None,
@@ -285,7 +289,7 @@ impl<'source> Parser<'source> {
             )?;
         }
         let strict =
-            inherited_strict || parser.directive_prologue_has_use_strict(0, inherited_strict)?;
+            inherited_strict || parser.directive_prologue_has_use_strict(inherited_strict)?;
         parser.relex_current_with_strict(strict)?;
         parser.functions[0].strict = strict;
         parser.functions[0].arguments_forbidden = arguments_forbidden;
@@ -297,8 +301,13 @@ impl<'source> Parser<'source> {
         #[cfg(feature = "profiling")]
         crate::engine::compiler::diagnostics::sample_ir_storage(
             crate::engine::api::profiling::CompilePhase::Parse,
-            crate::engine::compiler::diagnostics::arena_bytes(&parser.functions),
-            parser.functions.iter().map(|builder| &builder.ir),
+            crate::engine::compiler::diagnostics::arena_bytes(&parser.functions)
+                + parser
+                    .functions
+                    .iter()
+                    .map(FunctionBuilder::owned_record_bytes)
+                    .sum::<u64>(),
+            parser.functions.iter().map(|builder| builder.ir.as_ref()),
         );
         Ok(FunctionTree {
             functions: parser

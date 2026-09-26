@@ -119,12 +119,8 @@ impl<'source> Parser<'source> {
         // QuickJS's `name0` is captured only when the AssignmentExpression
         // starts with the identifier token itself. Parenthesized lvalues are
         // valid References but intentionally do not trigger NamedEvaluation.
-        let direct_identifier_name = match &self.current().kind {
-            TokenKind::Identifier(identifier) => {
-                Some(self.identifier_text(identifier).into_owned())
-            }
-            _ => None,
-        };
+        let direct_identifier_start = matches!(self.current().kind, TokenKind::Identifier(_))
+            .then_some(self.current().span.start.byte_offset);
         self.parse_conditional()?;
         if self.current_ir().context.last_optional_chain.is_some()
             && matches!(
@@ -165,8 +161,7 @@ impl<'source> Parser<'source> {
             if let Some(target) =
                 self.promote_tail_identifier_get(IdentifierReferenceAccess::Get)?
             {
-                let infer_name =
-                    direct_identifier_name.as_deref() == Some(self.names.name(target.name));
+                let infer_name = direct_identifier_start == Some(target.span.start.byte_offset);
                 return self.parse_logical_identifier_assignment(target, logical, infer_name);
             }
             return self.parse_logical_member_assignment(logical);
@@ -238,7 +233,7 @@ impl<'source> Parser<'source> {
             self.parse_assignment()?;
             self.inherit_source_marker_at(rhs_start, source_offset(target.span)?)?;
             let anonymous_rhs = self.take_anonymous_function_definition();
-            if direct_identifier_name.as_deref() == Some(self.names.name(target.name))
+            if direct_identifier_start == Some(target.span.start.byte_offset)
                 && let Some(definition) = anonymous_rhs
             {
                 let name_constant = self.add_constant(IrConstant::Primitive(Value::String(
@@ -537,135 +532,63 @@ impl<'source> Parser<'source> {
     }
 
     pub(in crate::engine::compiler) fn parse_bitwise_or(&mut self) -> Result<(), Error> {
-        self.parse_bitwise_xor()?;
-        while self.is_punctuator(Punctuator::BitOr) {
-            let operation_span = self.current().span;
-            self.advance()?;
-            self.parse_bitwise_xor()?;
-            self.emit_instruction_at(Instruction::BitOr, source_offset(operation_span)?)?;
-            self.anonymous_function_definition = None;
-        }
-        Ok(())
+        self.parse_binary(1)
     }
 
-    pub(in crate::engine::compiler) fn parse_bitwise_xor(&mut self) -> Result<(), Error> {
-        self.parse_bitwise_and()?;
-        while self.is_punctuator(Punctuator::BitXor) {
-            let operation_span = self.current().span;
-            self.advance()?;
-            self.parse_bitwise_and()?;
-            self.emit_instruction_at(Instruction::BitXor, source_offset(operation_span)?)?;
-            self.anonymous_function_definition = None;
-        }
-        Ok(())
-    }
-
-    pub(in crate::engine::compiler) fn parse_bitwise_and(&mut self) -> Result<(), Error> {
-        self.parse_equality()?;
-        while self.is_punctuator(Punctuator::BitAnd) {
-            let operation_span = self.current().span;
-            self.advance()?;
-            self.parse_equality()?;
-            self.emit_instruction_at(Instruction::BitAnd, source_offset(operation_span)?)?;
-            self.anonymous_function_definition = None;
-        }
-        Ok(())
-    }
-
-    pub(in crate::engine::compiler) fn parse_equality(&mut self) -> Result<(), Error> {
-        self.parse_relational()?;
-        loop {
-            let operation_span = self.current().span;
-            let operation = match self.current().kind {
-                TokenKind::Punctuator(Punctuator::EqualEqual) => Instruction::Eq,
-                TokenKind::Punctuator(Punctuator::StrictEqual) => Instruction::StrictEq,
-                TokenKind::Punctuator(Punctuator::NotEqual) => Instruction::Neq,
-                TokenKind::Punctuator(Punctuator::StrictNotEqual) => Instruction::StrictNeq,
-                _ => break,
-            };
-            self.advance()?;
-            self.parse_relational()?;
-            self.emit_instruction_at(operation, source_offset(operation_span)?)?;
-            self.anonymous_function_definition = None;
-        }
-        Ok(())
-    }
-
-    pub(in crate::engine::compiler) fn parse_relational(&mut self) -> Result<(), Error> {
-        if !self.parse_private_in_head()? {
-            self.parse_shift()?;
-        }
-        loop {
-            let operation_span = self.current().span;
-            let operation = match self.current().kind {
-                TokenKind::Punctuator(Punctuator::Less) => Instruction::Lt,
-                TokenKind::Punctuator(Punctuator::LessEqual) => Instruction::Lte,
-                TokenKind::Punctuator(Punctuator::Greater) => Instruction::Gt,
-                TokenKind::Punctuator(Punctuator::GreaterEqual) => Instruction::Gte,
-                TokenKind::Keyword(Keyword::Instanceof) => Instruction::InstanceOf,
-                TokenKind::Keyword(Keyword::In) if self.in_mode == InMode::Disallow => break,
-                TokenKind::Keyword(Keyword::In) => Instruction::In,
-                _ => break,
-            };
-            self.advance()?;
-            self.parse_shift()?;
-            self.emit_instruction_at(operation, source_offset(operation_span)?)?;
-            self.anonymous_function_definition = None;
-        }
-        Ok(())
-    }
-
+    // Private-brand checks have a ShiftExpression RHS, not another relational
+    // head. Keep that grammar boundary explicit in the precedence entry point.
     pub(in crate::engine::compiler) fn parse_shift(&mut self) -> Result<(), Error> {
-        self.parse_additive()?;
-        loop {
-            let operation_span = self.current().span;
-            let operation = match self.current().kind {
-                TokenKind::Punctuator(Punctuator::ShiftLeft) => Instruction::Shl,
-                TokenKind::Punctuator(Punctuator::ShiftRight) => Instruction::Sar,
-                TokenKind::Punctuator(Punctuator::UnsignedShiftRight) => Instruction::Shr,
-                _ => break,
-            };
-            self.advance()?;
-            self.parse_additive()?;
-            self.emit_instruction_at(operation, source_offset(operation_span)?)?;
-            self.anonymous_function_definition = None;
-        }
-        Ok(())
+        self.parse_binary(6)
     }
 
-    pub(in crate::engine::compiler) fn parse_additive(&mut self) -> Result<(), Error> {
-        self.parse_multiplicative()?;
-        loop {
-            let operation_span = self.current().span;
-            let operation = match self.current().kind {
-                TokenKind::Punctuator(Punctuator::Plus) => Instruction::Add,
-                TokenKind::Punctuator(Punctuator::Minus) => Instruction::Sub,
-                _ => break,
-            };
-            self.advance()?;
-            self.parse_multiplicative()?;
-            self.emit_instruction_at(operation, source_offset(operation_span)?)?;
-            self.anonymous_function_definition = None;
-        }
-        Ok(())
-    }
-
-    pub(in crate::engine::compiler) fn parse_multiplicative(&mut self) -> Result<(), Error> {
-        self.parse_unary()?;
-        loop {
-            let operation_span = self.current().span;
-            let operation = match self.current().kind {
-                TokenKind::Punctuator(Punctuator::Multiply) => Instruction::Mul,
-                TokenKind::Punctuator(Punctuator::Divide) => Instruction::Div,
-                TokenKind::Punctuator(Punctuator::Remainder) => Instruction::Mod,
-                _ => break,
-            };
-            self.advance()?;
+    fn parse_binary(&mut self, minimum: u8) -> Result<(), Error> {
+        if minimum > 5 || !self.parse_private_in_head()? {
             self.parse_unary()?;
+        }
+        while let Some((precedence, operation)) = self.binary_operator() {
+            if precedence < minimum {
+                break;
+            }
+            let operation_span = self.current().span;
+            self.advance()?;
+            self.parse_binary(precedence + 1)?;
             self.emit_instruction_at(operation, source_offset(operation_span)?)?;
             self.anonymous_function_definition = None;
         }
         Ok(())
+    }
+
+    fn binary_operator(&self) -> Option<(u8, Instruction)> {
+        use Punctuator::*;
+        Some(match self.current().kind {
+            TokenKind::Punctuator(operator) => match operator {
+                BitOr => (1, Instruction::BitOr),
+                BitXor => (2, Instruction::BitXor),
+                BitAnd => (3, Instruction::BitAnd),
+                EqualEqual => (4, Instruction::Eq),
+                StrictEqual => (4, Instruction::StrictEq),
+                NotEqual => (4, Instruction::Neq),
+                StrictNotEqual => (4, Instruction::StrictNeq),
+                Less => (5, Instruction::Lt),
+                LessEqual => (5, Instruction::Lte),
+                Greater => (5, Instruction::Gt),
+                GreaterEqual => (5, Instruction::Gte),
+                ShiftLeft => (6, Instruction::Shl),
+                ShiftRight => (6, Instruction::Sar),
+                UnsignedShiftRight => (6, Instruction::Shr),
+                Plus => (7, Instruction::Add),
+                Minus => (7, Instruction::Sub),
+                Multiply => (8, Instruction::Mul),
+                Divide => (8, Instruction::Div),
+                Remainder => (8, Instruction::Mod),
+                _ => return None,
+            },
+            TokenKind::Keyword(Keyword::Instanceof) => (5, Instruction::InstanceOf),
+            TokenKind::Keyword(Keyword::In) if self.in_mode == InMode::Allow => {
+                (5, Instruction::In)
+            }
+            _ => return None,
+        })
     }
 
     pub(in crate::engine::compiler) fn parse_unary(&mut self) -> Result<(), Error> {
@@ -1093,14 +1016,13 @@ impl<'source> Parser<'source> {
                     self.anonymous_function_definition = None;
                     return Ok(true);
                 }
-                TokenKind::Identifier(identifier) => self.identifier_text(&identifier).into_owned(),
-                TokenKind::Keyword(keyword) => keyword.as_str().to_owned(),
+                TokenKind::Identifier(identifier) => self.intern_identifier(&identifier),
+                TokenKind::Keyword(keyword) => self.intern_name(keyword.as_str()),
                 _ => return Err(self.syntax_here("expecting field name")),
             };
             self.advance()?;
-            let key = self.add_constant(IrConstant::Primitive(Value::String(
-                JsString::try_from_utf8(&name)?,
-            )))?;
+            let value = self.names.js_string(name)?;
+            let key = self.add_constant(IrConstant::Primitive(Value::String(value)))?;
             let operation =
                 self.emit_instruction_at(Instruction::GetField(key), source_offset(member_span)?)?;
             self.current_ir_mut().context.last_member_reference = Some(operation);
@@ -1200,9 +1122,10 @@ impl<'source> Parser<'source> {
             ));
         };
         let object_environment = self.parser_scope_has_authored_with(function_id, *scope)?;
+        let span_id = *span;
         let reference = IdentifierReference {
             name: *name,
-            span: *span,
+            span: function.operands.span(span_id),
             scope: *scope,
             object_environment,
         };
@@ -1216,7 +1139,7 @@ impl<'source> Parser<'source> {
             };
             *op = IrOp::IdentifierReference {
                 name: reference.name,
-                span: reference.span,
+                span: span_id,
                 scope: reference.scope,
                 access: reference_access,
             };
@@ -1320,9 +1243,10 @@ impl<'source> Parser<'source> {
             ));
         };
         let object_environment = self.parser_scope_has_authored_with(function_id, *scope)?;
+        let span_id = *span;
         let reference = IdentifierReference {
             name: *name,
-            span: *span,
+            span: function.operands.span(span_id),
             scope: *scope,
             object_environment,
         };
@@ -1336,7 +1260,7 @@ impl<'source> Parser<'source> {
             };
             *op = IrOp::IdentifierReference {
                 name: reference.name,
-                span: reference.span,
+                span: span_id,
                 scope: reference.scope,
                 access: IdentifierReferenceAccess::Prepare,
             };
@@ -1400,7 +1324,7 @@ impl<'source> Parser<'source> {
                 access: PrivateFieldAccess::Get,
             } => Ok(Some(MemberReference::Private {
                 name,
-                span,
+                span: function.operands.span(span),
                 scope,
                 site,
             })),
@@ -1456,7 +1380,9 @@ impl<'source> Parser<'source> {
             return Ok(None);
         }
         function.context.last_member_reference = None;
+        let operands = &function.ir.operands;
         let last = function
+            .ir
             .ops
             .last_mut()
             .ok_or_else(|| Error::internal("member Reference operation disappeared"))?;
@@ -1485,7 +1411,7 @@ impl<'source> Parser<'source> {
                 (
                     MemberReference::Private {
                         name: *name,
-                        span: *span,
+                        span: operands.span(*span),
                         scope: *scope,
                         site,
                     },

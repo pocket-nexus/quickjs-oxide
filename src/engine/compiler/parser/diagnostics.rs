@@ -128,6 +128,8 @@ pub(in crate::engine::compiler) const fn strict_reserved_identifier(keyword: Key
     )
 }
 
+#[cold]
+#[inline(never)]
 pub(in crate::engine::compiler) fn lex_error(error: LexError) -> Error {
     if error.kind == LexErrorKind::StringTooLong {
         Error::new(ErrorKind::JsInternal, error.message)

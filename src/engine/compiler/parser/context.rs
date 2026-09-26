@@ -46,6 +46,7 @@ use crate::engine::compiler::EvalCompileContext;
 use crate::engine::compiler::lexer::Lexer;
 use crate::engine::compiler::lexer::Span;
 use crate::engine::compiler::lexer::Token;
+use crate::engine::compiler::lexer::{LexContext, LexicalGoal};
 use crate::engine::compiler::model::bindings::BindingId;
 use crate::engine::compiler::model::ir::FunctionId;
 use crate::engine::compiler::module;
@@ -266,8 +267,11 @@ pub(in crate::engine::compiler) struct Parser<'source> {
     /// Sole name-interning authority. Every authored or synthetic compiler name
     /// is interned here once; resolution/lowering only read it back.
     pub(in crate::engine::compiler) names: NameTable,
-    pub(in crate::engine::compiler) tokens: Vec<Token<'source>>,
-    pub(in crate::engine::compiler) cursor: usize,
+    pub(in crate::engine::compiler) token: Token<'source>,
+    /// Context of the current token, which can differ from the context selected
+    /// for future scans (notably an async arrow's already-read parameter).
+    pub(in crate::engine::compiler) token_context: (LexContext, LexicalGoal),
+    pub(in crate::engine::compiler) previous_end: Option<usize>,
     pub(in crate::engine::compiler) current_function: FunctionId,
     pub(in crate::engine::compiler) in_mode: InMode,
     pub(in crate::engine::compiler) functions: Vec<FunctionBuilder>,

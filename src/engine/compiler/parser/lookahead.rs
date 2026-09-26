@@ -15,12 +15,17 @@
 //! already committed past; the cache is capped and front-compacts so a probe
 //! that scans an arbitrarily long region cannot make parsing quadratic.
 
+use crate::engine::compiler::destructuring::{BindingPatternScan, ParenthesizedParameterScan};
 use crate::engine::compiler::lexer::LexContext;
 use crate::engine::compiler::lexer::LexError;
 use crate::engine::compiler::lexer::Lexer;
 use crate::engine::compiler::lexer::LexicalGoal;
+use crate::engine::compiler::lexer::Punctuator;
 use crate::engine::compiler::lexer::Token;
+use crate::engine::compiler::parser::context::ForIterationKind;
 use crate::engine::compiler::parser::context::Parser;
+use std::cell::Cell;
+use std::collections::HashMap;
 
 /// Upper bound on memoized entries. A probe that scans a giant region (say a
 /// whole array literal looking for its initializer) stops caching past this
@@ -30,12 +35,39 @@ const MAX_ENTRIES: usize = 8 * 1024;
 /// Compact the invalidated prefix once it is at least this large and no
 /// smaller than the live region, keeping `invalidate_before` amortized O(1).
 const COMPACT_MIN_PREFIX: usize = 64;
+const MAX_PARENTHESIS_SUMMARIES: usize = 1024;
 
 #[derive(Default)]
 pub(in crate::engine::compiler) struct LookaheadCache<'source> {
     entries: Vec<LookaheadEntry<'source>>,
     /// `entries[..base]` are invalidated and await compaction.
     base: usize,
+    /// Probes and committed parsing usually consume consecutive entries.
+    /// Remember the last hit so those scans do not binary-search the entire
+    /// window for every token. This is only a hint; every hit checks its key.
+    cursor: Cell<usize>,
+    /// Complete nested cover-grammar probes can be reused when real parsing
+    /// reaches the same parentheses. Failed/depth-limited probes are never
+    /// recorded. Context is checked because yield/await affect tokenization.
+    parentheses: HashMap<usize, (LexContext, bool)>,
+    parentheses_pruned_at: Option<usize>,
+    // One result per probe family is enough for adjacent grammar consumers.
+    // These bounded summaries are pure functions of offset/context and never
+    // evict token entries or grow with source length.
+    pub(in crate::engine::compiler) binding_scan: Option<BindingScanMemo<'source>>,
+    pub(in crate::engine::compiler) parameter_scan:
+        Option<(usize, LexContext, Option<ParenthesizedParameterScan>)>,
+    pub(in crate::engine::compiler) iteration_hint:
+        Option<(usize, LexContext, Option<ForIterationKind>)>,
+}
+
+#[derive(Clone, Copy)]
+pub(in crate::engine::compiler) struct BindingScanMemo<'source> {
+    pub(in crate::engine::compiler) start: usize,
+    pub(in crate::engine::compiler) context: LexContext,
+    pub(in crate::engine::compiler) opening: Punctuator,
+    pub(in crate::engine::compiler) scan: Option<BindingPatternScan<'source>>,
+    pub(in crate::engine::compiler) assignment_seen: bool,
 }
 
 struct LookaheadEntry<'source> {
@@ -50,13 +82,38 @@ impl<'source> LookaheadCache<'source> {
         &self.entries[self.base..]
     }
 
-    fn peek(&self, start: usize, goal: LexicalGoal, context: LexContext) -> Option<Token<'source>> {
+    fn peek(
+        &self,
+        start: usize,
+        goal: LexicalGoal,
+        context: LexContext,
+    ) -> Option<&Token<'source>> {
+        let active = self.active();
+        if start < active.first()?.start || start > active.last()?.start {
+            return None;
+        }
         let key = (start, goal, context);
+        for index in [
+            self.cursor.get().saturating_add(1),
+            self.cursor.get(),
+            self.base,
+        ] {
+            if index < self.base {
+                continue;
+            }
+            if let Some(entry) = self.entries.get(index) {
+                if (entry.start, entry.goal, entry.context) == key {
+                    self.cursor.set(index);
+                    return Some(&entry.token);
+                }
+            }
+        }
         let index = self
             .active()
             .binary_search_by(|entry| (entry.start, entry.goal, entry.context).cmp(&key))
             .ok()?;
-        Some(self.active()[index].token)
+        self.cursor.set(self.base + index);
+        Some(&self.active()[index].token)
     }
 
     fn insert(
@@ -70,18 +127,29 @@ impl<'source> LookaheadCache<'source> {
             return;
         }
         let key = (start, goal, context);
-        let index = self
+        let entry = LookaheadEntry {
+            start,
+            goal,
+            context,
+            token,
+        };
+        if self
             .active()
-            .partition_point(|entry| (entry.start, entry.goal, entry.context) < key);
-        self.entries.insert(
-            self.base + index,
-            LookaheadEntry {
-                start,
-                goal,
-                context,
-                token,
-            },
-        );
+            .last()
+            .is_none_or(|entry| (entry.start, entry.goal, entry.context) < key)
+        {
+            // Sequential probes append. Vec::insert still shifts its suffix
+            // even for an append, so keep that operation off this hot path.
+            self.entries.push(entry);
+            self.cursor.set(self.entries.len() - 1);
+        } else {
+            let index = self.base
+                + self
+                    .active()
+                    .partition_point(|entry| (entry.start, entry.goal, entry.context) < key);
+            self.entries.insert(index, entry);
+            self.cursor.set(index);
+        }
     }
 
     /// Drops entries that start at or after `start`, used when a goal or
@@ -94,8 +162,24 @@ impl<'source> LookaheadCache<'source> {
     /// Drops entries that start before `start`, keeping only the region the
     /// parser has not committed past.
     fn invalidate_before(&mut self, start: usize) {
-        self.base += self.active().partition_point(|entry| entry.start < start);
+        if self
+            .active()
+            .first()
+            .is_none_or(|entry| entry.start >= start)
+        {
+            return;
+        }
+        self.base += if self
+            .active()
+            .get(1)
+            .is_none_or(|entry| entry.start >= start)
+        {
+            1
+        } else {
+            self.active().partition_point(|entry| entry.start < start)
+        };
         if self.base >= COMPACT_MIN_PREFIX && self.base >= self.entries.len() - self.base {
+            self.cursor.set(self.cursor.get().saturating_sub(self.base));
             self.entries.drain(..self.base);
             self.base = 0;
         }
@@ -108,6 +192,36 @@ impl<'source> LookaheadCache<'source> {
 }
 
 impl<'source> Parser<'source> {
+    pub(in crate::engine::compiler) fn cached_parenthesized_arrow(
+        &self,
+        start: usize,
+    ) -> Option<bool> {
+        let context = self.lexer.context();
+        self.lookahead
+            .borrow()
+            .parentheses
+            .get(&start)
+            .filter(|(cached_context, _)| *cached_context == context)
+            .map(|(_, arrow)| *arrow)
+    }
+
+    pub(in crate::engine::compiler) fn cache_parenthesized_arrow(&self, start: usize, arrow: bool) {
+        let mut cache = self.lookahead.borrow_mut();
+        if cache.parentheses.len() >= MAX_PARENTHESIS_SUMMARIES {
+            let current = self.current().span.start.byte_offset;
+            if cache.parentheses_pruned_at != Some(current) {
+                cache.parentheses.retain(|offset, _| *offset >= current);
+                cache.parentheses_pruned_at = Some(current);
+            }
+            if cache.parentheses.len() >= MAX_PARENTHESIS_SUMMARIES {
+                return;
+            }
+        }
+        cache
+            .parentheses
+            .insert(start, (self.lexer.context(), arrow));
+    }
+
     /// One memoized probe step: scan `goal` from the probe lexer's current
     /// position, reusing a memoized token when possible. A hit repositions the
     /// lexer at the token end, so the caller observes the same state a miss
@@ -138,37 +252,47 @@ impl<'source> Parser<'source> {
         goal: LexicalGoal,
         context: LexContext,
     ) -> Option<Token<'source>> {
-        let token = self.lookahead.borrow().peek(start, goal, context);
+        let token = self.lookahead.borrow().peek(start, goal, context).copied();
         #[cfg(feature = "profiling")]
         counters::record(token.is_some());
         token
     }
 
-    /// Drops memoized scans the parser has already committed past.
-    pub(in crate::engine::compiler) fn lookahead_invalidate_before(&self, start: usize) {
-        self.lookahead.borrow_mut().invalidate_before(start);
-    }
-
     /// Drops memoized scans invalidated by a goal or context change.
-    pub(in crate::engine::compiler) fn lookahead_invalidate_from(&self, start: usize) {
-        self.lookahead.borrow_mut().invalidate_from(start);
+    pub(in crate::engine::compiler) fn lookahead_invalidate_from(&mut self, start: usize) {
+        self.lookahead.get_mut().invalidate_from(start);
     }
 
-    /// A commit-path scan consumes a token a probe already memoized. Scanning
-    /// is a pure function of the key, so the committed token is byte-identical
-    /// to a fresh scan; the lexer is repositioned by the caller.
+    /// Copy a memoized token directly into the committed parser slot. The
+    /// committed cursor is monotone between explicit rewinds, so entries
+    /// before it can be discarded and the first remaining entry usually hits.
+    /// Rewinds safely miss and rescan when their old entries were discarded.
     pub(in crate::engine::compiler) fn take_lookahead(
-        &self,
+        &mut self,
         start: usize,
         goal: LexicalGoal,
         context: LexContext,
-    ) -> Option<Token<'source>> {
-        let token = self.lookahead.borrow().peek(start, goal, context);
-        #[cfg(feature = "profiling")]
-        if token.is_some() {
-            counters::record_commit_hit();
+    ) -> bool {
+        let cache = self.lookahead.get_mut();
+        cache.invalidate_before(start);
+        let Some(entry) = cache.active().first() else {
+            return false;
+        };
+        if entry.start != start {
+            return false;
         }
-        token
+        let token = if entry.goal == goal && entry.context == context {
+            &entry.token
+        } else if let Some(token) = cache.peek(start, goal, context) {
+            token
+        } else {
+            return false;
+        };
+        self.lexer.seek(token.span.end);
+        self.token = *token;
+        #[cfg(feature = "profiling")]
+        counters::record_commit_hit();
+        true
     }
 
     #[cfg(test)]
@@ -255,7 +379,7 @@ mod tests {
 
         assert_eq!(
             cache.peek(alpha.span.start.byte_offset, LexicalGoal::Div, context),
-            Some(alpha)
+            Some(&alpha)
         );
         assert_eq!(
             cache.peek(beta.span.start.byte_offset, LexicalGoal::RegExp, context),
@@ -265,7 +389,7 @@ mod tests {
         cache.invalidate_from(beta.span.start.byte_offset);
         assert_eq!(
             cache.peek(alpha.span.start.byte_offset, LexicalGoal::Div, context),
-            Some(alpha)
+            Some(&alpha)
         );
         assert_eq!(
             cache.peek(beta.span.start.byte_offset, LexicalGoal::Div, context),
@@ -287,7 +411,7 @@ mod tests {
         );
         assert_eq!(
             cache.peek(beta.span.start.byte_offset, LexicalGoal::Div, context),
-            Some(beta)
+            Some(&beta)
         );
     }
 
@@ -331,7 +455,47 @@ mod tests {
         assert_eq!(cache.peek(0, LexicalGoal::Div, context), None);
         assert_eq!(
             cache.peek(COMPACT_MIN_PREFIX, LexicalGoal::Div, context),
-            Some(beta)
+            Some(&beta)
+        );
+    }
+
+    #[test]
+    fn sequential_hint_checks_context_after_insert_and_compaction() {
+        let mut lexer = Lexer::new("yield /x/");
+        let identifier = lexer.next_token().unwrap();
+        let context = LexContext::default();
+        let strict = LexContext {
+            strict: true,
+            ..context
+        };
+        lexer.seek(identifier.span.start);
+        lexer.set_context(strict);
+        let keyword = lexer.next_token().unwrap();
+        let mut cache = LookaheadCache::default();
+        for offset in 0..256 {
+            cache.insert(offset, LexicalGoal::Div, context, identifier);
+        }
+        for offset in 128..256 {
+            assert_eq!(
+                cache.peek(offset, LexicalGoal::Div, context),
+                Some(&identifier)
+            );
+        }
+        cache.insert(200, LexicalGoal::Div, strict, keyword);
+        cache.invalidate_before(129);
+        for offset in (129..256).rev() {
+            assert_eq!(
+                cache.peek(offset, LexicalGoal::Div, context),
+                Some(&identifier)
+            );
+        }
+        assert_eq!(cache.peek(200, LexicalGoal::Div, strict), Some(&keyword));
+        assert_eq!(cache.peek(200, LexicalGoal::RegExp, strict), None);
+        cache.invalidate_from(200);
+        assert_eq!(cache.peek(200, LexicalGoal::Div, strict), None);
+        assert_eq!(
+            cache.peek(199, LexicalGoal::Div, context),
+            Some(&identifier)
         );
     }
 }

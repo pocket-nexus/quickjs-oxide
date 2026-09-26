@@ -496,9 +496,13 @@ fn parameter_assignment_prescan_retains_quickjs_bits_at_the_depth_bound() {
     )
     .unwrap();
     let parser = Parser {
+        token_context: (
+            lexer.context(),
+            crate::engine::compiler::lexer::LexicalGoal::Div,
+        ),
         lexer,
-        tokens: vec![first],
-        cursor: 0,
+        token: first,
+        previous_end: None,
         current_function: 0,
         in_mode: InMode::Allow,
         functions: vec![root],
@@ -550,9 +554,13 @@ fn lookahead_test_parser(source: &str) -> Parser<'_> {
     )
     .unwrap();
     Parser {
+        token_context: (
+            lexer.context(),
+            crate::engine::compiler::lexer::LexicalGoal::Div,
+        ),
         lexer,
-        tokens: vec![first],
-        cursor: 0,
+        token: first,
+        previous_end: None,
         current_function: 0,
         in_mode: InMode::Allow,
         functions: vec![root],
@@ -608,6 +616,128 @@ fn lookahead_cache_serves_the_commit_path() {
     parser.lookahead_insert(start, LexicalGoal::Div, LexContext::default(), sentinel);
     parser.advance_with_goal(LexicalGoal::Div).unwrap();
     assert_eq!(parser.current().kind, TokenKind::RawAscii(b'@'));
+}
+
+#[test]
+fn committed_lookahead_selects_the_exact_goal_and_context_at_one_offset() {
+    use crate::engine::compiler::lexer::{LexContext, LexicalGoal, Token, TokenKind};
+
+    let mut parser = lookahead_test_parser("alpha /x/g tail");
+    let strict = LexContext {
+        strict: true,
+        ..LexContext::default()
+    };
+    parser.set_future_lex_context(strict);
+    let start = parser.current().span.end.byte_offset;
+    let regexp = parser
+        .lexer
+        .clone()
+        .next_token_with_goal(LexicalGoal::RegExp)
+        .unwrap();
+    let wrong = Token {
+        kind: TokenKind::RawAscii(b'@'),
+        ..regexp
+    };
+    parser.lookahead_insert(start, LexicalGoal::Div, strict, wrong);
+    parser.lookahead_insert(start, LexicalGoal::RegExp, LexContext::default(), wrong);
+    parser.lookahead_insert(start, LexicalGoal::RegExp, strict, regexp);
+    parser.advance_with_goal(LexicalGoal::RegExp).unwrap();
+    assert_eq!(*parser.current(), regexp);
+    parser.advance().unwrap();
+    assert!(matches!(
+        parser.current().kind,
+        TokenKind::Identifier(identifier) if identifier.raw == "tail"
+    ));
+}
+
+#[test]
+fn current_token_context_is_distinct_from_future_scan_context() {
+    use crate::engine::compiler::lexer::{Keyword, LexContext, TokenKind};
+    let mut parser = lookahead_test_parser("yield yield");
+    let generator = LexContext {
+        generator: true,
+        ..LexContext::default()
+    };
+    parser.set_future_lex_context(generator);
+    assert!(matches!(parser.current().kind, TokenKind::Identifier(_)));
+    parser.relex_current_with_context(generator).unwrap();
+    assert!(matches!(
+        parser.current().kind,
+        TokenKind::Keyword(Keyword::Yield)
+    ));
+    parser
+        .relex_current_with_context(LexContext::default())
+        .unwrap();
+    assert!(matches!(parser.current().kind, TokenKind::Identifier(_)));
+    parser.set_future_lex_context(generator);
+    parser.advance().unwrap();
+    assert!(matches!(
+        parser.current().kind,
+        TokenKind::Keyword(Keyword::Yield)
+    ));
+}
+
+#[test]
+fn nested_arrow_probe_summaries_respect_regexp_newlines_context_and_depth() {
+    use crate::engine::compiler::arrow::ArrowHead;
+    use crate::engine::compiler::lexer::LexContext;
+    let source = "((a = /\\)/) => a, (b)\n=> b)";
+    let mut parser = lookahead_test_parser(source);
+    assert_eq!(parser.arrow_head_ahead(), None);
+    assert_eq!(parser.cached_parenthesized_arrow(1), Some(true));
+    assert_eq!(
+        parser.cached_parenthesized_arrow(source.find("(b)").unwrap()),
+        Some(false)
+    );
+    parser.advance().unwrap();
+    assert_eq!(parser.arrow_head_ahead(), Some(ArrowHead::Parenthesized));
+    parser.set_future_lex_context(LexContext {
+        generator: true,
+        ..LexContext::default()
+    });
+    assert_eq!(parser.cached_parenthesized_arrow(1), None);
+
+    let deep = format!("{}0{}", "(".repeat(256), ")".repeat(256));
+    let parser = lookahead_test_parser(&deep);
+    assert_eq!(parser.arrow_head_ahead(), None);
+    assert_eq!(parser.cached_parenthesized_arrow(0), None);
+}
+
+#[test]
+fn ascii_arrow_rejection_defers_comments_and_unicode_to_the_lexer() {
+    use crate::engine::compiler::arrow::ArrowHead;
+    for (trivia, expected) in [
+        ("", true),
+        (" \t\u{b}\u{c}", true),
+        ("\n", false),
+        ("/* ordinary */", true),
+        ("/*\u{2028}*/", false),
+        ("\u{a0}", true),
+        ("\u{2029}", false),
+        ("<!-- comment\n", false),
+    ] {
+        let source = format!("name{trivia}=> name");
+        let parser = lookahead_test_parser(&source);
+        assert_eq!(
+            parser.arrow_head_ahead(),
+            expected.then_some(ArrowHead::Identifier),
+            "{source:?}"
+        );
+    }
+    for source in [
+        "name.member",
+        "name()",
+        "name == value",
+        "name /= 2",
+        "name --",
+        "name / 2",
+    ] {
+        assert_eq!(
+            lookahead_test_parser(source).arrow_head_ahead(),
+            None,
+            "{source}"
+        );
+    }
 }
 
 #[test]

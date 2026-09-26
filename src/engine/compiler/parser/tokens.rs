@@ -84,19 +84,28 @@ impl<'source> Parser<'source> {
         self.names.intern(&decoded)
     }
 
+    /// Property-name occurrences share the same immutable string value. The
+    /// caller still appends each authored constant in its original order.
+    pub(in crate::engine::compiler) fn intern_identifier_string(
+        &mut self,
+        identifier: &Identifier<'source>,
+    ) -> Result<JsString, Error> {
+        let name = self.intern_identifier(identifier);
+        Ok(self.names.js_string(name)?)
+    }
+
     /// Intern the `#name` binding-key spelling of a private identifier. The
     /// decoded identifier body is interned separately by `intern_identifier`.
     pub(in crate::engine::compiler) fn intern_private_identifier(
         &mut self,
         identifier: &Identifier<'source>,
     ) -> NameId {
+        if !identifier.has_escape {
+            return self.names.intern(identifier.raw);
+        }
         let mut binding = String::with_capacity(identifier.raw.len().saturating_add(1));
         binding.push('#');
-        if identifier.has_escape {
-            binding.push_str(&self.lexer.decode_identifier_text(identifier.raw));
-        } else {
-            binding.push_str(identifier.raw.strip_prefix('#').unwrap_or(identifier.raw));
-        }
+        binding.push_str(&self.lexer.decode_identifier_text(identifier.raw));
         self.names.intern(&binding)
     }
 
@@ -139,6 +148,16 @@ impl<'source> Parser<'source> {
         &self,
         span: Span,
     ) -> Result<JsString, Error> {
+        let body = span.start.byte_offset + 1..span.end.byte_offset - 1;
+        if !self.lexer.source().as_bytes()[body.clone()].contains(&b'\\') {
+            // The committed token already checked syntax and UTF-16 length.
+            // Convert its source range once; SourceText retains surrogate
+            // carriers instead of interpreting them as ordinary PUA scalars.
+            return self
+                .lexer
+                .source_range_to_js_string(body)?
+                .ok_or_else(|| Error::internal("invalid string literal source range"));
+        }
         let value = self
             .lexer
             .decode_string_literal(span.start)
@@ -167,7 +186,7 @@ impl<'source> Parser<'source> {
         part: &TemplatePart<'source>,
         span: Span,
     ) -> Result<Option<JsString>, Error> {
-        if part.invalid_escape.is_some() {
+        if part.invalid_escape {
             return Ok(None);
         }
         let value = self
@@ -201,6 +220,12 @@ impl<'source> Parser<'source> {
     /// the real parser still validates the complete LeftHandSideExpression and
     /// reports source-ordered syntax errors.
     pub(in crate::engine::compiler) fn for_iteration_kind_ahead(&self) -> Option<ForIterationKind> {
+        if let Some((start, context, hint)) = self.lookahead.borrow().iteration_hint
+            && start == self.current().span.start.byte_offset
+            && context == self.lexer.context()
+        {
+            return hint;
+        }
         let mut lexer = self.lexer.clone();
         lexer.seek(self.current().span.start);
         let mut delimiters = Vec::new();
@@ -308,95 +333,120 @@ impl<'source> Parser<'source> {
         let mut regexp_allowed = true;
         let mut has_semicolon = false;
 
-        loop {
-            let requested_goal = goal;
-            goal = LexicalGoal::Div;
-            let Ok(mut token) = self.probe_token(&mut lexer, requested_goal) else {
-                return has_semicolon;
-            };
-            if requested_goal == LexicalGoal::Div
-                && regexp_allowed
-                && matches!(
-                    token.kind,
-                    TokenKind::Punctuator(Punctuator::Divide | Punctuator::DivideAssign)
-                )
-            {
-                lexer.seek(token.span.start);
-                let Ok(regexp) = self.probe_token(&mut lexer, LexicalGoal::RegExp) else {
+        let mut inner_start = None;
+        let mut iteration_hint = None;
+        let has_semicolon = (|| {
+            loop {
+                let requested_goal = goal;
+                goal = LexicalGoal::Div;
+                let Ok(mut token) = self.probe_token(&mut lexer, requested_goal) else {
                     return has_semicolon;
                 };
-                token = regexp;
-            }
+                if requested_goal == LexicalGoal::Div
+                    && regexp_allowed
+                    && matches!(
+                        token.kind,
+                        TokenKind::Punctuator(Punctuator::Divide | Punctuator::DivideAssign)
+                    )
+                {
+                    lexer.seek(token.span.start);
+                    let Ok(regexp) = self.probe_token(&mut lexer, LexicalGoal::RegExp) else {
+                        return has_semicolon;
+                    };
+                    token = regexp;
+                }
 
-            match &token.kind {
-                TokenKind::Punctuator(Punctuator::LeftParen) => {
-                    if delimiters.len() >= 255 {
-                        return has_semicolon;
-                    }
-                    delimiters.push(ForHeadDelimiter::Parenthesis);
-                }
-                TokenKind::Punctuator(Punctuator::LeftBracket) => {
-                    if delimiters.len() >= 255 {
-                        return has_semicolon;
-                    }
-                    delimiters.push(ForHeadDelimiter::Bracket);
-                }
-                TokenKind::Punctuator(Punctuator::LeftBrace) => {
-                    if delimiters.len() >= 255 {
-                        return has_semicolon;
-                    }
-                    delimiters.push(ForHeadDelimiter::Brace);
-                }
-                TokenKind::Punctuator(Punctuator::RightParen) => {
-                    if delimiters.pop() != Some(ForHeadDelimiter::Parenthesis) {
-                        return has_semicolon;
-                    }
-                    if delimiters.is_empty() {
-                        return has_semicolon;
+                if delimiters.len() == 1 {
+                    inner_start.get_or_insert(token.span.start.byte_offset);
+                    if iteration_hint.is_none() {
+                        iteration_hint = match &token.kind {
+                            TokenKind::Keyword(Keyword::In) => Some(ForIterationKind::In),
+                            TokenKind::Identifier(identifier)
+                                if self.is_unescaped_name(identifier, "of") =>
+                            {
+                                Some(ForIterationKind::Of)
+                            }
+                            _ => None,
+                        };
                     }
                 }
-                TokenKind::Punctuator(Punctuator::RightBracket) => {
-                    if delimiters.pop() != Some(ForHeadDelimiter::Bracket) {
-                        return has_semicolon;
-                    }
-                }
-                TokenKind::Punctuator(Punctuator::RightBrace) => {
-                    if delimiters.last() == Some(&ForHeadDelimiter::Template) {
-                        goal = LexicalGoal::TemplateContinuation;
-                        regexp_allowed = true;
-                        continue;
-                    }
-                    if delimiters.pop() != Some(ForHeadDelimiter::Brace) {
-                        return has_semicolon;
-                    }
-                }
-                TokenKind::Punctuator(Punctuator::Semicolon) if delimiters.len() == 1 => {
-                    has_semicolon = true;
-                }
-                TokenKind::Template(part) => match part.kind {
-                    TemplatePartKind::Head => {
+                match &token.kind {
+                    TokenKind::Punctuator(Punctuator::LeftParen) => {
                         if delimiters.len() >= 255 {
                             return has_semicolon;
                         }
-                        delimiters.push(ForHeadDelimiter::Template);
+                        delimiters.push(ForHeadDelimiter::Parenthesis);
                     }
-                    TemplatePartKind::Middle => {
-                        if delimiters.last() != Some(&ForHeadDelimiter::Template) {
+                    TokenKind::Punctuator(Punctuator::LeftBracket) => {
+                        if delimiters.len() >= 255 {
+                            return has_semicolon;
+                        }
+                        delimiters.push(ForHeadDelimiter::Bracket);
+                    }
+                    TokenKind::Punctuator(Punctuator::LeftBrace) => {
+                        if delimiters.len() >= 255 {
+                            return has_semicolon;
+                        }
+                        delimiters.push(ForHeadDelimiter::Brace);
+                    }
+                    TokenKind::Punctuator(Punctuator::RightParen) => {
+                        if delimiters.pop() != Some(ForHeadDelimiter::Parenthesis) {
+                            return has_semicolon;
+                        }
+                        if delimiters.is_empty() {
                             return has_semicolon;
                         }
                     }
-                    TemplatePartKind::Tail => {
-                        if delimiters.pop() != Some(ForHeadDelimiter::Template) {
+                    TokenKind::Punctuator(Punctuator::RightBracket) => {
+                        if delimiters.pop() != Some(ForHeadDelimiter::Bracket) {
                             return has_semicolon;
                         }
                     }
-                    TemplatePartKind::NoSubstitution => {}
-                },
-                TokenKind::Eof => return has_semicolon,
-                _ => {}
+                    TokenKind::Punctuator(Punctuator::RightBrace) => {
+                        if delimiters.last() == Some(&ForHeadDelimiter::Template) {
+                            goal = LexicalGoal::TemplateContinuation;
+                            regexp_allowed = true;
+                            continue;
+                        }
+                        if delimiters.pop() != Some(ForHeadDelimiter::Brace) {
+                            return has_semicolon;
+                        }
+                    }
+                    TokenKind::Punctuator(Punctuator::Semicolon) if delimiters.len() == 1 => {
+                        has_semicolon = true;
+                    }
+                    TokenKind::Template(part) => match part.kind {
+                        TemplatePartKind::Head => {
+                            if delimiters.len() >= 255 {
+                                return has_semicolon;
+                            }
+                            delimiters.push(ForHeadDelimiter::Template);
+                        }
+                        TemplatePartKind::Middle => {
+                            if delimiters.last() != Some(&ForHeadDelimiter::Template) {
+                                return has_semicolon;
+                            }
+                        }
+                        TemplatePartKind::Tail => {
+                            if delimiters.pop() != Some(ForHeadDelimiter::Template) {
+                                return has_semicolon;
+                            }
+                        }
+                        TemplatePartKind::NoSubstitution => {}
+                    },
+                    TokenKind::Eof => return has_semicolon,
+                    _ => {}
+                }
+                regexp_allowed = for_head_regexp_allowed_after(&token.kind);
             }
-            regexp_allowed = for_head_regexp_allowed_after(&token.kind);
+        })();
+        if let Some(start) = inner_start {
+            // A failed/depth-limited scan has not ruled out a later delimiter.
+            // Only positive hints can replace the unlimited iteration probe.
+            self.lookahead.borrow_mut().iteration_hint =
+                iteration_hint.map(|hint| (start, self.lexer.context(), Some(hint)));
         }
+        has_semicolon
     }
 
     /// QuickJS `is_let(..., DECL_MASK_OTHER)` resolves sloppy `let` before the
@@ -454,13 +504,13 @@ impl<'source> Parser<'source> {
         if identifier.escaped_reserved_word {
             return None;
         }
-        let label_name = self.identifier_text(identifier).into_owned();
         let mut lexer = self.lexer.clone();
         lexer.seek(self.current().span.end);
         let Ok(next) = self.probe_token(&mut lexer, LexicalGoal::Div) else {
             return None;
         };
-        matches!(next.kind, TokenKind::Punctuator(Punctuator::Colon)).then_some(label_name)
+        matches!(next.kind, TokenKind::Punctuator(Punctuator::Colon))
+            .then(|| self.identifier_text(identifier).into_owned())
     }
 
     /// QuickJS gates generator and pseudo-keyword `async function` declarations
@@ -547,8 +597,7 @@ impl<'source> Parser<'source> {
     }
 
     pub(in crate::engine::compiler) fn current(&self) -> &Token<'source> {
-        // Construction and every advance ensure the current token exists.
-        &self.tokens[self.cursor]
+        &self.token
     }
 
     pub(in crate::engine::compiler) fn advance(&mut self) -> Result<(), Error> {
@@ -558,62 +607,39 @@ impl<'source> Parser<'source> {
     /// Advance from a grammar delimiter to the first token of an expression,
     /// selecting RegExp only when the ordinary scanner sees a leading slash.
     pub(in crate::engine::compiler) fn advance_expression_start(&mut self) -> Result<(), Error> {
-        let start = self.current().span.end;
-        if self.tokens.len() > self.cursor + 1 {
-            self.tokens.truncate(self.cursor + 1);
-            self.lexer.seek(start);
-        }
-        let mut probe = self.lexer.clone();
-        probe.seek(start);
-        let next = self
-            .probe_token(&mut probe, LexicalGoal::Div)
-            .map_err(lex_error)?;
-        let goal = if matches!(
-            next.kind,
+        self.advance()?;
+        if matches!(
+            self.current().kind,
             TokenKind::Punctuator(Punctuator::Divide | Punctuator::DivideAssign)
         ) {
-            LexicalGoal::RegExp
-        } else {
-            LexicalGoal::Div
-        };
-        self.advance_with_goal(goal)
+            self.relex_current_with_goal(LexicalGoal::RegExp)?;
+        }
+        Ok(())
     }
 
+    #[inline]
     pub(in crate::engine::compiler) fn advance_with_goal(
         &mut self,
         goal: LexicalGoal,
     ) -> Result<(), Error> {
         if !self.at_eof() {
-            self.cursor += 1;
-            self.ensure_token_with_goal(self.cursor, goal)?;
-            // Probes only seek at or after the current token, so the committed
-            // prefix can never be requested again.
-            self.lookahead_invalidate_before(self.tokens[self.cursor].span.start.byte_offset);
+            let previous_end = self.token.span.end.byte_offset;
+            self.scan_next_token(goal)?;
+            self.previous_end = Some(previous_end);
         }
         Ok(())
     }
 
-    pub(in crate::engine::compiler) fn ensure_token(&mut self, index: usize) -> Result<(), Error> {
-        self.ensure_token_with_goal(index, LexicalGoal::Div)
-    }
-
-    pub(in crate::engine::compiler) fn ensure_token_with_goal(
-        &mut self,
-        index: usize,
-        goal: LexicalGoal,
-    ) -> Result<(), Error> {
-        while self.tokens.len() <= index {
-            let start = self.lexer.current_position().byte_offset;
-            let context = self.lexer.context();
-            let token = match self.take_lookahead(start, goal, context) {
-                Some(token) => {
-                    self.lexer.seek(token.span.end);
-                    token
-                }
-                None => self.lexer.next_token_with_goal(goal).map_err(lex_error)?,
-            };
-            self.tokens.push(token);
+    #[inline]
+    fn scan_next_token(&mut self, goal: LexicalGoal) -> Result<(), Error> {
+        let start = self.lexer.current_position().byte_offset;
+        let context = self.lexer.context();
+        if !self.take_lookahead(start, goal, context) {
+            self.lexer
+                .next_token_into(goal, &mut self.token)
+                .map_err(lex_error)?;
         }
+        self.token_context = (context, goal);
         Ok(())
     }
 
@@ -625,13 +651,15 @@ impl<'source> Parser<'source> {
         &mut self,
         goal: LexicalGoal,
     ) -> Result<(), Error> {
+        if self.token_context == (self.lexer.context(), goal) {
+            return Ok(());
+        }
         let position = self.current().span.start;
         let line_terminator_before = self.current().line_terminator_before;
         self.lookahead_invalidate_from(position.byte_offset);
-        self.tokens.truncate(self.cursor);
         self.lexer.seek(position);
-        self.ensure_token_with_goal(self.cursor, goal)?;
-        self.tokens[self.cursor].line_terminator_before = line_terminator_before;
+        self.scan_next_token(goal)?;
+        self.token.line_terminator_before = line_terminator_before;
         Ok(())
     }
 
@@ -652,14 +680,16 @@ impl<'source> Parser<'source> {
         &mut self,
         context: LexContext,
     ) -> Result<(), Error> {
+        self.lexer.set_context(context);
+        if self.token_context == (context, LexicalGoal::Div) {
+            return Ok(());
+        }
         let position = self.current().span.start;
         let line_terminator_before = self.current().line_terminator_before;
         self.lookahead_invalidate_from(position.byte_offset);
-        self.tokens.truncate(self.cursor);
         self.lexer.seek(position);
-        self.lexer.set_context(context);
-        self.ensure_token(self.cursor)?;
-        self.tokens[self.cursor].line_terminator_before = line_terminator_before;
+        self.scan_next_token(LexicalGoal::Div)?;
+        self.token.line_terminator_before = line_terminator_before;
         Ok(())
     }
 
@@ -669,17 +699,18 @@ impl<'source> Parser<'source> {
     pub(in crate::engine::compiler) fn set_future_lex_context(&mut self, context: LexContext) {
         let position = self.current().span.end;
         self.lookahead_invalidate_from(position.byte_offset);
-        self.tokens.truncate(self.cursor + 1);
         self.lexer.seek(position);
         self.lexer.set_context(context);
     }
 
     pub(in crate::engine::compiler) fn directive_prologue_has_use_strict(
         &self,
-        start: usize,
         inherited_strict: bool,
     ) -> Result<bool, Error> {
-        let position = self.tokens[start].span.start;
+        if !matches!(self.current().kind, TokenKind::String(_)) {
+            return Ok(false);
+        }
+        let position = self.current().span.start;
         let mut lexer = self.lexer.clone();
         lexer.seek(position);
         let mut context = lexer.context();

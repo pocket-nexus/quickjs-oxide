@@ -615,7 +615,7 @@ impl<'source> Parser<'source> {
         }
         self.expect_punctuator(Punctuator::LeftBrace)?;
 
-        let has_use_strict = self.directive_prologue_has_use_strict(self.cursor, parent_strict)?;
+        let has_use_strict = self.directive_prologue_has_use_strict(parent_strict)?;
         let strict = parent_strict || has_use_strict;
         child_context.strict = strict;
         self.relex_current_with_context(child_context)?;
@@ -723,6 +723,7 @@ impl<'source> Parser<'source> {
                 ..SourceOffset::try_from_usize(closing_brace.end.byte_offset)
                     .map_err(|error| Error::internal(error.to_string()))?,
         );
+        self.functions[child].finish_parsing()?;
         self.current_function = parent;
 
         let constant = self.add_constant(IrConstant::Child(child))?;

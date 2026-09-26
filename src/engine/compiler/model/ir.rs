@@ -1,8 +1,8 @@
 //! Linear operations and source sites preserved through resolution and lowering.
 
+use self::operands::{DynamicId, DynamicReferenceId, SpanId};
 use super::scope::ScopeId;
-use crate::engine::code::bytecode::{DynamicEnvironmentSource, Instruction};
-use crate::engine::compiler::lexer::Span;
+use crate::engine::code::bytecode::Instruction;
 use crate::engine::compiler::names::NameId;
 use crate::engine::value::{JsString, PrimitiveValue as Value};
 use crate::source::SourceOffset;
@@ -94,7 +94,7 @@ pub(in crate::engine::compiler) enum IrOp {
     /// module cell and deliberately never becomes an IdentifierReference, so
     /// assignment/update syntax cannot target it.
     ImportMeta {
-        span: Span,
+        span: SpanId,
         scope: ScopeId,
     },
     /// Typed counterparts of QuickJS `OP_enter_scope` / `OP_leave_scope`.
@@ -140,32 +140,23 @@ pub(in crate::engine::compiler) enum IrOp {
     /// One or more QuickJS `with_*`-shaped checks against hidden sloppy-eval
     /// variable objects, followed by the statically resolved outer fallback.
     DynamicIdentifier {
-        name: u32,
         access: IdentifierAccess,
-        sources: Box<[DynamicEnvironmentSource]>,
-        fallback: Box<IrOp>,
+        operand: DynamicId,
     },
-    /// Resolved identifier Reference. `sources` are selected once before the
-    /// RHS/call; `late_sources` are consulted only when no authored `with`
-    /// made QuickJS enter Reference mode (notably an imported eval `<with>`).
+    /// Resolved Reference data is cold and stored once in the function table.
     DynamicIdentifierReference {
-        name: u32,
         access: IdentifierReferenceAccess,
-        sources: Box<[DynamicEnvironmentSource]>,
-        late_sources: Box<[DynamicEnvironmentSource]>,
-        fallback: Box<IrOp>,
-        syntactic_with: bool,
-        fallback_readonly: bool,
+        operand: DynamicReferenceId,
     },
     Identifier {
         name: NameId,
-        span: Span,
+        span: SpanId,
         scope: ScopeId,
         access: IdentifierAccess,
     },
     IdentifierReference {
         name: NameId,
-        span: Span,
+        span: SpanId,
         scope: ScopeId,
         access: IdentifierReferenceAccess,
     },
@@ -175,7 +166,7 @@ pub(in crate::engine::compiler) enum IrOp {
     /// represented by a normal Identifier operation or public stack Value.
     PrivateField {
         name: NameId,
-        span: Span,
+        span: SpanId,
         scope: ScopeId,
         access: PrivateFieldAccess,
     },
@@ -253,3 +244,4 @@ impl IrOp {
 }
 
 pub(in crate::engine::compiler) mod function;
+pub(in crate::engine::compiler) mod operands;

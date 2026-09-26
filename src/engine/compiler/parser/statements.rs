@@ -844,8 +844,9 @@ impl<'source> Parser<'source> {
                     false,
                 )?;
 
+                let initializer_span = self.current().span;
                 let initializer_site = if self.consume_punctuator(Punctuator::Equal)? {
-                    let site = source_offset(self.tokens[self.cursor - 1].span)?;
+                    let site = source_offset(initializer_span)?;
                     self.parse_assignment()?;
                     if let Some(definition) = self.take_anonymous_function_definition() {
                         let name_constant = self.add_constant(IrConstant::Primitive(
@@ -928,11 +929,16 @@ impl<'source> Parser<'source> {
                     let initializer_scope = self.current_ir().context.current_scope;
                     let object_environment = self
                         .parser_scope_has_authored_with(self.current_function, initializer_scope)?;
+                    let reference_span = if object_environment {
+                        Some(self.current_ir_mut().operands.add_span(token.span)?)
+                    } else {
+                        None
+                    };
                     if object_environment {
                         self.emit_at(
                             IrOp::IdentifierReference {
                                 name,
-                                span: token.span,
+                                span: reference_span.expect("object environment span"),
                                 scope: initializer_scope,
                                 access: IdentifierReferenceAccess::Prepare,
                             },
@@ -957,7 +963,7 @@ impl<'source> Parser<'source> {
                         self.emit_at(
                             IrOp::IdentifierReference {
                                 name,
-                                span: token.span,
+                                span: reference_span.expect("object environment span"),
                                 scope: initializer_scope,
                                 access: IdentifierReferenceAccess::Set,
                             },

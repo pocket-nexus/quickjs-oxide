@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from compile_matrix import admit, classify, engine_command, load_corpus, summarize
+from compile_matrix import admit, classify, complete_geomeans, engine_command, load_corpus, summarize
 from compile_workloads import generate
 from run import digest
 
@@ -30,6 +30,18 @@ class CompileMatrixTests(unittest.TestCase):
             classify("qjs 2026-06-04\n")
         with self.assertRaises(ValueError):
             classify("oxide-compile-alloc-probe 1\n")
+
+    def test_parser_probe_versions_have_a_distinct_boundary(self):
+        self.assertEqual(classify("oxide-parse-probe 1"), "oxide-parser")
+        self.assertEqual(classify("boa-parse-probe 1 (boa_parser 0.22.0, annex-b)"), "boa-parser")
+        self.assertEqual(engine_command("boa-parser", Path("/probe"), "parse", Path("/a.js")),
+                         ["/probe", "/a.js"])
+
+    def test_geomean_requires_the_complete_fixed_corpus(self):
+        workloads = [{"case": "a"}, {"case": "b"}]
+        ratios = [dict(case=case, engine="new", ratio=ratio) for case, ratio in [("a", 2), ("b", 8)]]
+        self.assertAlmostEqual(complete_geomeans(ratios, ["boa", "new"], workloads)[0]["ratio"], 4)
+        self.assertEqual(complete_geomeans(ratios[:1], ["boa", "new"], workloads), [])
 
     def test_node_commands_use_eager_and_parse_only_flags(self):
         compile_command = engine_command("node", Path("/usr/bin/node"), "compile", Path("/tmp/a.js"))

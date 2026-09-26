@@ -1626,7 +1626,14 @@ mod tests {
             else {
                 panic!("expected private identity owner")
             };
-            names.push(*atom_index);
+            // AtomIdx is a reusable table slot, not a generation-bearing
+            // identity. Keep both names alive across frame destruction so
+            // this compares distinct private identities, not freed slots.
+            let atom = runtime.0.state.borrow().atoms.brand(*atom_index).unwrap();
+            names.push(
+                crate::engine::object::PrivateNameRef::from_borrowed_atom(runtime.clone(), atom)
+                    .unwrap(),
+            );
             assert_eq!(frame.resume_pc, pc + 1);
             drop(execution);
             assert!(runtime.0.state.borrow().active_frames.is_empty());

@@ -17,7 +17,6 @@ use crate::engine::compiler::model::ir::SpannedIrOp;
 use crate::engine::compiler::parser::builder::FunctionBuilder;
 use crate::engine::compiler::parser::context::Parser;
 use crate::engine::compiler::parser::diagnostics::source_offset;
-use crate::engine::value::JsString;
 use crate::engine::value::PrimitiveValue as Value;
 
 /// One nullish edge in a parser-owned optional chain.
@@ -103,14 +102,13 @@ impl<'source> Parser<'source> {
                 self.anonymous_function_definition = None;
                 return Ok(());
             }
-            TokenKind::Identifier(identifier) => self.identifier_text(&identifier).into_owned(),
-            TokenKind::Keyword(keyword) => keyword.as_str().to_owned(),
+            TokenKind::Identifier(identifier) => self.intern_identifier(&identifier),
+            TokenKind::Keyword(keyword) => self.intern_name(keyword.as_str()),
             _ => return Err(self.syntax_here("expecting field name")),
         };
         self.advance()?;
-        let key = self.add_constant(IrConstant::Primitive(Value::String(
-            JsString::try_from_utf8(&name)?,
-        )))?;
+        let value = self.names.js_string(name)?;
+        let key = self.add_constant(IrConstant::Primitive(Value::String(value)))?;
         let operation =
             self.emit_instruction_at(Instruction::GetField(key), source_offset(member_span)?)?;
         self.current_ir_mut().context.last_member_reference = Some(operation);

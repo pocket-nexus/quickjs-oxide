@@ -348,9 +348,13 @@ mod tests {
         )
         .unwrap();
         let mut parser = Parser {
+            token_context: (
+                lexer.context(),
+                crate::engine::compiler::lexer::LexicalGoal::Div,
+            ),
             lexer,
-            tokens: vec![first_token],
-            cursor: 0,
+            token: first_token,
+            previous_end: None,
             current_function: 0,
             in_mode: InMode::Allow,
             functions: vec![root],

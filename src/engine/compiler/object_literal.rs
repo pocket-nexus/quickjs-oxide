@@ -97,7 +97,7 @@ impl<'source> Parser<'source> {
                 let mut method_prefix = None;
                 let key = match token.kind {
                     TokenKind::Identifier(identifier) => {
-                        let name = self.identifier_text(&identifier).into_owned();
+                        let name = self.intern_identifier(&identifier);
                         // IdentifierName accepts escaped reserved words as a
                         // property key, but QuickJS does not reinterpret that
                         // key as an IdentifierReference shorthand.
@@ -105,12 +105,12 @@ impl<'source> Parser<'source> {
                             shorthand = Some(identifier);
                         }
                         if !identifier.has_escape
-                            && matches!(name.as_str(), "get" | "set" | "async")
+                            && matches!(identifier.raw, "get" | "set" | "async")
                         {
-                            method_prefix = Some(name.clone());
+                            method_prefix = Some(identifier.raw);
                         }
                         self.advance()?;
-                        JsString::try_from_utf8(&name)?
+                        self.names.js_string(name)?
                     }
                     TokenKind::Keyword(keyword) => {
                         self.advance()?;
@@ -158,11 +158,11 @@ impl<'source> Parser<'source> {
                         | TokenKind::PrivateIdentifier(_)
                         | TokenKind::Punctuator(Punctuator::LeftBracket)
                 );
-                let async_prefix_has_line_terminator = method_prefix.as_deref() == Some("async")
+                let async_prefix_has_line_terminator = method_prefix == Some("async")
                     && quickjs_simple_lookahead_has_line_terminator(
                         &self.lexer.source()[token.span.end.byte_offset..],
                     );
-                let is_method_prefix = method_prefix.as_deref().is_some_and(|prefix| {
+                let is_method_prefix = method_prefix.is_some_and(|prefix| {
                     (next_starts_property_name
                         || (prefix == "async" && self.is_punctuator(Punctuator::Multiply)))
                         && (prefix != "async" || !async_prefix_has_line_terminator)
@@ -179,7 +179,6 @@ impl<'source> Parser<'source> {
                     self.anonymous_function_definition = None;
                 } else if is_method_prefix {
                     let method_prefix = method_prefix
-                        .as_deref()
                         .ok_or_else(|| Error::internal("object method prefix disappeared"))?;
                     let async_generator = method_prefix == "async"
                         && self.consume_punctuator(Punctuator::Multiply)?;
@@ -293,7 +292,7 @@ impl<'source> Parser<'source> {
         let key = match token.kind {
             TokenKind::Identifier(identifier) => {
                 self.advance()?;
-                JsString::try_from_utf8(&self.identifier_text(&identifier))?
+                self.intern_identifier_string(&identifier)?
             }
             TokenKind::Keyword(keyword) => {
                 self.advance()?;

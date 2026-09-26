@@ -56,7 +56,8 @@ enum ObjectBindingPropertyKey<'source> {
     },
 }
 
-struct BindingPatternScan<'source> {
+#[derive(Clone, Copy)]
+pub(super) struct BindingPatternScan<'source> {
     following: Token<'source>,
     has_object_rest: bool,
     has_assignment: bool,
@@ -68,19 +69,20 @@ pub(super) struct ParenthesizedParameterScan {
     pub(super) bound_name_count: Option<usize>,
 }
 
-struct FormalParameterBoundNameCounter<'tokens, 'source> {
-    tokens: &'tokens [Token<'source>],
-    cursor: usize,
+struct FormalParameterBoundNameCounter<I: Iterator> {
+    tokens: std::iter::Peekable<I>,
 }
 
-impl<'tokens, 'source> FormalParameterBoundNameCounter<'tokens, 'source> {
-    fn new(tokens: &'tokens [Token<'source>]) -> Self {
-        Self { tokens, cursor: 0 }
+impl<'source, I: Iterator<Item = Result<Token<'source>, ()>>> FormalParameterBoundNameCounter<I> {
+    fn new(tokens: I) -> Self {
+        Self {
+            tokens: tokens.peekable(),
+        }
     }
 
     fn count(mut self) -> Option<usize> {
         let mut count = 0usize;
-        while self.cursor < self.tokens.len() {
+        while self.tokens.peek().is_some() {
             let is_rest = self.consume_punctuator(Punctuator::Ellipsis);
             count = count.checked_add(self.count_binding_target()?)?;
             if self.consume_punctuator(Punctuator::Equal) {
@@ -89,23 +91,23 @@ impl<'tokens, 'source> FormalParameterBoundNameCounter<'tokens, 'source> {
                 }
                 self.skip_expression_until(Punctuator::RightParen)?;
             }
-            if self.cursor == self.tokens.len() {
+            if self.tokens.peek().is_none() {
                 break;
             }
             if !self.consume_punctuator(Punctuator::Comma) {
                 return None;
             }
-            if is_rest || self.cursor == self.tokens.len() {
+            if is_rest || self.tokens.peek().is_none() {
                 break;
             }
         }
-        (self.cursor == self.tokens.len()).then_some(count)
+        (self.tokens.peek().is_none()).then_some(count)
     }
 
     fn count_binding_target(&mut self) -> Option<usize> {
         match self.current_kind()? {
             TokenKind::Identifier(_) => {
-                self.cursor += 1;
+                self.tokens.next();
                 Some(1)
             }
             TokenKind::Punctuator(Punctuator::LeftBracket) => self.count_array_pattern(),
@@ -153,11 +155,11 @@ impl<'tokens, 'source> FormalParameterBoundNameCounter<'tokens, 'source> {
 
             let shorthand = match self.current_kind()? {
                 TokenKind::Identifier(_) => {
-                    self.cursor += 1;
+                    self.tokens.next();
                     true
                 }
                 TokenKind::Keyword(_) | TokenKind::String(_) | TokenKind::Number(_) => {
-                    self.cursor += 1;
+                    self.tokens.next();
                     false
                 }
                 TokenKind::Punctuator(Punctuator::LeftBracket) => {
@@ -200,7 +202,7 @@ impl<'tokens, 'source> FormalParameterBoundNameCounter<'tokens, 'source> {
                 return Some(());
             }
             Self::update_delimiters(kind, &mut delimiters)?;
-            self.cursor += 1;
+            self.tokens.next();
         }
         (closing == Punctuator::RightParen && delimiters.is_empty()).then_some(())
     }
@@ -215,7 +217,7 @@ impl<'tokens, 'source> FormalParameterBoundNameCounter<'tokens, 'source> {
         let mut delimiters = Vec::new();
         while let Some(kind) = self.current_kind() {
             Self::update_delimiters(kind, &mut delimiters)?;
-            self.cursor += 1;
+            self.tokens.next();
             if delimiters.is_empty() {
                 return Some(());
             }
@@ -263,14 +265,14 @@ impl<'tokens, 'source> FormalParameterBoundNameCounter<'tokens, 'source> {
         Some(())
     }
 
-    fn current_kind(&self) -> Option<&TokenKind<'source>> {
-        self.tokens.get(self.cursor).map(|token| &token.kind)
+    fn current_kind(&mut self) -> Option<&TokenKind<'source>> {
+        self.tokens.peek()?.as_ref().ok().map(|token| &token.kind)
     }
 
     fn consume_punctuator(&mut self, punctuator: Punctuator) -> bool {
         if matches!(self.current_kind(), Some(TokenKind::Punctuator(current)) if *current == punctuator)
         {
-            self.cursor += 1;
+            self.tokens.next();
             true
         } else {
             false
@@ -547,13 +549,17 @@ impl<'source> Parser<'source> {
     }
 
     pub(super) fn array_assignment_pattern_ahead(&self) -> bool {
-        self.array_binding_following_token()
-            .is_some_and(|token| matches!(token.kind, TokenKind::Punctuator(Punctuator::Equal)))
+        self.is_punctuator(Punctuator::LeftBracket)
+            && self
+                .array_binding_following_token()
+                .is_some_and(|token| matches!(token.kind, TokenKind::Punctuator(Punctuator::Equal)))
     }
 
     pub(super) fn object_assignment_pattern_ahead(&self) -> bool {
-        self.object_binding_following_token()
-            .is_some_and(|token| matches!(token.kind, TokenKind::Punctuator(Punctuator::Equal)))
+        self.is_punctuator(Punctuator::LeftBrace)
+            && self
+                .object_binding_following_token()
+                .is_some_and(|token| matches!(token.kind, TokenKind::Punctuator(Punctuator::Equal)))
     }
 
     pub(super) fn for_array_assignment_pattern_ahead(
@@ -614,6 +620,19 @@ impl<'source> Parser<'source> {
     }
 
     pub(super) fn parenthesized_parameter_scan(&self) -> Option<ParenthesizedParameterScan> {
+        let start = self.current().span.start.byte_offset;
+        let context = self.lexer.context();
+        if let Some((offset, lex_context, result)) = self.lookahead.borrow().parameter_scan
+            && (offset, lex_context) == (start, context)
+        {
+            return result;
+        }
+        let result = self.scan_parenthesized_parameters();
+        self.lookahead.borrow_mut().parameter_scan = Some((start, context, result));
+        result
+    }
+
+    fn scan_parenthesized_parameters(&self) -> Option<ParenthesizedParameterScan> {
         let mut assignment_seen = false;
         let scan = self
             .binding_pattern_scan_recording_assignment(Punctuator::LeftParen, &mut assignment_seen);
@@ -628,14 +647,16 @@ impl<'source> Parser<'source> {
         let bound_name_count = has_assignment
             .then(|| self.parenthesized_parameter_tokens())
             .flatten()
-            .and_then(|tokens| FormalParameterBoundNameCounter::new(&tokens).count());
+            .and_then(|tokens| FormalParameterBoundNameCounter::new(tokens).count());
         Some(ParenthesizedParameterScan {
             has_assignment,
             bound_name_count,
         })
     }
 
-    fn parenthesized_parameter_tokens(&self) -> Option<Vec<Token<'source>>> {
+    fn parenthesized_parameter_tokens(
+        &self,
+    ) -> Option<impl Iterator<Item = Result<Token<'source>, ()>> + '_> {
         if !self.is_punctuator(Punctuator::LeftParen) {
             return None;
         }
@@ -648,83 +669,104 @@ impl<'source> Parser<'source> {
             return None;
         }
 
-        let mut tokens = Vec::new();
         let mut delimiters = vec![ForHeadDelimiter::Parenthesis];
         let mut goal = LexicalGoal::Div;
         let mut regexp_allowed = true;
-        loop {
-            let requested_goal = goal;
-            goal = LexicalGoal::Div;
-            let mut token = self.probe_token(&mut lexer, requested_goal).ok()?;
-            if requested_goal == LexicalGoal::Div
-                && regexp_allowed
-                && matches!(
-                    token.kind,
-                    TokenKind::Punctuator(Punctuator::Divide | Punctuator::DivideAssign)
-                )
-            {
-                lexer.seek(token.span.start);
-                token = self.probe_token(&mut lexer, LexicalGoal::RegExp).ok()?;
+        let mut finished = false;
+        Some(std::iter::from_fn(move || {
+            if finished {
+                return None;
             }
+            let result = (|| -> Result<Option<Token<'source>>, ()> {
+                let requested_goal = goal;
+                goal = LexicalGoal::Div;
+                let mut token = self
+                    .probe_token(&mut lexer, requested_goal)
+                    .map_err(|_| ())?;
+                if requested_goal == LexicalGoal::Div
+                    && regexp_allowed
+                    && matches!(
+                        token.kind,
+                        TokenKind::Punctuator(Punctuator::Divide | Punctuator::DivideAssign)
+                    )
+                {
+                    lexer.seek(token.span.start);
+                    token = self
+                        .probe_token(&mut lexer, LexicalGoal::RegExp)
+                        .map_err(|_| ())?;
+                }
 
-            let root_close = matches!(token.kind, TokenKind::Punctuator(Punctuator::RightParen))
-                && delimiters.as_slice() == [ForHeadDelimiter::Parenthesis];
-            if root_close {
-                return Some(tokens);
-            }
-            tokens.push(token);
+                let root_close =
+                    matches!(token.kind, TokenKind::Punctuator(Punctuator::RightParen))
+                        && delimiters.as_slice() == [ForHeadDelimiter::Parenthesis];
+                if root_close {
+                    return Ok(None);
+                }
 
-            match &token.kind {
-                TokenKind::Punctuator(Punctuator::LeftParen) => {
-                    delimiters.push(ForHeadDelimiter::Parenthesis);
-                }
-                TokenKind::Punctuator(Punctuator::LeftBracket) => {
-                    delimiters.push(ForHeadDelimiter::Bracket);
-                }
-                TokenKind::Punctuator(Punctuator::LeftBrace) => {
-                    delimiters.push(ForHeadDelimiter::Brace);
-                }
-                TokenKind::Punctuator(Punctuator::RightParen) => {
-                    if delimiters.pop() != Some(ForHeadDelimiter::Parenthesis) {
-                        return None;
+                match &token.kind {
+                    TokenKind::Punctuator(Punctuator::LeftParen) => {
+                        delimiters.push(ForHeadDelimiter::Parenthesis);
                     }
-                }
-                TokenKind::Punctuator(Punctuator::RightBracket) => {
-                    if delimiters.pop() != Some(ForHeadDelimiter::Bracket) {
-                        return None;
+                    TokenKind::Punctuator(Punctuator::LeftBracket) => {
+                        delimiters.push(ForHeadDelimiter::Bracket);
                     }
-                }
-                TokenKind::Punctuator(Punctuator::RightBrace) => {
-                    if delimiters.last() == Some(&ForHeadDelimiter::Template) {
-                        goal = LexicalGoal::TemplateContinuation;
-                        regexp_allowed = true;
-                        continue;
+                    TokenKind::Punctuator(Punctuator::LeftBrace) => {
+                        delimiters.push(ForHeadDelimiter::Brace);
                     }
-                    if delimiters.pop() != Some(ForHeadDelimiter::Brace) {
-                        return None;
-                    }
-                }
-                TokenKind::Template(part) => match part.kind {
-                    TemplatePartKind::Head => {
-                        delimiters.push(ForHeadDelimiter::Template);
-                    }
-                    TemplatePartKind::Middle => {
-                        if delimiters.last() != Some(&ForHeadDelimiter::Template) {
-                            return None;
+                    TokenKind::Punctuator(Punctuator::RightParen) => {
+                        if delimiters.pop() != Some(ForHeadDelimiter::Parenthesis) {
+                            return Err(());
                         }
                     }
-                    TemplatePartKind::Tail => {
-                        if delimiters.pop() != Some(ForHeadDelimiter::Template) {
-                            return None;
+                    TokenKind::Punctuator(Punctuator::RightBracket) => {
+                        if delimiters.pop() != Some(ForHeadDelimiter::Bracket) {
+                            return Err(());
                         }
                     }
-                    TemplatePartKind::NoSubstitution => {}
-                },
-                TokenKind::Eof => return None,
-                _ => {}
+                    TokenKind::Punctuator(Punctuator::RightBrace) => {
+                        if delimiters.last() == Some(&ForHeadDelimiter::Template) {
+                            goal = LexicalGoal::TemplateContinuation;
+                            regexp_allowed = true;
+                            return Ok(Some(token));
+                        }
+                        if delimiters.pop() != Some(ForHeadDelimiter::Brace) {
+                            return Err(());
+                        }
+                    }
+                    TokenKind::Template(part) => match part.kind {
+                        TemplatePartKind::Head => {
+                            delimiters.push(ForHeadDelimiter::Template);
+                        }
+                        TemplatePartKind::Middle => {
+                            if delimiters.last() != Some(&ForHeadDelimiter::Template) {
+                                return Err(());
+                            }
+                        }
+                        TemplatePartKind::Tail => {
+                            if delimiters.pop() != Some(ForHeadDelimiter::Template) {
+                                return Err(());
+                            }
+                        }
+                        TemplatePartKind::NoSubstitution => {}
+                    },
+                    TokenKind::Eof => return Err(()),
+                    _ => {}
+                }
+                regexp_allowed = for_head_regexp_allowed_after(&token.kind);
+                Ok(Some(token))
+            })();
+            match result {
+                Ok(Some(token)) => Some(Ok(token)),
+                Ok(None) => {
+                    finished = true;
+                    None
+                }
+                Err(()) => {
+                    finished = true;
+                    Some(Err(()))
+                }
             }
-            regexp_allowed = for_head_regexp_allowed_after(&token.kind);
-        }
+        }))
     }
 
     fn binding_pattern_following_token(&self, opening: Punctuator) -> Option<Token<'source>> {
@@ -738,6 +780,36 @@ impl<'source> Parser<'source> {
     }
 
     fn binding_pattern_scan_recording_assignment(
+        &self,
+        opening: Punctuator,
+        assignment_seen: &mut bool,
+    ) -> Option<BindingPatternScan<'source>> {
+        use crate::engine::compiler::parser::lookahead::BindingScanMemo;
+        if !self.is_punctuator(opening) {
+            return None;
+        }
+        let start = self.current().span.start.byte_offset;
+        let context = self.lexer.context();
+        if let Some(memo) = self.lookahead.borrow().binding_scan
+            && (memo.start, memo.context, memo.opening) == (start, context, opening)
+        {
+            *assignment_seen |= memo.assignment_seen;
+            return memo.scan;
+        }
+        let mut seen = false;
+        let scan = self.scan_binding_pattern(opening, &mut seen);
+        self.lookahead.borrow_mut().binding_scan = Some(BindingScanMemo {
+            start,
+            context,
+            opening,
+            scan,
+            assignment_seen: seen,
+        });
+        *assignment_seen |= seen;
+        scan
+    }
+
+    fn scan_binding_pattern(
         &self,
         opening: Punctuator,
         assignment_seen: &mut bool,

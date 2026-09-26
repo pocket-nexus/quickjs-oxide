@@ -23,6 +23,9 @@ pub(super) fn sample_ir_storage<'a>(
     for function in functions {
         for size in [
             arena_bytes(&function.ops),
+            arena_bytes(&function.operands.spans),
+            arena_bytes(&function.operands.dynamic),
+            arena_bytes(&function.operands.references),
             arena_bytes(&function.constants),
             arena_bytes(&function.bindings),
             arena_bytes(&function.scopes),

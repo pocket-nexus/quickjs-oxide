@@ -22,7 +22,8 @@ class OracleRegistryTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='qjo-oracle-registry-')
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        # Match the production ROOT's canonical form, including macOS /var.
+        self.root = Path(self.temp.name).resolve()
         self.oracle = self.root / 'apps/cli/tests/oracle'
         self.oracle.mkdir(parents=True)
         self.write('main.rs', 'mod ordinary;\n' + ''.join(

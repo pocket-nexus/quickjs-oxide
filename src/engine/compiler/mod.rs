@@ -13,6 +13,8 @@
 
 pub mod lexer;
 mod options;
+#[cfg(feature = "test-support")]
+pub mod testing;
 pub use options::{CompileOptions, DEFAULT_EVAL_FILENAME, EvalCompileContext};
 mod model;
 mod names;

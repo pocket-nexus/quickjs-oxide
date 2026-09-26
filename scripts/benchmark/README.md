@@ -337,3 +337,17 @@ alloc/realloc/dealloc calls and bytes around the same compile window; its
 `--version` deliberately matches no matrix magic, so `compile_matrix.py` rejects
 it. Baseline numbers and reproduction commands live in
 `docs/compile-benchmark.md` §9.
+
+
+## Complete lexer/parser comparison
+
+`build_frontend_probes.py --engine oxide|boa --output NEW_DIR` builds the complete
+production parser probes, including parser/interner initialization but excluding
+source I/O and result destruction. Both use release fat LTO with one codegen
+unit. Boa 0.22.0's dependency graph is frozen in `probes/boa_parse_probe.lock`.
+These parser-only probes cannot be mixed with the older parse+scope/compile
+probes. `prepare_frontend_corpus.py` freezes the eight pinned V8 Script bundles;
+`compile_matrix.py --metric parse` reports a geometric mean only when the entire
+selected corpus succeeds. Explicit subsets remain diagnostic runs, not the
+fixed primary target. See [the parser report](../../docs/performance/lexer-parser.md)
+for exact boundaries and reproduction commands.

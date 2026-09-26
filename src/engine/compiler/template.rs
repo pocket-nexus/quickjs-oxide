@@ -38,8 +38,16 @@ impl<'source> Parser<'source> {
                 ));
             };
             let kind = part.kind;
-            let invalid_span = part.invalid_escape.map(|error| error.span);
             let Some(cooked) = self.decode_template_cooked(&part, token.span)? else {
+                let initial = matches!(
+                    kind,
+                    TemplatePartKind::Head | TemplatePartKind::NoSubstitution
+                );
+                let invalid_span = self
+                    .lexer
+                    .template_escape_error(token.span.start, initial)
+                    .map_err(crate::engine::compiler::parser::diagnostics::lex_error)?
+                    .map(|error| error.span);
                 return Err(Error::syntax(
                     "malformed escape sequence in string literal",
                     source_span(invalid_span.unwrap_or(token.span)),

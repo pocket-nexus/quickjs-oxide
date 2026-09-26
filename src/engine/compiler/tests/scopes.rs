@@ -41,7 +41,7 @@ fn scope_name_lookup_selects_the_last_duplicate_parameter() {
     let function = &tree.functions[1];
     let scope = &function.scopes[function.var_scope.0];
     let binding = scope
-        .binding_named(tree.names.lookup("value").unwrap())
+        .binding_named(tree.names.lookup("value").unwrap(), &function.bindings)
         .unwrap();
     assert_eq!(
         function.bindings[binding.0].storage,
@@ -50,7 +50,7 @@ fn scope_name_lookup_selects_the_last_duplicate_parameter() {
     assert!(
         tree.names
             .lookup("missing")
-            .is_none_or(|id| scope.binding_named(id).is_none())
+            .is_none_or(|id| scope.binding_named(id, &function.bindings).is_none())
     );
 }
 
@@ -460,4 +460,20 @@ fn scope_graph_validation_rejects_invalid_definition_and_binding_identity() {
             .message(),
         "lexical scope parent is malformed"
     );
+}
+
+#[test]
+fn scope_lookup_keeps_declaration_order_across_small_scope_index_promotion() {
+    for unique in [0, 7, 8, 12] {
+        let mut parameters = vec!["value".to_owned()];
+        parameters.extend((0..unique).map(|n| format!("arg{n}")));
+        parameters.push("value".to_owned());
+        let source = format!("(function({}) {{ return value; }})", parameters.join(","));
+        let tree = Parser::parse(&source, JsString::from_static("<scope-index>")).unwrap();
+        let function = &tree.functions[1];
+        let binding = function
+            .binding_in_scope(function.var_scope, tree.names.lookup("value").unwrap())
+            .unwrap();
+        assert_eq!(binding.storage, BindingStorage::Argument(unique + 1));
+    }
 }

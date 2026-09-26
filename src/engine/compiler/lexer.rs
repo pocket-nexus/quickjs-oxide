@@ -367,6 +367,11 @@ impl JsString {
 trait StringSink {
     fn push_code_unit(&mut self, unit: u16) -> Result<(), JsStringError>;
 
+    /// On overflow, return the number of source bytes through the first unit
+    /// exceeding the limit. The lexer must report that precise cursor, even
+    /// when a later byte would produce another lexical error.
+    fn push_ascii(&mut self, bytes: &[u8]) -> Result<(), usize>;
+
     fn push_char(&mut self, ch: char) -> Result<(), JsStringError> {
         self.push_code_point(ch as u32)
     }
@@ -401,6 +406,15 @@ impl Utf16Sink {
 }
 
 impl StringSink for Utf16Sink {
+    fn push_ascii(&mut self, bytes: &[u8]) -> Result<(), usize> {
+        let remaining = self.limit.saturating_sub(self.units.len());
+        if bytes.len() > remaining {
+            return Err(remaining + 1);
+        }
+        self.units.extend(bytes.iter().copied().map(u16::from));
+        Ok(())
+    }
+
     fn push_code_unit(&mut self, unit: u16) -> Result<(), JsStringError> {
         RuntimeJsString::checked_length_with_limit(self.units.len(), 1, self.limit)?;
         self.units.push(unit);
@@ -422,6 +436,15 @@ impl ValidateSink {
 }
 
 impl StringSink for ValidateSink {
+    fn push_ascii(&mut self, bytes: &[u8]) -> Result<(), usize> {
+        let remaining = self.limit.saturating_sub(self.len);
+        if bytes.len() > remaining {
+            return Err(remaining + 1);
+        }
+        self.len += bytes.len();
+        Ok(())
+    }
+
     fn push_code_unit(&mut self, _unit: u16) -> Result<(), JsStringError> {
         RuntimeJsString::checked_length_with_limit(self.len, 1, self.limit)?;
         self.len += 1;
@@ -454,16 +477,15 @@ pub struct TemplateEscapeError {
 pub struct TemplatePart<'a> {
     /// Source between delimiters, before escape processing.
     pub raw: &'a str,
-    /// A malformed escape keeps tagged templates observing an undefined
-    /// cooked text while untagged templates reject it; the cooked value is
-    /// re-derived from the source on demand.
-    pub invalid_escape: Option<TemplateEscapeError>,
+    /// Tagged templates observe undefined cooked text. Only an untagged error
+    /// path materializes the full diagnostic using `template_escape_error`;
+    /// carrying its span and message here would widen every ordinary token.
+    pub invalid_escape: bool,
     pub kind: TemplatePartKind,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RegExpLiteral<'a> {
-    pub raw: &'a str,
     pub pattern: &'a str,
     pub flags: &'a str,
 }
@@ -652,20 +674,48 @@ impl<'a> Lexer<'a> {
     }
 
     pub fn next_token_with_goal(&mut self, goal: LexicalGoal) -> Result<Token<'a>, LexError> {
+        let position = self.current_position();
+        let mut token = Token {
+            kind: TokenKind::Eof,
+            span: Span::new(position, position),
+            line_terminator_before: false,
+        };
+        self.next_token_into(goal, &mut token)?;
+        Ok(token)
+    }
+
+    /// Fill the committed parser token directly. Keeping the output separate
+    /// from Result avoids returning and copying the wide token through each
+    /// parser advancement layer. Errors leave the previous token untouched.
+    pub fn next_token_into(
+        &mut self,
+        goal: LexicalGoal,
+        token: &mut Token<'a>,
+    ) -> Result<(), LexError> {
         if goal == LexicalGoal::TemplateContinuation {
-            return self.scan_template(false, false);
+            *token = self.scan_template(false, false)?;
+            return Ok(());
         }
 
-        let line_terminator_before = self.skip_trivia()?;
+        // Most tokens in minified input have no leading trivia. Only enter
+        // the trivia loop for bytes that can actually start it (including
+        // Annex B HTML comments and the offset-zero hashbang).
+        let line_terminator_before = match self.source.as_bytes().get(self.offset) {
+            Some(&byte) if byte >= 0x80 || ASCII_FLAGS[byte as usize] & MAY_START_TRIVIA != 0 => {
+                self.skip_trivia()?
+            }
+            _ => false,
+        };
         let start = self.current_position();
 
         if self.offset == self.source.len() {
             self.eof_emitted = true;
-            return Ok(Token {
+            *token = Token {
                 kind: TokenKind::Eof,
                 span: Span::new(start, start),
                 line_terminator_before,
-            });
+            };
+            return Ok(());
         }
 
         if self.invalid_source_byte_at(self.offset) {
@@ -674,7 +724,8 @@ impl<'a> Lexer<'a> {
 
         if goal == LexicalGoal::RegExp {
             if self.peek_char() == Some('/') {
-                return self.scan_regexp(start, line_terminator_before);
+                *token = self.scan_regexp(start, line_terminator_before)?;
+                return Ok(());
             }
             return Err(self.error_here(
                 LexErrorKind::ExpectedRegExp,
@@ -682,31 +733,51 @@ impl<'a> Lexer<'a> {
             ));
         }
 
-        let ch = self.peek_char().expect("checked non-empty source");
-        let kind = match ch {
-            '\'' | '"' => self.scan_string()?,
-            c if c == TEMPLATE_QUOTE => {
-                return self.scan_template(true, line_terminator_before);
+        let byte = self.source.as_bytes()[self.offset];
+        let dispatch = ASCII_DISPATCH
+            .get(byte as usize)
+            .copied()
+            .unwrap_or(ScanKind::Slow);
+        let kind = match dispatch {
+            ScanKind::Single(punctuator) => {
+                self.offset += 1;
+                self.column = self.column.saturating_add(1);
+                TokenKind::Punctuator(punctuator)
             }
-            '0'..='9' => self.scan_number(false)?,
-            '.' if self
-                .source
-                .as_bytes()
-                .get(self.offset + 1)
-                .is_some_and(u8::is_ascii_digit) =>
+            ScanKind::Identifier => self.scan_identifier(false)?,
+            ScanKind::Number => self.scan_number(false)?,
+            ScanKind::String => self.scan_string()?,
+            ScanKind::Template => {
+                *token = self.scan_template(true, line_terminator_before)?;
+                return Ok(());
+            }
+            ScanKind::Dot
+                if self
+                    .source
+                    .as_bytes()
+                    .get(self.offset + 1)
+                    .is_some_and(u8::is_ascii_digit) =>
             {
                 self.scan_number(true)?
             }
-            c if is_identifier_start(c) || c == '\\' => self.scan_identifier(false)?,
-            '#' => self.scan_identifier(true)?,
-            _ => self.scan_punctuator()?,
+            ScanKind::Private => self.scan_identifier(true)?,
+            ScanKind::Slow => {
+                let ch = self.peek_char().expect("checked non-empty source");
+                if is_identifier_start(ch) || ch == '\\' {
+                    self.scan_identifier(false)?
+                } else {
+                    self.scan_punctuator()?
+                }
+            }
+            ScanKind::Dot | ScanKind::Punctuator => self.scan_punctuator()?,
         };
 
-        Ok(Token {
+        *token = Token {
             kind,
             span: Span::new(start, self.current_position()),
             line_terminator_before,
-        })
+        };
+        Ok(())
     }
 
     fn peek_char(&self) -> Option<char> {
@@ -1011,6 +1082,60 @@ impl<'a> Lexer<'a> {
     }
 
     fn scan_identifier(&mut self, private: bool) -> Result<TokenKind<'a>, LexError> {
+        let raw_start = self.offset;
+        let value_start = raw_start + usize::from(private);
+        let bytes = self.source.as_bytes();
+        if bytes
+            .get(value_start)
+            .is_some_and(|byte| *byte < 0x80 && is_ascii_identifier_start_byte(*byte))
+        {
+            let mut end = value_start;
+            let mut flags = 0;
+            while let Some(&byte) = bytes.get(end) {
+                if byte >= 0x80 || !is_ascii_identifier_continue_byte(byte) {
+                    break;
+                }
+                flags |= ASCII_FLAGS[byte as usize];
+                end += 1;
+            }
+            // Escapes and non-ASCII boundaries retain the complete scanner,
+            // including attempted-escape flags and private-name diagnostics.
+            if !matches!(bytes.get(end), Some(b'\\' | 0x80..=0xff)) {
+                let length = end - raw_start;
+                if length > self.string_limit {
+                    let start = self.current_position();
+                    self.offset += self.string_limit + 1;
+                    self.column = self.column.saturating_add((self.string_limit + 1) as u32);
+                    return Err(self.string_too_long(start));
+                }
+                self.offset = end;
+                self.column = self.column.saturating_add(length as u32);
+                let raw = &self.source[raw_start..end];
+                let keyword_hint = if flags & NOT_KEYWORD == 0 {
+                    keyword_from_str(&self.source[value_start..end])
+                } else {
+                    None
+                };
+                if !private {
+                    if let Some(keyword) =
+                        keyword_hint.filter(|keyword| self.keyword_is_active(*keyword))
+                    {
+                        return Ok(TokenKind::Keyword(keyword));
+                    }
+                }
+                let identifier = Identifier {
+                    raw,
+                    has_escape: false,
+                    keyword_hint,
+                    escaped_reserved_word: false,
+                };
+                return Ok(if private {
+                    TokenKind::PrivateIdentifier(identifier)
+                } else {
+                    TokenKind::Identifier(identifier)
+                });
+            }
+        }
         self.scan_identifier_with_value(private)
             .map(|(kind, _)| kind)
     }
@@ -1035,6 +1160,7 @@ impl<'a> Lexer<'a> {
         // though the public identifier value excludes it.
         let mut value_utf16_len = usize::from(private);
         let mut has_escape = false;
+        let mut identifier_flags = 0u8;
         let mut first = true;
 
         loop {
@@ -1048,10 +1174,12 @@ impl<'a> Lexer<'a> {
                         is_ascii_identifier_continue_byte(byte)
                     };
                     if valid {
+                        identifier_flags |= ASCII_FLAGS[byte as usize];
                         let bytes = self.source.as_bytes();
                         let mut end = self.offset + 1;
                         while let Some(&next) = bytes.get(end) {
                             if next < 0x80 && is_ascii_identifier_continue_byte(next) {
+                                identifier_flags |= ASCII_FLAGS[next as usize];
                                 end += 1;
                             } else {
                                 break;
@@ -1165,6 +1293,7 @@ impl<'a> Lexer<'a> {
                 is_identifier_continue(ch)
             };
             if valid {
+                identifier_flags |= NOT_KEYWORD;
                 self.bump_char();
                 value_utf16_len = RuntimeJsString::checked_length_with_limit(
                     value_utf16_len,
@@ -1207,7 +1336,10 @@ impl<'a> Lexer<'a> {
         let raw = &self.source[raw_start..self.offset];
         let keyword_hint = match &value {
             Some(value) => keyword_from_str(value),
-            None => keyword_from_str(&raw[usize::from(private)..]),
+            None if identifier_flags & NOT_KEYWORD == 0 => {
+                keyword_from_str(&raw[usize::from(private)..])
+            }
+            None => None,
         };
         let active_keyword = keyword_hint.filter(|keyword| self.keyword_is_active(*keyword));
         let identifier = Identifier {
@@ -1238,7 +1370,11 @@ impl<'a> Lexer<'a> {
         let private = raw.starts_with('#');
         let start = raw.as_ptr() as usize - self.source.as_ptr() as usize;
         let mut lexer = self.clone();
-        lexer.seek(self.position_at(start));
+        // This token was already validated; decoding returns only its text,
+        // never a diagnostic position. Keep the absolute byte offset for the
+        // SourceText side tables, without replaying the entire source prefix
+        // to compute an unused line/column for every escaped identifier.
+        lexer.offset = start;
         match lexer.scan_identifier_with_value(private) {
             Ok((_, Some(value))) => value,
             _ => raw[usize::from(private)..].to_owned(),
@@ -1271,7 +1407,13 @@ impl<'a> Lexer<'a> {
         }
         let mut raw_value = Utf16Sink::new(lexer.string_limit);
         let mut no_cooked: Option<ValidateSink> = None;
-        lexer.scan_template_with_sinks(initial, false, &mut raw_value, &mut no_cooked)?;
+        lexer.scan_template_with_sinks(
+            initial,
+            false,
+            &mut raw_value,
+            &mut no_cooked,
+            &mut None,
+        )?;
         Ok(raw_value.into_js_string())
     }
 
@@ -1289,26 +1431,38 @@ impl<'a> Lexer<'a> {
         }
         let mut raw_value = ValidateSink::new(lexer.string_limit);
         let mut cooked = Some(Utf16Sink::new(lexer.string_limit));
-        let token = lexer.scan_template_with_sinks(initial, false, &mut raw_value, &mut cooked)?;
+        let token = lexer.scan_template_with_sinks(
+            initial,
+            false,
+            &mut raw_value,
+            &mut cooked,
+            &mut None,
+        )?;
         let TokenKind::Template(part) = token.kind else {
             unreachable!("template scan must return a template token");
         };
-        debug_assert!(part.invalid_escape.is_none());
+        debug_assert!(!part.invalid_escape);
         Ok(cooked.expect("cooked sink present").into_js_string())
     }
 
-    /// Recomputes the position of a trusted source offset by replaying the
-    /// scanner's own advancement rules. Only used by the cold decode path.
-    fn position_at(&self, byte_offset: usize) -> Position {
+    /// Recover the first malformed escape's exact diagnostic on the cold
+    /// untagged-template error path. Start at the saved token position, keeping
+    /// source carriers, CRLF rules and the original string limit intact.
+    pub fn template_escape_error(
+        &self,
+        start: Position,
+        initial: bool,
+    ) -> Result<Option<TemplateEscapeError>, LexError> {
         let mut lexer = self.clone();
-        lexer.offset = 0;
-        lexer.line = 1;
-        lexer.column = 1;
-        while lexer.offset < byte_offset {
+        lexer.seek(start);
+        if !initial {
             lexer.bump_char();
         }
-        debug_assert_eq!(lexer.offset, byte_offset);
-        lexer.current_position()
+        let mut raw = ValidateSink::new(lexer.string_limit);
+        let mut cooked = Some(ValidateSink::new(lexer.string_limit));
+        let mut invalid = None;
+        lexer.scan_template_with_sinks(initial, false, &mut raw, &mut cooked, &mut invalid)?;
+        Ok(invalid)
     }
 
     fn scan_identifier_escape(&mut self) -> Result<u32, LexError> {
@@ -1571,6 +1725,30 @@ impl<'a> Lexer<'a> {
         let mut has_legacy_octal_escape = false;
 
         loop {
+            // Ordinary ASCII cannot be a surrogate marker or malformed-byte
+            // carrier. Count/copy the whole run without per-scalar dispatch.
+            // DEL remains on the carrier-aware path along with non-ASCII.
+            let bytes = self.source.as_bytes();
+            let mut end = self.offset;
+            while let Some(&byte) = bytes.get(end) {
+                if byte >= 0x7f || byte == separator as u8 || matches!(byte, b'\\' | b'\r' | b'\n')
+                {
+                    break;
+                }
+                end += 1;
+            }
+            if end != self.offset {
+                let result = value.push_ascii(&bytes[self.offset..end]);
+                let consumed = match result {
+                    Ok(()) => end - self.offset,
+                    Err(consumed) => consumed,
+                };
+                self.offset += consumed;
+                self.column = self.column.saturating_add(consumed as u32);
+                if result.is_err() {
+                    return Err(self.string_too_long(start));
+                }
+            }
             if self.invalid_source_byte_at(self.offset) {
                 return Err(self.error_from(
                     start,
@@ -1875,7 +2053,13 @@ impl<'a> Lexer<'a> {
     ) -> Result<Token<'a>, LexError> {
         let mut raw_value = ValidateSink::new(self.string_limit);
         let mut cooked = Some(ValidateSink::new(self.string_limit));
-        self.scan_template_with_sinks(initial, line_terminator_before, &mut raw_value, &mut cooked)
+        self.scan_template_with_sinks(
+            initial,
+            line_terminator_before,
+            &mut raw_value,
+            &mut cooked,
+            &mut None,
+        )
     }
 
     fn scan_template_with_sinks(
@@ -1884,6 +2068,7 @@ impl<'a> Lexer<'a> {
         line_terminator_before: bool,
         raw_value: &mut impl StringSink,
         cooked: &mut Option<impl StringSink>,
+        invalid_escape: &mut Option<TemplateEscapeError>,
     ) -> Result<Token<'a>, LexError> {
         let start = if initial {
             self.current_position()
@@ -1909,7 +2094,6 @@ impl<'a> Lexer<'a> {
             self.bump_char();
         }
         let raw_start = self.offset;
-        let mut invalid_escape = None;
 
         loop {
             if self.invalid_source_byte_at(self.offset) {
@@ -1934,7 +2118,7 @@ impl<'a> Lexer<'a> {
                 return Ok(Token {
                     kind: TokenKind::Template(TemplatePart {
                         raw: &self.source[raw_start..raw_end],
-                        invalid_escape,
+                        invalid_escape: invalid_escape.is_some(),
                         kind,
                     }),
                     span: Span::new(start, self.current_position()),
@@ -1954,7 +2138,7 @@ impl<'a> Lexer<'a> {
                 return Ok(Token {
                     kind: TokenKind::Template(TemplatePart {
                         raw: &self.source[raw_start..raw_end],
-                        invalid_escape,
+                        invalid_escape: invalid_escape.is_some(),
                         kind,
                     }),
                     span: Span::new(start, self.current_position()),
@@ -1995,7 +2179,7 @@ impl<'a> Lexer<'a> {
                     }
                     Err(error) => {
                         if invalid_escape.is_none() {
-                            invalid_escape = Some(TemplateEscapeError {
+                            *invalid_escape = Some(TemplateEscapeError {
                                 message: error.message,
                                 span: error.span,
                             });
@@ -2052,7 +2236,6 @@ impl<'a> Lexer<'a> {
         start: Position,
         line_terminator_before: bool,
     ) -> Result<Token<'a>, LexError> {
-        let raw_start = self.offset;
         debug_assert_eq!(self.peek_char(), Some('/'));
         self.bump_char();
         let pattern_start = self.offset;
@@ -2123,7 +2306,6 @@ impl<'a> Lexer<'a> {
 
         Ok(Token {
             kind: TokenKind::RegExp(RegExpLiteral {
-                raw: &self.source[raw_start..self.offset],
                 pattern: &self.source[pattern_start..pattern_end],
                 flags: &self.source[flags_start..self.offset],
             }),
@@ -2528,12 +2710,88 @@ fn is_ascii_identifier_continue(ch: char) -> bool {
     is_ascii_identifier_start(ch) || ch.is_ascii_digit()
 }
 
+// Scanner tables keep the common ASCII path independent of Unicode decoding.
+// V8's scanner uses the same combined classification/keyword-candidate idea.
+const IDENTIFIER_START: u8 = 1;
+const IDENTIFIER_CONTINUE: u8 = 2;
+const NOT_KEYWORD: u8 = 4;
+const MAY_START_TRIVIA: u8 = 8;
+const ASCII_FLAGS: [u8; 128] = {
+    let mut table = [0; 128];
+    let mut byte = 0u8;
+    while byte < 128 {
+        let start = byte.is_ascii_alphabetic() || matches!(byte, b'_' | b'$');
+        table[byte as usize] = if start {
+            IDENTIFIER_START | IDENTIFIER_CONTINUE
+        } else if byte.is_ascii_digit() {
+            IDENTIFIER_CONTINUE
+        } else {
+            0
+        };
+        if !byte.is_ascii_lowercase() {
+            table[byte as usize] |= NOT_KEYWORD;
+        }
+        if matches!(
+            byte,
+            b' ' | b'\t' | b'\r' | b'\n' | 0x0b | 0x0c | b'/' | b'<' | b'-' | b'#'
+        ) {
+            table[byte as usize] |= MAY_START_TRIVIA;
+        }
+        byte += 1;
+    }
+    table
+};
+
+#[derive(Clone, Copy)]
+enum ScanKind {
+    Single(Punctuator),
+    Identifier,
+    Number,
+    String,
+    Template,
+    Dot,
+    Private,
+    Punctuator,
+    Slow,
+}
+
+const ASCII_DISPATCH: [ScanKind; 128] = {
+    let mut table = [ScanKind::Punctuator; 128];
+    let mut byte = 0u8;
+    while byte < 128 {
+        if ASCII_FLAGS[byte as usize] & IDENTIFIER_START != 0 {
+            table[byte as usize] = ScanKind::Identifier;
+        }
+        if byte.is_ascii_digit() {
+            table[byte as usize] = ScanKind::Number;
+        }
+        byte += 1;
+    }
+    table[b'\\' as usize] = ScanKind::Slow;
+    table[b'\'' as usize] = ScanKind::String;
+    table[b'"' as usize] = ScanKind::String;
+    table[b'`' as usize] = ScanKind::Template;
+    table[b'.' as usize] = ScanKind::Dot;
+    table[b'#' as usize] = ScanKind::Private;
+    table[b'{' as usize] = ScanKind::Single(Punctuator::LeftBrace);
+    table[b'}' as usize] = ScanKind::Single(Punctuator::RightBrace);
+    table[b'(' as usize] = ScanKind::Single(Punctuator::LeftParen);
+    table[b')' as usize] = ScanKind::Single(Punctuator::RightParen);
+    table[b'[' as usize] = ScanKind::Single(Punctuator::LeftBracket);
+    table[b']' as usize] = ScanKind::Single(Punctuator::RightBracket);
+    table[b';' as usize] = ScanKind::Single(Punctuator::Semicolon);
+    table[b',' as usize] = ScanKind::Single(Punctuator::Comma);
+    table[b':' as usize] = ScanKind::Single(Punctuator::Colon);
+    table[b'~' as usize] = ScanKind::Single(Punctuator::BitNot);
+    table
+};
+
 fn is_ascii_identifier_start_byte(byte: u8) -> bool {
-    byte.is_ascii_alphabetic() || matches!(byte, b'_' | b'$')
+    ASCII_FLAGS[byte as usize] & IDENTIFIER_START != 0
 }
 
 fn is_ascii_identifier_continue_byte(byte: u8) -> bool {
-    is_ascii_identifier_start_byte(byte) || byte.is_ascii_digit()
+    ASCII_FLAGS[byte as usize] & IDENTIFIER_CONTINUE != 0
 }
 
 fn is_identifier_start(ch: char) -> bool {
@@ -2739,6 +2997,94 @@ mod tests {
             Lexer::new(r"if\x61").next_token().unwrap().kind,
             TokenKind::Keyword(Keyword::If)
         ));
+    }
+
+    #[test]
+    fn escaped_identifier_decode_and_rewind_after_a_long_minified_line() {
+        let source = format!("{}\\u0061\\u{{62}}é;\r\n\\u{{10400}};", "x;".repeat(4096));
+        let mut lexer = Lexer::new(&source);
+        let mut escaped = Vec::new();
+        loop {
+            let token = lexer.next_token().unwrap();
+            if let TokenKind::Identifier(identifier) = token.kind {
+                if identifier.has_escape {
+                    escaped.push((token, identifier));
+                }
+            }
+            if matches!(token.kind, TokenKind::Eof) {
+                break;
+            }
+        }
+        assert_eq!(escaped[0].0.span.start, Position::new(8192, 1, 8193));
+        assert_eq!(escaped[1].0.span.start.line, 2);
+        assert_eq!(escaped[1].0.span.start.column, 1);
+        for ((token, identifier), expected) in escaped.into_iter().zip(["abé", "𐐀"]) {
+            assert_eq!(lexer.decode_identifier_text(identifier.raw), expected);
+            lexer.seek(token.span.start);
+            let replayed = lexer.next_token().unwrap();
+            assert_eq!(replayed.kind, token.kind);
+            assert_eq!(replayed.span, token.span);
+        }
+    }
+
+    #[test]
+    fn ascii_identifier_path_matches_full_scanner_at_context_and_length_boundaries() {
+        for context in [
+            LexContext::default(),
+            LexContext {
+                strict: true,
+                ..LexContext::default()
+            },
+            LexContext {
+                generator: true,
+                async_function: true,
+                module: true,
+                ..LexContext::default()
+            },
+        ] {
+            for source in [
+                "name;",
+                "a",
+                "async()",
+                "yield ",
+                "await",
+                "let",
+                "Name9_",
+                "alphaé;",
+                "éclair;",
+                r"if\u{2d}",
+                r"f\u006fo",
+                "alpha\u{a0}",
+                "alpha\u{2028}",
+                "#name",
+                "#yield",
+                "#é",
+                r"#\u0061",
+                "#9",
+            ] {
+                for limit in [1, 2, 5, 31, RuntimeJsString::MAX_LEN] {
+                    let mut fast = Lexer::with_options(
+                        source,
+                        LexerOptions {
+                            context,
+                            ..LexerOptions::default()
+                        },
+                    )
+                    .with_string_limit(limit);
+                    let mut full = fast.clone();
+                    let private = source.starts_with('#');
+                    let expected = full
+                        .scan_identifier_with_value(private)
+                        .map(|(kind, _)| kind);
+                    assert_eq!(
+                        fast.scan_identifier(private),
+                        expected,
+                        "{source:?}, {context:?}, limit {limit}"
+                    );
+                    assert_eq!(fast.current_position(), full.current_position());
+                }
+            }
+        }
     }
 
     #[test]
@@ -3084,7 +3430,10 @@ mod tests {
             TokenKind::RegExp(literal) => {
                 assert_eq!(literal.pattern, r"a[\/]b+");
                 assert_eq!(literal.flags, "gim");
-                assert_eq!(literal.raw, r"/a[\/]b+/gim");
+                assert_eq!(
+                    &regexp.source()[token.span.start.byte_offset..token.span.end.byte_offset],
+                    r"/a[\/]b+/gim"
+                );
             }
             other => panic!("expected regular expression, got {other:?}"),
         }
@@ -3456,10 +3805,41 @@ mod tests {
             panic!("expected template");
         };
         assert_eq!(part.kind, TemplatePartKind::NoSubstitution);
-        let invalid = part.invalid_escape.expect("invalid escape metadata");
+        assert!(part.invalid_escape);
+        let invalid = lexer
+            .template_escape_error(token.span.start, true)
+            .unwrap()
+            .expect("invalid escape metadata");
         assert_eq!(
             invalid.message,
             "malformed escape sequence in string literal"
+        );
+    }
+
+    #[test]
+    fn cold_template_diagnostics_keep_multiline_positions() {
+        let source = format!("`{}\r\né\\u{{x}}`", "a".repeat(8192));
+        let lexer = Lexer::new(&source);
+        let token = lexer.clone().next_token().unwrap();
+        let TokenKind::Template(part) = token.kind else {
+            panic!("expected template")
+        };
+        assert!(part.invalid_escape);
+        let error = lexer
+            .template_escape_error(token.span.start, true)
+            .unwrap()
+            .unwrap();
+        assert_eq!(error.span.start, Position::new(8197, 2, 2));
+        assert_eq!(error.span.end, Position::new(8200, 2, 5));
+    }
+
+    #[test]
+    fn cold_template_errors_do_not_widen_ordinary_tokens() {
+        assert!(std::mem::size_of::<Token<'_>>() <= 80);
+        eprintln!(
+            "Token={} TokenKind={}",
+            std::mem::size_of::<Token<'_>>(),
+            std::mem::size_of::<TokenKind<'_>>()
         );
     }
 
@@ -3471,8 +3851,17 @@ mod tests {
         };
         assert_eq!(part.kind, TemplatePartKind::NoSubstitution);
         assert_eq!(part.raw, "\\x");
-        assert!(part.invalid_escape.is_some());
-        assert_eq!(part.invalid_escape.unwrap().span.start.column, 2);
+        assert!(part.invalid_escape);
+        assert_eq!(
+            Lexer::new("`\\x`")
+                .template_escape_error(token.span.start, true)
+                .unwrap()
+                .unwrap()
+                .span
+                .start
+                .column,
+            2
+        );
 
         let mut lexer = Lexer::new("`\\x${value}`");
         let head_token = lexer.next_token().unwrap();
@@ -3489,7 +3878,7 @@ mod tests {
                 .unwrap(),
             "\\x"
         );
-        assert!(head.invalid_escape.is_some());
+        assert!(head.invalid_escape);
 
         assert!(matches!(
             lexer.next_token().unwrap().kind,
@@ -3534,7 +3923,7 @@ mod tests {
                 .unwrap(),
             "tail\\x"
         );
-        assert!(tail.invalid_escape.is_some());
+        assert!(tail.invalid_escape);
     }
 
     #[test]
@@ -3633,6 +4022,37 @@ mod tests {
             .next_token()
             .unwrap_err();
         assert_eq!(syntax_first.kind, LexErrorKind::InvalidEscape);
+    }
+
+    #[test]
+    fn ascii_string_runs_keep_overflow_and_unicode_cursor_positions() {
+        for prefix in ["", "abc", "\\u{1f600}", "é", "\\n"] {
+            let source = format!("'{prefix}abcdefghijklmnopqrstuvwxyz\\xZ'");
+            let decoded_prefix = match prefix {
+                "" => 0,
+                "abc" => 3,
+                "\\u{1f600}" => 2,
+                _ => 1,
+            };
+            let error = Lexer::new(&source)
+                .with_string_limit(decoded_prefix + 8)
+                .next_token()
+                .unwrap_err();
+            assert_eq!(error.kind, LexErrorKind::StringTooLong);
+            assert_eq!(error.span.end.byte_offset, 1 + prefix.len() + 9);
+        }
+        let source = "'abcédef\u{2028}ghi' next";
+        let mut lexer = Lexer::new(source);
+        let token = lexer.next_token().unwrap();
+        assert_eq!(token.span.end.line, 2);
+        assert_eq!(token.span.end.column, 5);
+        assert_eq!(
+            lexer.decode_string_literal(token.span.start).unwrap().utf16,
+            "abcédef\u{2028}ghi".encode_utf16().collect::<Vec<_>>()
+        );
+        let next = lexer.next_token().unwrap();
+        assert_eq!(next.span.start.line, 2);
+        assert_eq!(next.span.start.column, 6);
     }
 
     #[test]

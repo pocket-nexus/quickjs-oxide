@@ -14,8 +14,8 @@ use std::ops::{Deref, DerefMut};
 
 #[derive(Debug)]
 pub(in crate::engine::compiler) struct FunctionBuilder {
-    pub(in crate::engine::compiler) ir: FunctionIr,
-    pub(in crate::engine::compiler) context: FunctionParseContext,
+    pub(in crate::engine::compiler) ir: Box<FunctionIr>,
+    pub(in crate::engine::compiler) context: ParseContextStorage,
 }
 
 impl FunctionBuilder {
@@ -28,20 +28,60 @@ impl FunctionBuilder {
     ) -> Result<Self, Error> {
         let ir = FunctionIr::new(parent, kind, source, options, names)?;
         let context = FunctionParseContext::new(ir.body_scope);
-        Ok(Self { ir, context })
+        Ok(Self {
+            ir: Box::new(ir),
+            context: ParseContextStorage(Some(Box::new(context))),
+        })
     }
 
-    /// Move the existing operations and binding arrays; no IR is cloned.
-    /// Unclosed parser scopes/controls must never reach name resolution.
-    pub(in crate::engine::compiler) fn finish(mut self) -> Result<FunctionIr, Error> {
-        if self.context.current_scope != self.ir.body_scope {
+    #[cfg(feature = "profiling")]
+    pub(in crate::engine::compiler) fn owned_record_bytes(&self) -> u64 {
+        (size_of::<FunctionIr>()
+            + if self.context.0.is_some() {
+                size_of::<FunctionParseContext>()
+            } else {
+                0
+            }) as u64
+    }
+
+    /// Release construction-only state as soon as an ordinary/arrow body is
+    /// complete. Class aggregate initializers retain it while suspended.
+    pub(in crate::engine::compiler) fn finish_parsing(&mut self) -> Result<(), Error> {
+        let Some(context) = self.context.0.take() else {
+            return Ok(());
+        };
+        if context.current_scope != self.ir.body_scope {
             return Err(Error::internal("function scope roots are malformed"));
         }
-        if !self.context.break_controls.is_empty() {
+        if !context.break_controls.is_empty() {
             return Err(Error::internal("function parser controls are not closed"));
         }
-        self.ir.body_parsed = self.context.in_function_body;
+        self.ir.body_parsed = context.in_function_body;
+        Ok(())
+    }
+
+    /// Transfer the same IR allocation; arena growth and final collection move
+    /// pointers instead of the wide function record.
+    pub(in crate::engine::compiler) fn finish(mut self) -> Result<Box<FunctionIr>, Error> {
+        self.finish_parsing()?;
         Ok(self.ir)
+    }
+}
+
+#[derive(Debug)]
+pub(in crate::engine::compiler) struct ParseContextStorage(Option<Box<FunctionParseContext>>);
+
+impl Deref for ParseContextStorage {
+    type Target = FunctionParseContext;
+    fn deref(&self) -> &Self::Target {
+        self.0.as_deref().expect("function is still being parsed")
+    }
+}
+impl DerefMut for ParseContextStorage {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0
+            .as_deref_mut()
+            .expect("function is still being parsed")
     }
 }
 
@@ -190,6 +230,7 @@ impl<'source> Parser<'source> {
         pc_site: SourceOffset,
     ) -> Result<usize, Error> {
         let scope = self.current_ir().context.current_scope;
+        let span = self.current_ir_mut().operands.add_span(span)?;
         self.emit_at(
             IrOp::Identifier {
                 name,
@@ -208,6 +249,7 @@ impl<'source> Parser<'source> {
         scope: ScopeId,
         access: IdentifierAccess,
     ) -> Result<usize, Error> {
+        let span = self.current_ir_mut().operands.add_span(span)?;
         self.emit(IrOp::Identifier {
             name,
             span,
@@ -223,6 +265,7 @@ impl<'source> Parser<'source> {
         scope: ScopeId,
         access: IdentifierReferenceAccess,
     ) -> Result<usize, Error> {
+        let span = self.current_ir_mut().operands.add_span(span)?;
         self.emit(IrOp::IdentifierReference {
             name,
             span,
@@ -263,6 +306,9 @@ impl<'source> Parser<'source> {
         self.emit_with_site(operation, Some(site))
     }
 
+    // Let constant opcode callers specialize stack effects instead of paying
+    // a second runtime opcode dispatch for every emitted operation.
+    #[inline]
     pub(in crate::engine::compiler) fn emit_with_site(
         &mut self,
         operation: IrOp,
@@ -329,7 +375,7 @@ impl<'source> Parser<'source> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FunctionBuilder, FunctionParseContext};
+    use super::{FunctionBuilder, FunctionParseContext, ParseContextStorage};
     use crate::engine::compiler::model::scope::ScopeId;
     use crate::engine::compiler::parser::context::{BreakControlContext, BreakControlKind, Parser};
     use crate::engine::value::JsString;
@@ -338,7 +384,10 @@ mod tests {
         let mut tree = Parser::parse("0;", JsString::from_static("<finish-contract>")).unwrap();
         let ir = tree.functions.remove(0);
         let context = FunctionParseContext::new(ir.body_scope);
-        FunctionBuilder { ir, context }
+        FunctionBuilder {
+            ir,
+            context: ParseContextStorage(Some(Box::new(context))),
+        }
     }
 
     #[test]
