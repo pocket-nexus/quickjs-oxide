@@ -1991,7 +1991,7 @@ mod dense_array_read_tests {
     }
 
     #[test]
-    fn dense_array_read_leaf_keeps_frozen_materialized_values_on_canonical_path() {
+    fn array_read_leaf_reads_frozen_materialized_data_without_relaxing_writes() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
         let base = runtime
@@ -2002,7 +2002,15 @@ mod dense_array_read_tests {
             )
             .unwrap();
         runtime.run_gc().unwrap();
-        assert!(runtime.try_dense_array_immediate_read(&base, 0).is_none());
+        assert!(matches!(
+            runtime.try_dense_array_immediate_read(&base, 0),
+            Some(JsValue::Int(7))
+        ));
+        assert!(matches!(
+            runtime.try_dense_array_immediate_read(&base, 1),
+            Some(JsValue::Float(value)) if value == 0.0 && value.is_sign_negative()
+        ));
+        assert!(!runtime.try_write_dense_number(&base, 0, Number::Int(9)));
         assert_eq!(
             context
                 .eval("frozenRead[0] === 7 && 1 / frozenRead[1] === -Infinity")

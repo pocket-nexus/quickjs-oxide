@@ -107,7 +107,8 @@ impl SlotStore {
                         // Parameters and preceding locals were installed only in
                         // the unpublished suffix. The caller still owns every
                         // outgoing operand, including the method receiver.
-                        let _ = self.clear_unpublished(runtime, original_end..parameters_end + index);
+                        let _ =
+                            self.clear_unpublished(runtime, original_end..parameters_end + index);
                         return Err(runtime_error_to_vm_error(error));
                     }
                 };
