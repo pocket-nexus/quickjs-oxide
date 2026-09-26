@@ -807,14 +807,26 @@ mod tests {
                 PutArg(1),
             ),
         ] {
-            let correct = [GetArg(0), GetArg(1), update.clone(), store.clone(), GetArrayEl];
+            let correct = [
+                GetArg(0),
+                GetArg(1),
+                update.clone(),
+                store.clone(),
+                GetArrayEl,
+            ];
             assert_eq!(
                 FusionPlan::build(&correct, &locals, &[]).dense_span(0),
                 Some(kind),
                 "{correct:?}"
             );
             for invalid in [
-                [GetArg(0), GetArg(1), update.clone(), wrong_store, GetArrayEl],
+                [
+                    GetArg(0),
+                    GetArg(1),
+                    update.clone(),
+                    wrong_store,
+                    GetArrayEl,
+                ],
                 [GetArg(0), GetArg(1), update.clone(), wrong_mode, GetArrayEl],
                 [GetArg(0), GetArg(1), update, store.clone(), GetArrayEl3],
                 [GetArg(0), GetArg(1), PushI32(1), store, GetArrayEl],

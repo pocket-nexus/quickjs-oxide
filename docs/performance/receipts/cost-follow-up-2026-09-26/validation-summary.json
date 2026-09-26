@@ -1,0 +1,51 @@
+{
+  "source_commit": "c7fb5b69d88bb5e6170fab3b8af5a3062fd4cb72",
+  "toolchain_correctness": "Rust 1.88.0",
+  "library_profiling": {
+    "passed": 2152,
+    "failed": 0,
+    "command": "cargo +1.88.0 test --locked --lib --features profiling -j 2"
+  },
+  "clippy": "--locked --lib --tests --features profiling -j 2 -- -D warnings",
+  "source_layout_reachable_files": 626,
+  "fmt": "cargo +1.88.0 fmt --all --check; final check after formatting only two cfg(test) arrays",
+  "plain_release_build": "Rust 1.96.0, fat LTO, one codegen unit, frozen clean source",
+  "full_test262": "not rerun this iteration",
+  "earlier_ci": {
+    "commit": "c68361109ff4a0abf6e43ea22a73943515e42428",
+    "fast": "SUCCESS",
+    "test262_focused": "SUCCESS",
+    "run_id": 36218608291,
+    "covers_new_changes": false
+  },
+  "prior_failed_attempts": {
+    "lib-profiling-final.log": "new test moved Instruction values; corrected with clones",
+    "fmt-final-r2.log": "two new test arrays required wrapping; later formatting only"
+  },
+  "logs": {
+    "lib_initial": {
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-cost-follow-up/validation/lib-profiling.log",
+      "sha256": "4c6847d44e27d944b771f792af24401fc50ab2bbf124136579d935547176ec43"
+    },
+    "lib_final": {
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-cost-follow-up/validation/lib-profiling-final-r2.log",
+      "sha256": "b71935b6ba68a4ff57c4ee73b113672c74518991174f51d05c68aaa28388fdec"
+    },
+    "clippy": {
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-cost-follow-up/validation/clippy.log",
+      "sha256": "f028b710c91080ea271e93d5bd10929b2d8b96c3d4d9470fbf731589dee4cd9a"
+    },
+    "fmt": {
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-cost-follow-up/validation/fmt-final-r3.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "source_layout": {
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-cost-follow-up/validation/source-layout.log",
+      "sha256": "ec8e78f8acd7ec982c9eade15587182437eb2c5f5077a0f4950eefdcd7bef06e"
+    },
+    "release_build": {
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-cost-follow-up/validation/build-plain.log",
+      "sha256": "7cc8b1265a2c13ee3606d16bbaa4bc7e6b56778d05ddc6410810896c2de4361c"
+    }
+  }
+}

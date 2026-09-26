@@ -1,0 +1,60 @@
+{
+  "schema": "oxide-codegen-call-v1",
+  "scope": "plain aarch64-apple-darwin release binary, ready::enter_call symbol with ordinary::enter_selected inlined",
+  "before": {
+    "binary": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/build-plain-fixed/release/qjs",
+    "binary_sha256": "9a815b7f2607e9aa2474db4ea2bf4ba4a5203a06aa43dca6992d0b8a364b5517",
+    "build_receipt": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-follow-through/build-plain-fixed/release/qjs.build.json",
+    "build_receipt_sha256": "c92bff9471c96b035978988ba9fe2ad8665a47cc2c0f2b43db721d2869b771de",
+    "commit": "44f6d340d84727560c2ea7c6f179add3a3863d6e",
+    "source_tree": "10a0e62b59c8970f6f652cc52d31da789d111017",
+    "mode": "plain",
+    "features": [],
+    "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+    "asm": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-cost-follow-up/codegen-call/before-enter-call.asm",
+    "asm_sha256": "6f49d0cfa146534c331ae0b136a8bc7e4c3faf205602929c19bc029661d7afd8",
+    "asm_lines": 659
+  },
+  "after": {
+    "binary": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-cost-follow-up/build-plain/release/qjs",
+    "binary_sha256": "b241d0252cfe19d54b18843ae106f91c4cb66f2d7f462f120ce21e2d643f3573",
+    "build_receipt": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-cost-follow-up/build-plain/release/qjs.build.json",
+    "build_receipt_sha256": "469a6befb0fe6344739d60f5a8bff697d82b190bc81ee4a8a2e849dcadd64fb3",
+    "commit": "c7fb5b69d88bb5e6170fab3b8af5a3062fd4cb72",
+    "source_tree": "a772566bd64d079502ec931139b038f775a6bfd4",
+    "mode": "plain",
+    "features": [],
+    "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+    "asm": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-cost-follow-up/codegen-call/after-enter-call.asm",
+    "asm_sha256": "78d7b63044ccacdca8422579f7a4542955e2cb836f15ded9b2686254ed0a6670",
+    "asm_lines": 659
+  },
+  "tool": {
+    "path": "/opt/homebrew/opt/llvm/bin/llvm-objdump",
+    "version": "Homebrew LLVM version 23.1.1",
+    "command_template": [
+      "/opt/homebrew/opt/llvm/bin/llvm-objdump",
+      "--disassemble-symbols=__ZN13quickjs_oxide6engine2vm6driver5ready10enter_call17he97e6b3806a7fca3E",
+      "--no-show-raw-insn",
+      "BINARY"
+    ]
+  },
+  "symbol": "__ZN13quickjs_oxide6engine2vm6driver5ready10enter_call17he97e6b3806a7fca3E",
+  "source_diff": {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-cost-follow-up/codegen-call/source-diff.patch",
+    "sha256": "39381fd005233ac52c2a64ddf286c558a1b49876e89d9d88ba6f8ca4d59e6926"
+  },
+  "evidence": {
+    "before_initial_peek": "0x100419c1c..0x100419c40",
+    "before_ordinary_repeated_peek": "0x100419c58..0x100419c78",
+    "after_initial_peek": "0x100419a60..0x100419a74",
+    "after_nonmethod_skip": "0x100419a94 tbz w9,#0 -> 0x100419abc",
+    "before_selected_native_repeated_peek": "0x100419d34..0x100419d40",
+    "after_selected_native_method_only_peek": "0x100419b70..0x100419b84"
+  },
+  "conclusion": "For method=false, compiled entry reuses the first operand read and skips the second peek; method=true retains the second callee read. This is static codegen evidence, not a timing claim.",
+  "report": {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-cost-follow-up/codegen-call/README.md",
+    "sha256": "ea3f4a211796f8d1ee670f7f94716fa220b083a14184588c77db1665b6e29fb6"
+  }
+}
