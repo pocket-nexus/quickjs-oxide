@@ -21,7 +21,7 @@
 
 ## 2. 构建、机器与上游 pin
 
-使用普通 release、fat LTO、CGU=1，无 PGO、无 profiling。同一系列的双方在同一机器、相同配置下串行构建和测量；绑核不能代替整机隔离。记录 CPU／系统版本、可用硬件计数器、电源／频率策略、亲和性、内存状态、负载和是否存在其他会话；不支持的字段标未知。`run.py` 自动收集所在平台可取得的快照（macOS 包括 CPU 型号、物理内存、`pmset`、`vm_stat` 和 load average），微码、共享缓存干扰等仍需按主机能力补记。不能排除干扰或 A/A 已覆盖候选时间差时，cycles／wall 标“未裁决”，不作通过结论。
+使用普通 release、fat LTO、CGU=1，无 PGO、无 profiling。同一系列的双方在同一机器、相同配置下串行构建和测量；绑核不能代替整机隔离。记录 CPU／系统版本、可用硬件计数器、电源／频率策略、亲和性、内存状态、负载和是否存在其他会话；不支持的字段标未知。`run.py` 自动收集所在平台可取得的快照（macOS 包括 CPU 型号、物理内存、`pmset`、`vm_stat` 和 load average），微码、共享缓存干扰等仍需按主机能力补记。干扰或 A/A 波动足以覆盖候选时间差、交错结果无法区分时，cycles／wall 标“未裁决”，不作通过结论。已知同机干扰必须标注；它不自动抹掉在交错复测中持续分离的回退信号，也不能提供缓存或分支预测的因果解释。
 
 本轮外部 v8-v7 pin 为 `ahaoboy/js-engine-benchmark@2034d98fc8c5f8044e186267593f5d5ea5232caf`（#43 所用 checkout 的完整身份）；`run.py` 默认核对完整 SHA 和 tracked source 洁净度。未来系列可明确指定另一完整 pin（`--v8-source-commit`），并重建全部 bundle／分母，不把不同语料混算。每个生成 bundle 单独记录 SHA-256；pin 相同不代表旧的 `dist/` 一定由它生成，必须重新生成并保存生成器身份。QuickJS 对照仍用项目 pinned 2026-06-04 oracle，记录 C 编译器与 flags；跨引擎是诊断参考，不代替同源码 A/B。
 
@@ -89,13 +89,13 @@ python3 scripts/benchmark/fixed.py --manifest "$FIXED_MANIFEST" \
 
 正式 v8-v7 保持原本 benchmark body、warmup、计时、断言和 Score 计算，不为固定工作量修改后还称其原版分数。它按时间窗口增加迭代，变快可以导致整个进程退休指令更多；因此正式运行不能直接比较总 instructions。
 
-开发迭代可用 [`iterate_v8.py`](../../scripts/benchmark/README.md#bounded-fixed-iteration-v8-comparison) 对 pinned 原始 body 做八项 isolated 与一项 combined 固定工作量对照。每个进程只加载一次上游 `base.js`，保留其中确定性的 `Math.random` 初始化；该 pin 没有独立 `ResetRNG` 方法。每个原始 Benchmark 执行一次 `Setup`、默认零次固定 warmup、冻结的 `run` 次数、一次 `TearDown`，原有内部校验照常执行。先用 baseline pilot 按子项校准，再冻结源码、driver、生成 JS hash 和运行次数；后续比较以 `--plan` 重放完全相同的工作量，不随候选快慢重新校准。A/A 和 A/B 依冻结的完整 ABBA-BAAB 块运行，预算不足可降为每侧两次的 ABBA。**单次调用**的 pilot、冻结与两类对照共用默认 600 秒硬截止；超时或未完成仍保留原始样本，不能输出总体指标。它报告的是固定迭代整进程时间及可用硬件计数器，不是原版自适应 V8 Score；并不保证任意机器在十分钟内完成。已知同机干扰要在收据中标注，脚本的机器快照不能证明环境空载；落在本轮 A/A 波动内的小变化标“未裁决”，不据此强制接受或撤销候选。
+开发迭代可用 [`iterate_v8.py`](../../scripts/benchmark/README.md#bounded-fixed-iteration-v8-comparison) 对 pinned 原始 body 做八项 isolated 与一项 combined 固定工作量对照。每个进程只加载一次上游 `base.js`，保留其中确定性的 `Math.random` 初始化；该 pin 没有独立 `ResetRNG` 方法。每个原始 Benchmark 执行一次 `Setup`、默认零次固定 warmup、冻结的 `run` 次数、一次 `TearDown`，原有内部校验照常执行。先用 baseline pilot 按子项校准，再冻结源码、driver、生成 JS hash 和运行次数；后续比较以 `--plan` 重放完全相同的工作量，不随候选快慢重新校准。A/A 和 A/B 依冻结的完整 ABBA-BAAB 块运行，预算不足可降为每侧两次的 ABBA。**单次调用**的 pilot、冻结与两类对照共用默认 600 秒采样截止；进程清理和最后写盘可能略超该时间。超时或未完成仍保留原始样本，不能输出总体指标。它报告的是固定迭代整进程时间及可用硬件计数器，不是原版自适应 V8 Score；并不保证任意机器在十分钟内完成。已知同机干扰要在收据中标注，脚本的机器快照不能证明环境空载；落在本轮 A/A 波动内的小变化标“未裁决”，不据此强制接受或撤销候选。
 
 仅在准备发布原版 V8 Score 或声称达到总分目标时，另行规划 [`run.py`](../../scripts/benchmark/README.md#external-v8-v7-suite) 的完整 isolated 与 combined 配对复核及资源上限。该工具默认 isolated 覆盖全部八项；失败、超时、漏分、被 error callback 吞掉的失败均使该组无效。不能删去慢项、以短轮固定工作量比冒充 Score，或让两个完整套件并发运行。最终复核的重复次数与超时须在采样前固定并随原始结果保存，不要求每个研发切片重复小时级长跑。
 
 ## 4. 成本与覆盖报告
 
-普通 release 的平台硬件计数器／反汇编负责机器成本；profiling 构建负责逻辑事件，二者不能混成正式得分。报告实际符号归组规则、self／inclusive 口径、内联和采样 skid 的限制。父子调用时间不可重复加总，auth cache hit 不可代替 callsite 单态率。
+普通 release 的平台硬件计数器／反汇编负责机器成本；profiling 构建负责逻辑事件，二者不能混成正式得分。报告实际符号归组规则、self／inclusive 口径、内联和采样 skid 的限制。符号 self% 只计算落在该符号中的样本，可能遗漏内联、调用前准备及跨边界代价，不得作为语义机制的总成本或潜在收益上界。父子调用时间不可重复加总，auth cache hit 不可代替 callsite 单态率。
 
 至少有以下字段：
 

@@ -1,0 +1,161 @@
+{
+  "final_candidate": "b280ec8b77b9ff4d387118d31cfd5cbee644f477",
+  "lib_tests": 2158,
+  "fmt": "pass",
+  "source_layout": "626 reachable Rust files",
+  "clippy": "workspace/all-targets/profiling pass",
+  "full_test262": "not rerun on final candidate; prior result is not transferred",
+  "logs": [
+    {
+      "source_commit": "708afeb663fd6dbd9246a2474cb548318a62b28d",
+      "command": "cargo +1.88.0 test --lib --features profiling --locked -j 2",
+      "external_target_dir": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-choice-tests",
+      "exit_code": 0,
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/read-inline-tests.log",
+      "sha256": "ea3151be3d531d4eb52c8d79996e0572d5aac719f67ecf2b823f09312b79d6a7",
+      "tail": [
+        "test engine::vm::native_stack::tests::generator_delegation_reaches_the_portable_floor_and_recovers_after_overflow ... ok",
+        "",
+        "test result: ok. 2158 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 40.22s",
+        ""
+      ]
+    },
+    {
+      "source_commit": "708afeb663fd6dbd9246a2474cb548318a62b28d",
+      "command": "cargo +1.88.0 clippy --locked --workspace --all-targets --features profiling -j 2 -- -D warnings",
+      "external_target_dir": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-choice-tests",
+      "exit_code": 0,
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/read-inline-clippy.log",
+      "sha256": "3657491ebac76740459a2f37965ce969a7ceee21e3698bc68cdfd4d3b82df4eb",
+      "tail": [
+        "    Checking quickjs-oxide-web v0.0.1 (/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/read-inline-source/apps/web)",
+        "    Checking quickjs-oxide-test262 v0.0.1 (/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/read-inline-source/conformance/test262)",
+        "    Checking quickjs-oxide-cli v0.0.1 (/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/read-inline-source/apps/cli)",
+        "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 01s"
+      ]
+    },
+    {
+      "source_commit": "8d3875dcba2f639c85327e97014586fc0aae350b",
+      "command": "cargo +1.88.0 test --lib --features profiling --locked -j 2",
+      "external_target_dir": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-choice-tests",
+      "exit_code": 0,
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/read-current-tests.log",
+      "sha256": "4e4bb63a549ad3f62392d57c4d6e39bd2281423628607c6ea2f61d323a8e1c17",
+      "tail": [
+        "test engine::vm::native_stack::tests::generator_delegation_reaches_the_portable_floor_and_recovers_after_overflow ... ok",
+        "",
+        "test result: ok. 2158 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 42.37s",
+        ""
+      ]
+    },
+    {
+      "source_commit": "8d3875dcba2f639c85327e97014586fc0aae350b",
+      "command": "cargo +1.88.0 clippy --locked --workspace --all-targets --features profiling -j 2 -- -D warnings",
+      "external_target_dir": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-choice-tests",
+      "exit_code": 0,
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/read-current-clippy.log",
+      "sha256": "4c5d8eac5614f4522a3546e5bb27361af761d2bb8f582f861ec752be9b591cba",
+      "tail": [
+        "    Checking quickjs-oxide-web v0.0.1 (/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/read-inline-current-source/apps/web)",
+        "    Checking quickjs-oxide-cli v0.0.1 (/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/read-inline-current-source/apps/cli)",
+        "    Checking quickjs-oxide-test262 v0.0.1 (/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/read-inline-current-source/conformance/test262)",
+        "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 04s"
+      ]
+    },
+    {
+      "source_commit": "be855322ae09c3f92d746849559667fcaafc789e",
+      "command": "cargo +1.88.0 test --lib --features profiling --locked -j 2",
+      "exit_code": 0,
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/entry-read-tests.log",
+      "sha256": "309a7df2fd3db32266b0db7ea74494d5f5891948cc428723a5d04fd8b7512de4",
+      "tail": [
+        "test engine::vm::native_stack::tests::generator_delegation_reaches_the_portable_floor_and_recovers_after_overflow ... ok",
+        "",
+        "test result: ok. 2158 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 38.01s",
+        ""
+      ]
+    },
+    {
+      "source_commit": "be855322ae09c3f92d746849559667fcaafc789e",
+      "command": "cargo +1.88.0 clippy --locked --workspace --all-targets --features profiling -j 2 -- -D warnings",
+      "exit_code": 0,
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/entry-read-clippy.log",
+      "sha256": "80442660aee487fb7fe39e265742bfddd0547c75c535dc7bf3bffcd210a1f0f9",
+      "tail": [
+        "    Checking quickjs-oxide-cli v0.0.1 (/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/entry-read-source/apps/cli)",
+        "    Checking quickjs-oxide-web v0.0.1 (/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/entry-read-source/apps/web)",
+        "    Checking quickjs-oxide-test262 v0.0.1 (/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/entry-read-source/conformance/test262)",
+        "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 48.95s"
+      ]
+    },
+    {
+      "source_commit": "b280ec8b77b9ff4d387118d31cfd5cbee644f477",
+      "command": "cargo +1.88.0 test --lib --features profiling --locked -j 2",
+      "exit_code": 0,
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/write-inline-tests.log",
+      "sha256": "4b5577d432330eda0985748acbd94f36a1c0d04be8827e38310c8d1fd6ea1b0a",
+      "tail": [
+        "test engine::vm::native_stack::tests::generator_delegation_reaches_the_portable_floor_and_recovers_after_overflow ... ok",
+        "",
+        "test result: ok. 2158 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 37.29s",
+        ""
+      ]
+    },
+    {
+      "source_commit": "b280ec8b77b9ff4d387118d31cfd5cbee644f477",
+      "command": "cargo +1.88.0 clippy --locked --workspace --all-targets --features profiling -j 2 -- -D warnings",
+      "exit_code": 0,
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/write-inline-clippy.log",
+      "sha256": "bc3155df1c8b8cbf0aa0ea9eb5d8243612629d5dbf9b15e9fd19c6b3613c3297",
+      "tail": [
+        "    Checking quickjs-oxide-web v0.0.1 (/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/write-inline-source/apps/web)",
+        "    Checking quickjs-oxide-cli v0.0.1 (/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/write-inline-source/apps/cli)",
+        "    Checking quickjs-oxide-test262 v0.0.1 (/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/write-inline-source/conformance/test262)",
+        "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 46.53s"
+      ]
+    },
+    {
+      "source_commit": "b280ec8b77b9ff4d387118d31cfd5cbee644f477",
+      "command": "python3 -m unittest discover -s scripts/benchmark -p 'test_*.py'",
+      "exit_code": 0,
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/benchmark-tests-final-head.log",
+      "sha256": "3672079eae4690c09c50d0cdc08cc5713bfe0968ff12c9b478808f622ddf98b9",
+      "tail": [
+        "----------------------------------------------------------------------",
+        "Ran 42 tests in 3.397s",
+        "",
+        "OK"
+      ]
+    }
+  ],
+  "python_benchmark_tests": 42,
+  "python_benchmark_tests_note": "Re-run after all final measurements; 42 tests passed.",
+  "ci": {
+    "conclusion": "success",
+    "headSha": "b280ec8b77b9ff4d387118d31cfd5cbee644f477",
+    "jobs": [
+      {
+        "conclusion": "success",
+        "name": "test262-focused",
+        "status": "completed"
+      },
+      {
+        "conclusion": "success",
+        "name": "fast",
+        "status": "completed"
+      },
+      {
+        "conclusion": "skipped",
+        "name": "quickjs-differential",
+        "status": "completed"
+      },
+      {
+        "conclusion": "skipped",
+        "name": "test262-full",
+        "status": "completed"
+      }
+    ],
+    "status": "completed",
+    "url": "https://github.com/pocket-nexus/quickjs-oxide/actions/runs/36228182652"
+  }
+}

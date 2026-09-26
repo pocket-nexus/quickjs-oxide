@@ -140,7 +140,7 @@ Without the `profiling` feature, compiler and interpreter hooks are compiled out
 | `ordinary.validate.sampled` | 普通调用操作数窗口和参数分类。 |
 | `ordinary.authenticate.sampled` | 普通 callee 认证，包含缓存命中检查。 |
 | `ordinary.install.sampled` | 普通帧安装。 |
-| `ordinary.install.slots.sampled` | 安装内部的操作数／局部变量窗口准备，是 install 的子阶段。 |
+| `ordinary.install.slots.sampled` | 安装内部的操作数／局部变量窗口准备，是 install 的子阶段。实验提交 `dcc334aa`／`5e3dedc9` 曾将 receiver owner 转移纳入此阶段；该性能候选已撤回，跨版本比较须保留这个边界变化。 |
 
 准备、认证和安装的适用路径不同，attempts 不能直接互作分母。
 上述阶段不覆盖进入直接入口之前的派发，也不完整覆盖准备与安装之间的工作；

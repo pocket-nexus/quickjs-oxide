@@ -208,7 +208,8 @@ The default requests four repetitions per engine in each of same-binary A/A
 and baseline/candidate A/B, in balanced ABBA-BAAB blocks. If the pilot predicts
 that even one `run` per Benchmark cannot fit this schedule, it falls back to
 two repetitions per engine in ABBA order. Pilot, freeze and both comparisons
-share a **600-second hard deadline**. A slower machine or workload can still
+share a **600-second sampling deadline**; final result serialization and process
+cleanup can add a little time after that deadline. A slower machine or workload can still
 finish incomplete; timeout, bad output, changed bytes or missing samples leave
 `summary.aggregate` null. Raw outputs and statuses remain in the new directory.
 The summary's eight-suite geometric mean and combined whole-process speed ratio
@@ -390,8 +391,8 @@ outside its `Instant` interval; it never executes JavaScript. A build with
 the formal replay harness. Preserve separate build/patch/toolchain receipts
 for all binaries. The standalone builder avoids the CLI example dev dependency's
 `test-support` feature, validates all registry dependency checksums against the
-checkout lockfile, and records toolchain/features/flags. Formal stages require all 58 fixed entries with
-10 rounds in addition to the two replay commands above; `--case` subsets only
+checkout lockfile, and records toolchain/features/flags. Admission for this frozen S07 experiment requires all 58 fixed entries with
+10 rounds in addition to the two replay commands above; this is not the bounded V8 iteration protocol. `--case` subsets only
 support directional experiments. Run each matrix serially with builds, tests,
 profiling, and CPU/memory sampling stopped.
 

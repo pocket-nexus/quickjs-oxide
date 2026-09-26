@@ -1,0 +1,95 @@
+{
+  "baseline": {
+    "binary": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-cost-follow-up/build-plain/release/qjs",
+    "sha256": "b241d0252cfe19d54b18843ae106f91c4cb66f2d7f462f120ce21e2d643f3573",
+    "commit": "c7fb5b69d88bb5e6170fab3b8af5a3062fd4cb72"
+  },
+  "candidate": {
+    "binary": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/build-final/release/qjs",
+    "sha256": "1a0b7dbae0c0b92ee2fa9449bd955900d261a1e9b316ba7a9fa4f9ca7a08c5f0",
+    "commit": "5e3dedc9e3bfd717fe50f7187d08db1247c224d0"
+  },
+  "tool": "llvm-objdump --disassemble-symbols=<mangled symbol> --no-show-raw-insn",
+  "disassemblies": {
+    "install-before.s": {
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/codegen-receiver/install-before.s",
+      "sha256": "333be53da909e5ebfc617e231a216db67dcbdf7593bc2b46d50e1ecf8710cefa"
+    },
+    "install-after.s": {
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/codegen-receiver/install-after.s",
+      "sha256": "ff258b4991e0012f2892bfe7d2dda0d19ad8fe5d558de60f8989c3e1c35fe7b3"
+    },
+    "run-before.s": {
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/codegen-receiver/run-before.s",
+      "sha256": "d349dd98bcc0e273bc7b5364817e0159f71f4a3a9237b6831533a33c0d9e6ed6"
+    },
+    "run-after.s": {
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/codegen-receiver/run-after.s",
+      "sha256": "b29b02390239a1a0a197e09a7487758edc115ca2fe87a98e59050705f37b3f40"
+    },
+    "add_primitives-before.s": {
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/codegen-receiver/add_primitives-before.s",
+      "sha256": "afa2063a7706b9e69923fae3f79574c1d8485ee3f9a96a94e22ecaa09461825f"
+    },
+    "add_primitives-after.s": {
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/codegen-receiver/add_primitives-after.s",
+      "sha256": "be2cea255568e885ad8a11e6bb28631d8ee9daf8d3064c947e7641eb38abc7b4"
+    },
+    "string_in_place-before.s": {
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/codegen-receiver/string_in_place-before.s",
+      "sha256": "2d5a5bc7308b64cb9db028f3938e5c83f4b8f3467d79d2e3fea5780e214de5c1"
+    },
+    "string_in_place-after.s": {
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-plan-closure/codegen-receiver/string_in_place-after.s",
+      "sha256": "ff1e5cea0a18f8cfce06640ee8ef5c50a9d39ac5e684136582e906136008c20c"
+    }
+  },
+  "ordinary_install": {
+    "symbol": "__ZN13quickjs_oxide6engine2vm4call8ordinary12OrdinaryCall7install17h07471ad20c11add2E",
+    "before_range": "0x10041bbc8..0x10041ca70",
+    "after_range": "0x10041bbfc..0x10041cb74",
+    "before_bytes": 3752,
+    "after_bytes": 3960,
+    "before_instructions": 938,
+    "after_instructions": 990,
+    "stack_local_bytes_before": 416,
+    "stack_local_bytes_after": 800,
+    "calls": {
+      "SlotStore::peek": [
+        1,
+        0
+      ],
+      "copy_reference": [
+        2,
+        1
+      ],
+      "release_frame_binding": [
+        2,
+        0
+      ],
+      "retain_object_handle": [
+        1,
+        1
+      ]
+    }
+  },
+  "string_bridge_static": {
+    "source": "docs/performance/probes/fixed/string_bridge.js",
+    "method_calls_in_loop": 0,
+    "run_run_mnemonics": [
+      5197,
+      5197
+    ],
+    "run_run_mnemonic_differences": 0,
+    "add_primitives_mnemonics": [
+      515,
+      515
+    ],
+    "add_primitives_mnemonic_differences": 0,
+    "try_concat_in_place_mnemonics": [
+      136,
+      136
+    ],
+    "try_concat_in_place_mnemonic_differences": 0
+  }
+}
