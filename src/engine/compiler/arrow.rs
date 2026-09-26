@@ -321,6 +321,9 @@ impl<'source> Parser<'source> {
     /// substitutions and RegExp lexical goals, and accepts `=>` only when no
     /// LineTerminator separates it from the closing parenthesis.
     fn parenthesized_arrow_ahead(&self, opening: Span) -> bool {
+        if let Some(arrow) = self.cached_parenthesized_arrow(opening.start.byte_offset) {
+            return arrow;
+        }
         let mut lexer = self.lexer.clone();
         lexer.seek(opening.start);
         let Ok(first) = self.probe_token(&mut lexer, LexicalGoal::Div) else {
@@ -331,6 +334,8 @@ impl<'source> Parser<'source> {
         }
 
         let mut delimiters = vec![ForHeadDelimiter::Parenthesis];
+        let mut parentheses = vec![opening.start.byte_offset];
+        let mut closed_parenthesis = None;
         let mut goal = LexicalGoal::Div;
         let mut regexp_allowed = true;
         loop {
@@ -339,6 +344,13 @@ impl<'source> Parser<'source> {
             let Ok(mut token) = self.probe_token(&mut lexer, requested_goal) else {
                 return false;
             };
+            if let Some(start) = closed_parenthesis.take() {
+                self.cache_parenthesized_arrow(
+                    start,
+                    !token.line_terminator_before
+                        && matches!(token.kind, TokenKind::Punctuator(Punctuator::Arrow)),
+                );
+            }
             if requested_goal == LexicalGoal::Div
                 && regexp_allowed
                 && matches!(
@@ -359,6 +371,7 @@ impl<'source> Parser<'source> {
                         return false;
                     }
                     delimiters.push(ForHeadDelimiter::Parenthesis);
+                    parentheses.push(token.span.start.byte_offset);
                 }
                 TokenKind::Punctuator(Punctuator::LeftBracket) => {
                     if delimiters.len() >= 255 {
@@ -376,13 +389,17 @@ impl<'source> Parser<'source> {
                     if delimiters.pop() != Some(ForHeadDelimiter::Parenthesis) {
                         return false;
                     }
+                    let start = parentheses.pop().expect("balanced parenthesis probe");
                     if delimiters.is_empty() {
                         let Ok(arrow) = self.probe_token(&mut lexer, LexicalGoal::Div) else {
                             return false;
                         };
-                        return !arrow.line_terminator_before
+                        let result = !arrow.line_terminator_before
                             && matches!(arrow.kind, TokenKind::Punctuator(Punctuator::Arrow));
+                        self.cache_parenthesized_arrow(start, result);
+                        return result;
                     }
+                    closed_parenthesis = Some(start);
                 }
                 TokenKind::Punctuator(Punctuator::RightBracket) => {
                     if delimiters.pop() != Some(ForHeadDelimiter::Bracket) {

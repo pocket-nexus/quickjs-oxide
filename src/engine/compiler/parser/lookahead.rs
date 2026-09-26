@@ -25,6 +25,7 @@ use crate::engine::compiler::lexer::Token;
 use crate::engine::compiler::parser::context::ForIterationKind;
 use crate::engine::compiler::parser::context::Parser;
 use std::cell::Cell;
+use std::collections::HashMap;
 
 /// Upper bound on memoized entries. A probe that scans a giant region (say a
 /// whole array literal looking for its initializer) stops caching past this
@@ -34,6 +35,7 @@ const MAX_ENTRIES: usize = 8 * 1024;
 /// Compact the invalidated prefix once it is at least this large and no
 /// smaller than the live region, keeping `invalidate_before` amortized O(1).
 const COMPACT_MIN_PREFIX: usize = 64;
+const MAX_PARENTHESIS_SUMMARIES: usize = 1024;
 
 #[derive(Default)]
 pub(in crate::engine::compiler) struct LookaheadCache<'source> {
@@ -44,6 +46,11 @@ pub(in crate::engine::compiler) struct LookaheadCache<'source> {
     /// Remember the last hit so those scans do not binary-search the entire
     /// window for every token. This is only a hint; every hit checks its key.
     cursor: Cell<usize>,
+    /// Complete nested cover-grammar probes can be reused when real parsing
+    /// reaches the same parentheses. Failed/depth-limited probes are never
+    /// recorded. Context is checked because yield/await affect tokenization.
+    parentheses: HashMap<usize, (LexContext, bool)>,
+    parentheses_pruned_at: Option<usize>,
     // One result per probe family is enough for adjacent grammar consumers.
     // These bounded summaries are pure functions of offset/context and never
     // evict token entries or grow with source length.
@@ -165,6 +172,36 @@ impl<'source> LookaheadCache<'source> {
 }
 
 impl<'source> Parser<'source> {
+    pub(in crate::engine::compiler) fn cached_parenthesized_arrow(
+        &self,
+        start: usize,
+    ) -> Option<bool> {
+        let context = self.lexer.context();
+        self.lookahead
+            .borrow()
+            .parentheses
+            .get(&start)
+            .filter(|(cached_context, _)| *cached_context == context)
+            .map(|(_, arrow)| *arrow)
+    }
+
+    pub(in crate::engine::compiler) fn cache_parenthesized_arrow(&self, start: usize, arrow: bool) {
+        let mut cache = self.lookahead.borrow_mut();
+        if cache.parentheses.len() >= MAX_PARENTHESIS_SUMMARIES {
+            let current = self.current().span.start.byte_offset;
+            if cache.parentheses_pruned_at != Some(current) {
+                cache.parentheses.retain(|offset, _| *offset >= current);
+                cache.parentheses_pruned_at = Some(current);
+            }
+            if cache.parentheses.len() >= MAX_PARENTHESIS_SUMMARIES {
+                return;
+            }
+        }
+        cache
+            .parentheses
+            .insert(start, (self.lexer.context(), arrow));
+    }
+
     /// One memoized probe step: scan `goal` from the probe lexer's current
     /// position, reusing a memoized token when possible. A hit repositions the
     /// lexer at the token end, so the caller observes the same state a miss

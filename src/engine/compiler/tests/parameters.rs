@@ -646,6 +646,32 @@ fn current_token_context_is_distinct_from_future_scan_context() {
 }
 
 #[test]
+fn nested_arrow_probe_summaries_respect_regexp_newlines_context_and_depth() {
+    use crate::engine::compiler::arrow::ArrowHead;
+    use crate::engine::compiler::lexer::LexContext;
+    let source = "((a = /\\)/) => a, (b)\n=> b)";
+    let mut parser = lookahead_test_parser(source);
+    assert_eq!(parser.arrow_head_ahead(), None);
+    assert_eq!(parser.cached_parenthesized_arrow(1), Some(true));
+    assert_eq!(
+        parser.cached_parenthesized_arrow(source.find("(b)").unwrap()),
+        Some(false)
+    );
+    parser.advance().unwrap();
+    assert_eq!(parser.arrow_head_ahead(), Some(ArrowHead::Parenthesized));
+    parser.set_future_lex_context(LexContext {
+        generator: true,
+        ..LexContext::default()
+    });
+    assert_eq!(parser.cached_parenthesized_arrow(1), None);
+
+    let deep = format!("{}0{}", "(".repeat(256), ")".repeat(256));
+    let parser = lookahead_test_parser(&deep);
+    assert_eq!(parser.arrow_head_ahead(), None);
+    assert_eq!(parser.cached_parenthesized_arrow(0), None);
+}
+
+#[test]
 fn parameter_expression_binding_patterns_publish_the_quickjs_argument_scope_abi() {
     let script = compile_unlinked_script(
         "(function(left,[a,b=left],{c},right=a+b+c){return left+a+b+c+right})",
