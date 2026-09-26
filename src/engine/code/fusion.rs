@@ -580,6 +580,73 @@ mod tests {
             kind: ClosureVariableKind::Normal,
         }
     }
+
+    #[test]
+    fn fixed_plain_read_probes_have_distinct_published_plan_states() {
+        use crate::engine::api::Runtime;
+
+        for (name, source, expects_plan) in [
+            (
+                "fusion_no_plan",
+                include_str!("../../../docs/performance/probes/fixed/fusion_no_plan.js"),
+                false,
+            ),
+            (
+                "fusion_flag0",
+                include_str!("../../../docs/performance/probes/fixed/fusion_flag0.js"),
+                true,
+            ),
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let root = context.compile(source).unwrap();
+            let work = runtime.test_child_function_bytecode(&root, 0).unwrap();
+            let published = runtime.snapshot_function_bytecode(&work).unwrap();
+            assert_eq!(published.fusion.0.is_some(), expects_plan, "{name}");
+
+            let (loop_start, loop_end) = published
+                .code
+                .iter()
+                .enumerate()
+                .find_map(|(pc, instruction)| match instruction {
+                    Instruction::Goto(target) if (*target as usize) < pc => {
+                        Some((*target as usize, pc))
+                    }
+                    _ => None,
+                })
+                .expect("probe must contain a backward loop edge");
+            let loop_reads: Vec<_> = (loop_start..loop_end)
+                .filter(|&pc| {
+                    matches!(
+                        published.code[pc],
+                        Instruction::GetLocal(_) | Instruction::GetLocalCheck(_)
+                    )
+                })
+                .collect();
+            assert!(!loop_reads.is_empty(), "{name}: no local read in hot loop");
+            assert!(
+                loop_reads
+                    .iter()
+                    .all(|&pc| published.fusion.entry(pc).is_empty()),
+                "{name}: hot loop acquired a fusion candidate"
+            );
+
+            let candidates: Vec<_> = (0..published.code.len())
+                .filter(|&pc| !published.fusion.entry(pc).is_empty())
+                .collect();
+            if expects_plan {
+                assert!(!candidates.is_empty(), "{name}");
+                assert!(candidates.iter().all(|&pc| pc < loop_start), "{name}");
+                assert!(candidates.iter().any(|&pc| matches!(
+                    published.fusion.entry(pc).local_choice(),
+                    LocalFusionChoice::LocalAdd(_)
+                )));
+            } else {
+                assert!(candidates.is_empty(), "{name}");
+            }
+        }
+    }
+
     #[test]
     fn local_add_span_rejects_intermediate_entries_and_other_targets() {
         use Instruction::*;

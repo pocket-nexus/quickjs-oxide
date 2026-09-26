@@ -2,7 +2,7 @@
   "metadata": {
     "suite": "project-authored-fixed-vm-diagnostics",
     "generator": "docs/performance/probes/build_fixed_matrix.py",
-    "generator_sha256": "292e6acbcfa3d3ccdaee59835f680a42b07e3fc1d3aa401e1cff58c948928491",
+    "generator_sha256": "d444b8d1d950cf0f6140c5b12ae1974e922937304f8a9b984726bc67f1d3686b",
     "smoke": false,
     "workloads": {
       "workloads": [
@@ -24,14 +24,14 @@
           "case": "fusion_flag0",
           "size": 3000000,
           "path": "docs/performance/probes/fixed/fusion_flag0.js",
-          "sha256": "1b48f28344e148dcb425857a008881ec8aebf2d09d4c82f1b0ec4ebc52729ef6",
+          "sha256": "92df3e1420dafee42a615e883679737deb0021eb081e2bc05aafd63ec45829f1",
           "expected": "41\n"
         },
         {
           "case": "fusion_no_plan",
           "size": 3000000,
           "path": "docs/performance/probes/fixed/fusion_no_plan.js",
-          "sha256": "7d41f8cf6f6e823a498a4f78de7ae0ac6173d430cabdcd4fe1448a77e2008d80",
+          "sha256": "b4eeccb8624c086b664f7cb26741e82a946ca155fb2e738fbba46e372f172b7c",
           "expected": "41\n"
         },
         {

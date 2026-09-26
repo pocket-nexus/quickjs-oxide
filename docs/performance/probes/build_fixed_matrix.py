@@ -90,12 +90,13 @@ def cases(smoke: bool) -> list[Case]:
         n,
     )
     # The hot loops are deliberately identical: the one-time addition makes
-    # only the first function's fusion sidecar nonempty.
+    # only the first function's fusion sidecar nonempty. A truthiness check
+    # avoids publishing the independent comparison/branch fusion for n>0.
     plain_loop = """
         function work(n) {
             var plain=41, sum=0;
             __CANDIDATE__
-            while(n>0) { sum=plain; n=n-1; }
+            while(n) { sum=plain; n=n-1; }
             return sum;
         }
         print(work(__COUNT__));
