@@ -44,6 +44,8 @@ ARM64 普通版中，整个函数没有融合计划时已有一次跳转进入�
 
 这里删的是互斥候选的重复准入选择，没有删完 handler 内部的静态重验，也没有实现“所有静态不适用指令零额外派发”。原有 13 类跨度的详细提交证明仍见 [历史候选契约](../../numeric-array-spans.md)；它不是未来必须保留 u8、签名或 helper 边界的理由。
 
+五类选择各自的 guard、Result／RunExit、fault／resume PC，以及普通写入四种分类的 owner 和 readiness 作用域，详见[当前执行契约](execution-contract.md)。该文档也给出 Crypto 数组转换的源码链及未覆盖的逐对象因果边界。
+
 ## 结果
 
 ### 固定工作量：分别审查执行成本与回退
