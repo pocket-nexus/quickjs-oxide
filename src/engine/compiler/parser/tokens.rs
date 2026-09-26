@@ -138,6 +138,16 @@ impl<'source> Parser<'source> {
         &self,
         span: Span,
     ) -> Result<JsString, Error> {
+        let body = span.start.byte_offset + 1..span.end.byte_offset - 1;
+        if !self.lexer.source().as_bytes()[body.clone()].contains(&b'\\') {
+            // The committed token already checked syntax and UTF-16 length.
+            // Convert its source range once; SourceText retains surrogate
+            // carriers instead of interpreting them as ordinary PUA scalars.
+            return self
+                .lexer
+                .source_range_to_js_string(body)?
+                .ok_or_else(|| Error::internal("invalid string literal source range"));
+        }
         let value = self
             .lexer
             .decode_string_literal(span.start)

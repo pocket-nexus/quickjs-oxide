@@ -367,6 +367,11 @@ impl JsString {
 trait StringSink {
     fn push_code_unit(&mut self, unit: u16) -> Result<(), JsStringError>;
 
+    /// On overflow, return the number of source bytes through the first unit
+    /// exceeding the limit. The lexer must report that precise cursor, even
+    /// when a later byte would produce another lexical error.
+    fn push_ascii(&mut self, bytes: &[u8]) -> Result<(), usize>;
+
     fn push_char(&mut self, ch: char) -> Result<(), JsStringError> {
         self.push_code_point(ch as u32)
     }
@@ -401,6 +406,15 @@ impl Utf16Sink {
 }
 
 impl StringSink for Utf16Sink {
+    fn push_ascii(&mut self, bytes: &[u8]) -> Result<(), usize> {
+        let remaining = self.limit.saturating_sub(self.units.len());
+        if bytes.len() > remaining {
+            return Err(remaining + 1);
+        }
+        self.units.extend(bytes.iter().copied().map(u16::from));
+        Ok(())
+    }
+
     fn push_code_unit(&mut self, unit: u16) -> Result<(), JsStringError> {
         RuntimeJsString::checked_length_with_limit(self.units.len(), 1, self.limit)?;
         self.units.push(unit);
@@ -422,6 +436,15 @@ impl ValidateSink {
 }
 
 impl StringSink for ValidateSink {
+    fn push_ascii(&mut self, bytes: &[u8]) -> Result<(), usize> {
+        let remaining = self.limit.saturating_sub(self.len);
+        if bytes.len() > remaining {
+            return Err(remaining + 1);
+        }
+        self.len += bytes.len();
+        Ok(())
+    }
+
     fn push_code_unit(&mut self, _unit: u16) -> Result<(), JsStringError> {
         RuntimeJsString::checked_length_with_limit(self.len, 1, self.limit)?;
         self.len += 1;
@@ -1602,6 +1625,30 @@ impl<'a> Lexer<'a> {
         let mut has_legacy_octal_escape = false;
 
         loop {
+            // Ordinary ASCII cannot be a surrogate marker or malformed-byte
+            // carrier. Count/copy the whole run without per-scalar dispatch.
+            // DEL remains on the carrier-aware path along with non-ASCII.
+            let bytes = self.source.as_bytes();
+            let mut end = self.offset;
+            while let Some(&byte) = bytes.get(end) {
+                if byte >= 0x7f || byte == separator as u8 || matches!(byte, b'\\' | b'\r' | b'\n')
+                {
+                    break;
+                }
+                end += 1;
+            }
+            if end != self.offset {
+                let result = value.push_ascii(&bytes[self.offset..end]);
+                let consumed = match result {
+                    Ok(()) => end - self.offset,
+                    Err(consumed) => consumed,
+                };
+                self.offset += consumed;
+                self.column = self.column.saturating_add(consumed as u32);
+                if result.is_err() {
+                    return Err(self.string_too_long(start));
+                }
+            }
             if self.invalid_source_byte_at(self.offset) {
                 return Err(self.error_from(
                     start,
@@ -3740,6 +3787,37 @@ mod tests {
             .next_token()
             .unwrap_err();
         assert_eq!(syntax_first.kind, LexErrorKind::InvalidEscape);
+    }
+
+    #[test]
+    fn ascii_string_runs_keep_overflow_and_unicode_cursor_positions() {
+        for prefix in ["", "abc", "\\u{1f600}", "é", "\\n"] {
+            let source = format!("'{prefix}abcdefghijklmnopqrstuvwxyz\\xZ'");
+            let decoded_prefix = match prefix {
+                "" => 0,
+                "abc" => 3,
+                "\\u{1f600}" => 2,
+                _ => 1,
+            };
+            let error = Lexer::new(&source)
+                .with_string_limit(decoded_prefix + 8)
+                .next_token()
+                .unwrap_err();
+            assert_eq!(error.kind, LexErrorKind::StringTooLong);
+            assert_eq!(error.span.end.byte_offset, 1 + prefix.len() + 9);
+        }
+        let source = "'abcédef\u{2028}ghi' next";
+        let mut lexer = Lexer::new(source);
+        let token = lexer.next_token().unwrap();
+        assert_eq!(token.span.end.line, 2);
+        assert_eq!(token.span.end.column, 5);
+        assert_eq!(
+            lexer.decode_string_literal(token.span.start).unwrap().utf16,
+            "abcédef\u{2028}ghi".encode_utf16().collect::<Vec<_>>()
+        );
+        let next = lexer.next_token().unwrap();
+        assert_eq!(next.span.start.line, 2);
+        assert_eq!(next.span.start.column, 6);
     }
 
     #[test]
