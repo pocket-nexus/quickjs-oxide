@@ -19,6 +19,8 @@
 | 本轮集成版 plain 构建 | `d6a168e2` |
 | 集成版加普通写入分类内联的受测候选 | `8c38bc32a316aa6eb4fdf6540b448d0163770671` |
 
+两份不在 PR 主历史中的受测提交另保留远端实验引用，避免只剩本机 worktree：[`codex/measured-entry-choice-20260926`](https://github.com/pocket-nexus/quickjs-oxide/tree/codex/measured-entry-choice-20260926) 精确指向 `315035b5`，[`codex/measured-inline-20260926`](https://github.com/pocket-nexus/quickjs-oxide/tree/codex/measured-inline-20260926) 精确指向 `8c38bc32`。它们保存受测源码；不是已接纳性能候选的声明。
+
 普通计时构建为 release、fat LTO、CGU=1，无 PGO/profiling。诊断构建另存，逻辑事件不作为普通版耗时或 Score。macOS 原生 `/usr/bin/time -l` 在此主机提供整进程退休指令、cycles、最大 RSS 和 peak footprint；不是 Linux `perf ...:u` 的用户态专用口径。Instruments CPU Counters 的初步能力探针因时间限制终止、目标收到 SIGKILL，仅作为工具能力记录；它不能支持任何缓存、分支预测或瓶颈比例结论。
 
 Current 和 Parent 构建启动于工具完善期间，完整 Cargo verbose 日志保留了实际 rustc 命令和参数，但其旧版 receipt 中的 tooling hash 是构建结束时观察，不能证明进程加载的脚本版本。后续构建工具在启动时冻结脚本快照并在结束时校验；这项边界不改变前两份干净源码、完整编译命令与二进制的身份。
@@ -133,6 +135,6 @@ Crypto 的静态原因链也已核对：BigInteger 的 fresh Array 从空 dense 
 | 工具检查 | benchmark Python 单测、源码布局检查 | 分别 37/37 通过、625 个可达 Rust 文件通过。Python 日志未自证执行时的精确 Git 提交。 |
 | PR head `945d485d`，CI checkout `4bb6e870` | 远端 fast 与 test262-focused | 均通过。核对两个提交的 Git tree 均为 `5e0e5e46a21d882e5a3d5e27ab2687f4bc398654`，因此该 CI 覆盖已集成的内联注解及诊断修正。fast 包括 workspace 全 targets、CLI profiling、部分 profiling 库测试、doc／host 测试、Clippy、格式与架构／工具检查；不冒充全量 profiling 库回放。 |
 
-另行构建的 inline 候选 `8c38bc32` 仅改变一个内联注解，已以 `9df1969f` 并入当前实验分支；上述全量测试不覆盖它。完整 Test262 使用冻结的 `d6a168e2` 工作树，后续探针、诊断标签及内联注解提交不在该全量结果中。受测候选的固定矩阵输出校验另见各测量收据，不冒充最新 HEAD 的全量 Test262。
+另行构建的 inline 候选 `8c38bc32` 仅改变一个内联注解，已以 `9df1969f` 并入当前实验分支；较早的 `d6a168e2` 完整 Test262 与 `b59331bc` 全量 profiling 库测试不覆盖它。后续探针、诊断标签及内联注解提交不在该完整 Test262 结果中。受测候选的固定矩阵输出校验另见各测量收据，不冒充最新 HEAD 的全量 Test262。
 
 后续 [CI run 36214372192](https://github.com/pocket-nexus/quickjs-oxide/actions/runs/36214372192) 覆盖了包含该注解的 PR tree。该次 `test262-full` 与 `quickjs-differential` 按 workflow 条件跳过，不计为通过；完整日志、实际 checkout 提交与 tree 对照已留入 validation summary。
