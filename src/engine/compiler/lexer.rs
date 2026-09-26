@@ -1057,6 +1057,60 @@ impl<'a> Lexer<'a> {
     }
 
     fn scan_identifier(&mut self, private: bool) -> Result<TokenKind<'a>, LexError> {
+        let raw_start = self.offset;
+        let value_start = raw_start + usize::from(private);
+        let bytes = self.source.as_bytes();
+        if bytes
+            .get(value_start)
+            .is_some_and(|byte| *byte < 0x80 && is_ascii_identifier_start_byte(*byte))
+        {
+            let mut end = value_start;
+            let mut flags = 0;
+            while let Some(&byte) = bytes.get(end) {
+                if byte >= 0x80 || !is_ascii_identifier_continue_byte(byte) {
+                    break;
+                }
+                flags |= ASCII_FLAGS[byte as usize];
+                end += 1;
+            }
+            // Escapes and non-ASCII boundaries retain the complete scanner,
+            // including attempted-escape flags and private-name diagnostics.
+            if !matches!(bytes.get(end), Some(b'\\' | 0x80..=0xff)) {
+                let length = end - raw_start;
+                if length > self.string_limit {
+                    let start = self.current_position();
+                    self.offset += self.string_limit + 1;
+                    self.column = self.column.saturating_add((self.string_limit + 1) as u32);
+                    return Err(self.string_too_long(start));
+                }
+                self.offset = end;
+                self.column = self.column.saturating_add(length as u32);
+                let raw = &self.source[raw_start..end];
+                let keyword_hint = if flags & NOT_KEYWORD == 0 {
+                    keyword_from_str(&self.source[value_start..end])
+                } else {
+                    None
+                };
+                if !private {
+                    if let Some(keyword) =
+                        keyword_hint.filter(|keyword| self.keyword_is_active(*keyword))
+                    {
+                        return Ok(TokenKind::Keyword(keyword));
+                    }
+                }
+                let identifier = Identifier {
+                    raw,
+                    has_escape: false,
+                    keyword_hint,
+                    escaped_reserved_word: false,
+                };
+                return Ok(if private {
+                    TokenKind::PrivateIdentifier(identifier)
+                } else {
+                    TokenKind::Identifier(identifier)
+                });
+            }
+        }
         self.scan_identifier_with_value(private)
             .map(|(kind, _)| kind)
     }
@@ -2945,6 +2999,66 @@ mod tests {
             let replayed = lexer.next_token().unwrap();
             assert_eq!(replayed.kind, token.kind);
             assert_eq!(replayed.span, token.span);
+        }
+    }
+
+    #[test]
+    fn ascii_identifier_path_matches_full_scanner_at_context_and_length_boundaries() {
+        for context in [
+            LexContext::default(),
+            LexContext {
+                strict: true,
+                ..LexContext::default()
+            },
+            LexContext {
+                generator: true,
+                async_function: true,
+                module: true,
+                ..LexContext::default()
+            },
+        ] {
+            for source in [
+                "name;",
+                "a",
+                "async()",
+                "yield ",
+                "await",
+                "let",
+                "Name9_",
+                "alphaé;",
+                "éclair;",
+                r"if\u{2d}",
+                r"f\u006fo",
+                "alpha\u{a0}",
+                "alpha\u{2028}",
+                "#name",
+                "#yield",
+                "#é",
+                r"#\u0061",
+                "#9",
+            ] {
+                for limit in [1, 2, 5, 31, RuntimeJsString::MAX_LEN] {
+                    let mut fast = Lexer::with_options(
+                        source,
+                        LexerOptions {
+                            context,
+                            ..LexerOptions::default()
+                        },
+                    )
+                    .with_string_limit(limit);
+                    let mut full = fast.clone();
+                    let private = source.starts_with('#');
+                    let expected = full
+                        .scan_identifier_with_value(private)
+                        .map(|(kind, _)| kind);
+                    assert_eq!(
+                        fast.scan_identifier(private),
+                        expected,
+                        "{source:?}, {context:?}, limit {limit}"
+                    );
+                    assert_eq!(fast.current_position(), full.current_position());
+                }
+            }
         }
     }
 
