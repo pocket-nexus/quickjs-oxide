@@ -1,0 +1,53 @@
+{
+  "external_root": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths",
+  "files": [
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/analyze.py","sha256":"11b96ab3688485cddc636ea4c5f821ccaab4099bfce89dedf8bafd3cbecfdbf2"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/archive_shared_paths.py","sha256":"637d0305617baa87792ca54a3a727c718b565368d851961a1046d50db595b3d3"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/build-array/release/qjs.build.json","sha256":"775cbd58bb94efaf6b4209b4ea98baafb3a0a1280c3a4ea07b0a49b3bc2d4eda"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/build-array.log","sha256":"be03074ebe3ba5c4df531c88e1a0d5413cf978890c25d68bb9ddc8564f7cdf9d"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/build-final/release/qjs.build.json","sha256":"d802684dc051156c8c79bb2720eab0d1750a48cfc2ff647207e940b912bb135a"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/build-final.log","sha256":"8886d12221c1a35239710a080556116f57389d7318c5e409f6e5587c3791ae7e"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/build-own/release/qjs.build.json","sha256":"9cc180654e81e6101e42fdf895e30dfd88e5e8091eed50095f5b4da87aa3a32d"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/build-own.log","sha256":"fba3a0aefa8a56036e822d893a12ab24de4cfd5db0827f12e48b3b8f7772c490"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/build-profile/release/qjs.build.json","sha256":"be968a9407914f81fa2ad72c37797b6827a9d302c4b43a75797360cb1e807090"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/clippy-final.log","sha256":"6912e63a780622c89959f83a1325fe1bd3f5b80b9615448838a3e607ee29888d"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/clippy-verified.log","sha256":"40f2bf156cff3cfc8bcfe0cfe2f779db393b585c7ecd22760313935cd40a6205"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/codegen-call/array-control-metadata.json","sha256":"a732d65f814c3ef88b6b8a1956436699ed648a4c5222df5890d1a9e8889171ae"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/codegen-call/extract.py","sha256":"18bb0e1be547673371d460196fe6086831171859a52d3c764fe475201963e3f7"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/codegen-call/final-metadata.json","sha256":"e968fd0e055f8103736381d176f30788a2f618a9e7009713f076afb9dd048315"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/codegen-own/array-control-metadata.json","sha256":"baf238913578f589176d285b16e96f76700b415cb19a558de7d1a9d4fdafa0a8"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/codegen-own/baseline-metadata.json","sha256":"9e40789cc3e083f7eb2e5052a24e9f27c7cc67e2f9233101c0ea74dd04f88c72"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/codegen-own/extract.py","sha256":"7adafa6a6b06b17261d8e0f4ac4a90fb7b073129422d4d63d12bdb9b57f632fd"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/codegen-own/final-metadata.json","sha256":"d5e8f5af262aab920edbab60b1a2cf2f834f7da36492c37f0c01aa945d90fd56"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/codegen-own/own-metadata.json","sha256":"0b08aab92b93771d711bb6a351552329f9f1c77cc78cab9247a53d3c297c0f57"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/fixed-call.log","sha256":"c1ad7fadf336f892352a91205d02460e4b07b7e2461e603ef63ba8f8f3be64c1"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/fixed-final.log","sha256":"c1ad7fadf336f892352a91205d02460e4b07b7e2461e603ef63ba8f8f3be64c1"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/fixed-own.log","sha256":"c1ad7fadf336f892352a91205d02460e4b07b7e2461e603ef63ba8f8f3be64c1"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/fmt.log","sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/measure.py","sha256":"388fc3bf4a129277792514015c5583f5c6675227ab1061abdb5219cce4646bd3"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/profile.log","sha256":"61518768252816f594c5a4ff664b358a312dd3d1d1014a4346f37ea34e3de765"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/property-own-valid.log","sha256":"d2bcac2a024305946274ac7000cb16047b1547715450c16896c5750c0fb3fc95"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/property-own.log","sha256":"a0ed254fbe7b2bd39f4ca2ba45f3ce92083f36647eb7d9f9fe7c0e90e78c78b4"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/raytrace-aa.log","sha256":"7a30ad05650c99b06595d5376333f444052f21f642256d76e2df273e128276b2"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/raytrace-ab.log","sha256":"7a30ad05650c99b06595d5376333f444052f21f642256d76e2df273e128276b2"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/raytrace-manifest.json","sha256":"00b2087e0a8657f1cf89de63469d5321cb27b3e92b3588e769f15eb397ed43d1"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/recheck_raytrace.py","sha256":"ea46b0fa2ac6982d958ab18f16d7e6ca0208b877f00737ac638706492ba10521"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/scope.json","sha256":"a726e7a2a49ebe3798c249011637c4ea9affc07a92be7a626ecdeaf0bb886ca7"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/source-layout.log","sha256":"ec8e78f8acd7ec982c9eade15587182437eb2c5f5077a0f4950eefdcd7bef06e"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/summarize_pairs.py","sha256":"63d3386d7a16546e4bec6e84cc3a78f5af149d72be41a7e8c5bfe3e1b73e6849"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/test-array.log","sha256":"485c09364ef908bf61dda6e8c8f96a7a12ac5bb37862eac1c7ae3bc0c9cd100e"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/test-complete.log","sha256":"cad3275039bd1f546ae4538ceb88fa04fec98f4b207d69d88b16626ba724e1d0"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/test-final.log","sha256":"2afc44a10d52f81462ca60417ccac7806023e327e8628de8973569a8eab006af"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/test-verified.log","sha256":"f3d1991c3c101d4d302f3a9d212908b380c5174829041b98084ccb07f267b84b"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/v8-array.log","sha256":"4938d165e90528fbe7209c6b8f5e3939080c31b453aebd0317b59edbeb7819c5"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/v8-call.log","sha256":"4938d165e90528fbe7209c6b8f5e3939080c31b453aebd0317b59edbeb7819c5"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/v8-main.log","sha256":"4938d165e90528fbe7209c6b8f5e3939080c31b453aebd0317b59edbeb7819c5"},
+    {"path":"/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/v8-own.log","sha256":"4938d165e90528fbe7209c6b8f5e3939080c31b453aebd0317b59edbeb7819c5"}
+  ],
+  "excluded_attempts": [
+    {
+      "directory": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-shared-paths/property-own",
+      "reason": "initial manifest omitted size; runner stopped before paired journal; excluded from summaries"
+    }
+  ]
+}

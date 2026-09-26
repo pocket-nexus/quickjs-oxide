@@ -1,6 +1,8 @@
 # Safe Rust 性能改善：已完成候选与测量入口
 
-> 最新裁决（2026-09-26，产品源码 `b280ec8b`）：五项计划的本轮实现、画像与候选取舍见[完整收据](receipts/plan-closure-2026-09-26/README.md)。保留发布静态事实、融合入口选择、Number 写回和 dense 恢复，消除普通读写的 29 处机器调用点；撤回 receiver 性能转移，保留失败所有权清理修复。20 项固定矩阵相对 Parent／上一集成版本未出现超过 2% 的指令回退；Object 的约 7% cycles 回退不再重现。2,158 项库测试、fast CI 和 focused Test262 通过。
+> 本轮进展（2026-09-26，受测产品 `ae81f090`）：继续优化普通自有属性读取、materialized 数组读取、发布 local 初始化事实与标量帧清理，见[实现、逐片与累计证据](receipts/shared-paths-2026-09-26/README.md)。相对 main 同引擎代码基线，固定工作量 combined 指令 −13.24%；其中包含此前收益。新增属性片使 DeltaBlue/Splay 指令 −8.00%/−5.37%，新增数组片使 Crypto 再 −12.79%；调用片尚未证明整体加速。2,167 项 profiling 库测试及 Clippy 通过。四批八 isolated 加 combined 测量共约 8 分 16 秒；耗时仍标受干扰，非原版 V8 Score。
+
+> 上一轮裁决（2026-09-26，产品源码 `b280ec8b`）：五项计划的本轮实现、画像与候选取舍见[完整收据](receipts/plan-closure-2026-09-26/README.md)。保留发布静态事实、融合入口选择、Number 写回和 dense 恢复，消除普通读写的 29 处机器调用点；撤回 receiver 性能转移，保留失败所有权清理修复。20 项固定矩阵相对 Parent／上一集成版本未出现超过 2% 的指令回退；Object 的约 7% cycles 回退不再重现。2,158 项库测试、fast CI 和 focused Test262 通过。
 > 研发迭代使用八 isolated 加 combined 的固定工作量 A/A、A/B；最终四批各用 129–200 秒，采样截止为 600 秒。combined 退休指令相对 Parent／R0／B37 减少 6.15%／10.42%／10.84%，其中历史累计收益不能全归最后一片。**同机干扰下整体耗时仍未裁决；这些不是原版 V8 Score，也没有达到或证明 3–4 倍目标。** 原版 Score 留待专门的完整复核，不要求每个研发切片小时级长跑。
 > 上一轮（2026-09-26）：继续削减 Array dense 恢复的分配与验证、非 method 调用的重复 callee 读取，将前／后缀增减方向编码到发布计划，并细分 materialized 失败诊断。2,152 项库测试通过；仅测三项短探针共 12 个进程，小幅指令变化不作收益准入。见[当轮实现与收据](receipts/cost-follow-up-2026-09-26/README.md)。
 > 上一轮：完整倒序填充后的 Array dense 恢复、Dense 首操作数事实传递、普通调用单次参数校验已实现，并修正字典数组截断的命名键顺序。仅执行短探针和一次 Crypto 逻辑诊断；额外 helper 导致的数组读取指令回退已定位并修正。见[继续实施收据](receipts/follow-through-2026-09-26/README.md)。
