@@ -1003,9 +1003,21 @@ impl Runtime {
     }
 }
 
-/// The scalar property kernel shared by the IC miss and the test-only leaf.
-/// The caller has already proved whether consuming `base` can drain storage.
+#[cfg(test)]
 fn immediate_field_in_state(state: &RuntimeState, base: &JsValue, atom: Atom) -> Option<JsValue> {
+    field_in_state(state, base, atom, immediate_value_jsvalue)
+}
+
+/// Select an ordinary own data slot once, including at megamorphic sites.
+/// The caller promotes the borrowed slot while this same heap borrow is live.
+/// It has already proved whether consuming `base` can drain storage. Missing,
+/// accessor, lazy and exotic reads still take the canonical driver path.
+fn field_in_state(
+    state: &RuntimeState,
+    base: &JsValue,
+    atom: Atom,
+    promote: impl FnOnce(&RawValue) -> Option<JsValue>,
+) -> Option<JsValue> {
     if let JsValue::String(id) = base {
         // The executable owns a same-runtime interned atom; the pinned
         // spelling has that same canonical identity. No text traversal is
@@ -1051,7 +1063,7 @@ fn immediate_field_in_state(state: &RuntimeState, base: &JsValue, atom: Atom) ->
     let PropertySlot::Data(value) = &data.slots[slot.index] else {
         return None;
     };
-    immediate_value_jsvalue(value)
+    promote(value)
 }
 
 impl Runtime {

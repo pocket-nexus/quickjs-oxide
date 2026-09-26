@@ -3,6 +3,7 @@ use super::{LinkedNativeSelection, linked_field_atom};
 use crate::engine::api::{runtime::Runtime, runtime_error::RuntimeError};
 use crate::engine::atom::AtomIdx;
 use crate::engine::code::runtime::PublishedFunctionSnapshot;
+use crate::engine::heap::runtime::RuntimeState;
 use crate::engine::heap::{ObjectId, ObjectPayload, RawValue, SlotReleaseReadiness};
 use crate::engine::value::JsValue;
 use crate::engine::value::number::operations::Number;
@@ -112,10 +113,9 @@ impl Runtime {
     /// Trusted shared-borrow data-property read.
     ///
     /// Covers the location-cache hit for a live receiver without a mutable
-    /// state borrow or fallible plumbing. Symbols need an atom-table retain
-    /// (S1b) and every non-data or non-cached case declines with `None`, so the
-    /// caller keeps its canonical `try_property_ic_read_owned` fallback. A
-    /// declined read claims no owner.
+    /// state borrow or fallible plumbing. A cache miss can promote an ordinary
+    /// own data slot under the same borrow, so owner-bearing values do not
+    /// repeat lookup in the driver. A declined read claims no owner.
     #[inline]
     pub(crate) fn property_ic_read_fast(
         &self,
@@ -154,7 +154,7 @@ impl Runtime {
                         atom,
                     );
                 }
-                return super::immediate_field_in_state(&state, base, atom);
+                return self.uncached_field_in_state(&state, base, atom, keep_receiver, native);
             }
         };
         if !keep_receiver
@@ -164,7 +164,7 @@ impl Runtime {
             return None;
         }
         let Some(cache) = cache else {
-            return super::immediate_field_in_state(&state, base, atom);
+            return self.uncached_field_in_state(&state, base, atom, keep_receiver, native);
         };
         let raw = match cache.read(&state.heap, self.domain_id(), executable.realm, receiver) {
             Some(raw) => raw,
@@ -183,12 +183,51 @@ impl Runtime {
                 let Some(raw) =
                     cache.read(&state.heap, self.domain_id(), executable.realm, receiver)
                 else {
-                    return super::immediate_field_in_state(&state, base, atom);
+                    return self.uncached_field_in_state(&state, base, atom, keep_receiver, native);
                 };
                 raw
             }
         };
-        let result = match raw {
+        let result = self.promote_field_in_state(&state, raw, keep_receiver, native);
+        #[cfg(feature = "profiling")]
+        if result.is_some() {
+            crate::engine::api::profiling::record_owned_execution_event("property_ic.hit");
+        }
+        result
+    }
+
+    fn uncached_field_in_state(
+        &self,
+        state: &RuntimeState,
+        base: &JsValue,
+        atom: crate::engine::atom::Atom,
+        keep_receiver: bool,
+        native: &mut Option<LinkedNativeSelection>,
+    ) -> Option<JsValue> {
+        let result = super::field_in_state(state, base, atom, |raw| {
+            self.promote_field_in_state(state, raw, keep_receiver, native)
+        });
+        #[cfg(feature = "profiling")]
+        if result.is_some() {
+            crate::engine::api::profiling::record_owned_execution_event(
+                "property_ic.uncached_field",
+            );
+        }
+        result
+    }
+
+    /// The slot and its receiver stay live for this entire borrow. Retaining
+    /// the result cannot drain cleanup or invoke JS, and no fallible step
+    /// follows a successful retain. Cache hits and uncached own reads use the
+    /// same promotion and native-selection contract.
+    fn promote_field_in_state(
+        &self,
+        state: &RuntimeState,
+        raw: &RawValue,
+        keep_receiver: bool,
+        native: &mut Option<LinkedNativeSelection>,
+    ) -> Option<JsValue> {
+        match raw {
             RawValue::Object(function) => {
                 let selected = if keep_receiver {
                     let object = state.heap.object_fast(*function);
@@ -231,12 +270,7 @@ impl Runtime {
             RawValue::Int(value) => Some(JsValue::Int(*value)),
             RawValue::Float(value) => Some(JsValue::Float(*value)),
             RawValue::Private(_) | RawValue::Uninitialized | RawValue::Exception => None,
-        };
-        #[cfg(feature = "profiling")]
-        if result.is_some() {
-            crate::engine::api::profiling::record_owned_execution_event("property_ic.hit");
         }
-        result
     }
 
     /// Non-owning immediate projection of the location cache.
@@ -597,6 +631,121 @@ mod tests {
             })
             .unwrap();
         (executable, pc, key)
+    }
+
+    #[test]
+    fn uncached_own_read_retains_every_owner_after_last_base_release() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let (code, pc, key) = site(&runtime);
+        // Three distinct shapes put this site into its megamorphic cooldown.
+        // Every following value must therefore use the uncached own-slot path.
+        for expression in ["({x:1})", "({a:0,x:2})", "({b:0,a:0,x:3})"] {
+            let base = runtime
+                .into_jsvalue(context.eval(expression).unwrap())
+                .unwrap();
+            let result = runtime
+                .property_ic_read_fast(&base, &code, pc, key, true, &mut None)
+                .unwrap();
+            runtime.release_jsvalue(result).unwrap();
+            runtime.release_jsvalue(base).unwrap();
+        }
+        for expression in [
+            "({nested:7})",
+            "'wide λ text'",
+            "123456789012345678901234567890n",
+            "Symbol.for('uncached-read')",
+            "undefined",
+            "null",
+            "true",
+            "1.25",
+        ] {
+            let base = runtime
+                .into_jsvalue(context.eval(&format!("({{x:{expression}}})")).unwrap())
+                .unwrap();
+            let result = runtime
+                .property_ic_read_fast(&base, &code, pc, key, true, &mut None)
+                .unwrap_or_else(|| panic!("uncached {expression}"));
+            runtime.release_jsvalue(base).unwrap();
+            runtime.run_gc().unwrap();
+            let result = runtime.root_and_release_jsvalue(result).unwrap();
+            if let Value::Object(object) = result {
+                assert_eq!(
+                    context
+                        .get_property(&object, &runtime.intern_property_key("nested").unwrap())
+                        .unwrap(),
+                    Value::Int(7)
+                );
+            } else {
+                assert_eq!(result, context.eval(expression).unwrap(), "{expression}");
+            }
+        }
+    }
+
+    #[test]
+    fn uncached_own_read_declines_accessors_proxies_and_last_owner_consumption() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let (code, pc, key) = site(&runtime);
+        for expression in [
+            "({get x(){throw 1}})",
+            "new Proxy({x:1},{get(){throw 2}})",
+            "Object.create({get x(){throw 3}})",
+        ] {
+            let base = runtime
+                .into_jsvalue(context.eval(expression).unwrap())
+                .unwrap();
+            assert!(
+                runtime
+                    .property_ic_read_fast(&base, &code, pc, key, true, &mut None)
+                    .is_none()
+            );
+            runtime.release_jsvalue(base).unwrap();
+        }
+        let base = runtime
+            .into_jsvalue(context.eval("({x:{marker:1}})").unwrap())
+            .unwrap();
+        assert!(
+            runtime
+                .property_ic_read_fast(&base, &code, pc, key, false, &mut None)
+                .is_none()
+        );
+        let result = runtime
+            .property_ic_read_fast(&base, &code, pc, key, true, &mut None)
+            .unwrap();
+        runtime.release_jsvalue(result).unwrap();
+        runtime.release_jsvalue(base).unwrap();
+    }
+
+    #[test]
+    fn uncached_native_hint_describes_the_retained_current_value() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let (code, pc, key) = site(&runtime);
+        let poison = runtime
+            .into_jsvalue(context.eval("({get x(){throw 1}})").unwrap())
+            .unwrap();
+        assert!(
+            runtime
+                .property_ic_read_fast(&poison, &code, pc, key, true, &mut None)
+                .is_none()
+        );
+        runtime.release_jsvalue(poison).unwrap();
+        let base = runtime
+            .into_jsvalue(context.eval("({x:Math.min})").unwrap())
+            .unwrap();
+        let mut native = None;
+        let result = runtime
+            .property_ic_read_fast(&base, &code, pc, key, true, &mut native)
+            .unwrap();
+        assert!(
+            native
+                .unwrap()
+                .into_parts_jsvalue(&runtime, object(&result))
+                .is_some()
+        );
+        runtime.release_jsvalue(base).unwrap();
+        runtime.release_jsvalue(result).unwrap();
     }
 
     #[test]
