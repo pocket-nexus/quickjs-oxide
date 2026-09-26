@@ -619,6 +619,38 @@ fn lookahead_cache_serves_the_commit_path() {
 }
 
 #[test]
+fn committed_lookahead_selects_the_exact_goal_and_context_at_one_offset() {
+    use crate::engine::compiler::lexer::{LexContext, LexicalGoal, Token, TokenKind};
+
+    let mut parser = lookahead_test_parser("alpha /x/g tail");
+    let strict = LexContext {
+        strict: true,
+        ..LexContext::default()
+    };
+    parser.set_future_lex_context(strict);
+    let start = parser.current().span.end.byte_offset;
+    let regexp = parser
+        .lexer
+        .clone()
+        .next_token_with_goal(LexicalGoal::RegExp)
+        .unwrap();
+    let wrong = Token {
+        kind: TokenKind::RawAscii(b'@'),
+        ..regexp
+    };
+    parser.lookahead_insert(start, LexicalGoal::Div, strict, wrong);
+    parser.lookahead_insert(start, LexicalGoal::RegExp, LexContext::default(), wrong);
+    parser.lookahead_insert(start, LexicalGoal::RegExp, strict, regexp);
+    parser.advance_with_goal(LexicalGoal::RegExp).unwrap();
+    assert_eq!(*parser.current(), regexp);
+    parser.advance().unwrap();
+    assert!(matches!(
+        parser.current().kind,
+        TokenKind::Identifier(identifier) if identifier.raw == "tail"
+    ));
+}
+
+#[test]
 fn current_token_context_is_distinct_from_future_scan_context() {
     use crate::engine::compiler::lexer::{Keyword, LexContext, TokenKind};
     let mut parser = lookahead_test_parser("yield yield");

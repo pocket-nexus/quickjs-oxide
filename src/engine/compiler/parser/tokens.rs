@@ -626,7 +626,6 @@ impl<'source> Parser<'source> {
             let previous_end = self.token.span.end.byte_offset;
             self.scan_next_token(goal)?;
             self.previous_end = Some(previous_end);
-            self.lookahead_invalidate_before(self.token.span.start.byte_offset);
         }
         Ok(())
     }
@@ -635,15 +634,10 @@ impl<'source> Parser<'source> {
     fn scan_next_token(&mut self, goal: LexicalGoal) -> Result<(), Error> {
         let start = self.lexer.current_position().byte_offset;
         let context = self.lexer.context();
-        match self.take_lookahead(start, goal, context) {
-            Some(token) => {
-                self.lexer.seek(token.span.end);
-                self.token = token;
-            }
-            None => self
-                .lexer
+        if !self.take_lookahead(start, goal, context) {
+            self.lexer
                 .next_token_into(goal, &mut self.token)
-                .map_err(lex_error)?,
+                .map_err(lex_error)?;
         }
         self.token_context = (context, goal);
         Ok(())
