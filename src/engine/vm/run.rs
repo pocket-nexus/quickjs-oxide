@@ -320,7 +320,7 @@ enum DirectWriteClass {
     Other,
 }
 
-#[inline]
+#[inline(always)]
 fn direct_write_class(
     runtime: &crate::engine::api::runtime::Runtime,
     binding: &FrameBinding,
