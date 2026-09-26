@@ -46,6 +46,8 @@ pub(in crate::engine::compiler) struct IrScope {
     pub(in crate::engine::compiler) bindings: Vec<BindingId>,
     /// Last binding in declaration order for each name. The ordered list remains
     /// authoritative for validation, lowering and observable declaration order.
+    /// Boxing keeps every small scope's header compact; only large scopes allocate it.
+    #[allow(clippy::box_collection)]
     pub(in crate::engine::compiler) bindings_by_name: Option<Box<HashMap<NameId, BindingId>>>,
 }
 
