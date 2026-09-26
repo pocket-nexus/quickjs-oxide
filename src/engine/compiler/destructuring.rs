@@ -549,13 +549,17 @@ impl<'source> Parser<'source> {
     }
 
     pub(super) fn array_assignment_pattern_ahead(&self) -> bool {
-        self.array_binding_following_token()
-            .is_some_and(|token| matches!(token.kind, TokenKind::Punctuator(Punctuator::Equal)))
+        self.is_punctuator(Punctuator::LeftBracket)
+            && self
+                .array_binding_following_token()
+                .is_some_and(|token| matches!(token.kind, TokenKind::Punctuator(Punctuator::Equal)))
     }
 
     pub(super) fn object_assignment_pattern_ahead(&self) -> bool {
-        self.object_binding_following_token()
-            .is_some_and(|token| matches!(token.kind, TokenKind::Punctuator(Punctuator::Equal)))
+        self.is_punctuator(Punctuator::LeftBrace)
+            && self
+                .object_binding_following_token()
+                .is_some_and(|token| matches!(token.kind, TokenKind::Punctuator(Punctuator::Equal)))
     }
 
     pub(super) fn for_array_assignment_pattern_ahead(
@@ -781,6 +785,9 @@ impl<'source> Parser<'source> {
         assignment_seen: &mut bool,
     ) -> Option<BindingPatternScan<'source>> {
         use crate::engine::compiler::parser::lookahead::BindingScanMemo;
+        if !self.is_punctuator(opening) {
+            return None;
+        }
         let start = self.current().span.start.byte_offset;
         let context = self.lexer.context();
         if let Some(memo) = self.lookahead.borrow().binding_scan
