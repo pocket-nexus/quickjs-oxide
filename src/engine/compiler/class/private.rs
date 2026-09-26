@@ -348,6 +348,10 @@ mod tests {
         )
         .unwrap();
         let mut parser = Parser {
+            token_context: (
+                lexer.context(),
+                crate::engine::compiler::lexer::LexicalGoal::Div,
+            ),
             lexer,
             token: first_token,
             previous_span: None,

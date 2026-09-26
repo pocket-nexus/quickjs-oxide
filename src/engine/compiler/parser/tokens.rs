@@ -613,13 +613,15 @@ impl<'source> Parser<'source> {
     fn scan_next_token(&mut self, goal: LexicalGoal) -> Result<Token<'source>, Error> {
         let start = self.lexer.current_position().byte_offset;
         let context = self.lexer.context();
-        match self.take_lookahead(start, goal, context) {
+        let token = match self.take_lookahead(start, goal, context) {
             Some(token) => {
                 self.lexer.seek(token.span.end);
                 Ok(token)
             }
             None => self.lexer.next_token_with_goal(goal).map_err(lex_error),
-        }
+        }?;
+        self.token_context = (context, goal);
+        Ok(token)
     }
 
     /// Rescan the current token after the parser has selected its lexical
@@ -630,6 +632,9 @@ impl<'source> Parser<'source> {
         &mut self,
         goal: LexicalGoal,
     ) -> Result<(), Error> {
+        if self.token_context == (self.lexer.context(), goal) {
+            return Ok(());
+        }
         let position = self.current().span.start;
         let line_terminator_before = self.current().line_terminator_before;
         self.lookahead_invalidate_from(position.byte_offset);
@@ -656,11 +661,14 @@ impl<'source> Parser<'source> {
         &mut self,
         context: LexContext,
     ) -> Result<(), Error> {
+        self.lexer.set_context(context);
+        if self.token_context == (context, LexicalGoal::Div) {
+            return Ok(());
+        }
         let position = self.current().span.start;
         let line_terminator_before = self.current().line_terminator_before;
         self.lookahead_invalidate_from(position.byte_offset);
         self.lexer.seek(position);
-        self.lexer.set_context(context);
         self.token = self.scan_next_token(LexicalGoal::Div)?;
         self.token.line_terminator_before = line_terminator_before;
         Ok(())
@@ -680,6 +688,9 @@ impl<'source> Parser<'source> {
         &self,
         inherited_strict: bool,
     ) -> Result<bool, Error> {
+        if !matches!(self.current().kind, TokenKind::String(_)) {
+            return Ok(false);
+        }
         let position = self.current().span.start;
         let mut lexer = self.lexer.clone();
         lexer.seek(position);

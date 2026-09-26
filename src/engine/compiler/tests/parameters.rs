@@ -496,6 +496,10 @@ fn parameter_assignment_prescan_retains_quickjs_bits_at_the_depth_bound() {
     )
     .unwrap();
     let parser = Parser {
+        token_context: (
+            lexer.context(),
+            crate::engine::compiler::lexer::LexicalGoal::Div,
+        ),
         lexer,
         token: first,
         previous_span: None,
@@ -550,6 +554,10 @@ fn lookahead_test_parser(source: &str) -> Parser<'_> {
     )
     .unwrap();
     Parser {
+        token_context: (
+            lexer.context(),
+            crate::engine::compiler::lexer::LexicalGoal::Div,
+        ),
         lexer,
         token: first,
         previous_span: None,
@@ -608,6 +616,33 @@ fn lookahead_cache_serves_the_commit_path() {
     parser.lookahead_insert(start, LexicalGoal::Div, LexContext::default(), sentinel);
     parser.advance_with_goal(LexicalGoal::Div).unwrap();
     assert_eq!(parser.current().kind, TokenKind::RawAscii(b'@'));
+}
+
+#[test]
+fn current_token_context_is_distinct_from_future_scan_context() {
+    use crate::engine::compiler::lexer::{Keyword, LexContext, TokenKind};
+    let mut parser = lookahead_test_parser("yield yield");
+    let generator = LexContext {
+        generator: true,
+        ..LexContext::default()
+    };
+    parser.set_future_lex_context(generator);
+    assert!(matches!(parser.current().kind, TokenKind::Identifier(_)));
+    parser.relex_current_with_context(generator).unwrap();
+    assert!(matches!(
+        parser.current().kind,
+        TokenKind::Keyword(Keyword::Yield)
+    ));
+    parser
+        .relex_current_with_context(LexContext::default())
+        .unwrap();
+    assert!(matches!(parser.current().kind, TokenKind::Identifier(_)));
+    parser.set_future_lex_context(generator);
+    parser.advance().unwrap();
+    assert!(matches!(
+        parser.current().kind,
+        TokenKind::Keyword(Keyword::Yield)
+    ));
 }
 
 #[test]

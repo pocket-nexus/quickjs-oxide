@@ -251,6 +251,10 @@ impl<'source> Parser<'source> {
             &mut names,
         )?;
         let mut parser = Self {
+            token_context: (
+                lexer.context(),
+                crate::engine::compiler::lexer::LexicalGoal::Div,
+            ),
             lexer,
             names,
             token: first_token,
