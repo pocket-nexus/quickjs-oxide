@@ -84,6 +84,16 @@ impl<'source> Parser<'source> {
         self.names.intern(&decoded)
     }
 
+    /// Property-name occurrences share the same immutable string value. The
+    /// caller still appends each authored constant in its original order.
+    pub(in crate::engine::compiler) fn intern_identifier_string(
+        &mut self,
+        identifier: &Identifier<'source>,
+    ) -> Result<JsString, Error> {
+        let name = self.intern_identifier(identifier);
+        Ok(self.names.js_string(name)?)
+    }
+
     /// Intern the `#name` binding-key spelling of a private identifier. The
     /// decoded identifier body is interned separately by `intern_identifier`.
     pub(in crate::engine::compiler) fn intern_private_identifier(

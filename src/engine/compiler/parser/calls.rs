@@ -20,7 +20,6 @@ use crate::engine::compiler::pseudo_binding::ACTIVE_FUNCTION_LOCAL_NAME;
 use crate::engine::compiler::pseudo_binding::HOME_OBJECT_LOCAL_NAME;
 use crate::engine::compiler::pseudo_binding::NEW_TARGET_LOCAL_NAME;
 use crate::engine::compiler::pseudo_binding::THIS_LOCAL_NAME;
-use crate::engine::value::JsString;
 use crate::engine::value::PrimitiveValue as Value;
 
 impl<'source> Parser<'source> {
@@ -278,14 +277,13 @@ impl<'source> Parser<'source> {
                         source_span(token.span),
                     ));
                 }
-                TokenKind::Identifier(identifier) => self.identifier_text(&identifier).into_owned(),
-                TokenKind::Keyword(keyword) => keyword.as_str().to_owned(),
+                TokenKind::Identifier(identifier) => self.intern_identifier(&identifier),
+                TokenKind::Keyword(keyword) => self.intern_name(keyword.as_str()),
                 _ => return Err(self.syntax_here("expecting field name")),
             };
             self.advance()?;
-            let key = self.add_constant(IrConstant::Primitive(Value::String(
-                JsString::try_from_utf8(&name)?,
-            )))?;
+            let value = self.names.js_string(name)?;
+            let key = self.add_constant(IrConstant::Primitive(Value::String(value)))?;
             self.emit(IrOp::PushConstant(key))?;
         } else {
             self.advance_expression_start()?;
