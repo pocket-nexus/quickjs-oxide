@@ -95,7 +95,7 @@ RSS 复核门槛是左侧中位数的 `max(3%, 1 MiB)`，本组约 6 MiB 的工�
 | 冻结的集成执行版 `d6a168e2` | `TEST262_WORKERS=2 CARGO_BUILD_JOBS=2 ./scripts/test262/test-test262.sh --full` | 102,037 个变体，80,060 eligible，80,010 pass；完整结果向量与冻结基准逐项匹配，命令退出 0。其余结果保留在原始报告中，不计作通过。 |
 | 集成版加固定探针修订 `b59331bc` | profiling 库测试；CLI profiling 测试 | 分别 2,134/2,134 和 6/6 通过。新探针的发布器测试另确认 `fusion_no_plan` 无计划、`fusion_flag0` 的热循环局部读取 flag 为零。 |
 | `b59331bc` | Rust 1.88 workspace default 与 profiling 的全 targets Clippy `-D warnings`、`cargo +1.88.0 fmt --all -- --check` | 均退出 0。 |
-| profiling 标签修正 `b4a5f446` | `dense_diagnostic_priority_` 两项定向测试 | 2/2 通过；当时只有任务工具输出，尚无持久测试日志。此前的 2,134 项全量测试没有覆盖这次后续修正。 |
+| profiling 标签修正 `b4a5f446` | `dense_diagnostic_priority_` 两项定向测试 | 初次与保存日志的回放均为 2/2 通过。此前的 2,134 项全量测试没有覆盖这次后续修正。 |
 | 工具检查 | benchmark Python 单测、源码布局检查 | 分别 37/37 通过、625 个可达 Rust 文件通过。Python 日志未自证执行时的精确 Git 提交。 |
 
 另行构建的 inline 候选 `8c38bc32` 仅用于注解实验，尚未并入集成版；上述全量测试不覆盖它。完整 Test262 使用冻结的 `d6a168e2` 工作树，后续只改探针和诊断标签的提交不在该全量结果中。

@@ -131,7 +131,7 @@
     {
       "id": "dense_diagnostic_priority_targeted",
       "source_commit": "b4a5f4469531da44167fb400722c9756b9d71bbc",
-      "command": "cargo +1.88.0 test --locked --lib --features profiling -j 2 dense_diagnostic_priority_",
+      "command": "cargo +1.88.0 test --locked --lib --features profiling -j 2 dense_diagnostic_priority_ > /Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/validation/diagnostic-priority-b4a5.log 2>&1",
       "cwd": "/Users/eric/Documents/Sources/PocketStacks/quickjs-oxide",
       "exit_code": 0,
       "result": {
@@ -143,8 +143,11 @@
           "dense_diagnostic_priority_reports_binding_before_index"
         ]
       },
-      "log": null,
-      "evidence_note": "Perf audit task tool output recorded the command and result, but no durable stdout log was captured. A logged replay is pending."
+      "log": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/validation/diagnostic-priority-b4a5.log",
+        "sha256": "06838b5ba57d5919ac14cf9469adaf748ddea82eb0eb881e8d11f4ba9bc1a84e"
+      },
+      "evidence_note": "The initial focused run and this logged replay both exited 0 with 2/2 tests passing; the replay log is retained here."
     },
     {
       "id": "python_benchmark_tools",
