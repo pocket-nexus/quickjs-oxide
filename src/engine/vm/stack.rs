@@ -1705,7 +1705,24 @@ impl SlotStore {
         self.active_end = window.whole().start;
         for index in window.whole().start..window.operands().start + window.depth {
             if let Some(binding) = self.slots[index].take() {
-                release_binding(runtime, binding)?;
+                // These direct values carry no owner. Most ordinary calls
+                // clear several Undefined/Number parameter and local slots;
+                // entering the generic release path for each is unnecessary.
+                // Every edge-bearing or captured binding still releases in
+                // its original ascending slot order.
+                if !matches!(
+                    &binding,
+                    FrameBinding::Direct(
+                        JsValue::Undefined
+                            | JsValue::Null
+                            | JsValue::Bool(_)
+                            | JsValue::Int(_)
+                            | JsValue::Float(_)
+                            | JsValue::ShortBigInt(_)
+                    )
+                ) {
+                    release_binding(runtime, binding)?;
+                }
             }
         }
         debug_assert!(self.slots[window.whole()].iter().all(Option::is_none));
@@ -1914,6 +1931,36 @@ mod tests {
 
     fn take_public(runtime: &Runtime, value: JsValue) -> Value {
         runtime.root_and_release_jsvalue(value).unwrap()
+    }
+
+    #[test]
+    fn frame_clear_releases_edges_interleaved_with_direct_scalars() {
+        let runtime = Runtime::new();
+        let context = runtime.new_context();
+        let first = runtime.new_object(None).unwrap();
+        let first_id = first.object_id();
+        let second = runtime.new_object(None).unwrap();
+        let second_id = second.object_id();
+        let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
+        owner.metadata.max_stack = 5;
+        let mut slots = SlotStore::new(5);
+        let mut window = slots
+            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
+            .unwrap();
+        for value in [
+            JsValue::Int(7),
+            JsValue::Object(first.into_handle()),
+            JsValue::Undefined,
+            JsValue::Object(second.into_handle()),
+            JsValue::Float(2.5),
+        ] {
+            slots.push(&mut window, value).unwrap();
+        }
+        slots.clear_frame(&runtime, window).unwrap();
+        runtime.run_gc().unwrap();
+        let state = runtime.0.state.borrow();
+        assert!(state.heap.object(first_id).is_err());
+        assert!(state.heap.object(second_id).is_err());
     }
 
     #[test]
