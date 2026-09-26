@@ -1,0 +1,55 @@
+{
+  "metadata": {
+    "suite": "follow-through-focused-fixed-vm-diagnostics",
+    "authorship": "project-authored",
+    "metric": "fixed work, whole process; not V8 Score",
+    "original_fixed_manifest": "docs/performance/probes/fixed/manifest.json",
+    "original_fixed_manifest_sha256": "4807a3b4cea143c00cc923cf3f25020f163da5642a15920e8c01da409afe7042",
+    "workloads": {
+      "workloads": [
+        {
+          "case": "reverse_fill_read",
+          "size": 1280000,
+          "path": "docs/performance/receipts/follow-through-2026-09-26/workloads/reverse_fill_read.js",
+          "sha256": "6483357055c17afb5bd9c39126460bd72ba186bbf384c6aec29bfab041d2c2ad",
+          "expected": "41600000\n"
+        },
+        {
+          "case": "reverse_fill_build",
+          "size": 3000,
+          "path": "docs/performance/receipts/follow-through-2026-09-26/workloads/reverse_fill_build.js",
+          "sha256": "b1ca2f811776225b097be39ed5a4a2af87b7a4f70ef5be5ec5a8211536d50dd0",
+          "expected": "483000\n"
+        },
+        {
+          "case": "call_scalar_args",
+          "size": 800000,
+          "path": "docs/performance/receipts/follow-through-2026-09-26/workloads/call_scalar_args.js",
+          "sha256": "7abfb4eb8ffc5fb963d3c7e1db4f05b9ae8c8602492ee5159a050c3320f66301",
+          "expected": "8400000\n"
+        },
+        {
+          "case": "array_read",
+          "size": 2000000,
+          "path": "docs/performance/probes/fixed/array_read.js",
+          "sha256": "e198b7a4f263a025b296aa6a49d77101603ee7c4ef0370c0cd6963711962b38d",
+          "expected": "5000000\n"
+        },
+        {
+          "case": "call0",
+          "size": 800000,
+          "path": "docs/performance/probes/fixed/call0.js",
+          "sha256": "459fe42f4945b40fdd67ebd8c95c290c91166565d14e03a267f0457dfe1d71fa",
+          "expected": "800000\n"
+        },
+        {
+          "case": "fusion_no_plan",
+          "size": 3000000,
+          "path": "docs/performance/probes/fixed/fusion_no_plan.js",
+          "sha256": "b4eeccb8624c086b664f7cb26741e82a946ca155fb2e738fbba46e372f172b7c",
+          "expected": "41\n"
+        }
+      ]
+    }
+  }
+}
