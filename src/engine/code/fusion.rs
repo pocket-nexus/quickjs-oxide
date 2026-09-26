@@ -24,7 +24,45 @@ pub(crate) struct FusionPlan(Option<Rc<[u8]>>);
 #[derive(Clone, Copy)]
 pub(crate) struct FusionEntry(u8);
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LocalFusionChoice {
+    Canonical,
+    LocalAdd(usize),
+    Update(UpdateLocal),
+    CompareBranch(usize),
+    FieldAdd(usize),
+    Dense(DenseSpanKind),
+}
+
 impl FusionEntry {
+    /// Most local reads in a function with some fusion have no candidate at
+    /// their own PC. Give that case one explicit exit before classifying the
+    /// published flag.
+    #[inline(always)]
+    pub(crate) fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    /// Exactly one published candidate may start at a local-read PC. Dynamic
+    /// guards still run in the selected handler and decline to canonical code.
+    #[inline]
+    pub(crate) fn local_choice(self) -> LocalFusionChoice {
+        use LocalFusionChoice as Choice;
+        match self.0 {
+            35 | 128 | 130 => Choice::LocalAdd(4),
+            36 | 129 | 131 => Choice::LocalAdd(5),
+            flag if flag & 16 != 0 => Choice::Update(UpdateLocal::from_flag(flag)),
+            33 => Choice::CompareBranch(4),
+            34 => Choice::CompareBranch(5),
+            37 => Choice::FieldAdd(5),
+            38 => Choice::FieldAdd(6),
+            1..=13 => DenseSpanKind::from_flag(self.0)
+                .map(Choice::Dense)
+                .unwrap_or(Choice::Canonical),
+            _ => Choice::Canonical,
+        }
+    }
+
     #[inline]
     #[cfg(feature = "profiling")]
     pub(crate) fn has_candidate(self) -> bool {
@@ -37,17 +75,14 @@ impl FusionEntry {
     }
 
     #[inline]
+    #[cfg(test)]
     pub(crate) fn update(self) -> Option<UpdateLocal> {
         let flag = self.0;
-        (flag & 16 != 0).then_some(UpdateLocal {
-            increment: flag & 1 != 0,
-            postfix: flag & 2 != 0,
-            discard: flag & 4 != 0,
-            instructions: if flag & 8 != 0 { 4 } else { 3 },
-        })
+        (flag & 16 != 0).then_some(UpdateLocal::from_flag(flag))
     }
 
     #[inline]
+    #[cfg(test)]
     pub(crate) fn local_compare_branch(self) -> Option<usize> {
         match self.0 {
             33 => Some(4),
@@ -66,6 +101,7 @@ impl FusionEntry {
     }
 
     #[inline]
+    #[cfg(test)]
     pub(crate) fn local_field_add_span(self) -> Option<usize> {
         match self.0 {
             37 => Some(5),
@@ -75,12 +111,23 @@ impl FusionEntry {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct UpdateLocal {
     pub increment: bool,
     pub postfix: bool,
     pub discard: bool,
     pub instructions: usize,
+}
+
+impl UpdateLocal {
+    const fn from_flag(flag: u8) -> Self {
+        Self {
+            increment: flag & 1 != 0,
+            postfix: flag & 2 != 0,
+            discard: flag & 4 != 0,
+            instructions: if flag & 8 != 0 { 4 } else { 3 },
+        }
+    }
 }
 
 impl FusionPlan {
@@ -575,6 +622,67 @@ mod tests {
         assert_eq!(
             FusionPlan::build(&code, &[local(false), local(false)], &[]).local_add_span(0),
             None
+        );
+    }
+
+    #[test]
+    fn local_choice_keeps_plain_reads_canonical_inside_a_fused_function() {
+        use Instruction::*;
+        let code = [
+            GetLocal(0),
+            PushI32(1),
+            Add,
+            PutLocal(0),
+            GetLocal(1),
+            GetLocal(0),
+            Inc,
+            PutLocal(0),
+            GetLocal(1),
+            Return,
+        ];
+        let plan = FusionPlan::build(&code, &[local(false), local(false)], &[]);
+        assert_eq!(plan.entry(0).local_choice(), LocalFusionChoice::LocalAdd(4));
+        assert!(plan.entry(4).is_empty());
+        assert_eq!(plan.entry(4).local_choice(), LocalFusionChoice::Canonical);
+        assert!(matches!(
+            plan.entry(5).local_choice(),
+            LocalFusionChoice::Update(UpdateLocal {
+                increment: true,
+                postfix: false,
+                discard: true,
+                instructions: 3,
+            })
+        ));
+        assert!(plan.entry(8).is_empty());
+        assert_eq!(plan.entry(8).local_choice(), LocalFusionChoice::Canonical);
+
+        let compare = [GetLocal(0), GetLocal(1), Lt, IfFalse(4), ReturnUndefined];
+        assert_eq!(
+            FusionPlan::build(&compare, &[local(false), local(false)], &[])
+                .entry(0)
+                .local_choice(),
+            LocalFusionChoice::CompareBranch(4)
+        );
+        let field = [
+            GetLocal(0),
+            GetLocal(1),
+            GetField(0),
+            Add,
+            PutLocal(0),
+            ReturnUndefined,
+        ];
+        assert_eq!(
+            FusionPlan::build(&field, &[local(false), local(false)], &[])
+                .entry(0)
+                .local_choice(),
+            LocalFusionChoice::FieldAdd(5)
+        );
+        let dense = [GetLocal(0), GetArg(0), GetArrayEl, Return];
+        assert_eq!(
+            FusionPlan::build(&dense, &[local(false)], &[])
+                .entry(0)
+                .local_choice(),
+            LocalFusionChoice::Dense(DenseSpanKind::Read)
         );
     }
 
