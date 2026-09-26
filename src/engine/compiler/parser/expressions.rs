@@ -534,135 +534,63 @@ impl<'source> Parser<'source> {
     }
 
     pub(in crate::engine::compiler) fn parse_bitwise_or(&mut self) -> Result<(), Error> {
-        self.parse_bitwise_xor()?;
-        while self.is_punctuator(Punctuator::BitOr) {
-            let operation_span = self.current().span;
-            self.advance()?;
-            self.parse_bitwise_xor()?;
-            self.emit_instruction_at(Instruction::BitOr, source_offset(operation_span)?)?;
-            self.anonymous_function_definition = None;
-        }
-        Ok(())
+        self.parse_binary(1)
     }
 
-    pub(in crate::engine::compiler) fn parse_bitwise_xor(&mut self) -> Result<(), Error> {
-        self.parse_bitwise_and()?;
-        while self.is_punctuator(Punctuator::BitXor) {
-            let operation_span = self.current().span;
-            self.advance()?;
-            self.parse_bitwise_and()?;
-            self.emit_instruction_at(Instruction::BitXor, source_offset(operation_span)?)?;
-            self.anonymous_function_definition = None;
-        }
-        Ok(())
-    }
-
-    pub(in crate::engine::compiler) fn parse_bitwise_and(&mut self) -> Result<(), Error> {
-        self.parse_equality()?;
-        while self.is_punctuator(Punctuator::BitAnd) {
-            let operation_span = self.current().span;
-            self.advance()?;
-            self.parse_equality()?;
-            self.emit_instruction_at(Instruction::BitAnd, source_offset(operation_span)?)?;
-            self.anonymous_function_definition = None;
-        }
-        Ok(())
-    }
-
-    pub(in crate::engine::compiler) fn parse_equality(&mut self) -> Result<(), Error> {
-        self.parse_relational()?;
-        loop {
-            let operation_span = self.current().span;
-            let operation = match self.current().kind {
-                TokenKind::Punctuator(Punctuator::EqualEqual) => Instruction::Eq,
-                TokenKind::Punctuator(Punctuator::StrictEqual) => Instruction::StrictEq,
-                TokenKind::Punctuator(Punctuator::NotEqual) => Instruction::Neq,
-                TokenKind::Punctuator(Punctuator::StrictNotEqual) => Instruction::StrictNeq,
-                _ => break,
-            };
-            self.advance()?;
-            self.parse_relational()?;
-            self.emit_instruction_at(operation, source_offset(operation_span)?)?;
-            self.anonymous_function_definition = None;
-        }
-        Ok(())
-    }
-
-    pub(in crate::engine::compiler) fn parse_relational(&mut self) -> Result<(), Error> {
-        if !self.parse_private_in_head()? {
-            self.parse_shift()?;
-        }
-        loop {
-            let operation_span = self.current().span;
-            let operation = match self.current().kind {
-                TokenKind::Punctuator(Punctuator::Less) => Instruction::Lt,
-                TokenKind::Punctuator(Punctuator::LessEqual) => Instruction::Lte,
-                TokenKind::Punctuator(Punctuator::Greater) => Instruction::Gt,
-                TokenKind::Punctuator(Punctuator::GreaterEqual) => Instruction::Gte,
-                TokenKind::Keyword(Keyword::Instanceof) => Instruction::InstanceOf,
-                TokenKind::Keyword(Keyword::In) if self.in_mode == InMode::Disallow => break,
-                TokenKind::Keyword(Keyword::In) => Instruction::In,
-                _ => break,
-            };
-            self.advance()?;
-            self.parse_shift()?;
-            self.emit_instruction_at(operation, source_offset(operation_span)?)?;
-            self.anonymous_function_definition = None;
-        }
-        Ok(())
-    }
-
+    // Private-brand checks have a ShiftExpression RHS, not another relational
+    // head. Keep that grammar boundary explicit in the precedence entry point.
     pub(in crate::engine::compiler) fn parse_shift(&mut self) -> Result<(), Error> {
-        self.parse_additive()?;
-        loop {
-            let operation_span = self.current().span;
-            let operation = match self.current().kind {
-                TokenKind::Punctuator(Punctuator::ShiftLeft) => Instruction::Shl,
-                TokenKind::Punctuator(Punctuator::ShiftRight) => Instruction::Sar,
-                TokenKind::Punctuator(Punctuator::UnsignedShiftRight) => Instruction::Shr,
-                _ => break,
-            };
-            self.advance()?;
-            self.parse_additive()?;
-            self.emit_instruction_at(operation, source_offset(operation_span)?)?;
-            self.anonymous_function_definition = None;
-        }
-        Ok(())
+        self.parse_binary(6)
     }
 
-    pub(in crate::engine::compiler) fn parse_additive(&mut self) -> Result<(), Error> {
-        self.parse_multiplicative()?;
-        loop {
-            let operation_span = self.current().span;
-            let operation = match self.current().kind {
-                TokenKind::Punctuator(Punctuator::Plus) => Instruction::Add,
-                TokenKind::Punctuator(Punctuator::Minus) => Instruction::Sub,
-                _ => break,
-            };
-            self.advance()?;
-            self.parse_multiplicative()?;
-            self.emit_instruction_at(operation, source_offset(operation_span)?)?;
-            self.anonymous_function_definition = None;
-        }
-        Ok(())
-    }
-
-    pub(in crate::engine::compiler) fn parse_multiplicative(&mut self) -> Result<(), Error> {
-        self.parse_unary()?;
-        loop {
-            let operation_span = self.current().span;
-            let operation = match self.current().kind {
-                TokenKind::Punctuator(Punctuator::Multiply) => Instruction::Mul,
-                TokenKind::Punctuator(Punctuator::Divide) => Instruction::Div,
-                TokenKind::Punctuator(Punctuator::Remainder) => Instruction::Mod,
-                _ => break,
-            };
-            self.advance()?;
+    fn parse_binary(&mut self, minimum: u8) -> Result<(), Error> {
+        if minimum > 5 || !self.parse_private_in_head()? {
             self.parse_unary()?;
+        }
+        while let Some((precedence, operation)) = self.binary_operator() {
+            if precedence < minimum {
+                break;
+            }
+            let operation_span = self.current().span;
+            self.advance()?;
+            self.parse_binary(precedence + 1)?;
             self.emit_instruction_at(operation, source_offset(operation_span)?)?;
             self.anonymous_function_definition = None;
         }
         Ok(())
+    }
+
+    fn binary_operator(&self) -> Option<(u8, Instruction)> {
+        use Punctuator::*;
+        Some(match self.current().kind {
+            TokenKind::Punctuator(operator) => match operator {
+                BitOr => (1, Instruction::BitOr),
+                BitXor => (2, Instruction::BitXor),
+                BitAnd => (3, Instruction::BitAnd),
+                EqualEqual => (4, Instruction::Eq),
+                StrictEqual => (4, Instruction::StrictEq),
+                NotEqual => (4, Instruction::Neq),
+                StrictNotEqual => (4, Instruction::StrictNeq),
+                Less => (5, Instruction::Lt),
+                LessEqual => (5, Instruction::Lte),
+                Greater => (5, Instruction::Gt),
+                GreaterEqual => (5, Instruction::Gte),
+                ShiftLeft => (6, Instruction::Shl),
+                ShiftRight => (6, Instruction::Sar),
+                UnsignedShiftRight => (6, Instruction::Shr),
+                Plus => (7, Instruction::Add),
+                Minus => (7, Instruction::Sub),
+                Multiply => (8, Instruction::Mul),
+                Divide => (8, Instruction::Div),
+                Remainder => (8, Instruction::Mod),
+                _ => return None,
+            },
+            TokenKind::Keyword(Keyword::Instanceof) => (5, Instruction::InstanceOf),
+            TokenKind::Keyword(Keyword::In) if self.in_mode == InMode::Allow => {
+                (5, Instruction::In)
+            }
+            _ => return None,
+        })
     }
 
     pub(in crate::engine::compiler) fn parse_unary(&mut self) -> Result<(), Error> {
