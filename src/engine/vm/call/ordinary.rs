@@ -279,11 +279,12 @@ impl OrdinaryCall {
         runtime: &Runtime,
         execution: &mut crate::engine::vm::execution::RunningExecution,
         parent: crate::engine::vm::frame::FrameId,
-        count: usize,
-        method: bool,
+        checked: crate::engine::vm::stack::CheckedOrdinaryCallOperands,
         tail: bool,
     ) -> Result<(), Error> {
         use crate::engine::vm::frame::{Frame, ReturnOwner, ReturnTarget, ReturnValue};
+        let count = checked.count();
+        let method = checked.method();
         let depth = execution.frames.depth() + 1;
         execution.call_storage.reserve_depth(depth)?;
         let frame = execution.frames.current_mut(parent)?;
@@ -314,8 +315,7 @@ impl OrdinaryCall {
             runtime,
             &self.executable.frame_layout(),
             &mut frame.window,
-            count,
-            method,
+            checked,
             &self.function,
             self.executable.metadata.function_name_local,
             self.executable.observes_arguments,

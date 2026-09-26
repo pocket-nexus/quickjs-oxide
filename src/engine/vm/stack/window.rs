@@ -34,6 +34,31 @@ pub(in crate::engine::vm) struct FrameTransaction<'a> {
     store: &'a mut SlotStore,
     window: &'a mut FrameWindow,
 }
+
+/// A single-use proof for the outgoing operands of one direct ordinary call.
+///
+/// The driver may carry this across authentication and allocation, but must not
+/// write a caller slot, switch frames, or invoke JavaScript before consuming it.
+/// The install path checks window identity and depth again; those checks alone
+/// do not certify unchanged slot contents after an arbitrary intervening write.
+pub(in crate::engine::vm) struct CheckedOrdinaryCallOperands {
+    pub(super) window_id: u64,
+    pub(super) depth: usize,
+    pub(super) count: usize,
+    pub(super) method: bool,
+    pub(super) has_non_scalar_argument: bool,
+}
+
+impl CheckedOrdinaryCallOperands {
+    pub(in crate::engine::vm) fn count(&self) -> usize {
+        self.count
+    }
+
+    pub(in crate::engine::vm) fn method(&self) -> bool {
+        self.method
+    }
+}
+
 impl FrameTransaction<'_> {
     pub(in crate::engine::vm) fn peek(&self, offset: usize) -> Result<&JsValue, Error> {
         self.store.peek_current(self.window, offset)
@@ -48,6 +73,49 @@ impl FrameTransaction<'_> {
         crate::engine::api::profiling::record_owned_execution_event("call_value_domain_validation");
         self.store
             .validate_call_value_domains_current(self.window, runtime, count, method)
+    }
+
+    /// Validate the receiver, arguments, and callee before an ordinary call's
+    /// first fallible authentication step. Collect the dynamic argument class
+    /// in the same pass so frame installation need not scan these slots again.
+    pub(in crate::engine::vm) fn validate_ordinary_call_operands(
+        &self,
+        count: usize,
+        method: bool,
+    ) -> Result<CheckedOrdinaryCallOperands, Error> {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("call_value_domain_validation");
+        // Preserve the existing domain-check order: receiver, then arguments
+        // from left to right. The driver has already peeked the callee for
+        // selection; the final read makes the sealed proof complete.
+        if method {
+            self.peek(
+                count
+                    .checked_add(1)
+                    .ok_or_else(SlotStore::operand_stack_underflow)?,
+            )?;
+        }
+        let mut has_non_scalar_argument = false;
+        for offset in (0..count).rev() {
+            let value = self.peek(offset)?;
+            has_non_scalar_argument |= !matches!(
+                value,
+                JsValue::Undefined
+                    | JsValue::Null
+                    | JsValue::Bool(_)
+                    | JsValue::Int(_)
+                    | JsValue::Float(_)
+                    | JsValue::ShortBigInt(_)
+            );
+        }
+        self.peek(count)?;
+        Ok(CheckedOrdinaryCallOperands {
+            window_id: self.window.id,
+            depth: self.window.depth,
+            count,
+            method,
+            has_non_scalar_argument,
+        })
     }
     pub(in crate::engine::vm) fn take_native_call_operands(
         &mut self,

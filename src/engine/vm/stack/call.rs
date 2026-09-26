@@ -7,39 +7,28 @@ impl SlotStore {
         runtime: &Runtime,
         layout: &FrameLayout<'_>,
         parent: &mut FrameWindow,
-        count: usize,
-        method: bool,
+        checked: CheckedOrdinaryCallOperands,
         function: &crate::engine::object::ObjectRef,
         function_name: Option<u16>,
         observes_arguments: bool,
     ) -> Result<FrameWindow, Error> {
         self.check_current(parent)?;
+        if parent.id != checked.window_id || parent.depth != checked.depth {
+            return Err(Error::internal(
+                "ordinary call operands changed after validation",
+            ));
+        }
+        let count = checked.count;
+        let method = checked.method;
         let consumed = count
             .checked_add(1 + usize::from(method))
             .filter(|n| *n <= parent.depth)
             .ok_or_else(|| Error::internal("outgoing call exceeds caller operands"))?;
         let start = parent.operands().start + parent.depth - count;
-        let mut keep_originals = observes_arguments;
-        for index in start - 1 - usize::from(method)..start + count {
-            let Some(FrameBinding::Direct(value)) = &self.slots[index] else {
-                return Err(Error::internal("outgoing argument is not a direct owner"));
-            };
-            if index >= start
-                && !matches!(
-                    value,
-                    JsValue::Undefined
-                        | JsValue::Null
-                        | JsValue::Bool(_)
-                        | JsValue::Int(_)
-                        | JsValue::Float(_)
-                        | JsValue::ShortBigInt(_)
-                )
-            {
-                // Preserve every original non-scalar owner until frame teardown,
-                // even when a writable parameter is replaced or captured.
-                keep_originals = true;
-            }
-        }
+        // The checked call operands remain untouched between the transaction
+        // and this install. Preserve every non-scalar original until teardown,
+        // even when a writable parameter is replaced or captured.
+        let keep_originals = observes_arguments || checked.has_non_scalar_argument;
         let parameter_count = layout.argument_slots(count);
         let local_count = layout.locals().len();
         if function_name.is_some_and(|i| usize::from(i) >= local_count) {
@@ -179,6 +168,20 @@ impl SlotStore {
 mod tests {
     use super::*;
     use crate::engine::code::runtime::PublishedFunctionSnapshot;
+
+    fn checked_operands(
+        slots: &mut SlotStore,
+        parent: &mut FrameWindow,
+        count: usize,
+        method: bool,
+    ) -> CheckedOrdinaryCallOperands {
+        slots
+            .frame_transaction(parent)
+            .unwrap()
+            .validate_ordinary_call_operands(count, method)
+            .unwrap()
+    }
+
     fn storage(values: Vec<JsValue>) -> FrameStorage {
         FrameStorage {
             original_arguments: vec![],
@@ -205,13 +208,13 @@ mod tests {
                 ]),
             )
             .unwrap();
+        let checked = checked_operands(&mut slots, &mut parent, 1, false);
         let child = slots
             .push_ordinary_frame(
                 &runtime,
                 &executable.frame_layout(),
                 &mut parent,
-                1,
-                false,
+                checked,
                 &function,
                 None,
                 false,
@@ -238,13 +241,13 @@ mod tests {
         slots
             .push(&mut parent, JsValue::Object(marker.into_handle()))
             .unwrap();
+        let checked = checked_operands(&mut slots, &mut parent, 1, false);
         let child = slots
             .push_ordinary_frame(
                 &runtime,
                 &executable.frame_layout(),
                 &mut parent,
-                1,
-                false,
+                checked,
                 &function,
                 None,
                 false,
@@ -290,14 +293,14 @@ mod tests {
             )
             .unwrap();
         let end = slots.active_end;
+        let checked = checked_operands(&mut slots, &mut parent, 2, false);
         assert!(
             slots
                 .push_ordinary_frame(
                     &runtime,
                     &executable.frame_layout(),
                     &mut parent,
-                    2,
-                    false,
+                    checked,
                     &function,
                     None,
                     false
@@ -313,6 +316,84 @@ mod tests {
             .replace_operand(&parent, 0, JsValue::Undefined)
             .unwrap();
         let _ = stale;
+        slots.clear_frame(&runtime, parent).unwrap();
+    }
+
+    #[test]
+    fn checked_ordinary_operands_reject_depth_change_without_moving_owners() {
+        let runtime = Runtime::new();
+        let context = runtime.new_context();
+        let function = runtime.new_object(None).unwrap();
+        let marker = runtime.new_object(None).unwrap();
+        let marker_id = marker.object_id();
+        let mut executable = PublishedFunctionSnapshot::empty_for_test(context.realm);
+        executable.metadata.max_stack = 4;
+        let mut slots = SlotStore::new(32);
+        let mut parent = slots
+            .push_frame(
+                &runtime,
+                &executable.frame_layout(),
+                storage(vec![
+                    JsValue::Object(function.clone().into_handle()),
+                    JsValue::Object(marker.into_handle()),
+                ]),
+            )
+            .unwrap();
+        let checked = checked_operands(&mut slots, &mut parent, 1, false);
+        slots.push(&mut parent, JsValue::Int(9)).unwrap();
+        let end = slots.active_end;
+        let error = slots
+            .push_ordinary_frame(
+                &runtime,
+                &executable.frame_layout(),
+                &mut parent,
+                checked,
+                &function,
+                None,
+                false,
+            )
+            .err()
+            .unwrap();
+        assert_eq!(
+            error.message(),
+            "ordinary call operands changed after validation"
+        );
+        assert_eq!(slots.active_end, end);
+        assert_eq!(slots.depth(&parent), 3);
+        assert!(runtime.0.state.borrow().heap.object(marker_id).is_ok());
+        slots.clear_frame(&runtime, parent).unwrap();
+        runtime.run_gc().unwrap();
+        assert!(runtime.0.state.borrow().heap.object(marker_id).is_err());
+    }
+
+    #[test]
+    fn checked_ordinary_operands_preserve_method_domain_error_order() {
+        let runtime = Runtime::new();
+        let context = runtime.new_context();
+        let function = runtime.new_object(None).unwrap();
+        let mut executable = PublishedFunctionSnapshot::empty_for_test(context.realm);
+        executable.metadata.max_stack = 3;
+        let mut slots = SlotStore::new(32);
+        let mut parent = slots
+            .push_frame(
+                &runtime,
+                &executable.frame_layout(),
+                storage(vec![
+                    JsValue::Object(function.into_handle()),
+                    JsValue::Int(7),
+                ]),
+            )
+            .unwrap();
+        let argument_index = parent.operands().start + 1;
+        slots.slots[argument_index] = Some(FrameBinding::Uninitialized);
+        let error = slots
+            .frame_transaction(&mut parent)
+            .unwrap()
+            .validate_ordinary_call_operands(1, true)
+            .err()
+            .unwrap();
+        assert_eq!(error.message(), "owned operand stack underflow");
+        assert_eq!(slots.depth(&parent), 2);
         slots.clear_frame(&runtime, parent).unwrap();
     }
 }

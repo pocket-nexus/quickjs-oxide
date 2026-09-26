@@ -225,7 +225,8 @@ impl Drop for FrameStorageGuard {
 mod number;
 mod window;
 pub(in crate::engine::vm) use window::{
-    FrameTransaction, LinkedReadCompletion, NumberUpdate, NumericDestination, RunSlots,
+    CheckedOrdinaryCallOperands, FrameTransaction, LinkedReadCompletion, NumberUpdate,
+    NumericDestination, RunSlots,
 };
 
 impl SlotStore {

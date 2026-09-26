@@ -56,14 +56,18 @@ pub(super) fn enter_selected(
     let mut transaction = execution.slots.frame_transaction(&mut frame.window)?;
     transaction.peek(count + usize::from(method))?;
     enum Prepared {
-        Ordinary(crate::engine::vm::call::ordinary::OrdinaryCall),
+        Ordinary(
+            crate::engine::vm::call::ordinary::OrdinaryCall,
+            crate::engine::vm::stack::CheckedOrdinaryCallOperands,
+        ),
         Native(
             crate::engine::object::CallableRef,
             crate::engine::vm::frames::NativeClassification,
         ),
     }
     // End every Result/selection container holding a slot borrow before any
-    // frame installation or operand transfer. Only owning facts leave here.
+    // frame installation or operand transfer. Only owning facts and the
+    // single-use non-owning ordinary operand proof leave this transaction.
     let prepared = if let Some(selected) = selected_native {
         if !transaction.validate_call_value_domains(runtime, count, method)? {
             return Ok(Entry::General);
@@ -99,35 +103,45 @@ pub(super) fn enter_selected(
             callable_value,
         );
         let selection_result = DirectSelection::select_jsvalue(runtime, callable_value);
-        if matches!(selection_result, Ok(DirectSelection::General)) {
-            return Ok(Entry::General);
-        }
-        if !transaction.validate_call_value_domains(runtime, count, method)? {
-            return Ok(Entry::General);
-        }
-        let selection = selection_result.map_err(runtime_error_to_vm_error)?;
-        match selection {
-            DirectSelection::Ordinary(ordinary) => Prepared::Ordinary(
-                ordinary
-                    .authenticate(runtime)
-                    .map_err(runtime_error_to_vm_error)?,
-            ),
-            DirectSelection::Native(native) => {
+        match selection_result {
+            Ok(DirectSelection::General) => return Ok(Entry::General),
+            Ok(DirectSelection::Ordinary(ordinary)) => {
+                // The sealed proof is consumed by the immediately following
+                // ordinary installation. Authentication does not touch caller
+                // slots or reenter JavaScript; metadata errors still follow
+                // the original operand-domain error order.
+                let checked = transaction.validate_ordinary_call_operands(count, method)?;
+                Prepared::Ordinary(
+                    ordinary
+                        .authenticate(runtime)
+                        .map_err(runtime_error_to_vm_error)?,
+                    checked,
+                )
+            }
+            Ok(DirectSelection::Native(native)) => {
+                if !transaction.validate_call_value_domains(runtime, count, method)? {
+                    return Ok(Entry::General);
+                }
                 let (callable, selected) =
                     crate::engine::vm::frames::NativeClassification::promote_selected(native)
                         .map_err(runtime_error_to_vm_error)?;
                 Prepared::Native(callable, selected)
             }
-            DirectSelection::General => return Ok(Entry::General),
+            Err(error) => {
+                if !transaction.validate_call_value_domains(runtime, count, method)? {
+                    return Ok(Entry::General);
+                }
+                return Err(runtime_error_to_vm_error(error));
+            }
         }
     };
     match prepared {
-        Prepared::Ordinary(call) => {
+        Prepared::Ordinary(call, checked) => {
             drop(transaction);
             if !execution.frames.can_push() || runtime.bytecode_call_would_overflow() {
                 return Ok(Entry::General);
             }
-            call.install(runtime, execution, id, count, method, tail)?;
+            call.install(runtime, execution, id, checked, tail)?;
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_instruction(depth);
             Ok(Entry::Ordinary)
@@ -307,6 +321,17 @@ pub(super) fn finish(
 
 #[cfg(test)]
 mod layout_tests {
+    #[test]
+    fn ordinary_operand_proof_preserves_method_receiver_and_proxy_fallback() {
+        use crate::engine::api::{Runtime, Value};
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let source = "(()=>{let calls=0;let holder={base:40,f(x){calls++;return this.base+x}};let first=holder.f(2);let original=holder.f;holder.f=new Proxy(original,{apply(target,receiver,args){calls++;return Reflect.apply(target,receiver,args)}});let second=holder.f(2);return first===42&&second===42&&calls===3})()";
+        assert_eq!(context.eval(source).unwrap(), Value::Bool(true));
+        assert_eq!(runtime.0.active_frame_depth.get(), 0);
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
     #[test]
     fn literal_method_and_native_ready_keep_receivers_errors_and_argument_order() {
         use crate::engine::api::{Runtime, Value};
