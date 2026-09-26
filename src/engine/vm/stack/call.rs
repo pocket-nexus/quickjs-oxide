@@ -144,9 +144,12 @@ impl SlotStore {
                 count: self.slots.len() - initialized,
                 high_water: self.slots.len(),
             });
-            record_owned_storage(Cost::Clear(consumed - count));
+            // The callee is cleared; a method receiver changes owners.
+            record_owned_storage(Cost::Clear(1));
             record_owned_storage(Cost::Initialize(end - base));
-            record_owned_storage(Cost::Move(count + parameter_count + local_count));
+            record_owned_storage(Cost::Move(
+                count + parameter_count + local_count + usize::from(method),
+            ));
             self.record_occupancy();
             crate::engine::api::profiling::record_call_preparation(
                 parameter_count,
@@ -189,6 +192,7 @@ impl SlotStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::code::function::metadata::{ClosureVariableKind, VariableDefinition};
     use crate::engine::code::runtime::PublishedFunctionSnapshot;
 
     fn checked_operands(
@@ -473,6 +477,109 @@ mod tests {
         slots.clear_frame(&runtime, parent).unwrap();
         runtime.run_gc().unwrap();
         assert!(runtime.0.state.borrow().heap.object(receiver_id).is_err());
+    }
+
+    #[test]
+    fn failed_named_local_retain_clears_staged_parameter_and_earlier_local() {
+        let runtime = Runtime::new();
+        let context = runtime.new_context();
+        let callee = runtime.new_object(None).unwrap();
+        let receiver = runtime.new_object(None).unwrap();
+        let receiver_id = receiver.object_id();
+        let argument = runtime.new_object(None).unwrap();
+        let argument_id = argument.object_id();
+        // Synthesize an invalid function root only in this test. The separate
+        // live callee slot satisfies the operand witness; the named local's
+        // retain is the first operation that touches this stale handle.
+        let stale_id = runtime.new_object(None).unwrap().into_handle();
+        runtime.release_object_handle(stale_id);
+        runtime.run_gc().unwrap();
+        assert!(runtime.0.state.borrow().heap.object(stale_id).is_err());
+        let stale_function =
+            crate::engine::object::ObjectRef::from_owned_handle(runtime.clone(), stale_id);
+
+        let mut caller = PublishedFunctionSnapshot::empty_for_test(context.realm);
+        caller.metadata.max_stack = 3;
+        let mut callee_layout = PublishedFunctionSnapshot::empty_for_test(context.realm);
+        callee_layout.metadata.argument_count = 1;
+        callee_layout.metadata.local_count = 2;
+        callee_layout.metadata.function_name_local = Some(1);
+        let definition = VariableDefinition {
+            name: None,
+            is_lexical: false,
+            is_const: false,
+            is_parameter_initializer: false,
+            kind: ClosureVariableKind::Normal,
+        };
+        callee_layout.local_definitions = std::rc::Rc::from([definition; 2]);
+        let mut slots = SlotStore::new(32);
+        let mut parent = slots
+            .push_frame(
+                &runtime,
+                &caller.frame_layout(),
+                storage(vec![
+                    JsValue::Object(receiver.into_handle()),
+                    JsValue::Object(callee.clone().into_handle()),
+                    JsValue::Object(argument.into_handle()),
+                ]),
+            )
+            .unwrap();
+        let end = slots.active_end;
+        let checked = checked_operands(&mut slots, &mut parent, 1, true);
+        let error = slots
+            .push_ordinary_frame(
+                &runtime,
+                &callee_layout.frame_layout(),
+                &mut parent,
+                checked,
+                &stale_function,
+                callee_layout.metadata.function_name_local,
+                false,
+            )
+            .err()
+            .expect("the named local must reject a stale function handle");
+        // Disarm the synthetic wrapper without releasing a nonexistent edge.
+        // Draining first keeps ObjectRef::into_handle on its transfer branch.
+        runtime.run_gc().unwrap();
+        assert!(!runtime.0.deferred_references.has_pending());
+        assert!(!runtime.0.state.borrow().heap.has_pending_zero_cleanup());
+        let _ = stale_function.into_handle();
+        assert!(!error.message().is_empty());
+        // The unpublished parameter copy and first local have both been
+        // cleaned. The caller still owns its original receiver and argument.
+        assert_eq!(slots.active_end, end);
+        assert_eq!(slots.depth(&parent), 3);
+        assert!(slots.slots[end..].iter().all(Option::is_none));
+        assert!(matches!(
+            &slots.slots[parent.operands().start],
+            Some(FrameBinding::Direct(JsValue::Object(id))) if *id == receiver_id
+        ));
+        assert!(matches!(
+            &slots.slots[parent.operands().start + 2],
+            Some(FrameBinding::Direct(JsValue::Object(id))) if *id == argument_id
+        ));
+        assert_eq!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(receiver_id),
+            Ok(1)
+        );
+        assert_eq!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(argument_id),
+            Ok(1)
+        );
+        slots.clear_frame(&runtime, parent).unwrap();
+        runtime.run_gc().unwrap();
+        assert!(runtime.0.state.borrow().heap.object(receiver_id).is_err());
+        assert!(runtime.0.state.borrow().heap.object(argument_id).is_err());
     }
 
     #[test]
