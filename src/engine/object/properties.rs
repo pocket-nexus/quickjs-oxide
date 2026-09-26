@@ -1164,9 +1164,8 @@ impl Runtime {
         Ok(ArrayOwnKey::Other)
     }
 
-    /// Return QuickJS's representation state for a genuine Array. `Some(n)`
-    /// is the physical dense `u.array.count`; `None` is the irreversible slow
-    /// form.
+    /// Return the representation state for a genuine Array. `Some(n)` is its
+    /// physical contiguous dense count; `None` is ordinary indexed storage.
     pub(crate) fn array_fast_len(&self, object: &ObjectRef) -> Result<Option<u32>, RuntimeError> {
         Ok(self
             .0
@@ -1549,6 +1548,9 @@ impl Runtime {
         )?;
         if let Some((index, old_length)) = array {
             self.grow_dense_array_length(object, index, old_length)?;
+            if index == 0 && !existing {
+                self.try_recover_dense_array(object)?;
+            }
         }
         Ok(PropertyDefineOutcome::Defined(true))
     }
@@ -1662,11 +1664,15 @@ impl Runtime {
             }
             self.materialize_dense_array(object)?;
         }
+        let recover = index == 0 && !self.has_own_property(object, key)?;
         if !self.define_raw_property(object, key, record)? {
             return Ok(PropertyDefineOutcome::Defined(false));
         }
 
         if index < old_length {
+            if recover {
+                self.try_recover_dense_array(object)?;
+            }
             return Ok(PropertyDefineOutcome::Defined(true));
         }
 

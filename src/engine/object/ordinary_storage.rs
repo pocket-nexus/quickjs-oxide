@@ -1452,7 +1452,7 @@ mod dense_array_read_tests {
 
     #[cfg(feature = "profiling")]
     #[test]
-    fn reverse_fill_materializes_array_while_sequential_fill_stays_dense() {
+    fn reverse_fill_recovers_dense_number_reads_and_writes() {
         let runtime = Runtime::new();
         let sequential = runtime
             .into_jsvalue(receiver(
@@ -1470,16 +1470,15 @@ mod dense_array_read_tests {
             runtime.peek_dense_number(&sequential, 3),
             Some(Number::Int(3))
         ));
-        assert!(runtime.peek_dense_number(&reverse, 3).is_none());
-        assert_eq!(
-            runtime.diagnose_dense_number_read_miss(&reverse, 3),
-            "array_materialized"
-        );
-        assert!(!runtime.try_write_dense_number(&reverse, 3, Number::Int(7)));
-        assert_eq!(
-            runtime.diagnose_dense_number_write_miss(&reverse, 3),
-            "array_materialized"
-        );
+        assert!(matches!(
+            runtime.peek_dense_number(&reverse, 3),
+            Some(Number::Int(3))
+        ));
+        assert!(runtime.try_write_dense_number(&reverse, 3, Number::Int(7)));
+        assert!(matches!(
+            runtime.peek_dense_number(&reverse, 3),
+            Some(Number::Int(7))
+        ));
         runtime.release_jsvalue(sequential).unwrap();
         runtime.release_jsvalue(reverse).unwrap();
     }
