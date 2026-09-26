@@ -147,7 +147,8 @@ Without the `profiling` feature, compiler and interpreter hooks are compiled out
 不得相加后称为“完整调用成本”，不得与 plain 总耗时直接相除得到收益上界。
 抽样仍会扰动代码和被抽中调用，用于定位候选，性能准入使用 plain A/A 与 A/B。
 `ordinary_install.method/function` 与 `ordinary_install.args0/args1/args2/args3/args4plus`
-是全量安装事件，分别提供接收者形式和参数数量分布。
+是全量安装尝试入口事件（包括后续安装失败），分别提供接收者形式和参数数量分布；
+不能把它们当作成功安装数。
 
 ### 候选跨度与调用点逻辑诊断
 
@@ -187,6 +188,22 @@ Dense 失败标签只描述**先前 leaf 失败后、再次只读观察到的首
 顺序填充通常保留 dense 前缀，反向从高索引填充会转成普通属性表示；完整的默认
 索引集合若在新增索引 0 时符合恢复策略，可以重新转回 dense。
 两者不能合并归因为“缓存未命中”。
+
+`owned_execution_events` 还记录数组表示变化：
+
+- `array_storage_dense_materialization` 只在 dense→ordinary 布局提交成功后增加，
+  已为 ordinary 的早退和失败事务不计入。后缀 `_gap_write`、`_descriptor_path`、
+  `_interior_delete` 区分三个调用位置；descriptor 路径也可能处理跳跃写入，
+  不能把它解释成“全部由非默认属性标志导致”。
+- `array_storage_dense_recovery_enter` 只计实际调用恢复函数的次数；
+  `array_storage_dense_recovery` 计成功恢复。`_reject_*` 是该次检查首先确定的
+  拒绝原因：非普通 Array、短 length、槽数上限、槽数不足、索引／命名表分配失败、
+  越界索引、非默认 descriptor、非 data 槽、缺失索引或 shape 分配失败。
+  `_heap_declined` 保留堆接口 `Ok(None)` 的未细分含义；错误返回不计为普通拒绝。
+
+这些是事件次数，不是对象去重计数，也没有提供转换发生的 VM PC。
+恢复只在已接线的新增索引 0 边界尝试：没有 enter 事件不能证明对象不符合恢复条件。
+保留的命名属性本身不阻止恢复；单槽 `own_default_number` 也不证明全数组没有孔。
 
 每类 per-PC map 最多记录 16384 个位置，函数清单最多 4096 项，
 `omitted` 分别计数超限事件。其中 `omitted.static_functions` 计数函数清单

@@ -4,6 +4,8 @@
 //! are never read, and layout publication owns edge movement or retain/release.
 //! Length validation, conversion and rollback stay in the property algorithm.
 
+#[cfg(feature = "profiling")]
+use crate::engine::api::profiling::record_owned_execution_event;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::heap::{HeapError, ObjectPayload, PropertySlot, Slots};
@@ -19,19 +21,38 @@ impl Runtime {
     /// only at this mutation boundary, after proving that every index is an own
     /// default data property. Reads never pay for this recovery decision.
     pub(super) fn try_recover_dense_array(&self, object: &ObjectRef) -> Result<bool, RuntimeError> {
+        #[cfg(feature = "profiling")]
+        record_owned_execution_event("array_storage_dense_recovery_enter");
         let (length, _) = self.array_length_state(object)?;
         let length = length as usize;
         let mut state = self.0.state.borrow_mut();
         let id = object.object_id();
         let (prototype, entries, indexed_slots) = {
             let data = state.heap.object(id)?;
-            if !matches!(data.payload, ObjectPayload::Array { dense: None })
-                || length < 2
-                || data.slots.len() > MAX_DENSE_RECOVERY_SLOTS
-                // At least `length` elements plus the mandatory length slot.
-                // This rejects huge sparse indices before any allocation/scan.
-                || data.slots.len() <= length
-            {
+            // Each rejection counter names the first failed predicate in this
+            // order, not every property that might also be unsuitable.
+            if !matches!(data.payload, ObjectPayload::Array { dense: None }) {
+                #[cfg(feature = "profiling")]
+                record_owned_execution_event("array_storage_dense_recovery_reject_not_slow_array");
+                return Ok(false);
+            }
+            if length < 2 {
+                #[cfg(feature = "profiling")]
+                record_owned_execution_event("array_storage_dense_recovery_reject_short_length");
+                return Ok(false);
+            }
+            if data.slots.len() > MAX_DENSE_RECOVERY_SLOTS {
+                #[cfg(feature = "profiling")]
+                record_owned_execution_event("array_storage_dense_recovery_reject_slot_cap");
+                return Ok(false);
+            }
+            // At least `length` elements plus the mandatory length slot.
+            // This rejects huge sparse indices before any allocation/scan.
+            if data.slots.len() <= length {
+                #[cfg(feature = "profiling")]
+                record_owned_execution_event(
+                    "array_storage_dense_recovery_reject_insufficient_slots",
+                );
                 return Ok(false);
             }
             let shape = state.heap.shape(data.shape)?;
@@ -42,6 +63,10 @@ impl Runtime {
             }
             let mut indexed_slots = Vec::new();
             if indexed_slots.try_reserve_exact(length).is_err() {
+                #[cfg(feature = "profiling")]
+                record_owned_execution_event(
+                    "array_storage_dense_recovery_reject_index_map_allocation",
+                );
                 return Ok(false);
             }
             indexed_slots.resize(length, usize::MAX);
@@ -50,6 +75,10 @@ impl Runtime {
             let named_count = data.slots.len() - length;
             let mut entries = Vec::new();
             if entries.try_reserve_exact(named_count).is_err() {
+                #[cfg(feature = "profiling")]
+                record_owned_execution_event(
+                    "array_storage_dense_recovery_reject_named_entries_allocation",
+                );
                 return Ok(false);
             }
             for slot in shape.ordered_indices() {
@@ -64,10 +93,25 @@ impl Runtime {
                 };
                 if let Some(index) = index {
                     let index = index as usize;
-                    if index >= length
-                        || entry.flags != PropertyFlags::data(true, true, true)
-                        || !matches!(data.slots[slot], PropertySlot::Data(_))
-                    {
+                    if index >= length {
+                        #[cfg(feature = "profiling")]
+                        record_owned_execution_event(
+                            "array_storage_dense_recovery_reject_out_of_range_index",
+                        );
+                        return Ok(false);
+                    }
+                    if entry.flags != PropertyFlags::data(true, true, true) {
+                        #[cfg(feature = "profiling")]
+                        record_owned_execution_event(
+                            "array_storage_dense_recovery_reject_nondefault_descriptor",
+                        );
+                        return Ok(false);
+                    }
+                    if !matches!(data.slots[slot], PropertySlot::Data(_)) {
+                        #[cfg(feature = "profiling")]
+                        record_owned_execution_event(
+                            "array_storage_dense_recovery_reject_nondata_slot",
+                        );
                         return Ok(false);
                     }
                     if indexed_slots[index] != usize::MAX {
@@ -80,12 +124,18 @@ impl Runtime {
                     // More names than this bound proves an index is missing;
                     // decline before push rather than allocate implicitly.
                     if entries.len() == named_count {
+                        #[cfg(feature = "profiling")]
+                        record_owned_execution_event(
+                            "array_storage_dense_recovery_reject_missing_index",
+                        );
                         return Ok(false);
                     }
                     entries.push(*entry);
                 }
             }
             if indexed_slots.contains(&usize::MAX) {
+                #[cfg(feature = "profiling")]
+                record_owned_execution_event("array_storage_dense_recovery_reject_missing_index");
                 return Ok(false);
             }
             (shape.prototype(), entries, indexed_slots)
@@ -94,7 +144,13 @@ impl Runtime {
         // reentry or release of an element can invalidate the selected slots.
         let shape = match state.get_or_create_shape(prototype, &entries) {
             Ok(shape) => shape,
-            Err(RuntimeError::Heap(HeapError::Allocation { .. })) => return Ok(false),
+            Err(RuntimeError::Heap(HeapError::Allocation { .. })) => {
+                #[cfg(feature = "profiling")]
+                record_owned_execution_event(
+                    "array_storage_dense_recovery_reject_shape_allocation",
+                );
+                return Ok(false);
+            }
             Err(error) => return Err(error),
         };
         let moved = state
@@ -103,11 +159,14 @@ impl Runtime {
         let shape_cleanup = state.heap.release_shape(shape)?;
         state.apply_cleanup(shape_cleanup)?;
         let Some(cleanup) = moved? else {
+            // The heap API exposes this optional decline only as Ok(None).
+            #[cfg(feature = "profiling")]
+            record_owned_execution_event("array_storage_dense_recovery_heap_declined");
             return Ok(false);
         };
         state.apply_cleanup(cleanup)?;
         #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("array_storage_dense_recovery");
+        record_owned_execution_event("array_storage_dense_recovery");
         Ok(true)
     }
 

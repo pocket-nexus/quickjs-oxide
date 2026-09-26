@@ -1175,7 +1175,11 @@ impl Runtime {
             .array_dense_len(object.object_id())?)
     }
 
-    fn materialize_dense_array(&self, object: &ObjectRef) -> Result<(), RuntimeError> {
+    fn materialize_dense_array(
+        &self,
+        object: &ObjectRef,
+        #[cfg(feature = "profiling")] reason: &'static str,
+    ) -> Result<(), RuntimeError> {
         let (prototype, dense_len, mut entries) =
             {
                 let state = self.0.state.borrow();
@@ -1224,10 +1228,21 @@ impl Runtime {
             keys.push(key);
         }
 
-        self.0
-            .state
-            .borrow_mut()
-            .materialize_array_layout(object.object_id(), prototype, &entries)
+        self.0.state.borrow_mut().materialize_array_layout(
+            object.object_id(),
+            prototype,
+            &entries,
+        )?;
+        // Count only a completed dense-to-ordinary transition. The early
+        // dense=None return above and failed layout transactions count neither.
+        #[cfg(feature = "profiling")]
+        {
+            crate::engine::api::profiling::record_owned_execution_event(
+                "array_storage_dense_materialization",
+            );
+            crate::engine::api::profiling::record_owned_execution_event(reason);
+        }
+        Ok(())
     }
 
     fn append_dense_array_raw(
@@ -1464,6 +1479,12 @@ impl Runtime {
                         self.grow_dense_array_length(object, index, length)?;
                         return Ok(PropertyDefineOutcome::Defined(true));
                     }
+                    #[cfg(feature = "profiling")]
+                    self.materialize_dense_array(
+                        object,
+                        "array_storage_dense_materialization_gap_write",
+                    )?;
+                    #[cfg(not(feature = "profiling"))]
                     self.materialize_dense_array(object)?;
                 }
                 Some((index, length))
@@ -1662,6 +1683,15 @@ impl Runtime {
                     return Ok(PropertyDefineOutcome::Defined(true));
                 }
             }
+            // This event identifies the descriptor-definition call site. It
+            // can also receive a gap write, so it is not an exclusive claim
+            // that nondefault attributes caused the conversion.
+            #[cfg(feature = "profiling")]
+            self.materialize_dense_array(
+                object,
+                "array_storage_dense_materialization_descriptor_path",
+            )?;
+            #[cfg(not(feature = "profiling"))]
             self.materialize_dense_array(object)?;
         }
         let recover = index == 0 && !self.has_own_property(object, key)?;
@@ -2042,6 +2072,12 @@ impl Runtime {
                 state.apply_cleanup(cleanup)?;
                 return Ok(true);
             }
+            #[cfg(feature = "profiling")]
+            self.materialize_dense_array(
+                object,
+                "array_storage_dense_materialization_interior_delete",
+            )?;
+            #[cfg(not(feature = "profiling"))]
             self.materialize_dense_array(object)?;
         }
         let arguments_index = self
