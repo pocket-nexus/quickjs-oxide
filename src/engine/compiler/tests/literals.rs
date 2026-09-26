@@ -88,3 +88,37 @@ fn detached_string_literals_follow_quickjs_atom_identity_boundaries() {
     };
     assert!(first.same_representation(second));
 }
+
+#[test]
+fn integer_fast_path_preserves_rounding_at_mantissa_and_accumulator_boundaries() {
+    use crate::engine::compiler::lexer::{Lexer, TokenKind};
+    use crate::engine::compiler::parser::literals::parse_number;
+    use num_bigint::BigUint;
+    use num_traits::ToPrimitive;
+
+    for bits in [31usize, 32, 52, 53, 54, 63, 64, 65, 1023, 1024] {
+        let boundary = BigUint::from(1u32) << bits;
+        for delta in 0..=3u32 {
+            for integer in [&boundary + delta, &boundary - delta] {
+                let expected = Value::number(integer.to_f64().unwrap_or(f64::INFINITY));
+                for (radix, prefix) in [(2, "0b"), (8, "0o"), (10, ""), (16, "0x")] {
+                    let digits = integer.to_str_radix(radix);
+                    let separated = digits
+                        .chars()
+                        .map(|ch| ch.to_string())
+                        .collect::<Vec<_>>()
+                        .join("_");
+                    for digits in [&digits, &separated] {
+                        let source = format!("{prefix}{digits}");
+                        let TokenKind::Number(number) =
+                            Lexer::new(&source).next_token().unwrap().kind
+                        else {
+                            panic!("number token expected: {source}");
+                        };
+                        assert_eq!(parse_number(&number).unwrap(), expected, "{source}");
+                    }
+                }
+            }
+        }
+    }
+}

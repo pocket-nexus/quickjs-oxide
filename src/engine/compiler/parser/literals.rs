@@ -407,6 +407,19 @@ use num_bigint::BigUint;
 pub(in crate::engine::compiler) fn parse_number(
     number: &crate::engine::compiler::lexer::NumberLiteral<'_>,
 ) -> Result<Value, String> {
+    // Ordinary integer tokens can be converted without either a temporary
+    // separator-free String or BigUint allocation. Overflow keeps the exact
+    // arbitrary-precision fallback used for IEEE-754 rounding.
+    let integer = match number.kind {
+        NumberKind::Integer(radix) => Some(radix_digits(number.raw, radix)),
+        NumberKind::LegacyOctal => Some((number.raw, 8)),
+        _ => None,
+    };
+    if let Some((digits, radix)) = integer
+        && let Some(value) = small_integer(digits, radix)
+    {
+        return Ok(Value::number(value as f64));
+    }
     let raw = if number.raw.contains('_') {
         Cow::Owned(number.raw.replace('_', ""))
     } else {
@@ -445,13 +458,41 @@ pub(in crate::engine::compiler) fn parse_radix_literal(
     raw: &str,
     radix: NumericRadix,
 ) -> Result<f64, String> {
-    let (digits, base) = match radix {
+    let (digits, base) = radix_digits(raw, radix);
+    parse_digits(digits, base)
+}
+
+fn radix_digits(raw: &str, radix: NumericRadix) -> (&str, u32) {
+    match radix {
         NumericRadix::Binary => (raw.get(2..).unwrap_or_default(), 2),
         NumericRadix::Octal => (raw.get(2..).unwrap_or_default(), 8),
         NumericRadix::Decimal => (raw, 10),
         NumericRadix::Hexadecimal => (raw.get(2..).unwrap_or_default(), 16),
-    };
-    parse_digits(digits, base)
+    }
+}
+
+/// Called only for lexer-validated tokens; separators already have their
+/// placement checked. Invalid digits or u64 overflow take the old fallback.
+fn small_integer(digits: &str, radix: u32) -> Option<u64> {
+    let mut value = 0u64;
+    let mut any_digit = false;
+    for byte in digits.bytes() {
+        let digit = match byte {
+            b'0'..=b'9' => byte - b'0',
+            b'a'..=b'f' => byte - b'a' + 10,
+            b'A'..=b'F' => byte - b'A' + 10,
+            b'_' => continue,
+            _ => return None,
+        };
+        if u32::from(digit) >= radix {
+            return None;
+        }
+        any_digit = true;
+        value = value
+            .checked_mul(u64::from(radix))?
+            .checked_add(u64::from(digit))?;
+    }
+    any_digit.then_some(value)
 }
 
 pub(in crate::engine::compiler) fn parse_digits(digits: &str, radix: u32) -> Result<f64, String> {
