@@ -1,0 +1,2450 @@
+{
+  "schema": "oxide-v8-v7-user-stopped-aa-partial-v1",
+  "status": "user stopped after RegExp; partial A/A only",
+  "analysis_script": {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/analyze-v8-partial.py",
+    "sha256": "65defbaab1c65cad7e193ed03d043914a405c95d2b2d1f1a15b7d071d60e05c5"
+  },
+  "shared_validation_script": {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/analyze-v8-final.py",
+    "sha256": "0e943e37e0a33aa2d19080943d403d579dca22229665fa2f6c8ddf33be643a38"
+  },
+  "frozen_runner": {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/integrated-src/scripts/benchmark/run.py",
+    "sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5"
+  },
+  "interpretation": {
+    "scores_and_wall": "same-host interfered; observations only, not performance admission",
+    "raw_stdout_stderr_hashes": "calculated during analysis, not sealed at sample capture",
+    "comparison": "same-binary A/A fake changes only; no Inline candidate samples",
+    "combined_score": "not available; combined all workload cancelled by user",
+    "isolated_aggregate": "not computed; six cases cannot stand in for V8 total score",
+    "instructions": "adaptive-process instructions not used as fixed-workload cost"
+  },
+  "source": {
+    "checkout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark",
+    "commit": "2034d98fc8c5f8044e186267593f5d5ea5232caf",
+    "run_js_sha256": "f13e44c0c4c70a9eb7bdab79956cab9faf59be8b9bec97f98f21548e01d9f938",
+    "files_sha256": {
+      "base.js": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+      "richards.js": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11",
+      "deltablue.js": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9",
+      "crypto.js": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af",
+      "raytrace.js": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb",
+      "earley-boyer.js": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01",
+      "regexp.js": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602",
+      "splay.js": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d",
+      "navier-stokes.js": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84"
+    },
+    "adaptation": "only upstream scripts/build.ts load inlining and standalone concatenation; no benchmark-body or timing changes",
+    "timer": "external harness Date millisecond clock",
+    "metric": "suite score; higher is better"
+  },
+  "engines": {
+    "current": {
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs",
+      "binary_sha256": "f7b4c2ec6e883a2abb014460330a1f251aa70c29191bcfbcae8c06b873680baf",
+      "build_receipt": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs.build.json",
+        "sha256": "840443f428d9e9df80133df178fc12dd5e4b82e15df5e498115e621a5ff45b4c"
+      },
+      "commit": "b42652f8a31240feebd247b8a730b58a6b9a4921",
+      "mode": "plain",
+      "features": [],
+      "build_logs": {
+        "stdout": {
+          "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs.build.stdout.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "stderr": {
+          "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs.build.stderr.log",
+          "sha256": "04b7d98b5e8a9da1b0b356b8452e3659be148240c26b87a06aa2c9cda109146a"
+        }
+      },
+      "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2",
+      "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)"
+    },
+    "again": {
+      "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs",
+      "binary_sha256": "f7b4c2ec6e883a2abb014460330a1f251aa70c29191bcfbcae8c06b873680baf",
+      "build_receipt": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs.build.json",
+        "sha256": "840443f428d9e9df80133df178fc12dd5e4b82e15df5e498115e621a5ff45b4c"
+      },
+      "commit": "b42652f8a31240feebd247b8a730b58a6b9a4921",
+      "mode": "plain",
+      "features": [],
+      "build_logs": {
+        "stdout": {
+          "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs.build.stdout.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "stderr": {
+          "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs.build.stderr.log",
+          "sha256": "04b7d98b5e8a9da1b0b356b8452e3659be148240c26b87a06aa2c9cda109146a"
+        }
+      },
+      "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2",
+      "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)"
+    }
+  },
+  "machine_identity": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "cpu": "Apple M1",
+    "logical_cpus": 8,
+    "physical_memory_bytes": 17179869184
+  },
+  "runner_sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5",
+  "selected_cases": [
+    "richards",
+    "deltablue",
+    "crypto",
+    "raytrace",
+    "earley-boyer",
+    "regexp"
+  ],
+  "selected_sample_count": 48,
+  "selected_valid_sample_count": 48,
+  "selected_stats": {
+    "richards": {
+      "current": {
+        "successful": 4,
+        "requested": 4,
+        "eligible_for_comparison": true,
+        "score": {
+          "raw": [
+            34.9,
+            29.2,
+            29.4,
+            28.7
+          ],
+          "min": 28.7,
+          "median": 29.299999999999997,
+          "max": 34.9,
+          "mean": 30.549999999999997,
+          "population_stdev": 2.5243811122728674,
+          "population_cv_percent": 8.263113297128863
+        },
+        "process_wall_seconds": {
+          "raw": [
+            4.298260791,
+            5.304277083,
+            5.252074958,
+            5.50937825
+          ],
+          "min": 4.298260791,
+          "median": 5.2781760205,
+          "max": 5.50937825,
+          "mean": 5.0909977705,
+          "population_stdev": 0.4676826033130847,
+          "population_cv_percent": 9.186462544200886
+        }
+      },
+      "again": {
+        "successful": 4,
+        "requested": 4,
+        "eligible_for_comparison": true,
+        "score": {
+          "raw": [
+            34.3,
+            29.5,
+            27.8,
+            26.9
+          ],
+          "min": 26.9,
+          "median": 28.65,
+          "max": 34.3,
+          "mean": 29.625,
+          "population_stdev": 2.8560243346302205,
+          "population_cv_percent": 9.64058847132564
+        },
+        "process_wall_seconds": {
+          "raw": [
+            5.28042725,
+            5.183987709,
+            5.251357875,
+            5.27287525
+          ],
+          "min": 5.183987709,
+          "median": 5.2621165625,
+          "max": 5.28042725,
+          "mean": 5.247162021,
+          "population_stdev": 0.038001133185378566,
+          "population_cv_percent": 0.7242225994412183
+        }
+      }
+    },
+    "deltablue": {
+      "current": {
+        "successful": 4,
+        "requested": 4,
+        "eligible_for_comparison": true,
+        "score": {
+          "raw": [
+            39.2,
+            42.1,
+            38.7,
+            48.0
+          ],
+          "min": 38.7,
+          "median": 40.650000000000006,
+          "max": 48.0,
+          "mean": 42.0,
+          "population_stdev": 3.6993242626187817,
+          "population_cv_percent": 8.807914910997098
+        },
+        "process_wall_seconds": {
+          "raw": [
+            6.456006584,
+            6.400895584,
+            7.552222583,
+            5.565820583
+          ],
+          "min": 5.565820583,
+          "median": 6.428451084,
+          "max": 7.552222583,
+          "mean": 6.493736333499999,
+          "population_stdev": 0.7055961520536391,
+          "population_cv_percent": 10.865796142870746
+        }
+      },
+      "again": {
+        "successful": 4,
+        "requested": 4,
+        "eligible_for_comparison": true,
+        "score": {
+          "raw": [
+            41.5,
+            40.6,
+            41.4,
+            39.1
+          ],
+          "min": 39.1,
+          "median": 41.0,
+          "max": 41.5,
+          "mean": 40.65,
+          "population_stdev": 0.9604686356149265,
+          "population_cv_percent": 2.362776471377433
+        },
+        "process_wall_seconds": {
+          "raw": [
+            6.477393833,
+            6.708811375,
+            6.499203709,
+            6.606781084
+          ],
+          "min": 6.477393833,
+          "median": 6.5529923965,
+          "max": 6.708811375,
+          "mean": 6.5730475002499995,
+          "population_stdev": 0.09242877517891716,
+          "population_cv_percent": 1.4061784153454195
+        }
+      }
+    },
+    "crypto": {
+      "current": {
+        "successful": 4,
+        "requested": 4,
+        "eligible_for_comparison": true,
+        "score": {
+          "raw": [
+            61.7,
+            60.1,
+            74.1,
+            62.2
+          ],
+          "min": 60.1,
+          "median": 61.95,
+          "max": 74.1,
+          "mean": 64.525,
+          "population_stdev": 5.582282239371274,
+          "population_cv_percent": 8.651347910687754
+        },
+        "process_wall_seconds": {
+          "raw": [
+            58.702266167,
+            68.638108542,
+            57.5434245,
+            64.86569575
+          ],
+          "min": 57.5434245,
+          "median": 61.783980958499995,
+          "max": 68.638108542,
+          "mean": 62.43737373975,
+          "population_stdev": 4.534523889411184,
+          "population_cv_percent": 7.262515409940015
+        }
+      },
+      "again": {
+        "successful": 4,
+        "requested": 4,
+        "eligible_for_comparison": true,
+        "score": {
+          "raw": [
+            69.3,
+            74.9,
+            57.8,
+            52.7
+          ],
+          "min": 52.7,
+          "median": 63.55,
+          "max": 74.9,
+          "mean": 63.675,
+          "population_stdev": 8.840354913689835,
+          "population_cv_percent": 13.883556990482662
+        },
+        "process_wall_seconds": {
+          "raw": [
+            59.11512825,
+            53.092055917,
+            65.896259083,
+            77.071135583
+          ],
+          "min": 53.092055917,
+          "median": 62.5056936665,
+          "max": 77.071135583,
+          "mean": 63.79364470825,
+          "population_stdev": 8.904005700316832,
+          "population_cv_percent": 13.957512133125288
+        }
+      }
+    },
+    "raytrace": {
+      "current": {
+        "successful": 4,
+        "requested": 4,
+        "eligible_for_comparison": true,
+        "score": {
+          "raw": [
+            40.5,
+            40.3,
+            47.3,
+            66.1
+          ],
+          "min": 40.3,
+          "median": 43.9,
+          "max": 66.1,
+          "mean": 48.55,
+          "population_stdev": 10.517010031372983,
+          "population_cv_percent": 21.66222457543354
+        },
+        "process_wall_seconds": {
+          "raw": [
+            60.354006625,
+            63.078311375,
+            51.405754709,
+            38.384438208
+          ],
+          "min": 38.384438208,
+          "median": 55.879880666999995,
+          "max": 63.078311375,
+          "mean": 53.30562772925,
+          "population_stdev": 9.636342731037773,
+          "population_cv_percent": 18.077533539202832
+        }
+      },
+      "again": {
+        "successful": 4,
+        "requested": 4,
+        "eligible_for_comparison": true,
+        "score": {
+          "raw": [
+            30.0,
+            15.6,
+            67.1,
+            63.0
+          ],
+          "min": 15.6,
+          "median": 46.5,
+          "max": 67.1,
+          "mean": 43.925,
+          "population_stdev": 21.77812836310779,
+          "population_cv_percent": 49.58025808334158
+        },
+        "process_wall_seconds": {
+          "raw": [
+            80.719299209,
+            164.631150584,
+            36.338561292,
+            39.501912208
+          ],
+          "min": 36.338561292,
+          "median": 60.1106057085,
+          "max": 164.631150584,
+          "mean": 80.29773082325,
+          "population_stdev": 51.74217527996934,
+          "population_cv_percent": 64.43790471970289
+        }
+      }
+    },
+    "earley-boyer": {
+      "current": {
+        "successful": 4,
+        "requested": 4,
+        "eligible_for_comparison": true,
+        "score": {
+          "raw": [
+            59.0,
+            95.7,
+            62.2,
+            55.9
+          ],
+          "min": 55.9,
+          "median": 60.6,
+          "max": 95.7,
+          "mean": 68.2,
+          "population_stdev": 16.03262299188751,
+          "population_cv_percent": 23.508244856140045
+        },
+        "process_wall_seconds": {
+          "raw": [
+            163.543299458,
+            116.188573666,
+            160.573004917,
+            172.539288
+          ],
+          "min": 116.188573666,
+          "median": 162.0581521875,
+          "max": 172.539288,
+          "mean": 153.21104151025,
+          "population_stdev": 21.824288631867407,
+          "population_cv_percent": 14.24459256770168
+        }
+      },
+      "again": {
+        "successful": 4,
+        "requested": 4,
+        "eligible_for_comparison": true,
+        "score": {
+          "raw": [
+            74.8,
+            100.0,
+            111.0,
+            45.5
+          ],
+          "min": 45.5,
+          "median": 87.4,
+          "max": 111.0,
+          "mean": 82.825,
+          "population_stdev": 25.23077238215271,
+          "population_cv_percent": 30.46274963133439
+        },
+        "process_wall_seconds": {
+          "raw": [
+            132.329165291,
+            103.623586917,
+            99.832108167,
+            244.713582375
+          ],
+          "min": 99.832108167,
+          "median": 117.976376104,
+          "max": 244.713582375,
+          "mean": 145.1246106875,
+          "population_stdev": 58.85455051063934,
+          "population_cv_percent": 40.5544932949878
+        }
+      }
+    },
+    "regexp": {
+      "current": {
+        "successful": 4,
+        "requested": 4,
+        "eligible_for_comparison": true,
+        "score": {
+          "raw": [
+            37.7,
+            90.0,
+            93.7,
+            92.7
+          ],
+          "min": 37.7,
+          "median": 91.35,
+          "max": 93.7,
+          "mean": 78.525,
+          "population_stdev": 23.609148121014446,
+          "population_cv_percent": 30.06577283796809
+        },
+        "process_wall_seconds": {
+          "raw": [
+            83.990108042,
+            34.78174875,
+            34.30571375,
+            34.335666083
+          ],
+          "min": 34.30571375,
+          "median": 34.5587074165,
+          "max": 83.990108042,
+          "mean": 46.85330915625,
+          "population_stdev": 21.441769637267672,
+          "population_cv_percent": 45.76361845811577
+        }
+      },
+      "again": {
+        "successful": 4,
+        "requested": 4,
+        "eligible_for_comparison": true,
+        "score": {
+          "raw": [
+            58.5,
+            80.8,
+            85.6,
+            105.0
+          ],
+          "min": 58.5,
+          "median": 83.19999999999999,
+          "max": 105.0,
+          "mean": 82.475,
+          "population_stdev": 16.543484366964535,
+          "population_cv_percent": 20.058786743818775
+        },
+        "process_wall_seconds": {
+          "raw": [
+            55.552789917,
+            39.105025,
+            36.195045375,
+            30.697524709
+          ],
+          "min": 30.697524709,
+          "median": 37.650035187499995,
+          "max": 55.552789917,
+          "mean": 40.38759625025,
+          "population_stdev": 9.261520626739769,
+          "population_cv_percent": 22.931596546012415
+        }
+      }
+    }
+  },
+  "aa_fake_changes": {
+    "richards": {
+      "comparable": true,
+      "ratio": 0.9778156996587031,
+      "percent_change": -2.2184300341296925
+    },
+    "deltablue": {
+      "comparable": true,
+      "ratio": 1.008610086100861,
+      "percent_change": 0.8610086100860892
+    },
+    "crypto": {
+      "comparable": true,
+      "ratio": 1.025827280064568,
+      "percent_change": 2.5827280064568026
+    },
+    "raytrace": {
+      "comparable": true,
+      "ratio": 1.0592255125284737,
+      "percent_change": 5.9225512528473745
+    },
+    "earley-boyer": {
+      "comparable": true,
+      "ratio": 1.4422442244224423,
+      "percent_change": 44.224422442244226
+    },
+    "regexp": {
+      "comparable": true,
+      "ratio": 0.9107827038861521,
+      "percent_change": -8.921729611384787
+    }
+  },
+  "selected_failures": [],
+  "original_segment": {
+    "directory": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa",
+    "sample_count": 36,
+    "planned_sample_count": 72,
+    "valid_sample_count": 36,
+    "failures": [],
+    "complete_matrix": false,
+    "all_samples_valid": true,
+    "machine_identity": {
+      "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+      "machine": "arm64",
+      "cpu": "Apple M1",
+      "logical_cpus": 8,
+      "physical_memory_bytes": 17179869184
+    },
+    "runner_sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5",
+    "created_utc": "2026-09-26T03:10:08Z",
+    "timeout_seconds": 180,
+    "cases": [
+      "richards",
+      "deltablue",
+      "crypto",
+      "raytrace",
+      "earley-boyer",
+      "regexp",
+      "splay",
+      "navier-stokes",
+      "all"
+    ],
+    "repeat": 4,
+    "engines": {
+      "current": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs",
+        "binary_sha256": "f7b4c2ec6e883a2abb014460330a1f251aa70c29191bcfbcae8c06b873680baf",
+        "build_receipt": {
+          "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs.build.json",
+          "sha256": "840443f428d9e9df80133df178fc12dd5e4b82e15df5e498115e621a5ff45b4c"
+        },
+        "commit": "b42652f8a31240feebd247b8a730b58a6b9a4921",
+        "mode": "plain",
+        "features": [],
+        "build_logs": {
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs.build.stdout.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs.build.stderr.log",
+            "sha256": "04b7d98b5e8a9da1b0b356b8452e3659be148240c26b87a06aa2c9cda109146a"
+          }
+        },
+        "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2",
+        "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)"
+      },
+      "again": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs",
+        "binary_sha256": "f7b4c2ec6e883a2abb014460330a1f251aa70c29191bcfbcae8c06b873680baf",
+        "build_receipt": {
+          "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs.build.json",
+          "sha256": "840443f428d9e9df80133df178fc12dd5e4b82e15df5e498115e621a5ff45b4c"
+        },
+        "commit": "b42652f8a31240feebd247b8a730b58a6b9a4921",
+        "mode": "plain",
+        "features": [],
+        "build_logs": {
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs.build.stdout.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs.build.stderr.log",
+            "sha256": "04b7d98b5e8a9da1b0b356b8452e3659be148240c26b87a06aa2c9cda109146a"
+          }
+        },
+        "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2",
+        "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)"
+      }
+    },
+    "source": {
+      "checkout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark",
+      "commit": "2034d98fc8c5f8044e186267593f5d5ea5232caf",
+      "run_js_sha256": "f13e44c0c4c70a9eb7bdab79956cab9faf59be8b9bec97f98f21548e01d9f938",
+      "files_sha256": {
+        "base.js": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+        "richards.js": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11",
+        "deltablue.js": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9",
+        "crypto.js": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af",
+        "raytrace.js": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb",
+        "earley-boyer.js": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01",
+        "regexp.js": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602",
+        "splay.js": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d",
+        "navier-stokes.js": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84"
+      },
+      "adaptation": "only upstream scripts/build.ts load inlining and standalone concatenation; no benchmark-body or timing changes",
+      "timer": "external harness Date millisecond clock",
+      "metric": "suite score; higher is better"
+    },
+    "workloads": {
+      "richards": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark/dist/quickjs-oxide/richards.js",
+        "sha256": "3a6a75ed44921a21ccb5d651c4fa40e1168cc398497f5783f70f520b5880f816",
+        "args": [],
+        "expected": [
+          "Richards"
+        ]
+      },
+      "deltablue": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark/dist/quickjs-oxide/deltablue.js",
+        "sha256": "0d09178b33846768ca0c46893b9f615ce820ce4eb1aca0537ca21d3bf9647807",
+        "args": [],
+        "expected": [
+          "DeltaBlue"
+        ]
+      },
+      "crypto": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark/dist/quickjs-oxide/crypto.js",
+        "sha256": "8be5c62888023de8a555264fbb3a7474435382686c9af887d8db981a4975fd63",
+        "args": [],
+        "expected": [
+          "Crypto"
+        ]
+      },
+      "raytrace": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark/dist/quickjs-oxide/raytrace.js",
+        "sha256": "6a2859cbe7aeb2c18ae8e256135f1ca20ef0265a5889636791dbabc11608be41",
+        "args": [],
+        "expected": [
+          "RayTrace"
+        ]
+      },
+      "earley-boyer": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark/dist/quickjs-oxide/earley-boyer.js",
+        "sha256": "d027baa0505e868e7e1273a4d64804f2806ebfad724bc20d44298e7789e6b102",
+        "args": [],
+        "expected": [
+          "EarleyBoyer"
+        ]
+      },
+      "regexp": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark/dist/quickjs-oxide/regexp.js",
+        "sha256": "90098a6d8c417a629558396814e23bb64a881c1d0d9d1c7e376c35c4c5642883",
+        "args": [],
+        "expected": [
+          "RegExp"
+        ]
+      },
+      "splay": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark/dist/quickjs-oxide/splay.js",
+        "sha256": "ecb56713721fcdc54a040d237fd4155cee4524c1ecbe7be47d1d0efac1dae8fa",
+        "args": [],
+        "expected": [
+          "Splay"
+        ]
+      },
+      "navier-stokes": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark/dist/quickjs-oxide/navier-stokes.js",
+        "sha256": "02f0aa6d195bae84d9c19da850cb98a883b6e535f2e9a38d11000e7aa5170c79",
+        "args": [],
+        "expected": [
+          "NavierStokes"
+        ]
+      },
+      "all": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark/dist/quickjs-oxide/run.js",
+        "sha256": "777f2c2ea9fcf3b8c7db198f758f2e7bd2113c4f8a347ea7323e13c85b4d9946",
+        "args": [],
+        "expected": [
+          "Richards",
+          "DeltaBlue",
+          "Crypto",
+          "RayTrace",
+          "EarleyBoyer",
+          "RegExp",
+          "Splay",
+          "NavierStokes"
+        ]
+      }
+    },
+    "stats": {
+      "richards": {
+        "current": {
+          "successful": 4,
+          "requested": 4,
+          "eligible_for_comparison": true,
+          "score": {
+            "raw": [
+              34.9,
+              29.2,
+              29.4,
+              28.7
+            ],
+            "min": 28.7,
+            "median": 29.299999999999997,
+            "max": 34.9,
+            "mean": 30.549999999999997,
+            "population_stdev": 2.5243811122728674,
+            "population_cv_percent": 8.263113297128863
+          },
+          "process_wall_seconds": {
+            "raw": [
+              4.298260791,
+              5.304277083,
+              5.252074958,
+              5.50937825
+            ],
+            "min": 4.298260791,
+            "median": 5.2781760205,
+            "max": 5.50937825,
+            "mean": 5.0909977705,
+            "population_stdev": 0.4676826033130847,
+            "population_cv_percent": 9.186462544200886
+          }
+        },
+        "again": {
+          "successful": 4,
+          "requested": 4,
+          "eligible_for_comparison": true,
+          "score": {
+            "raw": [
+              34.3,
+              29.5,
+              27.8,
+              26.9
+            ],
+            "min": 26.9,
+            "median": 28.65,
+            "max": 34.3,
+            "mean": 29.625,
+            "population_stdev": 2.8560243346302205,
+            "population_cv_percent": 9.64058847132564
+          },
+          "process_wall_seconds": {
+            "raw": [
+              5.28042725,
+              5.183987709,
+              5.251357875,
+              5.27287525
+            ],
+            "min": 5.183987709,
+            "median": 5.2621165625,
+            "max": 5.28042725,
+            "mean": 5.247162021,
+            "population_stdev": 0.038001133185378566,
+            "population_cv_percent": 0.7242225994412183
+          }
+        }
+      },
+      "deltablue": {
+        "current": {
+          "successful": 4,
+          "requested": 4,
+          "eligible_for_comparison": true,
+          "score": {
+            "raw": [
+              39.2,
+              42.1,
+              38.7,
+              48.0
+            ],
+            "min": 38.7,
+            "median": 40.650000000000006,
+            "max": 48.0,
+            "mean": 42.0,
+            "population_stdev": 3.6993242626187817,
+            "population_cv_percent": 8.807914910997098
+          },
+          "process_wall_seconds": {
+            "raw": [
+              6.456006584,
+              6.400895584,
+              7.552222583,
+              5.565820583
+            ],
+            "min": 5.565820583,
+            "median": 6.428451084,
+            "max": 7.552222583,
+            "mean": 6.493736333499999,
+            "population_stdev": 0.7055961520536391,
+            "population_cv_percent": 10.865796142870746
+          }
+        },
+        "again": {
+          "successful": 4,
+          "requested": 4,
+          "eligible_for_comparison": true,
+          "score": {
+            "raw": [
+              41.5,
+              40.6,
+              41.4,
+              39.1
+            ],
+            "min": 39.1,
+            "median": 41.0,
+            "max": 41.5,
+            "mean": 40.65,
+            "population_stdev": 0.9604686356149265,
+            "population_cv_percent": 2.362776471377433
+          },
+          "process_wall_seconds": {
+            "raw": [
+              6.477393833,
+              6.708811375,
+              6.499203709,
+              6.606781084
+            ],
+            "min": 6.477393833,
+            "median": 6.5529923965,
+            "max": 6.708811375,
+            "mean": 6.5730475002499995,
+            "population_stdev": 0.09242877517891716,
+            "population_cv_percent": 1.4061784153454195
+          }
+        }
+      },
+      "crypto": {
+        "current": {
+          "successful": 4,
+          "requested": 4,
+          "eligible_for_comparison": true,
+          "score": {
+            "raw": [
+              61.7,
+              60.1,
+              74.1,
+              62.2
+            ],
+            "min": 60.1,
+            "median": 61.95,
+            "max": 74.1,
+            "mean": 64.525,
+            "population_stdev": 5.582282239371274,
+            "population_cv_percent": 8.651347910687754
+          },
+          "process_wall_seconds": {
+            "raw": [
+              58.702266167,
+              68.638108542,
+              57.5434245,
+              64.86569575
+            ],
+            "min": 57.5434245,
+            "median": 61.783980958499995,
+            "max": 68.638108542,
+            "mean": 62.43737373975,
+            "population_stdev": 4.534523889411184,
+            "population_cv_percent": 7.262515409940015
+          }
+        },
+        "again": {
+          "successful": 4,
+          "requested": 4,
+          "eligible_for_comparison": true,
+          "score": {
+            "raw": [
+              69.3,
+              74.9,
+              57.8,
+              52.7
+            ],
+            "min": 52.7,
+            "median": 63.55,
+            "max": 74.9,
+            "mean": 63.675,
+            "population_stdev": 8.840354913689835,
+            "population_cv_percent": 13.883556990482662
+          },
+          "process_wall_seconds": {
+            "raw": [
+              59.11512825,
+              53.092055917,
+              65.896259083,
+              77.071135583
+            ],
+            "min": 53.092055917,
+            "median": 62.5056936665,
+            "max": 77.071135583,
+            "mean": 63.79364470825,
+            "population_stdev": 8.904005700316832,
+            "population_cv_percent": 13.957512133125288
+          }
+        }
+      },
+      "raytrace": {
+        "current": {
+          "successful": 4,
+          "requested": 4,
+          "eligible_for_comparison": true,
+          "score": {
+            "raw": [
+              40.5,
+              40.3,
+              47.3,
+              66.1
+            ],
+            "min": 40.3,
+            "median": 43.9,
+            "max": 66.1,
+            "mean": 48.55,
+            "population_stdev": 10.517010031372983,
+            "population_cv_percent": 21.66222457543354
+          },
+          "process_wall_seconds": {
+            "raw": [
+              60.354006625,
+              63.078311375,
+              51.405754709,
+              38.384438208
+            ],
+            "min": 38.384438208,
+            "median": 55.879880666999995,
+            "max": 63.078311375,
+            "mean": 53.30562772925,
+            "population_stdev": 9.636342731037773,
+            "population_cv_percent": 18.077533539202832
+          }
+        },
+        "again": {
+          "successful": 4,
+          "requested": 4,
+          "eligible_for_comparison": true,
+          "score": {
+            "raw": [
+              30.0,
+              15.6,
+              67.1,
+              63.0
+            ],
+            "min": 15.6,
+            "median": 46.5,
+            "max": 67.1,
+            "mean": 43.925,
+            "population_stdev": 21.77812836310779,
+            "population_cv_percent": 49.58025808334158
+          },
+          "process_wall_seconds": {
+            "raw": [
+              80.719299209,
+              164.631150584,
+              36.338561292,
+              39.501912208
+            ],
+            "min": 36.338561292,
+            "median": 60.1106057085,
+            "max": 164.631150584,
+            "mean": 80.29773082325,
+            "population_stdev": 51.74217527996934,
+            "population_cv_percent": 64.43790471970289
+          }
+        }
+      },
+      "earley-boyer": {
+        "current": {
+          "successful": 2,
+          "requested": 4,
+          "eligible_for_comparison": false,
+          "score": {
+            "raw": [
+              78.1,
+              148.0
+            ],
+            "min": 78.1,
+            "median": 113.05,
+            "max": 148.0,
+            "mean": 113.05,
+            "population_stdev": 34.95,
+            "population_cv_percent": 30.915524104378594
+          },
+          "process_wall_seconds": {
+            "raw": [
+              125.819117083,
+              69.845941958
+            ],
+            "min": 69.845941958,
+            "median": 97.8325295205,
+            "max": 125.819117083,
+            "mean": 97.8325295205,
+            "population_stdev": 27.9865875625,
+            "population_cv_percent": 28.606627774697003
+          }
+        },
+        "again": {
+          "successful": 2,
+          "requested": 4,
+          "eligible_for_comparison": false,
+          "score": {
+            "raw": [
+              113.0,
+              155.0
+            ],
+            "min": 113.0,
+            "median": 134.0,
+            "max": 155.0,
+            "mean": 134.0,
+            "population_stdev": 21.0,
+            "population_cv_percent": 15.671641791044777
+          },
+          "process_wall_seconds": {
+            "raw": [
+              90.2760195,
+              67.242870667
+            ],
+            "min": 67.242870667,
+            "median": 78.7594450835,
+            "max": 90.2760195,
+            "mean": 78.7594450835,
+            "population_stdev": 11.5165744165,
+            "population_cv_percent": 14.622467698052263
+          }
+        }
+      },
+      "regexp": {
+        "current": {
+          "successful": 0,
+          "requested": 4,
+          "eligible_for_comparison": false,
+          "score": null,
+          "process_wall_seconds": null
+        },
+        "again": {
+          "successful": 0,
+          "requested": 4,
+          "eligible_for_comparison": false,
+          "score": null,
+          "process_wall_seconds": null
+        }
+      },
+      "splay": {
+        "current": {
+          "successful": 0,
+          "requested": 4,
+          "eligible_for_comparison": false,
+          "score": null,
+          "process_wall_seconds": null
+        },
+        "again": {
+          "successful": 0,
+          "requested": 4,
+          "eligible_for_comparison": false,
+          "score": null,
+          "process_wall_seconds": null
+        }
+      },
+      "navier-stokes": {
+        "current": {
+          "successful": 0,
+          "requested": 4,
+          "eligible_for_comparison": false,
+          "score": null,
+          "process_wall_seconds": null
+        },
+        "again": {
+          "successful": 0,
+          "requested": 4,
+          "eligible_for_comparison": false,
+          "score": null,
+          "process_wall_seconds": null
+        }
+      },
+      "all": {
+        "current": {
+          "successful": 0,
+          "requested": 4,
+          "eligible_for_comparison": false,
+          "score": null,
+          "process_wall_seconds": null
+        },
+        "again": {
+          "successful": 0,
+          "requested": 4,
+          "eligible_for_comparison": false,
+          "score": null,
+          "process_wall_seconds": null
+        }
+      }
+    },
+    "artifacts": {
+      "results_json": null,
+      "metadata_json": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/metadata.json",
+        "sha256": "5e394cb18268ee465105bd82bc50d468b6ece22da2ecbfe686d491ce45125901"
+      },
+      "samples_jsonl": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/samples.jsonl",
+        "sha256": "c8906ee0903e1702cf7a9ed50ff80bb9b7ecc46c807ee9f226248931274ddc22"
+      },
+      "report_md": null,
+      "raw": [
+        {
+          "case": "richards",
+          "engine": "current",
+          "repetition": 0,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/richards-current-0.stdout",
+            "sha256": "6201a804978eeec24fc17269ac1b452072221a165aeff0f8b1bc2cabd7ec3e15"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/richards-current-0.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "richards",
+          "engine": "again",
+          "repetition": 0,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/richards-again-0.stdout",
+            "sha256": "049ef84ca344ea620111a9b569b62d63fe1e789bc177951c9f035b245819a255"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/richards-again-0.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "richards",
+          "engine": "again",
+          "repetition": 1,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/richards-again-1.stdout",
+            "sha256": "15c564d02184a4c34e171c336dac60a50377c411f7c0828867a3b91087379a45"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/richards-again-1.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "richards",
+          "engine": "current",
+          "repetition": 1,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/richards-current-1.stdout",
+            "sha256": "cb7185e14afde056dae2b208eb8b2f386a0338b90614cc806b79bf560f16ef2b"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/richards-current-1.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "richards",
+          "engine": "again",
+          "repetition": 2,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/richards-again-2.stdout",
+            "sha256": "af57bc8846b4b571b1577ef0d85deaae60653399e6880cdd6a3a70ea69f7b9c8"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/richards-again-2.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "richards",
+          "engine": "current",
+          "repetition": 2,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/richards-current-2.stdout",
+            "sha256": "3d8f68d845e720501a9ea8be73b2705e4250e1fe5572055e3e024c9b1e8ec759"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/richards-current-2.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "richards",
+          "engine": "current",
+          "repetition": 3,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/richards-current-3.stdout",
+            "sha256": "b0d2cc805b4a781f4140e471f8aeac1416f21433f99f93ac6f110851d17c0166"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/richards-current-3.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "richards",
+          "engine": "again",
+          "repetition": 3,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/richards-again-3.stdout",
+            "sha256": "fabcf71cd324c94f20bb0bc6e3c27ac25c239307731589fd9900475d9f6092b1"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/richards-again-3.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "deltablue",
+          "engine": "current",
+          "repetition": 0,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/deltablue-current-0.stdout",
+            "sha256": "94820e09586a28b49a935ca6dd377eb83633aae316c4a2f13183d7409ff48dca"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/deltablue-current-0.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "deltablue",
+          "engine": "again",
+          "repetition": 0,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/deltablue-again-0.stdout",
+            "sha256": "4c5ecc83aef185a0c4152acfd33a5eb358ea45614f51bcc9ac8f849dd4050628"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/deltablue-again-0.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "deltablue",
+          "engine": "again",
+          "repetition": 1,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/deltablue-again-1.stdout",
+            "sha256": "1956c9fc04ce366d2f6f862389bf77783d35e9be0e5b60b88a7492bc65bc16ca"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/deltablue-again-1.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "deltablue",
+          "engine": "current",
+          "repetition": 1,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/deltablue-current-1.stdout",
+            "sha256": "9bbc492e415fb7fd6a91bb8d41aeae27cd804e366af468ebb2d72aafd5c75465"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/deltablue-current-1.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "deltablue",
+          "engine": "again",
+          "repetition": 2,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/deltablue-again-2.stdout",
+            "sha256": "b3bbe430bec456482ed92a23e955d907e00b9a58b3985ff2f89bef48cd3ec0cb"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/deltablue-again-2.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "deltablue",
+          "engine": "current",
+          "repetition": 2,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/deltablue-current-2.stdout",
+            "sha256": "89fd3244f9f8772609fe65634bc7de500c307abd0175a645558fb83f0a67f17a"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/deltablue-current-2.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "deltablue",
+          "engine": "current",
+          "repetition": 3,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/deltablue-current-3.stdout",
+            "sha256": "bab5970c5df395e5f6493499d02edc997e4a9e1fd241e17ad28f22653fc697cf"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/deltablue-current-3.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "deltablue",
+          "engine": "again",
+          "repetition": 3,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/deltablue-again-3.stdout",
+            "sha256": "46663629b01787887996dbedcd9b8bcd952a4e9aae358b70afffd79ac50d064c"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/deltablue-again-3.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "crypto",
+          "engine": "current",
+          "repetition": 0,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/crypto-current-0.stdout",
+            "sha256": "c824ea67e5b3e19c16bbf95a7dd054c74ccec78383c5478ca685cc9bd9d0bebf"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/crypto-current-0.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "crypto",
+          "engine": "again",
+          "repetition": 0,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/crypto-again-0.stdout",
+            "sha256": "cd79b6edc81547a4e7454c8a0b8fbf4c430f09b0a7a43af0d317d5b015e7bb0b"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/crypto-again-0.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "crypto",
+          "engine": "again",
+          "repetition": 1,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/crypto-again-1.stdout",
+            "sha256": "eab3809a722ee392c891bbdafd2c0bb94301ee5034eda76a3efa4ef3c26d8a57"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/crypto-again-1.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "crypto",
+          "engine": "current",
+          "repetition": 1,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/crypto-current-1.stdout",
+            "sha256": "41825bd64ded419458967290fa930ee0f759ebe2cb86fd6010225c351a378c3c"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/crypto-current-1.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "crypto",
+          "engine": "again",
+          "repetition": 2,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/crypto-again-2.stdout",
+            "sha256": "c3f74f571eb9437edd6c4baff19edb68a024d1b4de124b4f70af96c7cb4156cc"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/crypto-again-2.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "crypto",
+          "engine": "current",
+          "repetition": 2,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/crypto-current-2.stdout",
+            "sha256": "081d98c78738a3a30adc9fd768ab90b06d6bb1160b8f1a86825a352c90a2a7d8"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/crypto-current-2.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "crypto",
+          "engine": "current",
+          "repetition": 3,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/crypto-current-3.stdout",
+            "sha256": "14ddf7f0eb841eaa2bca475ed5700235f4210ae9acb5d40a31657c0a6d3e3665"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/crypto-current-3.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "crypto",
+          "engine": "again",
+          "repetition": 3,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/crypto-again-3.stdout",
+            "sha256": "754f143e774877831f00eadb8551586b67723f8a3d5ca7c1483fbaa4e652db9f"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/crypto-again-3.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "raytrace",
+          "engine": "current",
+          "repetition": 0,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/raytrace-current-0.stdout",
+            "sha256": "849e0eeace9b648c8c5b982e314cbcb5ada5b6f864023bafeee19968849751c7"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/raytrace-current-0.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "raytrace",
+          "engine": "again",
+          "repetition": 0,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/raytrace-again-0.stdout",
+            "sha256": "f79e692e3a001d6c9a137d87f670f07cd82d04b352dbbf69dd8594ca46456c9f"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/raytrace-again-0.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "raytrace",
+          "engine": "again",
+          "repetition": 1,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/raytrace-again-1.stdout",
+            "sha256": "c316b696e813e1b956d184e16657e01684f2331b6fb8a2d3b22df143ed47c78a"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/raytrace-again-1.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "raytrace",
+          "engine": "current",
+          "repetition": 1,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/raytrace-current-1.stdout",
+            "sha256": "11a742237bcedb48377f8840530069f85993e6b75582839721235fb9a8120712"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/raytrace-current-1.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "raytrace",
+          "engine": "again",
+          "repetition": 2,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/raytrace-again-2.stdout",
+            "sha256": "146768dbb20fb2631c20d811a9b51ec62eac774f6f3fabd1feccbbbcb910d254"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/raytrace-again-2.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "raytrace",
+          "engine": "current",
+          "repetition": 2,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/raytrace-current-2.stdout",
+            "sha256": "774c92d3e23264bac92ce7ccd63eda0965f99962a65aaa7f7239dd9b1242d71e"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/raytrace-current-2.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "raytrace",
+          "engine": "current",
+          "repetition": 3,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/raytrace-current-3.stdout",
+            "sha256": "fd383ac723571e41396a6398fb0b05aec56aaff4bcc2e229b4ab6c19013c23c6"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/raytrace-current-3.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "raytrace",
+          "engine": "again",
+          "repetition": 3,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/raytrace-again-3.stdout",
+            "sha256": "60fee7ac9cfc718c94a5822b15d45f4253d18f3cac79a7e142190eafd87b212d"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/raytrace-again-3.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "earley-boyer",
+          "engine": "current",
+          "repetition": 0,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/earley-boyer-current-0.stdout",
+            "sha256": "189067c107cd0bfcc942bbe12266cf22fd2a8f8b64c3d912f1c603a77036f7a0"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/earley-boyer-current-0.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "earley-boyer",
+          "engine": "again",
+          "repetition": 0,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/earley-boyer-again-0.stdout",
+            "sha256": "b9b9f7aac292ba59292ec2c0023be81cb2cd086056a2f596e3e85583a0cb10fa"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/earley-boyer-again-0.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "earley-boyer",
+          "engine": "again",
+          "repetition": 1,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/earley-boyer-again-1.stdout",
+            "sha256": "e823e2caf102b75e7be0fe6fa724abb12953ed486a34b7cbe873449dee8d5739"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/earley-boyer-again-1.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "earley-boyer",
+          "engine": "current",
+          "repetition": 1,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/earley-boyer-current-1.stdout",
+            "sha256": "36fadfef61a9aa70cb18474a9b81646254c7f021d1603db7aea64a23d62a75d9"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/earley-boyer-current-1.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        }
+      ]
+    }
+  },
+  "continuation_segment": {
+    "directory": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation",
+    "sample_count": 16,
+    "planned_sample_count": 40,
+    "valid_sample_count": 16,
+    "failures": [],
+    "complete_matrix": false,
+    "all_samples_valid": true,
+    "machine_identity": {
+      "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+      "machine": "arm64",
+      "cpu": "Apple M1",
+      "logical_cpus": 8,
+      "physical_memory_bytes": 17179869184
+    },
+    "runner_sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5",
+    "created_utc": "2026-09-26T03:35:40Z",
+    "timeout_seconds": 900,
+    "cases": [
+      "earley-boyer",
+      "regexp",
+      "splay",
+      "navier-stokes",
+      "all"
+    ],
+    "repeat": 4,
+    "engines": {
+      "current": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs",
+        "binary_sha256": "f7b4c2ec6e883a2abb014460330a1f251aa70c29191bcfbcae8c06b873680baf",
+        "build_receipt": {
+          "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs.build.json",
+          "sha256": "840443f428d9e9df80133df178fc12dd5e4b82e15df5e498115e621a5ff45b4c"
+        },
+        "commit": "b42652f8a31240feebd247b8a730b58a6b9a4921",
+        "mode": "plain",
+        "features": [],
+        "build_logs": {
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs.build.stdout.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs.build.stderr.log",
+            "sha256": "04b7d98b5e8a9da1b0b356b8452e3659be148240c26b87a06aa2c9cda109146a"
+          }
+        },
+        "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2",
+        "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)"
+      },
+      "again": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs",
+        "binary_sha256": "f7b4c2ec6e883a2abb014460330a1f251aa70c29191bcfbcae8c06b873680baf",
+        "build_receipt": {
+          "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs.build.json",
+          "sha256": "840443f428d9e9df80133df178fc12dd5e4b82e15df5e498115e621a5ff45b4c"
+        },
+        "commit": "b42652f8a31240feebd247b8a730b58a6b9a4921",
+        "mode": "plain",
+        "features": [],
+        "build_logs": {
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs.build.stdout.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs.build.stderr.log",
+            "sha256": "04b7d98b5e8a9da1b0b356b8452e3659be148240c26b87a06aa2c9cda109146a"
+          }
+        },
+        "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2",
+        "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)"
+      }
+    },
+    "source": {
+      "checkout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark",
+      "commit": "2034d98fc8c5f8044e186267593f5d5ea5232caf",
+      "run_js_sha256": "f13e44c0c4c70a9eb7bdab79956cab9faf59be8b9bec97f98f21548e01d9f938",
+      "files_sha256": {
+        "base.js": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+        "richards.js": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11",
+        "deltablue.js": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9",
+        "crypto.js": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af",
+        "raytrace.js": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb",
+        "earley-boyer.js": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01",
+        "regexp.js": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602",
+        "splay.js": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d",
+        "navier-stokes.js": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84"
+      },
+      "adaptation": "only upstream scripts/build.ts load inlining and standalone concatenation; no benchmark-body or timing changes",
+      "timer": "external harness Date millisecond clock",
+      "metric": "suite score; higher is better"
+    },
+    "workloads": {
+      "earley-boyer": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark/dist/quickjs-oxide/earley-boyer.js",
+        "sha256": "d027baa0505e868e7e1273a4d64804f2806ebfad724bc20d44298e7789e6b102",
+        "args": [],
+        "expected": [
+          "EarleyBoyer"
+        ]
+      },
+      "regexp": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark/dist/quickjs-oxide/regexp.js",
+        "sha256": "90098a6d8c417a629558396814e23bb64a881c1d0d9d1c7e376c35c4c5642883",
+        "args": [],
+        "expected": [
+          "RegExp"
+        ]
+      },
+      "splay": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark/dist/quickjs-oxide/splay.js",
+        "sha256": "ecb56713721fcdc54a040d237fd4155cee4524c1ecbe7be47d1d0efac1dae8fa",
+        "args": [],
+        "expected": [
+          "Splay"
+        ]
+      },
+      "navier-stokes": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark/dist/quickjs-oxide/navier-stokes.js",
+        "sha256": "02f0aa6d195bae84d9c19da850cb98a883b6e535f2e9a38d11000e7aa5170c79",
+        "args": [],
+        "expected": [
+          "NavierStokes"
+        ]
+      },
+      "all": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark/dist/quickjs-oxide/run.js",
+        "sha256": "777f2c2ea9fcf3b8c7db198f758f2e7bd2113c4f8a347ea7323e13c85b4d9946",
+        "args": [],
+        "expected": [
+          "Richards",
+          "DeltaBlue",
+          "Crypto",
+          "RayTrace",
+          "EarleyBoyer",
+          "RegExp",
+          "Splay",
+          "NavierStokes"
+        ]
+      }
+    },
+    "stats": {
+      "earley-boyer": {
+        "current": {
+          "successful": 4,
+          "requested": 4,
+          "eligible_for_comparison": true,
+          "score": {
+            "raw": [
+              59.0,
+              95.7,
+              62.2,
+              55.9
+            ],
+            "min": 55.9,
+            "median": 60.6,
+            "max": 95.7,
+            "mean": 68.2,
+            "population_stdev": 16.03262299188751,
+            "population_cv_percent": 23.508244856140045
+          },
+          "process_wall_seconds": {
+            "raw": [
+              163.543299458,
+              116.188573666,
+              160.573004917,
+              172.539288
+            ],
+            "min": 116.188573666,
+            "median": 162.0581521875,
+            "max": 172.539288,
+            "mean": 153.21104151025,
+            "population_stdev": 21.824288631867407,
+            "population_cv_percent": 14.24459256770168
+          }
+        },
+        "again": {
+          "successful": 4,
+          "requested": 4,
+          "eligible_for_comparison": true,
+          "score": {
+            "raw": [
+              74.8,
+              100.0,
+              111.0,
+              45.5
+            ],
+            "min": 45.5,
+            "median": 87.4,
+            "max": 111.0,
+            "mean": 82.825,
+            "population_stdev": 25.23077238215271,
+            "population_cv_percent": 30.46274963133439
+          },
+          "process_wall_seconds": {
+            "raw": [
+              132.329165291,
+              103.623586917,
+              99.832108167,
+              244.713582375
+            ],
+            "min": 99.832108167,
+            "median": 117.976376104,
+            "max": 244.713582375,
+            "mean": 145.1246106875,
+            "population_stdev": 58.85455051063934,
+            "population_cv_percent": 40.5544932949878
+          }
+        }
+      },
+      "regexp": {
+        "current": {
+          "successful": 4,
+          "requested": 4,
+          "eligible_for_comparison": true,
+          "score": {
+            "raw": [
+              37.7,
+              90.0,
+              93.7,
+              92.7
+            ],
+            "min": 37.7,
+            "median": 91.35,
+            "max": 93.7,
+            "mean": 78.525,
+            "population_stdev": 23.609148121014446,
+            "population_cv_percent": 30.06577283796809
+          },
+          "process_wall_seconds": {
+            "raw": [
+              83.990108042,
+              34.78174875,
+              34.30571375,
+              34.335666083
+            ],
+            "min": 34.30571375,
+            "median": 34.5587074165,
+            "max": 83.990108042,
+            "mean": 46.85330915625,
+            "population_stdev": 21.441769637267672,
+            "population_cv_percent": 45.76361845811577
+          }
+        },
+        "again": {
+          "successful": 4,
+          "requested": 4,
+          "eligible_for_comparison": true,
+          "score": {
+            "raw": [
+              58.5,
+              80.8,
+              85.6,
+              105.0
+            ],
+            "min": 58.5,
+            "median": 83.19999999999999,
+            "max": 105.0,
+            "mean": 82.475,
+            "population_stdev": 16.543484366964535,
+            "population_cv_percent": 20.058786743818775
+          },
+          "process_wall_seconds": {
+            "raw": [
+              55.552789917,
+              39.105025,
+              36.195045375,
+              30.697524709
+            ],
+            "min": 30.697524709,
+            "median": 37.650035187499995,
+            "max": 55.552789917,
+            "mean": 40.38759625025,
+            "population_stdev": 9.261520626739769,
+            "population_cv_percent": 22.931596546012415
+          }
+        }
+      },
+      "splay": {
+        "current": {
+          "successful": 0,
+          "requested": 4,
+          "eligible_for_comparison": false,
+          "score": null,
+          "process_wall_seconds": null
+        },
+        "again": {
+          "successful": 0,
+          "requested": 4,
+          "eligible_for_comparison": false,
+          "score": null,
+          "process_wall_seconds": null
+        }
+      },
+      "navier-stokes": {
+        "current": {
+          "successful": 0,
+          "requested": 4,
+          "eligible_for_comparison": false,
+          "score": null,
+          "process_wall_seconds": null
+        },
+        "again": {
+          "successful": 0,
+          "requested": 4,
+          "eligible_for_comparison": false,
+          "score": null,
+          "process_wall_seconds": null
+        }
+      },
+      "all": {
+        "current": {
+          "successful": 0,
+          "requested": 4,
+          "eligible_for_comparison": false,
+          "score": null,
+          "process_wall_seconds": null
+        },
+        "again": {
+          "successful": 0,
+          "requested": 4,
+          "eligible_for_comparison": false,
+          "score": null,
+          "process_wall_seconds": null
+        }
+      }
+    },
+    "artifacts": {
+      "results_json": null,
+      "metadata_json": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/metadata.json",
+        "sha256": "678f541f311612afce5ae0f746e3176e695e87f6b9b13393b42fc90052692114"
+      },
+      "samples_jsonl": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/samples.jsonl",
+        "sha256": "2df5db74dd5422737c63a7435553312d7697c913b587bed751fd807ab260f38e"
+      },
+      "report_md": null,
+      "raw": [
+        {
+          "case": "earley-boyer",
+          "engine": "current",
+          "repetition": 0,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/earley-boyer-current-0.stdout",
+            "sha256": "eb0096ae572ace79ace4d031228647a5c8be9b5328ec18430ba5ce80e44d01d0"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/earley-boyer-current-0.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "earley-boyer",
+          "engine": "again",
+          "repetition": 0,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/earley-boyer-again-0.stdout",
+            "sha256": "e7798c71a85f52ae27cb1bd5beb99abe484bea96104e09f0b728d653c8b33fef"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/earley-boyer-again-0.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "earley-boyer",
+          "engine": "again",
+          "repetition": 1,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/earley-boyer-again-1.stdout",
+            "sha256": "bea86c889061855fa54dfe8a03547dbb0c5f288b81f9afb81f04c3159d75486d"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/earley-boyer-again-1.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "earley-boyer",
+          "engine": "current",
+          "repetition": 1,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/earley-boyer-current-1.stdout",
+            "sha256": "a58b4d920b0034545504eddbd12a18eb356fa687b87cdc4cb3b6f2c4b27d440a"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/earley-boyer-current-1.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "earley-boyer",
+          "engine": "again",
+          "repetition": 2,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/earley-boyer-again-2.stdout",
+            "sha256": "54a43d70fc94a0e293e292924213e4e6145072e6a9669426bd2ae12d3982a7bd"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/earley-boyer-again-2.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "earley-boyer",
+          "engine": "current",
+          "repetition": 2,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/earley-boyer-current-2.stdout",
+            "sha256": "6546ca0a89ff5822cecfb8a14f7daa9d9e898b509aefd9a2f551630f0cbec4f9"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/earley-boyer-current-2.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "earley-boyer",
+          "engine": "current",
+          "repetition": 3,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/earley-boyer-current-3.stdout",
+            "sha256": "654c6946c9dafea68e3ebdcfe9ffe69353cb2a6a035a56022fa746a5f647037a"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/earley-boyer-current-3.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "earley-boyer",
+          "engine": "again",
+          "repetition": 3,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/earley-boyer-again-3.stdout",
+            "sha256": "792aa1ac5deb2c6e7c25577d04ea70efb503f425dc0cd946fd819bafb9a8cb05"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/earley-boyer-again-3.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "regexp",
+          "engine": "current",
+          "repetition": 0,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/regexp-current-0.stdout",
+            "sha256": "e2b37f57f20b2f84eec0b329d3def886bc7d4404acc012f0401e8f17280f6c01"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/regexp-current-0.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "regexp",
+          "engine": "again",
+          "repetition": 0,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/regexp-again-0.stdout",
+            "sha256": "0af275c06eadca451a2df896f257996f52a459fd39da79771162b264d2cec660"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/regexp-again-0.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "regexp",
+          "engine": "again",
+          "repetition": 1,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/regexp-again-1.stdout",
+            "sha256": "a92dec3c78a9aca595ed7b973bf54838c54c226592b57d3ba027dfe0f752a76d"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/regexp-again-1.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "regexp",
+          "engine": "current",
+          "repetition": 1,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/regexp-current-1.stdout",
+            "sha256": "37cfe47bf0b8bb19bfb6a2386f6e412ffaafc4acfc20198c37124877b4db645d"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/regexp-current-1.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "regexp",
+          "engine": "again",
+          "repetition": 2,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/regexp-again-2.stdout",
+            "sha256": "ea8a4620f4c019ce3b35af62a61c6ec7c4326ee5bbe03c5b806bf9a9c36bf2a5"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/regexp-again-2.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "regexp",
+          "engine": "current",
+          "repetition": 2,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/regexp-current-2.stdout",
+            "sha256": "eb36f04928ec7e98eeb096b1c812c2ce9939c8f81ad4b30cbd0d219f672958ce"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/regexp-current-2.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "regexp",
+          "engine": "current",
+          "repetition": 3,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/regexp-current-3.stdout",
+            "sha256": "1f2bcfc089fd77577db5ef5c2efed0f6778bba79247f1d492d358bbdcd35b8e9"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/regexp-current-3.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        },
+        {
+          "case": "regexp",
+          "engine": "again",
+          "repetition": 3,
+          "status": "ok",
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/regexp-again-3.stdout",
+            "sha256": "efea749ebcf879172e9c14790791f6951c38ce4453d0733874c7d8318b1d5b72"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/regexp-again-3.stderr",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        }
+      ]
+    }
+  },
+  "resource_amendment": {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-resource-amendment.json",
+    "sha256": "df4191328a011c6ff3f657381e008670f5c69b6f90ace8a37154b60b08815b32",
+    "record": {
+      "utc": "2026-09-26T03:34:58.033384+00:00",
+      "reason": "Resource-cap amendment before any fiveway candidate V8 sampling: observed isolated durations already sum above the original 180 second combined timeout; increase uniform future timeout to 900 seconds, preserving all original samples. Complete AA case groups retained, unfinished case group restarted in a new directory.",
+      "old_timeout_seconds": 180,
+      "new_timeout_seconds": 900,
+      "stopped_orchestrator_and_runner": {
+        "56295": "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python /Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/run-plan-v2.py fixed-final-b37 fixed-final-r0 v8-aa v8-fiveway",
+        "43382": "/opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python /Users/eric/Documents/Sources/PocketStacks/quickjs-oxide/scripts/benchmark/run.py --suite v8-v7 --source /Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark --repeat 4 --timeout 180 --output /Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa --engine current=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs --engine again=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs --order abba-baab --case richards --case deltablue --case crypto --case raytrace --case earley-boyer --case regexp --case splay --case navier-stokes --case all"
+      },
+      "aborted_active_processes": [
+        {
+          "pid": 72476,
+          "elapsed": "00:03",
+          "command": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs /Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark/dist/quickjs-oxide/earley-boyer.js"
+        }
+      ],
+      "completed_journal_samples": 36,
+      "journal_sha256": "c8906ee0903e1702cf7a9ed50ff80bb9b7ecc46c807ee9f226248931274ddc22",
+      "metadata_sha256": "5e394cb18268ee465105bd82bc50d468b6ece22da2ecbfe686d491ce45125901",
+      "completed_cases": [
+        "richards",
+        "deltablue",
+        "crypto",
+        "raytrace"
+      ],
+      "partial_cases": [
+        "earley-boyer"
+      ]
+    }
+  },
+  "excluded_original_earley_samples": [
+    {
+      "case": "earley-boyer",
+      "engine": "current",
+      "repetition": 0,
+      "status": "ok",
+      "measurements": {
+        "EarleyBoyer": 78.1,
+        "Score": 78.1
+      },
+      "process_wall_ns": 125819117083,
+      "raw_artifacts": {
+        "case": "earley-boyer",
+        "engine": "current",
+        "repetition": 0,
+        "status": "ok",
+        "stdout": {
+          "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/earley-boyer-current-0.stdout",
+          "sha256": "189067c107cd0bfcc942bbe12266cf22fd2a8f8b64c3d912f1c603a77036f7a0"
+        },
+        "stderr": {
+          "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/earley-boyer-current-0.stderr",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "case": "earley-boyer",
+      "engine": "again",
+      "repetition": 0,
+      "status": "ok",
+      "measurements": {
+        "EarleyBoyer": 113.0,
+        "Score": 113.0
+      },
+      "process_wall_ns": 90276019500,
+      "raw_artifacts": {
+        "case": "earley-boyer",
+        "engine": "again",
+        "repetition": 0,
+        "status": "ok",
+        "stdout": {
+          "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/earley-boyer-again-0.stdout",
+          "sha256": "b9b9f7aac292ba59292ec2c0023be81cb2cd086056a2f596e3e85583a0cb10fa"
+        },
+        "stderr": {
+          "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/earley-boyer-again-0.stderr",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "case": "earley-boyer",
+      "engine": "again",
+      "repetition": 1,
+      "status": "ok",
+      "measurements": {
+        "EarleyBoyer": 155.0,
+        "Score": 155.0
+      },
+      "process_wall_ns": 67242870667,
+      "raw_artifacts": {
+        "case": "earley-boyer",
+        "engine": "again",
+        "repetition": 1,
+        "status": "ok",
+        "stdout": {
+          "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/earley-boyer-again-1.stdout",
+          "sha256": "e823e2caf102b75e7be0fe6fa724abb12953ed486a34b7cbe873449dee8d5739"
+        },
+        "stderr": {
+          "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/earley-boyer-again-1.stderr",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    },
+    {
+      "case": "earley-boyer",
+      "engine": "current",
+      "repetition": 1,
+      "status": "ok",
+      "measurements": {
+        "EarleyBoyer": 148.0,
+        "Score": 148.0
+      },
+      "process_wall_ns": 69845941958,
+      "raw_artifacts": {
+        "case": "earley-boyer",
+        "engine": "current",
+        "repetition": 1,
+        "status": "ok",
+        "stdout": {
+          "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/earley-boyer-current-1.stdout",
+          "sha256": "36fadfef61a9aa70cb18474a9b81646254c7f021d1603db7aea64a23d62a75d9"
+        },
+        "stderr": {
+          "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/earley-boyer-current-1.stderr",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      }
+    }
+  ],
+  "aborted_original_earley": {
+    "sample_key": [
+      "earley-boyer",
+      "again",
+      2
+    ],
+    "journalled": false,
+    "score_usable": false,
+    "process": {
+      "pid": 72476,
+      "elapsed": "00:03",
+      "command": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs /Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark/dist/quickjs-oxide/earley-boyer.js"
+    },
+    "raw_artifacts": [
+      {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/earley-boyer-again-2.stdout",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa/raw/earley-boyer-again-2.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    ]
+  },
+  "user_stop": {
+    "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-user-stop.json",
+    "sha256": "77b2826768414aaa0400ef3ddf8830cb060e11e5e4885ca1e4d96e02e70704b5",
+    "record": {
+      "utc": "2026-09-26T04:01:23.627728+00:00",
+      "reason": "User explicitly requested finishing RegExp and stopping this benchmark, then continuing implementation/reporting. No further V8 sampling is authorized in this task.",
+      "user_instruction": "先把 RegExp 跑了就不要跑这个 benchmark 了太浪费时间了，可以继续推进了",
+      "completed_continuation_samples": 16,
+      "regexp_samples": 8,
+      "journal_sha256": "2df5db74dd5422737c63a7435553312d7697c913b587bed751fd807ab260f38e",
+      "metadata_sha256": "678f541f311612afce5ae0f746e3176e695e87f6b9b13393b42fc90052692114",
+      "boundary_processes_aborted": [
+        {
+          "pid": 85053,
+          "elapsed": "00:00",
+          "command": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs /Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark/dist/quickjs-oxide/splay.js"
+        }
+      ],
+      "cancelled_cases": [
+        "splay",
+        "navier-stokes",
+        "all"
+      ],
+      "cancelled_stage": "v8-fiveway",
+      "stopped_pids": [
+        74333,
+        74355
+      ]
+    }
+  },
+  "boundary_splay": {
+    "journalled": false,
+    "score_usable": false,
+    "reported_processes": [
+      {
+        "pid": 85053,
+        "elapsed": "00:00",
+        "command": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/build-current/release/qjs /Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/upstream-benchmark/dist/quickjs-oxide/splay.js"
+      }
+    ],
+    "raw_artifacts": [
+      {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/splay-current-0.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-aa-continuation/raw/splay-current-0.stdout",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    ]
+  },
+  "cancelled_cases": [
+    "splay",
+    "navier-stokes",
+    "all"
+  ],
+  "fiveway": {
+    "status": "cancelled by user before any samples",
+    "directory": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-fiveway",
+    "sample_count": 0
+  },
+  "sampling_windows": [
+    {
+      "name": "original_stopped",
+      "started_utc": "2026-09-26T03:10:08Z",
+      "timeout_seconds": 180,
+      "journal_samples": 36,
+      "selected_samples": 32
+    },
+    {
+      "name": "continuation_user_stopped",
+      "started_utc": "2026-09-26T03:35:40Z",
+      "timeout_seconds": 900,
+      "journal_samples": 16,
+      "selected_samples": 16
+    }
+  ]
+}
