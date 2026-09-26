@@ -153,7 +153,7 @@ pub(super) fn resolve_identifiers(tree: &mut FunctionTree) -> Result<(), Error> 
                         } => unresolved.push((
                             index,
                             *name,
-                            *span,
+                            tree.functions[function_id].operands.span(*span),
                             *scope,
                             UnresolvedAccess::Identifier(*access),
                         )),
@@ -165,7 +165,7 @@ pub(super) fn resolve_identifiers(tree: &mut FunctionTree) -> Result<(), Error> 
                         } => unresolved.push((
                             index,
                             *name,
-                            *span,
+                            tree.functions[function_id].operands.span(*span),
                             *scope,
                             UnresolvedAccess::IdentifierReference(*access),
                         )),
@@ -174,7 +174,7 @@ pub(super) fn resolve_identifiers(tree: &mut FunctionTree) -> Result<(), Error> 
                             import_meta_name.ok_or_else(|| {
                                 Error::internal("import.meta binding name was not interned")
                             })?,
-                            *span,
+                            tree.functions[function_id].operands.span(*span),
                             *scope,
                             UnresolvedAccess::ImportMeta,
                         )),
@@ -186,7 +186,7 @@ pub(super) fn resolve_identifiers(tree: &mut FunctionTree) -> Result<(), Error> 
                         } => unresolved.push((
                             index,
                             *name,
-                            *span,
+                            tree.functions[function_id].operands.span(*span),
                             *scope,
                             UnresolvedAccess::PrivateField(*access),
                         )),
@@ -1725,15 +1725,17 @@ fn resolve_identifier_reference(
         } = tree;
         ensure_string_constant(&mut functions[function_id], names.js_string(name)?)?
     };
-    Ok(IrOp::DynamicIdentifierReference {
-        name,
-        access,
-        sources: sources.into_boxed_slice(),
-        late_sources: late_sources.into_boxed_slice(),
-        fallback: Box::new(path.fallback),
-        syntactic_with,
-        fallback_readonly: path.fallback_readonly,
-    })
+    let operand = tree.functions[function_id].operands.add_reference(
+        crate::engine::compiler::model::ir::operands::DynamicReferenceOperand {
+            name,
+            sources: sources.into_boxed_slice(),
+            late_sources: late_sources.into_boxed_slice(),
+            fallback: path.fallback,
+            syntactic_with,
+            fallback_readonly: path.fallback_readonly,
+        },
+    )?;
+    Ok(IrOp::DynamicIdentifierReference { access, operand })
 }
 
 fn has_authored_with_scope(
@@ -2338,12 +2340,14 @@ fn wrap_dynamic_identifier(
         ));
     }
     let name = ensure_string_constant(function, names.js_string(name)?)?;
-    Ok(IrOp::DynamicIdentifier {
-        name,
-        access,
-        sources: sources.into_boxed_slice(),
-        fallback: Box::new(fallback),
-    })
+    let operand = function.operands.add_dynamic(
+        crate::engine::compiler::model::ir::operands::DynamicOperand {
+            name,
+            sources: sources.into_boxed_slice(),
+            fallback,
+        },
+    )?;
+    Ok(IrOp::DynamicIdentifier { access, operand })
 }
 
 fn global_declaration_operation(

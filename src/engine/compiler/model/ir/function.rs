@@ -236,6 +236,7 @@ pub(in crate::engine::compiler) struct FunctionIr {
     /// validated separately from authored locals before publication.
     pub(in crate::engine::compiler) synthetic_locals: Vec<SyntheticLocal>,
     pub(in crate::engine::compiler) ops: Vec<SpannedIrOp>,
+    pub(in crate::engine::compiler) operands: super::operands::IrOperands,
     pub(in crate::engine::compiler) constants: Vec<IrConstant>,
     /// First primitive string occurrence; constant ordinals remain append-only.
     pub(in crate::engine::compiler) string_constants: HashMap<JsString, u32>,
@@ -448,6 +449,7 @@ impl FunctionIr {
             eval_ret_local,
             synthetic_locals,
             ops,
+            operands: Default::default(),
             constants: Vec::new(),
             string_constants: HashMap::new(),
             closure_variables: Vec::new(),

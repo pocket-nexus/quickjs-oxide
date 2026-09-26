@@ -50,6 +50,7 @@ impl<'source> Parser<'source> {
         site: SourceOffset,
     ) -> Result<usize, Error> {
         let scope = self.current_ir().context.current_scope;
+        let span = self.current_ir_mut().operands.add_span(span)?;
         self.emit_at(
             IrOp::PrivateField {
                 name,
@@ -69,6 +70,7 @@ impl<'source> Parser<'source> {
         access: PrivateFieldAccess,
         site: SourceOffset,
     ) -> Result<usize, Error> {
+        let span = self.current_ir_mut().operands.add_span(span)?;
         self.emit_at(
             IrOp::PrivateField {
                 name,

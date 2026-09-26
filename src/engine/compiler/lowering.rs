@@ -205,7 +205,7 @@ pub(super) fn lower_detached_script(tree: FunctionTree) -> Result<DetachedByteco
     }
     let captured_locals = vec![false; function.locals.len()];
     let scope_lifecycles = build_scope_lifecycles(&function, &captured_locals)?;
-    let code = lower_ops(function.ops, &scope_lifecycles)?.code;
+    let code = lower_ops(function.ops, &scope_lifecycles, function.operands)?.code;
     let mut atom_strings = HashMap::<u32, Vec<JsString>>::new();
     let constants = function
         .constants
@@ -473,7 +473,7 @@ pub(super) fn lower_unlinked_tree(
             })
             .transpose()?;
         let has_pattern_parameters = function.pattern_parameter_initialization;
-        let lowered_ops = lower_ops(function.ops, &scope_lifecycles)?;
+        let lowered_ops = lower_ops(function.ops, &scope_lifecycles, function.operands)?;
         let parameter_initialization_end = lowered_ops.parameter_initialization_end;
         let parameter_pattern_end = has_pattern_parameters
             .then_some(parameter_initialization_end)
@@ -1098,7 +1098,11 @@ fn emit_dynamic_identifier_reference(
     Ok(())
 }
 
-fn lower_ops(operations: Vec<SpannedIrOp>, scopes: &[ScopeLifecycle]) -> Result<LoweredOps, Error> {
+fn lower_ops(
+    operations: Vec<SpannedIrOp>,
+    scopes: &[ScopeLifecycle],
+    mut operands: crate::engine::compiler::model::ir::operands::IrOperands,
+) -> Result<LoweredOps, Error> {
     let mut offsets = Vec::with_capacity(operations.len() + 1);
     let mut code_len = 0_usize;
     for operation in &operations {
@@ -1139,28 +1143,29 @@ fn lower_ops(operations: Vec<SpannedIrOp>, scopes: &[ScopeLifecycle]) -> Result<
                 .close_locals
                 .len(),
             IrOp::GlobalSet(_) | IrOp::CapturedLexicalSet(_) => 2,
-            IrOp::DynamicIdentifier {
-                access,
-                sources,
-                fallback,
-                ..
-            } => dynamic_identifier_len(*access, sources, fallback)?,
-            IrOp::DynamicIdentifierReference {
-                access,
-                sources,
-                late_sources,
-                fallback,
-                syntactic_with,
-                fallback_readonly,
-                ..
-            } => dynamic_identifier_reference_len(
-                *access,
-                sources,
-                late_sources,
-                fallback,
-                *syntactic_with,
-                *fallback_readonly,
-            )?,
+            IrOp::DynamicIdentifier { access, operand } => {
+                let data = operands
+                    .dynamic
+                    .get(operand.0 as usize)
+                    .and_then(Option::as_ref)
+                    .ok_or_else(|| Error::internal("missing dynamic identifier operand"))?;
+                dynamic_identifier_len(*access, &data.sources, &data.fallback)?
+            }
+            IrOp::DynamicIdentifierReference { access, operand } => {
+                let data = operands
+                    .references
+                    .get(operand.0 as usize)
+                    .and_then(Option::as_ref)
+                    .ok_or_else(|| Error::internal("missing dynamic Reference operand"))?;
+                dynamic_identifier_reference_len(
+                    *access,
+                    &data.sources,
+                    &data.late_sources,
+                    &data.fallback,
+                    data.syntactic_with,
+                    data.fallback_readonly,
+                )?
+            }
             _ => 1,
         };
         code_len = code_len
@@ -1294,39 +1299,36 @@ fn lower_ops(operations: Vec<SpannedIrOp>, scopes: &[ScopeLifecycle]) -> Result<
                 code.push(Instruction::PutVarRefCheck(index));
                 pc_sites.push(None);
             }
-            IrOp::DynamicIdentifier {
-                name,
-                access,
-                sources,
-                fallback,
-            } => {
+            IrOp::DynamicIdentifier { access, operand } => {
+                let data = operands
+                    .dynamic
+                    .get_mut(operand.0 as usize)
+                    .and_then(Option::take)
+                    .ok_or_else(|| Error::internal("dynamic identifier operand already lowered"))?;
                 emit_dynamic_identifier_operation(
-                    name,
+                    data.name,
                     access,
-                    &sources,
-                    *fallback,
+                    &data.sources,
+                    data.fallback,
                     pc_site,
                     &mut code,
                     &mut pc_sites,
                 )?;
             }
-            IrOp::DynamicIdentifierReference {
-                name,
-                access,
-                sources,
-                late_sources,
-                fallback,
-                syntactic_with,
-                fallback_readonly,
-            } => {
+            IrOp::DynamicIdentifierReference { access, operand } => {
+                let data = operands
+                    .references
+                    .get_mut(operand.0 as usize)
+                    .and_then(Option::take)
+                    .ok_or_else(|| Error::internal("dynamic Reference operand already lowered"))?;
                 emit_dynamic_identifier_reference(
-                    name,
+                    data.name,
                     access,
-                    &sources,
-                    &late_sources,
-                    *fallback,
-                    syntactic_with,
-                    fallback_readonly,
+                    &data.sources,
+                    &data.late_sources,
+                    data.fallback,
+                    data.syntactic_with,
+                    data.fallback_readonly,
                     pc_site,
                     &mut code,
                     &mut pc_sites,

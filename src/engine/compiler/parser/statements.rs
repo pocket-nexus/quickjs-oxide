@@ -930,11 +930,16 @@ impl<'source> Parser<'source> {
                     let initializer_scope = self.current_ir().context.current_scope;
                     let object_environment = self
                         .parser_scope_has_authored_with(self.current_function, initializer_scope)?;
+                    let reference_span = if object_environment {
+                        Some(self.current_ir_mut().operands.add_span(token.span)?)
+                    } else {
+                        None
+                    };
                     if object_environment {
                         self.emit_at(
                             IrOp::IdentifierReference {
                                 name,
-                                span: token.span,
+                                span: reference_span.expect("object environment span"),
                                 scope: initializer_scope,
                                 access: IdentifierReferenceAccess::Prepare,
                             },
@@ -959,7 +964,7 @@ impl<'source> Parser<'source> {
                         self.emit_at(
                             IrOp::IdentifierReference {
                                 name,
-                                span: token.span,
+                                span: reference_span.expect("object environment span"),
                                 scope: initializer_scope,
                                 access: IdentifierReferenceAccess::Set,
                             },

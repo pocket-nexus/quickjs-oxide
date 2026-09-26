@@ -230,6 +230,7 @@ impl<'source> Parser<'source> {
         pc_site: SourceOffset,
     ) -> Result<usize, Error> {
         let scope = self.current_ir().context.current_scope;
+        let span = self.current_ir_mut().operands.add_span(span)?;
         self.emit_at(
             IrOp::Identifier {
                 name,
@@ -248,6 +249,7 @@ impl<'source> Parser<'source> {
         scope: ScopeId,
         access: IdentifierAccess,
     ) -> Result<usize, Error> {
+        let span = self.current_ir_mut().operands.add_span(span)?;
         self.emit(IrOp::Identifier {
             name,
             span,
@@ -263,6 +265,7 @@ impl<'source> Parser<'source> {
         scope: ScopeId,
         access: IdentifierReferenceAccess,
     ) -> Result<usize, Error> {
+        let span = self.current_ir_mut().operands.add_span(span)?;
         self.emit(IrOp::IdentifierReference {
             name,
             span,

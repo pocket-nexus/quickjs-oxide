@@ -321,9 +321,10 @@ impl<'source> Parser<'source> {
             }
             self.advance()?;
             self.ensure_module_import_meta_binding()?;
+            let span = self.current_ir_mut().operands.add_span(import_span)?;
             self.emit_at(
                 IrOp::ImportMeta {
-                    span: import_span,
+                    span,
                     scope: self.current_ir().context.current_scope,
                 },
                 source_offset(import_span)?,

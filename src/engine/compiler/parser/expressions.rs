@@ -1125,9 +1125,10 @@ impl<'source> Parser<'source> {
             ));
         };
         let object_environment = self.parser_scope_has_authored_with(function_id, *scope)?;
+        let span_id = *span;
         let reference = IdentifierReference {
             name: *name,
-            span: *span,
+            span: function.operands.span(span_id),
             scope: *scope,
             object_environment,
         };
@@ -1141,7 +1142,7 @@ impl<'source> Parser<'source> {
             };
             *op = IrOp::IdentifierReference {
                 name: reference.name,
-                span: reference.span,
+                span: span_id,
                 scope: reference.scope,
                 access: reference_access,
             };
@@ -1245,9 +1246,10 @@ impl<'source> Parser<'source> {
             ));
         };
         let object_environment = self.parser_scope_has_authored_with(function_id, *scope)?;
+        let span_id = *span;
         let reference = IdentifierReference {
             name: *name,
-            span: *span,
+            span: function.operands.span(span_id),
             scope: *scope,
             object_environment,
         };
@@ -1261,7 +1263,7 @@ impl<'source> Parser<'source> {
             };
             *op = IrOp::IdentifierReference {
                 name: reference.name,
-                span: reference.span,
+                span: span_id,
                 scope: reference.scope,
                 access: IdentifierReferenceAccess::Prepare,
             };
@@ -1325,7 +1327,7 @@ impl<'source> Parser<'source> {
                 access: PrivateFieldAccess::Get,
             } => Ok(Some(MemberReference::Private {
                 name,
-                span,
+                span: function.operands.span(span),
                 scope,
                 site,
             })),
@@ -1381,7 +1383,9 @@ impl<'source> Parser<'source> {
             return Ok(None);
         }
         function.context.last_member_reference = None;
+        let operands = &function.ir.operands;
         let last = function
+            .ir
             .ops
             .last_mut()
             .ok_or_else(|| Error::internal("member Reference operation disappeared"))?;
@@ -1410,7 +1414,7 @@ impl<'source> Parser<'source> {
                 (
                     MemberReference::Private {
                         name: *name,
-                        span: *span,
+                        span: operands.span(*span),
                         scope: *scope,
                         site,
                     },
