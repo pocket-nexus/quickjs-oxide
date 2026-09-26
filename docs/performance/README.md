@@ -2,6 +2,8 @@
 
 > 本轮进展（2026-09-26，受测产品 `ae81f090`）：继续优化普通自有属性读取、materialized 数组读取、发布 local 初始化事实与标量帧清理，见[实现、逐片与累计证据](receipts/shared-paths-2026-09-26/README.md)。相对 main 同引擎代码基线，固定工作量 combined 指令 −13.24%；其中包含此前收益。新增属性片使 DeltaBlue/Splay 指令 −8.00%/−5.37%，新增数组片使 Crypto 再 −12.79%；调用片尚未证明整体加速。2,167 项 profiling 库测试及 Clippy 通过。四批八 isolated 加 combined 测量共约 8 分 16 秒；耗时仍标受干扰，非原版 V8 Score。
 
+后续优化先按[优化与 Profile 原则](principles.md)判断方向、候选和阶段性回退。当前仓库仍允许以性能证据推动跨模块执行架构改造；下方记录的历史候选、范围和门槛不限制新方案。
+
 > 上一轮裁决（2026-09-26，产品源码 `b280ec8b`）：五项计划的本轮实现、画像与候选取舍见[完整收据](receipts/plan-closure-2026-09-26/README.md)。保留发布静态事实、融合入口选择、Number 写回和 dense 恢复，消除普通读写的 29 处机器调用点；撤回 receiver 性能转移，保留失败所有权清理修复。20 项固定矩阵相对 Parent／上一集成版本未出现超过 2% 的指令回退；Object 的约 7% cycles 回退不再重现。2,158 项库测试、fast CI 和 focused Test262 通过。
 > 研发迭代使用八 isolated 加 combined 的固定工作量 A/A、A/B；最终四批各用 129–200 秒，采样截止为 600 秒。combined 退休指令相对 Parent／R0／B37 减少 6.15%／10.42%／10.84%，其中历史累计收益不能全归最后一片。**同机干扰下整体耗时仍未裁决；这些不是原版 V8 Score，也没有达到或证明 3–4 倍目标。** 原版 Score 留待专门的完整复核，不要求每个研发切片小时级长跑。
 > 上一轮（2026-09-26）：继续削减 Array dense 恢复的分配与验证、非 method 调用的重复 callee 读取，将前／后缀增减方向编码到发布计划，并细分 materialized 失败诊断。2,152 项库测试通过；仅测三项短探针共 12 个进程，小幅指令变化不作收益准入。见[当轮实现与收据](receipts/cost-follow-up-2026-09-26/README.md)。
@@ -38,7 +40,7 @@
 
 编译器、解析器、模块和 Test262 的独立契约文档不在本次清理范围。已完成的 D 阶段布局、shape 和 Map 改造属于基线，不再包装成新增收益。
 
-## 3. 为什么不能继续承诺三个“大点”
+## 3. 总分目标的覆盖要求
 
 v8-v7 有八个子套件：Richards、DeltaBlue、Crypto、RayTrace、EarleyBoyer、RegExp、Splay、NavierStokes。总分的增益为各子项增益的几何平均：
 
@@ -48,7 +50,7 @@ G = exp(sum(log(score_new[i] / score_base[i])) / 8)
 
 只让 Crypto 与 NavierStokes 各快 4 倍，其余不变，总分只有约 1.414 倍；三个子项各快 4 倍也只有约 1.682 倍。RegExp 不变时，其余七项平均须约 3.51／4.88 倍，才能使总分达到 3／4 倍。这些是算术条件，不是预测。
 
-因此数组路线成功也不能直接宣布项目目标完成。每个阶段必须输出八项覆盖表：基线时间／分数、候选动态覆盖、成功与失败分布、固定工作量变化、正式分数、未覆盖成本。没有 profile 的空白填“未测”，不能填 0，也不能把 `run::run` 之外的时间一概归给调用或 RC。
+因此数组路线成功也不能直接宣布项目目标完成。这些算术条件要求审查整体覆盖，并不限制跨模块或大范围的架构优化。阶段性诊断应记录八项覆盖：基线时间／分数、候选动态覆盖、成功与失败分布、固定工作量变化和未覆盖成本；原版正式分数留到阶段性集成或发布裁决。没有 profile 的空白填“未测”，不能填 0，也不能把 `run::run` 之外的时间一概归给调用或 RC。
 
 #43 当次的符号自时间画像不足以证明调用机制的收益上界，也未提供足以投入大范围改造的正面证据。后续是否重开调用专项，应按新负载中的实际 callsite 分布、内联代码和跨边界成本重新裁决。
 
@@ -71,6 +73,6 @@ P2 当时拟定的继续门槛是目标固定探针退休指令下降至少 30%�
 
 ## 5. 文档与状态纪律
 
-本目录文档各司其职：本页记录当次决策与排程；[evidence.md](evidence.md) 记录事实、来源和未知项；[implementation.md](implementation.md) 记录阶段职责；[numeric-array-spans.md](numeric-array-spans.md) 保存已完成候选的 opcode、API、逐函数修改和测试契约；[measurement.md](measurement.md) 记录分母、实验和准入协议。后续方案可修改内部结构，须另记设计依据、日期、commit、测量和语义验证，避免把历史实施规格当作永久限制。
+本目录文档各司其职：[principles.md](principles.md) 指导后续优化和 Profile；本页记录当次决策与排程；[evidence.md](evidence.md) 记录事实、来源和未知项；[implementation.md](implementation.md) 记录阶段职责；[numeric-array-spans.md](numeric-array-spans.md) 保存已完成候选的 opcode、API、逐函数修改和测试契约；[measurement.md](measurement.md) 记录分母、实验和取舍方法。后续方案可删除或替换内部限制，须另记设计依据、日期、commit、测量和语义验证，避免把历史实施规格当作永久限制。
 
 上述受测组合包含 #41 和 #42 的产品代码；它的历史成绩不代表后续 VM 改动的成绩。旧 B1/C 的失败仍是设计输入；被删除的混合计划可由 Git 历史恢复。Rust 编译与四函数发布后 dump 已执行；静态 manifest 不能代替动态覆盖、Test262 full 或正式 Score。
