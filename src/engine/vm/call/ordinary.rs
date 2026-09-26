@@ -279,11 +279,31 @@ impl OrdinaryCall {
         runtime: &Runtime,
         execution: &mut crate::engine::vm::execution::RunningExecution,
         parent: crate::engine::vm::frame::FrameId,
-        count: usize,
-        method: bool,
+        checked: crate::engine::vm::stack::CheckedOrdinaryCallOperands,
         tail: bool,
     ) -> Result<(), Error> {
+        #[cfg(feature = "profiling")]
+        let _timer =
+            crate::engine::api::profiling::PhaseTimer::start_vm_sampled("ordinary.install.sampled");
         use crate::engine::vm::frame::{Frame, ReturnOwner, ReturnTarget, ReturnValue};
+        let count = checked.count();
+        let method = checked.method();
+        #[cfg(feature = "profiling")]
+        {
+            use crate::engine::api::profiling::record_owned_execution_event as record;
+            record(if method {
+                "ordinary_install.method"
+            } else {
+                "ordinary_install.function"
+            });
+            record(match count {
+                0 => "ordinary_install.args0",
+                1 => "ordinary_install.args1",
+                2 => "ordinary_install.args2",
+                3 => "ordinary_install.args3",
+                _ => "ordinary_install.args4plus",
+            });
+        }
         let depth = execution.frames.depth() + 1;
         execution.call_storage.reserve_depth(depth)?;
         let frame = execution.frames.current_mut(parent)?;
@@ -300,6 +320,14 @@ impl OrdinaryCall {
         } else {
             crate::engine::value::JsValue::Undefined
         };
+        // The following flag, frame, and slot preparations can fail. Hold the
+        // copied receiver edge until the child frame takes CallInput.
+        let input = crate::engine::vm::CallInput::new(
+            runtime,
+            receiver,
+            crate::engine::value::JsValue::Undefined,
+            None,
+        );
         let (flags, flag_bytes) = if self.executable.has_captured_locals {
             execution
                 .call_storage
@@ -310,16 +338,20 @@ impl OrdinaryCall {
         let prepared = execution.frames.prepare_push()?;
         let mut prepared = prepared;
         let frame = prepared.current_mut(parent)?;
-        let window = execution.slots.push_ordinary_frame(
-            runtime,
-            &self.executable.frame_layout(),
-            &mut frame.window,
-            count,
-            method,
-            &self.function,
-            self.executable.metadata.function_name_local,
-            self.executable.observes_arguments,
-        )?;
+        let window = {
+            #[cfg(feature = "profiling")]
+            let _timer = crate::engine::api::profiling::PhaseTimer::start_vm_sampled(
+                "ordinary.install.slots.sampled",
+            );
+            execution.slots.push_ordinary_frame(
+                runtime,
+                &self.executable.frame_layout(),
+                &mut frame.window,
+                checked,
+                &self.function,
+                self.executable.observes_arguments,
+            )?
+        };
         frame.resume_pc = resume;
         let (mut cold, frame_bytes) = execution.call_storage.vacant(caller_realm);
         cold.return_to = Some(ReturnTarget {
@@ -332,13 +364,7 @@ impl OrdinaryCall {
         cold.function = self.function.into();
         cold.closure_slots = self.closure;
         cold.reusable_captured_locals = flags;
-        cold.input = crate::engine::vm::CallInput::new(
-            runtime,
-            receiver,
-            crate::engine::value::JsValue::Undefined,
-            None,
-        )
-        .into();
+        cold.input = input.into();
         cold.executable = self.executable.into();
         cold.window = window.into();
         prepared.install(Frame {
@@ -409,6 +435,30 @@ impl OrdinarySelection<'_> {
 #[cfg(test)]
 mod direct_selection_tests {
     use super::*;
+
+    #[test]
+    fn method_receiver_survives_nested_return_and_caught_throw() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let result = context
+            .eval("(function(){var token={};var receiver={mark:41,m:function(arg){var saved=this;try{arg.fail()}catch(error){if(error!==token)return -1}return saved===receiver?this.mark+arg.bump():-2}};var arg={fail:function(){throw token},bump:function(){return 1}};return receiver.m(arg)})()")
+            .unwrap();
+        assert_eq!(result, Value::Int(42));
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[test]
+    fn method_receiver_general_and_native_fallback_stay_callable() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        for source in [
+            "(function(){var o={m:Math.max};return o.m(41,42)===42?42:0})()",
+            "(function(){var o={x:42,m:new Proxy(function(){return this.x},{})};return o.m()})()",
+        ] {
+            assert_eq!(context.eval(source).unwrap(), Value::Int(42), "{source}");
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
+    }
 
     #[test]
     fn authentication_cache_is_rootless_and_rejects_a_different_publication() {

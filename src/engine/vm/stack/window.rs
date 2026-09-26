@@ -1,7 +1,20 @@
 //! One authenticated continuous execution borrow. No arena mutation API escapes.
 use super::{Error, FrameBinding, FrameWindow, JsValue, Runtime, SlotStore};
+use crate::engine::code::fusion::DirectSlot;
 use crate::engine::heap::ObjectId;
 use crate::engine::value::number::operations::Number;
+
+#[derive(Clone, Copy, Debug)]
+pub(in crate::engine::vm) enum NumericDestination {
+    Push,
+    Local(u16),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(in crate::engine::vm) struct NumberUpdate {
+    pub slot: DirectSlot,
+    pub value: Number,
+}
 
 pub(in crate::engine::vm) enum LinkedReadCompletion {
     Completed,
@@ -21,6 +34,31 @@ pub(in crate::engine::vm) struct FrameTransaction<'a> {
     store: &'a mut SlotStore,
     window: &'a mut FrameWindow,
 }
+
+/// A single-use proof for the outgoing operands of one direct ordinary call.
+///
+/// The driver may carry this across authentication and allocation, but must not
+/// write a caller slot, switch frames, or invoke JavaScript before consuming it.
+/// The install path checks window identity and depth again; those checks alone
+/// do not certify unchanged slot contents after an arbitrary intervening write.
+pub(in crate::engine::vm) struct CheckedOrdinaryCallOperands {
+    pub(super) window_id: u64,
+    pub(super) depth: usize,
+    pub(super) count: usize,
+    pub(super) method: bool,
+    pub(super) has_non_scalar_argument: bool,
+}
+
+impl CheckedOrdinaryCallOperands {
+    pub(in crate::engine::vm) fn count(&self) -> usize {
+        self.count
+    }
+
+    pub(in crate::engine::vm) fn method(&self) -> bool {
+        self.method
+    }
+}
+
 impl FrameTransaction<'_> {
     pub(in crate::engine::vm) fn peek(&self, offset: usize) -> Result<&JsValue, Error> {
         self.store.peek_current(self.window, offset)
@@ -35,6 +73,49 @@ impl FrameTransaction<'_> {
         crate::engine::api::profiling::record_owned_execution_event("call_value_domain_validation");
         self.store
             .validate_call_value_domains_current(self.window, runtime, count, method)
+    }
+
+    /// Validate the receiver, arguments, and callee before an ordinary call's
+    /// first fallible authentication step. Collect the dynamic argument class
+    /// in the same pass so frame installation need not scan these slots again.
+    pub(in crate::engine::vm) fn validate_ordinary_call_operands(
+        &self,
+        count: usize,
+        method: bool,
+    ) -> Result<CheckedOrdinaryCallOperands, Error> {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("call_value_domain_validation");
+        // Preserve the existing domain-check order: receiver, then arguments
+        // from left to right. The driver has already peeked the callee for
+        // selection; the final read makes the sealed proof complete.
+        if method {
+            self.peek(
+                count
+                    .checked_add(1)
+                    .ok_or_else(SlotStore::operand_stack_underflow)?,
+            )?;
+        }
+        let mut has_non_scalar_argument = false;
+        for offset in (0..count).rev() {
+            let value = self.peek(offset)?;
+            has_non_scalar_argument |= !matches!(
+                value,
+                JsValue::Undefined
+                    | JsValue::Null
+                    | JsValue::Bool(_)
+                    | JsValue::Int(_)
+                    | JsValue::Float(_)
+                    | JsValue::ShortBigInt(_)
+            );
+        }
+        self.peek(count)?;
+        Ok(CheckedOrdinaryCallOperands {
+            window_id: self.window.id,
+            depth: self.window.depth,
+            count,
+            method,
+            has_non_scalar_argument,
+        })
     }
     pub(in crate::engine::vm) fn take_native_call_operands(
         &mut self,
@@ -68,12 +149,9 @@ impl FrameTransaction<'_> {
             let binding = locals[left]
                 .as_mut()
                 .ok_or_else(|| Error::internal("owned local is vacant"))?;
-            let FrameBinding::Direct(value) = binding else {
+            let FrameBinding::Direct(_) = binding else {
                 return Ok(None);
             };
-            if !local_add_values(value, value) {
-                return Ok(None);
-            }
             // Aliased locals cannot expose `&mut` and `&` views of the same
             // owner to the append callback at once; decline to the canonical
             // path until the fused append accepts a single-view callback.
@@ -99,9 +177,8 @@ impl FrameTransaction<'_> {
         let FrameBinding::Direct(right) = right else {
             return Ok(None);
         };
-        if !local_add_values(left, right) {
-            return Ok(None);
-        }
+        // Run's admission proved both primitive domains before this frame
+        // transaction. Nothing can mutate either binding across the boundary.
         Ok(Some(consume(left, right)))
     }
     pub(in crate::engine::vm) fn with_local_add_constant<T>(
@@ -118,9 +195,8 @@ impl FrameTransaction<'_> {
         let FrameBinding::Direct(left) = local else {
             return Ok(None);
         };
-        if !local_add_values(left, right) {
-            return Ok(None);
-        }
+        // The published constant is a String and Run proved the local's
+        // direct primitive domain before selecting AddLocal.
         Ok(Some(consume(left, right)))
     }
     /// Prepend `C + R`: the constant is the mutable left operand and the local
@@ -140,9 +216,7 @@ impl FrameTransaction<'_> {
         let FrameBinding::Direct(local) = local else {
             return Ok(None);
         };
-        if !local_add_values(constant, local) {
-            return Ok(None);
-        }
+        // The left constant is a String and Run proved the local domain.
         Ok(Some(consume(constant, local)))
     }
     pub(in crate::engine::vm) fn slots(&mut self) -> RunSlots<'_> {
@@ -254,6 +328,63 @@ pub(in crate::engine::vm) struct RunSlots<'a> {
     pub(super) window: &'a mut FrameWindow,
 }
 impl RunSlots<'_> {
+    /// Borrow a direct binding only for this execution borrow. No owner is
+    /// created, and the returned reference cannot outlive a subsequent commit.
+    #[inline]
+    #[allow(clippy::needless_lifetimes)] // Spell out the short borrow, not the frame lifetime.
+    pub(in crate::engine::vm) fn direct_value<'borrow>(
+        &'borrow self,
+        source: DirectSlot,
+    ) -> Option<&'borrow JsValue> {
+        let region = match source {
+            DirectSlot::Local(_) => self.window.locals(),
+            DirectSlot::Argument(_) => self.window.parameters(),
+        };
+        let index = match source {
+            DirectSlot::Local(index) | DirectSlot::Argument(index) => usize::from(index),
+        };
+        let FrameBinding::Direct(value) = self.store.slots[region].get(index)?.as_ref()? else {
+            return None;
+        };
+        Some(value)
+    }
+
+    #[inline]
+    pub(in crate::engine::vm) fn numeric_span_room(&self, extra_peak: u8) -> bool {
+        self.store
+            .numeric_span_room_current(self.window, extra_peak)
+    }
+
+    #[inline]
+    #[cfg(test)]
+    pub(in crate::engine::vm) fn try_commit_number(
+        &mut self,
+        destination: NumericDestination,
+        result: Number,
+        update: Option<NumberUpdate>,
+        extra_peak: u8,
+    ) -> bool {
+        self.store
+            .try_commit_number_current(self.window, destination, result, update, extra_peak)
+    }
+
+    #[inline]
+    pub(in crate::engine::vm) fn try_commit_proven_number(
+        &mut self,
+        destination: NumericDestination,
+        result: Number,
+        update: Option<NumberUpdate>,
+        extra_peak: u8,
+    ) -> bool {
+        self.store.try_commit_proven_number_current(
+            self.window,
+            destination,
+            result,
+            update,
+            extra_peak,
+        )
+    }
+
     pub(in crate::engine::vm) fn property_ic_read(
         &mut self,
         runtime: &Runtime,
@@ -366,10 +497,12 @@ impl RunSlots<'_> {
         Ok(local_add_values(left, right))
     }
 
+    #[inline(always)]
     pub(in crate::engine::vm) fn local(&self, index: u16) -> Result<&FrameBinding, Error> {
         self.store.local_current(self.window, index)
     }
 
+    #[inline(always)]
     pub(in crate::engine::vm) fn parameter(&self, index: u16) -> Result<&FrameBinding, Error> {
         self.store.parameter_current(self.window, index)
     }
@@ -433,6 +566,16 @@ impl RunSlots<'_> {
     }
 
     #[inline]
+    pub(in crate::engine::vm) fn store_proven_number_operand(
+        &mut self,
+        destination: DirectSlot,
+        keep: bool,
+    ) -> bool {
+        self.store
+            .store_proven_number_operand_current(self.window, destination, keep)
+    }
+
+    #[inline(always)]
     pub(in crate::engine::vm) fn replace_local(
         &mut self,
         index: u16,
@@ -441,6 +584,7 @@ impl RunSlots<'_> {
         self.store.replace_local_current(self.window, index, value)
     }
 
+    #[inline(always)]
     pub(in crate::engine::vm) fn replace_parameter(
         &mut self,
         index: u16,
@@ -538,7 +682,7 @@ impl RunSlots<'_> {
         executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
         pc: usize,
         key: u32,
-    ) -> Result<bool, Error> {
+    ) -> Result<Option<bool>, Error> {
         self.store
             .property_ic_write_scalar_current(self.window, runtime, executable, pc, key)
     }
@@ -551,6 +695,7 @@ impl RunSlots<'_> {
             .array_immediate_read_current(self.window, runtime)
     }
 
+    #[cfg(test)]
     pub(in crate::engine::vm) fn ordinary_field_immediate_read(
         &mut self,
         runtime: &Runtime,

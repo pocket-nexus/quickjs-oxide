@@ -161,37 +161,55 @@ impl NativeErrorKind {
     }
 }
 
-/// An engine error. JavaScript exceptions will eventually carry a heap value;
-/// this type is also usable before a context exists (lexer and decoder errors).
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Error {
+/// Cold error payload. Boxing it keeps [`Error`] at one word so the common
+/// `Result<(), _>`/`Result<bool, _>`/`Result<&T, _>` helper returns used the
+/// register ABI in the measured x86_64 fat-LTO build instead of a hidden
+/// 80-byte memory slot; that codegen result is target-specific.
+#[derive(Clone, Eq, PartialEq)]
+struct ErrorData {
     kind: ErrorKind,
     message: String,
     native_message: Option<Box<NativeErrorMessage>>,
     span: Option<SourceSpan>,
 }
 
+/// An engine error. JavaScript exceptions will eventually carry a heap value;
+/// this type is also usable before a context exists (lexer and decoder errors).
+#[derive(Clone, Eq, PartialEq)]
+pub struct Error(Box<ErrorData>);
+
+impl fmt::Debug for Error {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Error")
+            .field("kind", &self.0.kind)
+            .field("message", &self.0.message)
+            .field("native_message", &self.0.native_message)
+            .field("span", &self.0.span)
+            .finish()
+    }
+}
+
 impl Error {
     #[must_use]
     pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
-        let message = message.into();
-        Self {
+        Self(Box::new(ErrorData {
             kind,
-            message,
+            message: message.into(),
             native_message: None,
             span: None,
-        }
+        }))
     }
 
     #[must_use]
     pub fn from_native_message(kind: ErrorKind, native_message: NativeErrorMessage) -> Self {
         let message = native_message.to_utf8_lossy();
-        Self {
+        Self(Box::new(ErrorData {
             kind,
             message,
             native_message: Some(Box::new(native_message)),
             span: None,
-        }
+        }))
     }
 
     #[must_use]
@@ -211,51 +229,51 @@ impl Error {
 
     #[must_use]
     pub const fn kind(&self) -> ErrorKind {
-        self.kind
+        self.0.kind
     }
 
     #[must_use]
     pub fn message(&self) -> &str {
-        &self.message
+        &self.0.message
     }
 
     #[must_use]
     pub fn native_message(&self) -> Option<&NativeErrorMessage> {
-        self.native_message.as_deref()
+        self.0.native_message.as_deref()
     }
 
     #[must_use]
     pub const fn span(&self) -> Option<SourceSpan> {
-        self.span
+        self.0.span
     }
 
     #[must_use]
     pub const fn with_span(mut self, span: SourceSpan) -> Self {
-        self.span = Some(span);
+        self.0.span = Some(span);
         self
     }
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(span) = self.span {
-            if self.kind == ErrorKind::JsInternal {
+        if let Some(span) = self.0.span {
+            if self.0.kind == ErrorKind::JsInternal {
                 write!(
                     formatter,
                     "InternalError at {}:{}: {}",
-                    span.start.line, span.start.column, self.message
+                    span.start.line, span.start.column, self.0.message
                 )
             } else {
                 write!(
                     formatter,
                     "{:?}Error at {}:{}: {}",
-                    self.kind, span.start.line, span.start.column, self.message
+                    self.0.kind, span.start.line, span.start.column, self.0.message
                 )
             }
         } else {
-            match self.kind {
-                ErrorKind::JsInternal => write!(formatter, "InternalError: {}", self.message),
-                _ => write!(formatter, "{:?}Error: {}", self.kind, self.message),
+            match self.0.kind {
+                ErrorKind::JsInternal => write!(formatter, "InternalError: {}", self.0.message),
+                _ => write!(formatter, "{:?}Error: {}", self.0.kind, self.0.message),
             }
         }
     }
@@ -266,6 +284,8 @@ impl StdError for Error {}
 #[cfg(test)]
 mod tests {
     use super::{Error, ErrorKind, NativeErrorMessage};
+    use crate::engine::api::runtime_error::RuntimeError;
+    use crate::source::{SourceLocation, SourceSpan};
 
     #[test]
     fn error_equality_and_debug_preserve_exact_native_payload() {
@@ -288,5 +308,79 @@ mod tests {
             [0x80, b'A']
         );
         assert!(public.native_message().is_none());
+    }
+
+    #[test]
+    fn error_channel_stays_one_register() {
+        use crate::engine::value::JsValue;
+        use std::mem::size_of;
+        let word = size_of::<usize>();
+        assert_eq!(size_of::<Error>(), word);
+        assert_eq!(size_of::<Result<(), Error>>(), word);
+        assert!(size_of::<Result<bool, Error>>() <= 2 * word);
+        assert!(size_of::<Result<&u8, Error>>() <= 2 * word);
+        assert!(size_of::<Result<JsValue, Error>>() <= 2 * word);
+    }
+
+    #[test]
+    fn error_span_and_debug_survive_runtime_wrapping_and_clone() {
+        let span = SourceSpan::new(
+            SourceLocation::new(12, 3, 5),
+            SourceLocation::new(18, 3, 11),
+        );
+        let original = Error::syntax("unexpected token", span);
+        assert_eq!(original.kind(), ErrorKind::Syntax);
+        assert_eq!(original.message(), "unexpected token");
+        assert_eq!(original.span(), Some(span));
+        assert_eq!(
+            format!("{original}"),
+            "SyntaxError at 3:5: unexpected token"
+        );
+        assert_eq!(
+            format!("{original:?}"),
+            "Error { kind: Syntax, message: \"unexpected token\", native_message: None, span: Some(SourceSpan { start: SourceLocation { byte_offset: 12, line: 3, column: 5 }, end: SourceLocation { byte_offset: 18, line: 3, column: 11 } }) }"
+        );
+
+        let wrapped = RuntimeError::from(original.clone());
+        assert_eq!(wrapped, RuntimeError::Engine(original.clone()));
+        assert_eq!(format!("{wrapped}"), format!("{original}"));
+        assert_eq!(format!("{wrapped:?}"), format!("Engine({original:?})"));
+        assert_eq!(original.clone(), original);
+
+        let relocated = original.clone().with_span(SourceSpan::default());
+        assert_eq!(relocated.span(), Some(SourceSpan::default()));
+        assert_ne!(relocated, original);
+        assert_eq!(original.span(), Some(span));
+    }
+
+    #[test]
+    fn with_span_remains_usable_from_a_const_function() {
+        const fn attach_span(error: Error, span: SourceSpan) -> Error {
+            error.with_span(span)
+        }
+
+        let span = SourceSpan::new(SourceLocation::new(2, 1, 3), SourceLocation::new(5, 1, 6));
+        let error = attach_span(Error::new(ErrorKind::Unsupported, "frontier"), span);
+        assert_eq!(error.kind(), ErrorKind::Unsupported);
+        assert_eq!(error.message(), "frontier");
+        assert_eq!(error.span(), Some(span));
+    }
+
+    #[test]
+    fn native_error_payload_remains_exact_after_clone_and_span_change() {
+        let mut raw = NativeErrorMessage::new();
+        raw.push_bytes([b'A', 0, 0x80]);
+        let error = Error::from_native_message(ErrorKind::JsInternal, raw);
+        let span = SourceSpan::new(SourceLocation::new(4, 2, 1), SourceLocation::new(7, 2, 4));
+        let error = error.with_span(span);
+        let cloned = error.clone();
+
+        assert_eq!(cloned, error);
+        assert_eq!(cloned.kind(), ErrorKind::JsInternal);
+        assert_eq!(cloned.span(), Some(span));
+        assert_eq!(cloned.message(), "A");
+        assert_eq!(cloned.native_message().unwrap().visible_bytes(), b"A");
+        assert_eq!(format!("{cloned}"), "InternalError at 2:1: A");
+        assert!(format!("{cloned:?}").contains("NativeErrorMessage([65, 0, 128])"));
     }
 }

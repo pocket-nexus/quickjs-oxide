@@ -224,7 +224,10 @@ impl Drop for FrameStorageGuard {
 
 mod number;
 mod window;
-pub(in crate::engine::vm) use window::{FrameTransaction, LinkedReadCompletion, RunSlots};
+pub(in crate::engine::vm) use window::{
+    CheckedOrdinaryCallOperands, FrameTransaction, LinkedReadCompletion, NumberUpdate,
+    NumericDestination, RunSlots,
+};
 
 impl SlotStore {
     /// Commit a retained IC result only after output capacity and the receiver
@@ -252,31 +255,10 @@ impl SlotStore {
             None
         };
         let base = self.peek_current(window, 0)?;
-        let value = match runtime.property_ic_read_fast(
-            base,
-            executable,
-            pc,
-            key_index,
-            keep_receiver,
-            native,
-        ) {
-            Some(value) => value,
-            None => {
-                let Some(value) = runtime
-                    .try_property_ic_read_owned(
-                        base,
-                        executable,
-                        pc,
-                        key_index,
-                        keep_receiver,
-                        native,
-                    )
-                    .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?
-                else {
-                    return Ok(false);
-                };
-                value
-            }
+        let Some(value) =
+            runtime.property_ic_read_fast(base, executable, pc, key_index, keep_receiver, native)
+        else {
+            return Ok(false);
         };
         if let Some(index) = output_index {
             self.install_operand(window, index, value);
@@ -955,20 +937,26 @@ impl SlotStore {
         if *key < 0 {
             return Ok(false);
         }
-        let typed = match value {
-            JsValue::Int(value) => {
-                runtime.try_typed_array_number_write(base, *key as u32, f64::from(*value))
+        // Dense arrays dominate the numeric-span workloads. Do their direct
+        // scalar replacement first; an accepted write never enters the typed
+        // leaf and never repeats the receiver release proof.
+        let dense = runtime
+            .try_dense_array_write_scalar(base, *key as u32, value)
+            .map_err(super::exception::runtime_error_to_vm_error)?;
+        let typed = if dense {
+            false
+        } else {
+            match value {
+                JsValue::Int(value) => {
+                    runtime.try_typed_array_number_write(base, *key as u32, f64::from(*value))
+                }
+                JsValue::Float(value) => {
+                    runtime.try_typed_array_number_write(base, *key as u32, *value)
+                }
+                _ => false,
             }
-            JsValue::Float(value) => {
-                runtime.try_typed_array_number_write(base, *key as u32, *value)
-            }
-            _ => false,
         };
-        if !typed
-            && !runtime
-                .try_dense_array_write_scalar(base, *key as u32, value)
-                .map_err(super::exception::runtime_error_to_vm_error)?
-        {
+        if !dense && !typed {
             return Ok(false);
         }
         // The successful leaf proved base's sole release cannot drain. Only
@@ -1071,6 +1059,7 @@ impl SlotStore {
         Ok(true)
     }
 
+    #[cfg(test)]
     fn ordinary_field_immediate_read_current(
         &mut self,
         window: &mut FrameWindow,
@@ -1107,7 +1096,7 @@ impl SlotStore {
         executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
         pc: usize,
         key: u32,
-    ) -> Result<bool, Error> {
+    ) -> Result<Option<bool>, Error> {
         let offset = window
             .depth
             .checked_sub(2)
@@ -1120,11 +1109,11 @@ impl SlotStore {
         else {
             return Err(Self::operand_slot_not_a_value());
         };
-        if !runtime
+        let outcome = runtime
             .try_property_ic_write_scalar(base, executable, pc, key, value)
-            .map_err(super::exception::runtime_error_to_vm_error)?
-        {
-            return Ok(false);
+            .map_err(super::exception::runtime_error_to_vm_error)?;
+        if outcome != Some(true) {
+            return Ok(outcome);
         }
         let base = self.slots[index].take();
         let value = self.slots[index + 1].take();
@@ -1137,7 +1126,7 @@ impl SlotStore {
             self.live_slots -= 2;
             record_owned_storage(Cost::Move(2));
         }
-        Ok(true)
+        Ok(Some(true))
     }
 
     /// Move an owned value into an already reserved, empty operand slot.
@@ -1407,7 +1396,7 @@ impl SlotStore {
         self.local_current(window, index)
     }
 
-    #[inline]
+    #[inline(always)]
     fn local_current(&self, window: &FrameWindow, index: u16) -> Result<&FrameBinding, Error> {
         if usize::from(index) >= window.locals().len() {
             return Err(Error::internal("owned local index is out of bounds"));
@@ -1452,7 +1441,7 @@ impl SlotStore {
         self.replace_local_current(window, index, value)
     }
 
-    #[inline]
+    #[inline(always)]
     fn replace_local_current(
         &mut self,
         window: &FrameWindow,
@@ -1538,7 +1527,7 @@ impl SlotStore {
         self.parameter_current(window, index)
     }
 
-    #[inline]
+    #[inline(always)]
     fn parameter_current(&self, window: &FrameWindow, index: u16) -> Result<&FrameBinding, Error> {
         if usize::from(index) >= window.parameters().len() {
             return Err(Error::internal("owned parameter index is out of bounds"));
@@ -1559,6 +1548,7 @@ impl SlotStore {
         self.replace_parameter_current(window, index, value)
     }
 
+    #[inline(always)]
     fn replace_parameter_current(
         &mut self,
         window: &FrameWindow,
@@ -1715,7 +1705,24 @@ impl SlotStore {
         self.active_end = window.whole().start;
         for index in window.whole().start..window.operands().start + window.depth {
             if let Some(binding) = self.slots[index].take() {
-                release_binding(runtime, binding)?;
+                // These direct values carry no owner. Most ordinary calls
+                // clear several Undefined/Number parameter and local slots;
+                // entering the generic release path for each is unnecessary.
+                // Every edge-bearing or captured binding still releases in
+                // its original ascending slot order.
+                if !matches!(
+                    &binding,
+                    FrameBinding::Direct(
+                        JsValue::Undefined
+                            | JsValue::Null
+                            | JsValue::Bool(_)
+                            | JsValue::Int(_)
+                            | JsValue::Float(_)
+                            | JsValue::ShortBigInt(_)
+                    )
+                ) {
+                    release_binding(runtime, binding)?;
+                }
             }
         }
         debug_assert!(self.slots[window.whole()].iter().all(Option::is_none));
@@ -1927,6 +1934,36 @@ mod tests {
     }
 
     #[test]
+    fn frame_clear_releases_edges_interleaved_with_direct_scalars() {
+        let runtime = Runtime::new();
+        let context = runtime.new_context();
+        let first = runtime.new_object(None).unwrap();
+        let first_id = first.object_id();
+        let second = runtime.new_object(None).unwrap();
+        let second_id = second.object_id();
+        let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
+        owner.metadata.max_stack = 5;
+        let mut slots = SlotStore::new(5);
+        let mut window = slots
+            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
+            .unwrap();
+        for value in [
+            JsValue::Int(7),
+            JsValue::Object(first.into_handle()),
+            JsValue::Undefined,
+            JsValue::Object(second.into_handle()),
+            JsValue::Float(2.5),
+        ] {
+            slots.push(&mut window, value).unwrap();
+        }
+        slots.clear_frame(&runtime, window).unwrap();
+        runtime.run_gc().unwrap();
+        let state = runtime.0.state.borrow();
+        assert!(state.heap.object(first_id).is_err());
+        assert!(state.heap.object(second_id).is_err());
+    }
+
+    #[test]
     fn native_argument_transaction_preserves_order_and_surviving_owners() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
@@ -2041,11 +2078,12 @@ mod tests {
                 .push(&mut window, into_internal(&runtime, Value::Int(17)))
                 .unwrap();
             assert!(
-                !slots
+                slots
                     .run_window(&mut window)
                     .unwrap()
                     .property_ic_write_scalar(&runtime, &code, pc, key)
                     .unwrap()
+                    != Some(true)
             );
             assert_eq!(window.depth, 3);
             assert_eq!(

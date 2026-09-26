@@ -32,6 +32,38 @@ impl CompilePhase {
 type ActivePhase = (Weak<Collector>, Weak<Cell<u128>>);
 thread_local! {
     static ACTIVE: RefCell<Vec<ActivePhase>> = const { RefCell::new(Vec::new()) };
+    // Pseudorandom sampling avoids repeatedly selecting the same position in
+    // a periodic call pattern. Diagnostics only; this is not security entropy.
+    static CALL_SAMPLE: Cell<(u32, bool)> = const { Cell::new((0x91e1_0da5, false)) };
+}
+
+/// Select roughly one in 64 direct entries, restoring the enclosing scope on
+/// reentry. All subphases of that entry share the same sampling decision.
+pub(crate) struct VmCallSample(bool);
+
+impl VmCallSample {
+    pub(crate) fn enter() -> Self {
+        let (previous, sampled) = CALL_SAMPLE.with(|state| {
+            let (mut seed, previous) = state.get();
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            let sampled = seed & 63 == 0;
+            state.set((seed, sampled));
+            (previous, sampled)
+        });
+        super::record_owned_execution_event("direct_timing.calls");
+        if sampled {
+            super::record_owned_execution_event("direct_timing.sampled_calls");
+        }
+        Self(previous)
+    }
+}
+
+impl Drop for VmCallSample {
+    fn drop(&mut self) {
+        CALL_SAMPLE.with(|state| state.set((state.get().0, self.0)));
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -56,6 +88,13 @@ impl PhaseTimer {
     }
     pub(crate) fn start_vm(name: &'static str) -> Self {
         Self::start_phase(Phase::Vm(name))
+    }
+    pub(crate) fn start_vm_sampled(name: &'static str) -> Self {
+        if CALL_SAMPLE.with(|state| state.get().1) {
+            Self::start_vm(name)
+        } else {
+            Self(None)
+        }
     }
     fn start_phase(phase: Phase) -> Self {
         Self(current().map(|collector| {
@@ -122,6 +161,46 @@ impl Drop for PhaseTimer {
 mod tests {
     use super::*;
     use crate::engine::api::profiling::CostProfile;
+
+    #[test]
+    fn direct_call_sampling_restores_scope_after_nested_unwind() {
+        let original = CALL_SAMPLE.with(Cell::get);
+        CALL_SAMPLE.with(|state| state.set((0x91e1_0da5, true)));
+        let profile = CostProfile::start();
+        let mut selected = 0;
+        for _ in 0..2048 {
+            {
+                let _scope = VmCallSample::enter();
+                let outer = CALL_SAMPLE.with(Cell::get);
+                selected += usize::from(outer.1);
+                let first = PhaseTimer::start_vm_sampled("sample.first");
+                assert_eq!(first.0.is_some(), outer.1);
+                {
+                    let _nested = VmCallSample::enter();
+                }
+                assert_eq!(CALL_SAMPLE.with(|state| state.get().1), outer.1);
+                let second = PhaseTimer::start_vm_sampled("sample.second");
+                assert_eq!(second.0.is_some(), outer.1);
+            }
+            assert!(CALL_SAMPLE.with(|state| state.get().1));
+        }
+        let costs = profile.snapshot();
+        assert!(selected > 0 && selected < 2048);
+        assert_eq!(
+            costs.vm_phases["sample.first"].cost.attempts,
+            selected as u64
+        );
+        assert_eq!(
+            costs.vm_phases["sample.second"].cost.attempts,
+            selected as u64
+        );
+        let _ = std::panic::catch_unwind(|| {
+            let _nested = VmCallSample::enter();
+            panic!("simulated reentry unwind");
+        });
+        assert!(CALL_SAMPLE.with(|state| state.get().1));
+        CALL_SAMPLE.with(|state| state.set(original));
+    }
 
     #[test]
     fn child_time_is_subtracted_once_even_when_phases_recurse() {

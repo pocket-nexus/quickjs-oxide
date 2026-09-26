@@ -6,33 +6,24 @@ use crate::engine::api::runtime::Runtime;
 use crate::engine::code::bytecode::Instruction;
 use crate::engine::value::JsValue;
 
-pub(super) fn available(slots: &RunSlots<'_>, instructions: &[Instruction]) -> bool {
-    instructions.iter().all(|instruction| match instruction {
-        Instruction::GetLocal(index) | Instruction::GetLocalCheck(index) => {
-            matches!(slots.local(*index), Ok(FrameBinding::Direct(_)))
-        }
-        Instruction::GetArg(index) => {
-            matches!(slots.parameter(*index), Ok(FrameBinding::Direct(_)))
-        }
-        _ => true,
-    })
-}
-
+/// Read each argument once. A non-direct binding resumes at its own canonical
+/// PC after the preceding arguments have already been pushed, exactly as
+/// ordinary instruction-by-instruction execution would do.
 pub(super) fn argument(
     runtime: &Runtime,
     slots: &RunSlots<'_>,
     instruction: &Instruction,
-) -> Result<JsValue, Error> {
-    Ok(match instruction {
+) -> Result<Option<JsValue>, Error> {
+    Ok(Some(match instruction {
         Instruction::GetLocal(index) | Instruction::GetLocalCheck(index) => {
-            let FrameBinding::Direct(value) = slots.local(*index)? else {
-                unreachable!("preflighted direct method argument")
+            let Ok(FrameBinding::Direct(value)) = slots.local(*index) else {
+                return Ok(None);
             };
             copy_value(runtime, value)?
         }
         Instruction::GetArg(index) => {
-            let FrameBinding::Direct(value) = slots.parameter(*index)? else {
-                unreachable!("preflighted direct method parameter")
+            let Ok(FrameBinding::Direct(value)) = slots.parameter(*index) else {
+                return Ok(None);
             };
             copy_value(runtime, value)?
         }
@@ -42,5 +33,5 @@ pub(super) fn argument(
         Instruction::PushTrue => JsValue::Bool(true),
         Instruction::PushFalse => JsValue::Bool(false),
         _ => unreachable!("published method call span"),
-    })
+    }))
 }

@@ -360,6 +360,30 @@ fn detached_vm_uses_the_declared_undefined_local_frame() {
 }
 
 #[test]
+fn ordinary_local_and_argument_writes_keep_assignment_results_and_owner_fallback() {
+    assert_js(
+        r#"(function(a) {
+            var x = 1;
+            var keptLocal = (x = 2);
+            if (keptLocal !== 2 || x !== 2) return false;
+            x = 3;
+            var keptArgument = (a = 4);
+            if (keptArgument !== 4 || a !== 4) return false;
+            a = 5;
+            var owner = { marker: 7 };
+            x = owner;
+            x = 6;
+            a = owner;
+            a = 8;
+            if (owner.marker !== 7 || x !== 6 || a !== 8) return false;
+            x = -0;
+            a = -0;
+            return 1 / x === -Infinity && 1 / a === -Infinity;
+        })(0)"#,
+    );
+}
+
+#[test]
 fn executes_power_stack_bytecode_and_quickjs_number_edges() {
     let function = DetachedBytecode::<Value> {
         code: vec![

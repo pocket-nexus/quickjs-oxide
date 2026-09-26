@@ -78,7 +78,8 @@ pub(crate) use enabled::*;
 mod enabled {
     use super::*;
     use quickjs_oxide::engine::api::profiling::{
-        AllocationEventKind, AllocationTrace, CostProfile, CostSnapshot, MemorySnapshot,
+        AllocationEventKind, AllocationTrace, CostProfile, CostSnapshot, FunctionSiteKey,
+        MemorySnapshot,
     };
     use std::cell::{Cell, RefCell};
     use std::io::{self, Write};
@@ -338,6 +339,18 @@ mod enabled {
                     phase.omitted_samples
                 )?;
             }
+            writeln!(out, "fusion_static={:?}", costs.fusion_static)?;
+            writeln!(out, "fusion_dispatch={:?}", costs.fusion_dispatch)?;
+            writeln!(out, "fusion_sites={:?}", costs.fusion_sites)?;
+            writeln!(out, "callsites={:?}", costs.callsites)?;
+            writeln!(
+                out,
+                "diagnostic_omissions: functions={} dispatch={} outcomes={} callsites={}",
+                costs.omitted_fusion_static_functions,
+                costs.omitted_fusion_dispatch_events,
+                costs.omitted_fusion_outcome_events,
+                costs.omitted_callsite_events
+            )?;
             return Ok(());
         }
         write!(
@@ -538,6 +551,95 @@ mod enabled {
 
         write!(
             out,
+            ",\"fusion_diagnostics\":{{\"basis\":\"logical-profiled-events; no timing; executed-functions-only; max 4096 functions, 16384 sites per category, 4 callee identities per callsite\",\"callsite_scope\":\"ordinary-driver-enter-selected-only; other call and construct paths are excluded\",\"omitted\":{{\"static_functions\":{},\"dispatch_events\":{},\"outcome_events\":{},\"callsite_events\":{}}},\"functions\":[",
+            costs.omitted_fusion_static_functions,
+            costs.omitted_fusion_dispatch_events,
+            costs.omitted_fusion_outcome_events,
+            costs.omitted_callsite_events
+        )?;
+        for (index, (key, cost)) in costs.fusion_static.iter().enumerate() {
+            if index != 0 {
+                write!(out, ",")?;
+            }
+            write!(out, "{{")?;
+            write_function_site_key(out, key, None)?;
+            write!(out, ",\"function_name\":")?;
+            optional_string(out, cost.function_name.as_deref())?;
+            write!(out, ",\"filename\":")?;
+            optional_string(out, cost.filename.as_deref())?;
+            write!(out, ",\"definition_line_zero_based\":")?;
+            optional_u32(out, cost.definition_line_zero_based)?;
+            write!(out, ",\"definition_column_zero_based\":")?;
+            optional_u32(out, cost.definition_column_zero_based)?;
+            write!(
+                out,
+                ",\"instructions\":{},\"direct_local_read_sites\":{},\"direct_argument_read_sites\":{},\"unfused_read_sites\":{},\"dense_candidate_sites\":{},\"dense_noncandidate_read_sites\":{}}}",
+                cost.instructions,
+                cost.direct_local_read_sites,
+                cost.direct_argument_read_sites,
+                cost.unfused_read_sites,
+                cost.dense_candidate_sites,
+                cost.dense_noncandidate_read_sites
+            )?;
+        }
+        write!(out, "],\"dispatch\":[")?;
+        for (index, (key, cost)) in costs.fusion_dispatch.iter().enumerate() {
+            if index != 0 {
+                write!(out, ",")?;
+            }
+            write!(out, "{{")?;
+            write_function_site_key(out, &key.function, Some(key.pc))?;
+            write!(
+                out,
+                ",\"visits\":{},\"static_noncandidate_visits\":{}}}",
+                cost.visits, cost.static_noncandidate_visits
+            )?;
+        }
+        write!(out, "],\"sites\":[")?;
+        for (index, (key, cost)) in costs.fusion_sites.iter().enumerate() {
+            if index != 0 {
+                write!(out, ",")?;
+            }
+            write!(out, "{{")?;
+            write_function_site_key(out, &key.site.function, Some(key.site.pc))?;
+            write!(out, ",\"kind\":")?;
+            string(out, key.kind)?;
+            write!(
+                out,
+                ",\"attempts\":{},\"hits\":{},\"misses\":{{",
+                cost.attempts, cost.hits
+            )?;
+            for (miss_index, (reason, count)) in cost.misses.iter().enumerate() {
+                if miss_index != 0 {
+                    write!(out, ",")?;
+                }
+                string(out, reason)?;
+                write!(out, ":{count}")?;
+            }
+            write!(out, "}}}}")?;
+        }
+        write!(out, "],\"callsites\":[")?;
+        for (index, (key, cost)) in costs.callsites.iter().enumerate() {
+            if index != 0 {
+                write!(out, ",")?;
+            }
+            write!(out, "{{")?;
+            write_function_site_key(out, &key.function, Some(key.pc))?;
+            write!(
+                out,
+                ",\"calls\":{},\"object_callees\":{},\"nonobject_callees\":{},\"callee_identity_changes\":{},\"distinct_callees_observed\":{},\"distinct_overflow\":{}}}",
+                cost.calls,
+                cost.object_callees,
+                cost.nonobject_callees,
+                cost.callee_identity_changes,
+                cost.distinct_callees_observed,
+                cost.distinct_overflow
+            )?;
+        }
+        write!(out, "]}}")?;
+
+        write!(
+            out,
             ",\"scope\":\"thread-interval-innermost-collector\",\"execution_path\":\"owned-stack\",\"timer\":\"inclusive-monotonic-wall-ns\",\"phase_totals_additive\":false,\"phases\":{{",
         )?;
         for (index, (name, phase)) in [
@@ -583,6 +685,33 @@ mod enabled {
             AllocationEventKind::Allocate => "A",
             AllocationEventKind::Reallocate => "R",
             AllocationEventKind::Free => "F",
+        }
+    }
+    fn write_function_site_key(
+        out: &mut dyn Write,
+        key: &FunctionSiteKey,
+        pc: Option<usize>,
+    ) -> io::Result<()> {
+        write!(out, "\"runtime_id\":{},\"bytecode_id\":", key.runtime_id)?;
+        match key.bytecode_id {
+            Some(id) => write!(out, "{id}")?,
+            None => write!(out, "null")?,
+        }
+        if let Some(pc) = pc {
+            write!(out, ",\"pc\":{pc}")?;
+        }
+        Ok(())
+    }
+    fn optional_string(out: &mut dyn Write, value: Option<&str>) -> io::Result<()> {
+        match value {
+            Some(value) => string(out, value),
+            None => write!(out, "null"),
+        }
+    }
+    fn optional_u32(out: &mut dyn Write, value: Option<u32>) -> io::Result<()> {
+        match value {
+            Some(value) => write!(out, "{value}"),
+            None => write!(out, "null"),
         }
     }
     fn display_number(value: Option<usize>) -> String {

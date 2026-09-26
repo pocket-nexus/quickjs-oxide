@@ -1,0 +1,37 @@
+{
+  "metadata": {
+    "suite": "shared-own-property-paths",
+    "workloads": {
+      "workloads": [
+        {
+          "case": "property_object_hit",
+          "path": "docs/performance/probes/shared-paths/property_object_hit.js",
+          "sha256": "28a9070015a1feaccd595777420a745839d53baa2eeb95b60beb51bbde70796a",
+          "expected": "7\n",
+          "size": 500000
+        },
+        {
+          "case": "property_string_hit",
+          "path": "docs/performance/probes/shared-paths/property_string_hit.js",
+          "sha256": "a700ecc7d8757a4e1e7887a82c053a2e89899fc6279678e3433b3528b51ca1cd",
+          "expected": "7\n",
+          "size": 500000
+        },
+        {
+          "case": "property_number_hit",
+          "path": "docs/performance/probes/shared-paths/property_number_hit.js",
+          "sha256": "b686f640962d6fec96d23f1ffa40923582cd1fe7bdeabf25eaa35fa7f4b26ec9",
+          "expected": "7\n",
+          "size": 500000
+        },
+        {
+          "case": "property_object_megamorphic",
+          "path": "docs/performance/probes/shared-paths/property_object_megamorphic.js",
+          "sha256": "bf1ef43a2ebb038ffb17f43e0882de4da666cd528b21baa083982f49582fcadc",
+          "expected": "7\n",
+          "size": 200000
+        }
+      ]
+    }
+  }
+}

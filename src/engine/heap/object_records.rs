@@ -305,8 +305,9 @@ pub enum ObjectPayload {
     /// ordinary shape/slot arrays. QuickJS's contiguous C/W/E prefix lives in
     /// `dense` instead and therefore does not allocate decimal property atoms.
     Array {
-        /// QuickJS `u.array.values[0..count]`. `Some` is the fast form and
-        /// `None` records its irreversible conversion to ordinary properties.
+        /// Contiguous indexed values. `Some` is the fast form; `None` uses
+        /// ordinary properties. Completing a reverse fill can recover `Some`
+        /// after validating all indices and their default data descriptors.
         /// A fast Array has no holes inside this vector; its logical `length`
         /// slot may nevertheless be greater than `dense.len()`.
         dense: Option<Vec<RawValue>>,
