@@ -520,10 +520,12 @@ fn finish_local(
     if let Some(value) = pending.abrupt.take() {
         return Ok(CallStep::Complete(Completion::Throw(value)));
     }
-    frame.resume_pc = pending
-        .pc
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("iterator resume PC overflow"))?;
+    frame.resume_pc = frame
+        .executable
+        .exec
+        .decode(pending.pc as u32)
+        .map_err(|_| Error::internal("iterator pending PC is not an instruction boundary"))?
+        .next_pc as usize;
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_instruction(depth);
     Ok(CallStep::Entered)
@@ -568,7 +570,7 @@ fn apply_next(
         regions::disable(runtime, frame, slots, record_base)?;
     }
     if !abrupt {
-        let mut window = slots.run_window(&mut frame.window)?;
+        let mut window = slots.borrow_frame_slots(&mut frame.window)?;
         window.push(value)?;
         window.push(JsValue::Bool(done))?;
     }
@@ -599,10 +601,7 @@ pub(super) fn finish_next(
     if let Some(value) = abrupt {
         return Ok(CallStep::Complete(Completion::Throw(value)));
     }
-    frame.resume_pc = frame
-        .fault_pc
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("iterator resume PC overflow"))?;
+    frame.resume_pc = frame.next_pc()?;
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_instruction(depth);
     Ok(CallStep::Entered)

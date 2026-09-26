@@ -21,7 +21,7 @@ impl NumericProgress {
 }
 
 /// Commit in the original previous/value order. Pending owners remain outside
-/// RunSlots even if authentication or a later push fails.
+/// FrameSlots even if authentication or a later push fails.
 pub(in crate::engine::vm) fn commit_output(
     runtime: &Runtime,
     execution: &mut RunningExecution,
@@ -34,12 +34,9 @@ pub(in crate::engine::vm) fn commit_output(
     let mut previous = previous;
     let result = (|| {
         let frame = execution.frames.current_mut(id)?;
-        let resume_pc = frame
-            .fault_pc
-            .checked_add(1)
-            .ok_or_else(|| Error::internal("numeric resume PC overflow"))?;
+        let resume_pc = frame.next_pc()?;
         {
-            let mut slots = execution.slots.run_window(&mut frame.window)?;
+            let mut slots = execution.slots.borrow_frame_slots(&mut frame.window)?;
             if previous.is_some() {
                 slots.push_pending(&mut previous)?;
             }
@@ -69,7 +66,7 @@ pub(in crate::engine::vm) fn try_complete_primitive(
     let frame = execution.frames.current_mut(id)?;
     let realm = frame.executable.realm;
     let depth = execution.slots.depth(&frame.window);
-    let fault_pc = frame.fault_pc;
+    let resume_pc = frame.next_pc()?;
     let mut transaction = execution.slots.frame_transaction(&mut frame.window)?;
     let (left, right) = {
         let mut slots = transaction.slots();
@@ -113,9 +110,6 @@ pub(in crate::engine::vm) fn try_complete_primitive(
     let mut value = Some(output.value);
     let mut previous = output.previous;
     let result: Result<usize, Error> = (|| {
-        let resume_pc = fault_pc
-            .checked_add(1)
-            .ok_or_else(|| Error::internal("numeric resume PC overflow"))?;
         {
             let mut slots = transaction.slots();
             if previous.is_some() {
@@ -295,112 +289,6 @@ mod tests {
             &JsValue::Int(41)
         );
         assert_eq!((frame.fault_pc, frame.resume_pc), (fault, resume));
-    }
-
-    #[test]
-    fn resident_numeric_preflight_preserves_canonical_missing_left_consumption() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        let (mut execution, id) = fixture(&runtime, &mut context);
-        push(
-            &mut execution,
-            id,
-            runtime
-                .into_jsvalue(Value::String(crate::engine::value::JsString::from_static(
-                    "7",
-                )))
-                .unwrap(),
-        );
-        {
-            let frame = execution.frames.current_mut(id).unwrap();
-            let mut transaction = execution
-                .slots
-                .frame_transaction(&mut frame.window)
-                .unwrap();
-            let slots = transaction.slots();
-            assert!(!crate::engine::vm::run::test_supported_numeric(
-                &slots,
-                NumericKind::Mul
-            ));
-            assert!(slots.peek(0).is_ok(), "preflight must not consume RHS");
-            assert!(slots.peek(1).is_err());
-        }
-        // Rejection takes the unchanged canonical path, which consumes RHS
-        // before the missing LHS is diagnosed. No resident helper is entered.
-        assert!(complete(&runtime, &mut execution, id, NumericKind::Mul).is_err());
-        let frame = execution.frames.current_mut(id).unwrap();
-        assert_eq!(execution.slots.depth(&frame.window), 0);
-        assert!(execution.pending.is_none());
-    }
-
-    #[test]
-    fn resident_numeric_postfix_output_failure_keeps_previous_and_pc() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        let (mut execution, id) = fixture(&runtime, &mut context);
-        let text = Value::String(crate::engine::value::JsString::from_static("41"));
-        loop {
-            let frame = execution.frames.current_mut(id).unwrap();
-            if execution
-                .slots
-                .push(&mut frame.window, JsValue::Int(0))
-                .is_err()
-            {
-                break;
-            }
-        }
-        let frame = execution.frames.current_mut(id).unwrap();
-        drop(execution.slots.pop(&mut frame.window).unwrap());
-        execution
-            .slots
-            .push(&mut frame.window, runtime.into_jsvalue(text).unwrap())
-            .unwrap();
-        let depth = execution.slots.depth(&frame.window);
-        let before = (frame.fault_pc, frame.resume_pc);
-        let realm = frame.executable.realm;
-        let active_frame = frame.active_frame;
-        let fault_pc = frame.fault_pc;
-        runtime
-            .update_active_bytecode_pc(active_frame, crate::engine::vm::BytecodePc::new(fault_pc))
-            .unwrap();
-        {
-            let mut transaction = execution
-                .slots
-                .frame_transaction(&mut frame.window)
-                .unwrap();
-            {
-                let slots = transaction.slots();
-                assert!(crate::engine::vm::run::test_supported_numeric(
-                    &slots,
-                    NumericKind::PostInc
-                ));
-            }
-            let result = crate::engine::vm::run::test_complete_numeric(
-                &runtime,
-                realm,
-                &mut transaction,
-                NumericKind::PostInc,
-                &mut execution.pending,
-                active_frame,
-                fault_pc,
-            );
-            assert!(
-                result.is_err(),
-                "second postfix output has no remaining capacity"
-            );
-            let slots = transaction.slots();
-            assert_eq!(
-                slots.peek(0).unwrap(),
-                &JsValue::Int(41),
-                "previous commits before value fails"
-            );
-        }
-        assert_eq!(execution.slots.depth(&frame.window), depth);
-        assert_eq!((frame.fault_pc, frame.resume_pc), before);
-        assert!(
-            execution.pending.is_none(),
-            "capacity failure remains an engine error"
-        );
     }
 
     #[test]

@@ -137,9 +137,13 @@ impl Heap {
         string_nodes.basis = "node-count-only; payloads are Rc-owned outside the arena accounting";
         let mut bigint_nodes = logical("bigint_nodes", 0);
         bigint_nodes.basis = "node-count-only; payloads are Rc-owned outside the arena accounting";
-        let mut code = storage("bytecode_instructions", 0, 0, 1);
-        code.basis = "deduplicated-Rc-slice-inline-bytes; excludes Rc headers and nested operands";
+        let mut code = storage("exec_words", 0, 0, 1);
+        code.basis =
+            "deduplicated-Rc-slice-inline-bytes; includes extension words, excludes Rc headers";
         let mut seen_code = HashSet::new();
+        let mut boundaries = storage("exec_boundaries", 0, 0, 1);
+        boundaries.basis = "deduplicated-Rc-slice-inline-bytes; excludes Rc headers";
+        let mut seen_boundaries = HashSet::new();
         let mut executable_projections = storage("bytecode_executable_projections", 0, 0, 1);
         executable_projections.basis = "one initialized shared projection per bytecode node; excludes Rc headers and shared slice payloads";
         let mut property_keys = storage("bytecode_property_keys", 0, 0, 1);
@@ -191,12 +195,20 @@ impl Heap {
                     }
                     // Pointer identity is local to this read-only snapshot and
                     // is never serialized. Shared slices are counted once.
-                    if seen_code.insert(Rc::as_ptr(&data.code)) {
+                    if seen_code.insert(data.exec.word_storage_identity()) {
                         add_storage(
                             &mut code,
-                            data.code.len(),
-                            data.code.len(),
-                            size_of::<Instruction>(),
+                            data.exec.word_len(),
+                            data.exec.word_len(),
+                            size_of::<u32>(),
+                        );
+                    }
+                    if seen_boundaries.insert(data.exec.boundary_storage_identity()) {
+                        add_storage(
+                            &mut boundaries,
+                            data.exec.boundary_len(),
+                            data.exec.boundary_len(),
+                            size_of::<u32>(),
                         );
                     }
                     if let Some(keys) = &data.property_key_atoms
@@ -235,6 +247,7 @@ impl Heap {
             string_nodes,
             bigint_nodes,
             code,
+            boundaries,
             property_keys,
             executable_projections,
         ]);

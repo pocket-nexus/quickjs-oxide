@@ -176,13 +176,17 @@ pub(in crate::engine::heap) fn validate_async_function_state(
         || activation.reusable_captured_locals.len() != activation.locals.len()
         || vm.stack.len() > usize::from(bytecode.metadata.max_stack)
         || vm.pc == 0
-        || vm.pc > bytecode.code.len()
+        || vm.pc > bytecode.exec.word_len()
+        || !bytecode.exec.is_boundary(vm.pc)
     {
         return Err(HeapError::Invariant(
             "AsyncFunction activation has invalid frame metadata",
         ));
     }
-    if !matches!(bytecode.code.get(vm.pc - 1), Some(Instruction::Await)) {
+    if !matches!(
+        bytecode.exec.opcode_before(vm.pc),
+        Some(crate::engine::code::exec_opcode::Opcode::Await)
+    ) {
         return Err(HeapError::Invariant(
             "AsyncFunction activation is not parked after its await opcode",
         ));
@@ -234,7 +238,10 @@ pub(in crate::engine::heap) fn validate_async_function_state(
             crate::engine::vm::VmUnwindRegion::Catch {
                 target,
                 stack_depth,
-            } if target >= bytecode.code.len() || stack_depth > vm.stack.len() => {
+            } if target >= bytecode.exec.word_len()
+                || !bytecode.exec.is_boundary(target)
+                || stack_depth > vm.stack.len() =>
+            {
                 return Err(HeapError::Invariant(
                     "AsyncFunction catch region is outside its saved frame",
                 ));
@@ -265,8 +272,8 @@ pub(in crate::engine::heap) fn validate_async_function_state(
                     || record_base.checked_add(3) != Some(vm.stack.len())
                     || !matches!(vm.stack.last(), Some(RawValue::Undefined))
                     || !matches!(
-                        bytecode.code.get(vm.pc),
-                        Some(Instruction::IteratorGetValueDone)
+                        bytecode.exec.opcode_at_exec(vm.pc),
+                        Some(crate::engine::code::exec_opcode::Opcode::IteratorGetValueDone)
                     )) =>
             {
                 return Err(HeapError::Invariant(
@@ -299,8 +306,8 @@ pub(in crate::engine::heap) fn validate_async_generator_state(
                             heap.function_bytecode(activation.bytecode),
                             Ok(bytecode)
                                 if matches!(
-                                    bytecode.code.get(activation.vm.pc.saturating_sub(1)),
-                                    Some(Instruction::Await)
+                                    bytecode.exec.opcode_before(activation.vm.pc),
+                                    Some(crate::engine::code::exec_opcode::Opcode::Await)
                                 )
                         )
                     }))
@@ -409,24 +416,28 @@ pub(in crate::engine::heap) fn validate_async_generator_state(
         || activation.reusable_captured_locals.len() != activation.locals.len()
         || vm.stack.len() > usize::from(bytecode.metadata.max_stack)
         || vm.pc == 0
-        || vm.pc > bytecode.code.len()
+        || vm.pc > bytecode.exec.word_len()
+        || !bytecode.exec.is_boundary(vm.pc)
     {
         return Err(HeapError::Invariant(
             "AsyncGenerator activation has invalid frame metadata",
         ));
     }
     let suspension_matches = matches!(
-        (data.state, bytecode.code.get(vm.pc - 1)),
+        (data.state, bytecode.exec.opcode_before(vm.pc)),
         (
             AsyncGeneratorState::SuspendedStart,
-            Some(Instruction::InitialYield)
+            Some(crate::engine::code::exec_opcode::Opcode::InitialYield)
         ) | (
             AsyncGeneratorState::SuspendedYield,
-            Some(Instruction::Yield)
+            Some(crate::engine::code::exec_opcode::Opcode::Yield)
         ) | (
             AsyncGeneratorState::SuspendedYieldStar,
-            Some(Instruction::AsyncYieldStar)
-        ) | (AsyncGeneratorState::Executing, Some(Instruction::Await))
+            Some(crate::engine::code::exec_opcode::Opcode::AsyncYieldStar)
+        ) | (
+            AsyncGeneratorState::Executing,
+            Some(crate::engine::code::exec_opcode::Opcode::Await)
+        )
     );
     if !suspension_matches {
         return Err(HeapError::Invariant(
@@ -479,7 +490,10 @@ pub(in crate::engine::heap) fn validate_async_generator_state(
             crate::engine::vm::VmUnwindRegion::Catch {
                 target,
                 stack_depth,
-            } if target >= bytecode.code.len() || stack_depth > vm.stack.len() => {
+            } if target >= bytecode.exec.word_len()
+                || !bytecode.exec.is_boundary(target)
+                || stack_depth > vm.stack.len() =>
+            {
                 return Err(HeapError::Invariant(
                     "AsyncGenerator catch region is outside its saved frame",
                 ));
@@ -511,8 +525,8 @@ pub(in crate::engine::heap) fn validate_async_generator_state(
                     || record_base.checked_add(3) != Some(vm.stack.len())
                     || !matches!(vm.stack.last(), Some(RawValue::Undefined))
                     || !matches!(
-                        bytecode.code.get(vm.pc),
-                        Some(Instruction::IteratorGetValueDone)
+                        bytecode.exec.opcode_at_exec(vm.pc),
+                        Some(crate::engine::code::exec_opcode::Opcode::IteratorGetValueDone)
                     )) =>
             {
                 return Err(HeapError::Invariant(

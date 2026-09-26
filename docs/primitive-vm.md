@@ -1,5 +1,7 @@
 # 原语执行核心（Primitive VM）
 
+> 历史记录：本文记载此前 `root_call` 和 `run` 重构的设计与当时的性能收据。当前发布格式与唯一执行循环见 [architecture.md](architecture.md)。下文的旧路径名称和测量数字不描述本次 `ExecCode` 重写。
+
 本重写把解释器统一为一个原语执行核心：旧的 `dispatch` / `frame_execution` / `host_bridge` / `call_bridge` / `numeric_execution` / `unwind` 路径已退役，`root_call` 是唯一执行核心。
 
 ## 架构

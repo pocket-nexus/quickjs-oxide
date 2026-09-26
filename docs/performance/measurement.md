@@ -122,7 +122,10 @@ python3 scripts/benchmark/fixed.py --manifest "$FIXED_MANIFEST" \
 
 相对 H0 的旧 BigInt 债务继续单独保存同协议重测表。#41 的下降不能跨系列抵消 #37 的增长；也不能移动分母隐藏旧债务。声称 v8-v7 总分达到 3–4 倍时，仍需以 B37 为分母，完成八项原版 isolated 与 combined 复核。短轮固定迭代的几何平均与 combined 时间比用于诊断和筛选，不冒充原版 Score。旧候选若被撤销，保留测试、配方和负结果；方向是否继续由新的成本模型决定。
 
-## 5.1 当次 B0 发布后 canonical 捕获协议
+## 5.1 历史 B0 发布后 canonical 捕获协议
+
+本节只记录旧 `FusionPlan` 候选的实验方法和收据。当前发布格式是
+`ExecCode`，不得按本节的 matcher 或 flags 判定新执行器的覆盖与收益。
 
 执行 [run_dump.py](probes/run_dump.py)，参数与完整路径见 [跨度规格](numeric-array-spans.md) §2。它只在新建 detached worktree 添加 ignored test 模块，不修改原工作区或产品 API；外部 checkout 必须是本协议的完整 pin，两份源文件 blob 必须未改。输出目录必须新建且在两个仓库之外。
 

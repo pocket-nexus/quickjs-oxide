@@ -265,10 +265,7 @@ fn finish_instruction_call(
         Completion::Return(mut value) => {
             let result: Result<CallStep, Error> = (|| {
                 let parent = execution.frames.current_mut(owner.frame()?)?;
-                let resume_pc = parent
-                    .fault_pc
-                    .checked_add(1)
-                    .ok_or_else(|| Error::internal("property resume PC overflow"))?;
+                let resume_pc = parent.next_pc()?;
                 if push {
                     execution.slots.push_owned(&mut parent.window, &mut value)?;
                 }
@@ -1660,8 +1657,7 @@ fn drive_inner(
                             "query_bytecode_callback",
                         );
                         let child = execution.frames.current_mut(id)?;
-                        child.resume_pc = pc;
-                        child.fault_pc = pc.saturating_sub(1);
+                        child.set_resume_pc(pc)?;
                         return Ok(Progress::Call(CallStep::Entered));
                     }
                     Err(error) => {
@@ -3454,10 +3450,7 @@ fn finish_for_in(
     let mut value = value;
     let result: Result<CallStep, Error> = (|| {
         let parent = execution.frames.current_mut(frame)?;
-        let resume_pc = parent
-            .fault_pc
-            .checked_add(1)
-            .ok_or_else(|| Error::internal("for-in resume PC overflow"))?;
+        let resume_pc = parent.next_pc()?;
         execution.slots.push_owned(&mut parent.window, &mut value)?;
         if let Some(done) = done {
             execution

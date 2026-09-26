@@ -49,11 +49,9 @@ impl Runtime {
                 continue;
             }
             let bytecode = state.heap.function_bytecode(bytecode)?;
-            if bytecode.code.iter().any(|instruction| {
-                matches!(
-                    instruction,
-                    crate::engine::code::bytecode::Instruction::Import
-                )
+            if (0..bytecode.exec.instruction_len()).any(|pc| {
+                bytecode.exec.opcode_at_source(pc)
+                    == Some(crate::engine::code::exec_opcode::Opcode::Import)
             }) {
                 return Ok(true);
             }

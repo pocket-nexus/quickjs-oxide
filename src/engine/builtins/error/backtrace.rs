@@ -7,7 +7,6 @@ use crate::engine::object::access::raw_string_property_one_level;
 
 use crate::engine::object::{DescriptorField, ObjectRef, OrdinaryPropertyDescriptor};
 use crate::engine::value::{JsString, JsStringBuilder, JsStringError, Value};
-use crate::engine::vm::BytecodePc;
 use crate::engine::vm::frames::{ActiveFrameKind, ExplicitBacktraceLocation};
 
 impl Runtime {
@@ -196,14 +195,20 @@ impl Runtime {
                         append_backtrace_string(&mut output, &filename)?;
                         if let Some(table) = &debug.pc2line {
                             let pc = pc
-                                .map(BytecodePc::index)
-                                .map(u32::try_from)
-                                .transpose()
-                                .map_err(|_| {
-                                    RuntimeError::Invariant(
-                                        "active bytecode PC does not fit debug metadata",
-                                    )
-                                })?;
+                                .map(|pc| {
+                                    let exec_pc = u32::try_from(pc.index()).map_err(|_| {
+                                        RuntimeError::Invariant(
+                                            "active execution PC does not fit word offsets",
+                                        )
+                                    })?;
+                                    bytecode
+                                        .exec
+                                        .source_pc(exec_pc)
+                                        .ok_or(RuntimeError::Invariant(
+                                            "active execution PC is not an instruction boundary",
+                                        ))
+                                })
+                                .transpose()?;
                             let (line, column) =
                                 table.lookup(pc).one_based().ok_or(RuntimeError::Invariant(
                                     "bytecode debug position cannot be represented one-based",

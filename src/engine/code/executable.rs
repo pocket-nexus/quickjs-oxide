@@ -175,12 +175,11 @@ impl PublishedFunctionSnapshot {
                 observes_arguments: true,
                 plain_local_initializers: true,
 
-                fusion: Default::default(),
-
-                property_read_ic: crate::engine::object::property_ic::PropertyReadCacheTable::new(
-                    &[],
-                ),
-                code: Rc::from([]),
+                property_read_ic:
+                    crate::engine::object::property_ic::PropertyReadCacheTable::new_exec(
+                        &crate::engine::code::exec::ExecCode::empty(),
+                    ),
+                exec: crate::engine::code::exec::ExecCode::empty(),
                 constants: Rc::from([]),
                 property_key_atoms: None,
                 argument_definitions: Rc::from([]),
@@ -214,10 +213,8 @@ pub(crate) struct PublishedFunctionData {
     pub(crate) observes_arguments: bool,
     pub(crate) plain_local_initializers: bool,
 
-    pub(crate) fusion: crate::engine::code::fusion::FusionPlan,
-
     pub(crate) property_read_ic: crate::engine::object::property_ic::PropertyReadCacheTable,
-    pub(crate) code: Rc<[crate::engine::code::bytecode::Instruction]>,
+    pub(crate) exec: crate::engine::code::exec::ExecCode,
     pub(crate) constants: Rc<[BytecodeConstant]>,
     pub(crate) property_key_atoms: Option<Rc<[Atom]>>,
     pub(crate) argument_definitions: Rc<[VariableDefinition]>,
@@ -258,21 +255,25 @@ impl Runtime {
         let data = bytecode.executable.get_or_init(|| {
             let data = Rc::new(PublishedFunctionData {
                 has_captured_locals: !bytecode.local_definitions.is_empty()
-                    && bytecode.code.iter().any(|op| {
+                    && (0..bytecode.exec.instruction_len()).any(|pc| {
                         matches!(
-                            op,
-                            crate::engine::code::bytecode::Instruction::FClosure(_)
-                                | crate::engine::code::bytecode::Instruction::Eval { .. }
-                                | crate::engine::code::bytecode::Instruction::ApplyEval { .. }
+                            bytecode.exec.opcode_at_source(pc),
+                            Some(
+                                crate::engine::code::exec_opcode::Opcode::FClosure
+                                    | crate::engine::code::exec_opcode::Opcode::Eval
+                                    | crate::engine::code::exec_opcode::Opcode::ApplyEval
+                            )
                         )
                     }),
-                observes_arguments: bytecode.code.iter().any(|op| {
+                observes_arguments: (0..bytecode.exec.instruction_len()).any(|pc| {
                     matches!(
-                        op,
-                        crate::engine::code::bytecode::Instruction::Arguments(_)
-                            | crate::engine::code::bytecode::Instruction::Rest(_)
-                            | crate::engine::code::bytecode::Instruction::Eval { .. }
-                            | crate::engine::code::bytecode::Instruction::ApplyEval { .. }
+                        bytecode.exec.opcode_at_source(pc),
+                        Some(
+                            crate::engine::code::exec_opcode::Opcode::Arguments
+                                | crate::engine::code::exec_opcode::Opcode::Rest
+                                | crate::engine::code::exec_opcode::Opcode::Eval
+                                | crate::engine::code::exec_opcode::Opcode::ApplyEval
+                        )
                     )
                 }),
                 plain_local_initializers: bytecode.metadata.function_name_local.is_none()
@@ -281,12 +282,11 @@ impl Runtime {
                         .iter()
                         .all(|local| !local.is_lexical),
 
-                fusion: bytecode.fusion.clone(),
-
-                property_read_ic: crate::engine::object::property_ic::PropertyReadCacheTable::new(
-                    &bytecode.code,
-                ),
-                code: bytecode.code.clone(),
+                property_read_ic:
+                    crate::engine::object::property_ic::PropertyReadCacheTable::new_exec(
+                        &bytecode.exec,
+                    ),
+                exec: bytecode.exec.clone(),
                 constants: bytecode.constants.clone(),
                 property_key_atoms: bytecode.property_key_atoms.clone(),
                 argument_definitions: bytecode.argument_definitions.clone(),
@@ -368,7 +368,7 @@ mod tests {
         drop(function);
         assert_eq!(snapshot.root().unwrap().bytecode_id(), id);
         assert!(matches!(
-            snapshot.code.as_ref(),
+            snapshot.exec.test_ir(),
             [Instruction::PushI32(42), Instruction::Return]
         ));
         assert!(runtime.0.state.borrow().heap.function_bytecode(id).is_ok());
@@ -468,6 +468,6 @@ mod tests {
         let context = runtime.new_context();
         let function = publish(&runtime, context.realm);
         let mut snapshot = runtime.snapshot_function_bytecode(&function).unwrap();
-        snapshot.code = Rc::from([]);
+        snapshot.exec = crate::engine::code::exec::ExecCode::empty();
     }
 }

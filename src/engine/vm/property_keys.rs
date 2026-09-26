@@ -127,10 +127,7 @@ pub(super) fn set_name(
     })();
     match result {
         Ok(()) => {
-            frame.resume_pc = frame
-                .fault_pc
-                .checked_add(1)
-                .ok_or_else(|| Error::internal("name resume PC overflow"))?;
+            frame.resume_pc = frame.next_pc()?;
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_instruction(
                 execution.slots.depth(&frame.window),

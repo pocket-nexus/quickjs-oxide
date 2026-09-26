@@ -27,14 +27,13 @@ pub(super) enum ReadKey {
 /// to return Entered after synchronous work.
 pub(super) enum PropertyProgress {
     Completed,
-    MethodCall(u16),
     Deferred(CallStep),
 }
 
 impl PropertyProgress {
     pub(super) fn into_call_step(self) -> CallStep {
         match self {
-            Self::Completed | Self::MethodCall(_) => CallStep::Entered,
+            Self::Completed => CallStep::Entered,
             Self::Deferred(step) => step,
         }
     }
@@ -84,20 +83,10 @@ pub(super) fn read_progress(
     key_kind: ReadKey,
     keep_receiver: bool,
 ) -> Result<PropertyProgress, Error> {
-    read_progress_selected(runtime, execution, id, key_kind, keep_receiver, &mut None)
-}
-
-pub(super) fn read_progress_selected(
-    runtime: &Runtime,
-    execution: &mut RunningExecution,
-    id: FrameId,
-    key_kind: ReadKey,
-    keep_receiver: bool,
-    native: &mut Option<crate::engine::object::LinkedNativeSelection>,
-) -> Result<PropertyProgress, Error> {
     let frame = execution.frames.current_mut(id)?;
     let computed = matches!(key_kind, ReadKey::Computed { .. });
     let realm = frame.executable.realm;
+    let next_pc = frame.next_pc()?;
     let mut selected_read = None;
     if let ReadKey::Static(index) = key_kind {
         use super::stack::LinkedReadCompletion;
@@ -106,80 +95,37 @@ pub(super) fn read_progress_selected(
         let depth = execution.slots.depth(&body.window);
         let mut preserved_receiver = None;
         let mut retained_key = None;
-        let mut method_call = None;
-        let candidate = keep_receiver
-            .then(|| executable.fusion.method_call(frame.fault_pc))
-            .flatten();
         let result = execution.slots.with_linked_own_read_selected(
             &mut body.window,
             runtime,
             executable,
             index,
-            candidate.map(|_| &mut *native),
+            None,
             |slots, value| {
                 // Lookup has finished and retained the result. Move the base
                 // owner into the enclosing driver scope before publication.
                 preserved_receiver = Some(slots.pop()?);
-                // Base has moved outside the slot window. The result and
-                // receiver need two slots; decline fusion before any literal
-                // pushes if the verified capacity cannot hold the whole span.
-                let count = candidate.filter(|count| slots.has_operand_capacity(count + 2));
                 publish_read_result(
                     slots,
                     &mut frame.resume_pc,
-                    frame.fault_pc,
+                    next_pc,
                     &mut preserved_receiver,
                     &mut retained_key,
                     keep_receiver,
                     value,
                 )?;
-                let _ = runtime;
-                if let Some(count) = count {
-                    // GetField2 completed even if a later fallible argument
-                    // retain fails at its own canonical PC.
-                    record_read_completion(depth);
-                    let start = frame.fault_pc;
-                    for offset in 0..count {
-                        // Copy retains never drain references or call JS. On a
-                        // failed retain, publish this canonical argument PC once
-                        // the RunSlots borrow has ended below.
-                        frame.fault_pc = start + offset + 1;
-                        frame.resume_pc = frame.fault_pc;
-                        let Some(literal) = super::method_arguments::argument(
-                            runtime,
-                            slots,
-                            &executable.code[frame.fault_pc],
-                        )?
-                        else {
-                            // The completed read and earlier arguments stay
-                            // installed; canonical execution resumes here.
-                            return Ok(());
-                        };
-                        slots.push(literal)?;
-                        #[cfg(feature = "profiling")]
-                        crate::engine::api::profiling::record_owned_instruction(depth + offset + 1);
-                    }
-                    frame.resume_pc = start + count + 1;
-                    #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_owned_execution_event("method_call_span");
-                    method_call = Some(count as u16);
-                }
                 Ok(())
             },
         );
         match result {
             Ok(LinkedReadCompletion::Completed) => {
-                if method_call.is_none() {
-                    record_read_completion(depth);
-                }
+                record_read_completion(depth);
                 if !keep_receiver && let Some(value) = preserved_receiver.take() {
                     runtime
                         .release_jsvalue(value)
                         .map_err(runtime_error_to_vm_error)?;
                 }
-                return Ok(method_call
-                    .map(PropertyProgress::MethodCall)
-                    .unwrap_or(PropertyProgress::Completed));
+                return Ok(PropertyProgress::Completed);
             }
             Ok(LinkedReadCompletion::Pending(read)) => selected_read = Some(read),
             Ok(LinkedReadCompletion::Declined) => {}
@@ -297,7 +243,7 @@ pub(super) fn read_progress_selected(
                 .ok_or(crate::engine::api::runtime_error::RuntimeError::Invariant(
                     "fallback read lost its key",
                 ))?,
-            keep_receiver.then_some(&mut *native),
+            None,
         )
     }) {
         Ok(read) => read,
@@ -527,6 +473,7 @@ fn complete_read(
     }
     let mut value = Some(value);
     let frame = execution.frames.current_mut(id)?;
+    let next_pc = frame.next_pc()?;
     let mut transaction = execution.slots.frame_transaction(&mut frame.cold.window)?;
     let discarded = {
         let mut slots = transaction.slots();
@@ -562,7 +509,7 @@ fn complete_read(
             publish_read_result(
                 &mut slots,
                 &mut frame.resume_pc,
-                frame.fault_pc,
+                next_pc,
                 &mut preserved_receiver,
                 &mut retained_key,
                 keep_receiver,
@@ -579,7 +526,7 @@ fn complete_read(
         }
         discarded
     };
-    // Preserve original pop/release order outside RunSlots for owning keys
+    // Preserve original pop/release order outside FrameSlots for owning keys
     // and externally prepared reads. The base and normalized key stay owned.
     for slot in discarded.into_iter().flatten() {
         runtime
@@ -590,7 +537,7 @@ fn complete_read(
     publish_read_result(
         &mut slots,
         &mut frame.resume_pc,
-        frame.fault_pc,
+        next_pc,
         &mut preserved_receiver,
         &mut retained_key,
         keep_receiver,
@@ -609,9 +556,9 @@ fn complete_read(
 #[inline]
 #[allow(clippy::too_many_arguments)]
 fn publish_read_result(
-    slots: &mut super::stack::RunSlots<'_>,
+    slots: &mut super::stack::FrameSlots<'_>,
     resume_pc: &mut usize,
-    fault_pc: usize,
+    next_pc: usize,
     preserved_receiver: &mut Option<JsValue>,
     retained_key: &mut Option<JsValue>,
     keep_receiver: bool,
@@ -623,9 +570,7 @@ fn publish_read_result(
     if retained_key.is_some() {
         slots.push_pending(retained_key)?;
     }
-    *resume_pc = fault_pc
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("property resume PC overflow"))?;
+    *resume_pc = next_pc;
     slots.push_pending(value)?;
     Ok(())
 }
@@ -801,10 +746,7 @@ fn read_pending(
             runtime, execution, id, callable, receiver, arguments, false, depth,
         );
     }
-    frame.resume_pc = frame
-        .fault_pc
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("property resume PC overflow"))?;
+    frame.resume_pc = frame.next_pc()?;
     if let Some((call, receiver)) = ordinary_callback {
         let entry = call.prepare_callback(
             &mut execution.call_storage,

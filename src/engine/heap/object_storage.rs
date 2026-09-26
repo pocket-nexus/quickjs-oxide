@@ -575,6 +575,7 @@ impl Heap {
     /// indexed descriptor first materializes the Array into slow storage.
     /// This transaction never changes ownership, length, shape, or layout.
     #[inline]
+    #[cfg(test)]
     pub(crate) fn try_replace_dense_number_value(
         &mut self,
         id: ObjectId,
@@ -1964,22 +1965,25 @@ impl Heap {
                     || activation.reusable_captured_locals.len() != activation.locals.len()
                     || vm.stack.len() > usize::from(bytecode.metadata.max_stack)
                     || vm.pc == 0
-                    || vm.pc > bytecode.code.len()
+                    || vm.pc > bytecode.exec.word_len()
+                    || !bytecode.exec.is_boundary(vm.pc)
                 {
                     return Err(HeapError::Invariant(
                         "generator activation has invalid frame metadata",
                     ));
                 }
                 let suspension_matches = matches!(
-                    (state, bytecode.code.get(vm.pc - 1)),
+                    (state, bytecode.exec.opcode_before(vm.pc)),
                     (
                         GeneratorState::SuspendedStart,
-                        Some(Instruction::InitialYield)
-                    ) | (GeneratorState::SuspendedYield, Some(Instruction::Yield))
-                        | (
-                            GeneratorState::SuspendedYieldStar,
-                            Some(Instruction::YieldStar)
-                        )
+                        Some(crate::engine::code::exec_opcode::Opcode::InitialYield)
+                    ) | (
+                        GeneratorState::SuspendedYield,
+                        Some(crate::engine::code::exec_opcode::Opcode::Yield)
+                    ) | (
+                        GeneratorState::SuspendedYieldStar,
+                        Some(crate::engine::code::exec_opcode::Opcode::YieldStar)
+                    )
                 );
                 if !suspension_matches {
                     return Err(HeapError::Invariant(
@@ -2033,7 +2037,10 @@ impl Heap {
                         crate::engine::vm::VmUnwindRegion::Catch {
                             target,
                             stack_depth,
-                        } if target >= bytecode.code.len() || stack_depth > vm.stack.len() => {
+                        } if target >= bytecode.exec.word_len()
+                            || !bytecode.exec.is_boundary(target)
+                            || stack_depth > vm.stack.len() =>
+                        {
                             return Err(HeapError::Invariant(
                                 "generator catch region is outside its saved frame",
                             ));

@@ -253,10 +253,7 @@ pub(super) fn step(
     }
     match result {
         Ok(()) => {
-            frame.resume_pc = frame
-                .fault_pc
-                .checked_add(1)
-                .ok_or_else(|| Error::internal("private access resume PC overflow"))?;
+            frame.resume_pc = frame.next_pc()?;
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_instruction(depth);
             Ok(Outcome::Done)
@@ -326,10 +323,7 @@ fn enter_accessor(
             .release_jsvalue(base)
             .map_err(runtime_error_to_vm_error)?;
     }
-    frame.resume_pc = frame
-        .fault_pc
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("accessor resume PC overflow"))?;
+    frame.resume_pc = frame.next_pc()?;
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_instruction(depth);
     match super::proxy_get_driver::start_vm_call(

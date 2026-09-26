@@ -1,6 +1,5 @@
 //! Scheduling for a pending addition or unary-plus conversion. Domain phases remain in
 //! value/conversion; only frame installation and reply routing live here.
-mod local_add;
 use crate::engine::api::{error::Error, runtime::Runtime};
 use crate::engine::code::function::metadata::FunctionKind;
 use crate::engine::object::{CallableRef, OrdinaryRead};
@@ -11,7 +10,6 @@ use crate::engine::vm::exception::runtime_error_to_vm_error;
 use crate::engine::vm::execution::RunningExecution;
 use crate::engine::vm::frame::{FrameId, ReturnTarget};
 use crate::engine::vm::{Completion, ToPrimitiveHint};
-pub(super) use local_add::complete_local_add;
 
 enum Finish {
     Predicate(Option<Box<super::predicate_driver::Input>>),
@@ -172,7 +170,7 @@ pub(super) fn complete_primitives(
     #[cfg(feature = "profiling")]
     let depth = execution.slots.depth(&body.window);
     let mut transaction = execution.slots.frame_transaction(&mut body.window)?;
-    let (left, right, store) = {
+    let (left, right) = {
         let mut slots = transaction.slots();
         // Internal values carry no runtime branding; authenticate every operand
         // slot in the original left-to-right order before the identity issue.
@@ -184,27 +182,6 @@ pub(super) fn complete_primitives(
         *next_operation = next_operation
             .checked_add(1)
             .ok_or_else(|| Error::internal("conversion identity exhausted"))?;
-        let store = if addition && executable.fusion.add_store(frame.fault_pc) {
-            use crate::engine::code::bytecode::Instruction;
-            match executable.code.get(frame.fault_pc + 1) {
-                Some(
-                    Instruction::PutLocal(index)
-                    | Instruction::PutLocalCheck(index)
-                    | Instruction::SetLocal(index)
-                    | Instruction::SetLocalCheck(index),
-                ) => match slots.local(*index)? {
-                    super::bindings::FrameBinding::Direct(value) => Some((
-                        *index,
-                        executable.fusion.add_store_span(frame.fault_pc),
-                        matches!(value, JsValue::Object(_) | JsValue::Symbol(_)),
-                    )),
-                    _ => None,
-                },
-                _ => None,
-            }
-        } else {
-            None
-        };
         if has_object {
             return Ok(PrimitiveCompletion::Declined);
         }
@@ -218,7 +195,7 @@ pub(super) fn complete_primitives(
         } else {
             None
         };
-        (left, right, store)
+        (left, right)
     };
     // End the authenticated window before String/BigInt allocation or release.
     let completion = if let Some(left) = left {
@@ -246,74 +223,14 @@ pub(super) fn complete_primitives(
     );
     Ok(match completion {
         Completion::Return(value) => {
-            if let Some((index, span, observable_release)) = store {
-                // Scalar/String/BigInt release cannot observe the runtime PC.
-                // Object/Symbol release retains the canonical store publication
-                // before replacement. No RunSlots borrow crosses either release.
-                let store_pc = frame
-                    .fault_pc
-                    .checked_add(1)
-                    .ok_or_else(|| Error::internal("conversion resume PC overflow"))?;
-                if observable_release {
-                    (frame.fault_pc, frame.resume_pc) = (store_pc, store_pc);
-                    runtime
-                        .update_active_bytecode_pc(
-                            frame.active_frame,
-                            super::BytecodePc::new(frame.fault_pc),
-                        )
-                        .map_err(runtime_error_to_vm_error)?;
-                }
-                let mut pending = Some(super::bindings::FrameBinding::Direct(value));
-                let old = {
-                    let mut slots = transaction.slots();
-                    slots.replace_local_pending(index, &mut pending)
-                };
-                let old = match old {
-                    Ok(old) => old,
-                    Err(error) => {
-                        if !observable_release {
-                            (frame.fault_pc, frame.resume_pc) = (store_pc, store_pc);
-                            runtime
-                                .update_active_bytecode_pc(
-                                    frame.active_frame,
-                                    super::BytecodePc::new(frame.fault_pc),
-                                )
-                                .map_err(runtime_error_to_vm_error)?;
-                        }
-                        return Err(error);
-                    }
-                };
-                super::bindings::release_frame_binding(runtime, old)?;
-                // The optional Drop only removes the assignment result while
-                // the local keeps the value; it has no observable owner drain.
-                let resume = store_pc
-                    .checked_add(span - 1)
-                    .ok_or_else(|| Error::internal("binding release resume PC overflow"))?;
-                (frame.fault_pc, frame.resume_pc) = (resume - 1, resume);
-                #[cfg(feature = "profiling")]
-                {
-                    crate::engine::api::profiling::record_owned_instruction(depth);
-                    crate::engine::api::profiling::record_owned_instruction(depth - 1);
-                    if span == 3 {
-                        crate::engine::api::profiling::record_owned_instruction(depth - 1);
-                    }
-                    crate::engine::api::profiling::record_owned_execution_event(
-                        "primitive_add_store_fused",
-                    );
-                }
-            } else {
-                let mut pending = Some(value);
-                {
-                    let mut slots = transaction.slots();
-                    slots.push_pending(&mut pending)?;
-                }
-                frame.resume_pc = frame
-                    .fault_pc
-                    .checked_add(1)
-                    .ok_or_else(|| Error::internal("conversion resume PC overflow"))?;
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_instruction(depth);
+            let mut pending = Some(value);
+            {
+                let mut slots = transaction.slots();
+                slots.push_pending(&mut pending)?;
             }
+            frame.resume_pc = frame.next_pc()?;
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_instruction(depth);
             PrimitiveCompletion::Completed
         }
         Completion::Throw(value) => PrimitiveCompletion::Throw(value),
@@ -380,10 +297,7 @@ impl ConversionTask {
             #[cfg(feature = "profiling")]
             let depth = execution.slots.depth(&parent.window) + 1;
             execution.slots.push(&mut parent.window, value)?;
-            parent.resume_pc = parent
-                .fault_pc
-                .checked_add(1)
-                .ok_or_else(|| Error::internal("conversion resume PC overflow"))?;
+            parent.resume_pc = parent.next_pc()?;
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_instruction(depth);
             return Ok(Self(None));
@@ -983,7 +897,6 @@ mod primitive_store_tests {
     fn primitive_store_keeps_conversion_capture_and_throw_observations() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        let profile = CostProfile::start();
         assert_eq!(
             context
                 .eval(
@@ -1005,15 +918,6 @@ mod primitive_store_tests {
                 )
                 .unwrap(),
             Value::Bool(true)
-        );
-        assert!(
-            profile
-                .snapshot()
-                .owned_execution_events
-                .get("numeric_completed_in_run")
-                .copied()
-                .unwrap_or(0)
-                > 0
         );
     }
 }

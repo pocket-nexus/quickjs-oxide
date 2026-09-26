@@ -7,7 +7,7 @@ use super::{
 use crate::engine::{
     api::runtime::Runtime,
     api::{Error, ErrorKind},
-    code::bytecode::Instruction,
+    code::exec_opcode::Opcode,
     value::JsValue,
     vm::{Completion, ToPrimitiveHint},
 };
@@ -41,36 +41,37 @@ pub(in crate::engine::vm) enum NumericKind {
     Gte,
 }
 impl NumericKind {
-    pub(in crate::engine::vm) fn for_instruction(instruction: &Instruction) -> Option<Self> {
-        Some(match instruction {
-            Instruction::Neg => Self::Neg,
-            Instruction::Plus => Self::Plus,
-            Instruction::BitNot => Self::BitNot,
-            Instruction::Inc => Self::Inc,
-            Instruction::Dec => Self::Dec,
-            Instruction::PostInc => Self::PostInc,
-            Instruction::PostDec => Self::PostDec,
-            Instruction::Add => Self::Add,
-            Instruction::Sub => Self::Sub,
-            Instruction::Mul => Self::Mul,
-            Instruction::Div => Self::Div,
-            Instruction::Mod => Self::Mod,
-            Instruction::Pow => Self::Pow,
-            Instruction::Shl => Self::Shl,
-            Instruction::Sar => Self::Sar,
-            Instruction::Shr => Self::Shr,
-            Instruction::BitAnd => Self::BitAnd,
-            Instruction::BitOr => Self::BitOr,
-            Instruction::BitXor => Self::BitXor,
-            Instruction::Eq => Self::Eq,
-            Instruction::Neq => Self::Neq,
-            Instruction::Lt => Self::Lt,
-            Instruction::Lte => Self::Lte,
-            Instruction::Gt => Self::Gt,
-            Instruction::Gte => Self::Gte,
+    pub(in crate::engine::vm) fn for_opcode(opcode: Opcode) -> Option<Self> {
+        Some(match opcode {
+            Opcode::Neg => Self::Neg,
+            Opcode::Plus => Self::Plus,
+            Opcode::BitNot => Self::BitNot,
+            Opcode::Inc => Self::Inc,
+            Opcode::Dec => Self::Dec,
+            Opcode::PostInc => Self::PostInc,
+            Opcode::PostDec => Self::PostDec,
+            Opcode::Add => Self::Add,
+            Opcode::Sub => Self::Sub,
+            Opcode::Mul => Self::Mul,
+            Opcode::Div => Self::Div,
+            Opcode::Mod => Self::Mod,
+            Opcode::Pow => Self::Pow,
+            Opcode::Shl => Self::Shl,
+            Opcode::Sar => Self::Sar,
+            Opcode::Shr => Self::Shr,
+            Opcode::BitAnd => Self::BitAnd,
+            Opcode::BitOr => Self::BitOr,
+            Opcode::BitXor => Self::BitXor,
+            Opcode::Eq => Self::Eq,
+            Opcode::Neq => Self::Neq,
+            Opcode::Lt => Self::Lt,
+            Opcode::Lte => Self::Lte,
+            Opcode::Gt => Self::Gt,
+            Opcode::Gte => Self::Gte,
             _ => return None,
         })
     }
+
     pub(in crate::engine::vm) fn unary(self) -> bool {
         matches!(
             self,
@@ -111,7 +112,7 @@ impl NumericOutput {
 
 /// Primitive arithmetic uses the same conversion and operator kernels as resumes.
 /// Parsing, allocation and final primitive-owner release require an ended
-/// RunSlots borrow; the resident run helper is also such an owning boundary.
+/// FrameSlots borrow; the resident run helper is also such an owning boundary.
 pub(in crate::engine::vm) fn primitive_output(
     runtime: &Runtime,
     kind: NumericKind,

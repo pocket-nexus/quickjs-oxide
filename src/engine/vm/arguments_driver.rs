@@ -90,25 +90,22 @@ pub(super) fn step(
     runtime: &Runtime,
     execution: &mut RunningExecution,
     id: FrameId,
-    exit: super::run::RunExit,
+    exit: super::execute::VmAction,
 ) -> Result<Option<super::Completion>, Error> {
     let frame = execution.frames.current_mut(id)?;
     let realm = frame.executable.realm;
     #[cfg(feature = "profiling")]
     let depth = execution.slots.depth(&frame.window);
     let result = match exit {
-        super::run::RunExit::Arguments(kind) => arguments(runtime, execution, id, kind),
-        super::run::RunExit::Rest(start) => rest(runtime, execution, id, start),
+        super::execute::VmAction::Arguments(kind) => arguments(runtime, execution, id, kind),
+        super::execute::VmAction::Rest(start) => rest(runtime, execution, id, start),
         _ => return Err(Error::internal("arguments step received an unrelated exit")),
     };
     match result {
         Ok(value) => {
             let frame = execution.frames.current_mut(id)?;
             execution.slots.push(&mut frame.window, value)?;
-            frame.resume_pc = frame
-                .fault_pc
-                .checked_add(1)
-                .ok_or_else(|| Error::internal("arguments resume PC overflow"))?;
+            frame.resume_pc = frame.next_pc()?;
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_instruction(depth);
             Ok(None)

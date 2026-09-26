@@ -1,10 +1,9 @@
 # Workspace architecture
 
 This document describes the current implementation and its responsibility
-boundaries. The [primitive VM overview](primitive-vm.md) summarizes the
-execution-core redesign: the legacy execution path is retired and the
-unified `root_call` core — explicit JS frames, one driver and owned domain
-continuations — is the only engine.
+boundaries. [primitive-vm.md](primitive-vm.md) records the earlier frame and
+continuation redesign; its historical execution-loop description predates the
+current `ExecCode` publication format.
 
 ## Packages and module owners
 
@@ -74,27 +73,39 @@ for local rewrites and delegates required normal/exception/resume stack facts
 to the existing code verifier. `optimize.rs` owns the bounded constant-branch
 rewrite and its ordered QuickJS late-throw source-site projection. It runs the
 projection before rewriting and preserves physical instruction slots.
-Profiling builds expose scoped compile/legacy-dispatch counters through
-`api/profiling/cost.rs`; default builds contain no instrumentation hooks.
+Profiling builds expose scoped compile, execution, site and call counters
+through `api/profiling/cost.rs`; default builds contain no instrumentation
+hooks.
 
-Expression intermediates live on an operand stack; numbered locals do not
-make this a register VM. The current execution path splits arguments and
-locals in `RuntimeVmHost` from the operand stack in `VmActivation`, with
-additional active-frame tracking. Ordinary JS calls recursively enter the
-Rust interpreter. These are the principal ownership and driving boundaries
-that the pending plan replaces.
+`Instruction` is temporary compiler IR. Publication validates it, encodes a
+single `ExecCode` word stream, and drops the IR. Each word has a 16-bit opcode
+header and a 16-bit short operand; wide operands use following 32-bit words.
+The header also encodes the verified word width, so dispatch does not recount
+extensions on every execution.
+The encoder and verifier share the opcode/operand contract. `ExecCode` stores
+instruction boundaries so jump and exception targets, resumed frames and
+diagnostics use verified word offsets. The published function retains the
+word stream, constants and metadata; it has no second instruction array or
+fusion plan.
 
-Code verification and transactional publication already exist. Published
-instructions and constant storage already share immutable arrays; the plan
-must account for remaining per-call projections and roots rather than treat
-sharing as a missing feature. Code representation and publication belong in
-`code`; active pc, stack position and call state belong in `vm`.
+`vm/execute.rs` is the only instruction loop. `FrameCursor` borrows the frame
+window for one short operation at a time, moves or copies owned values, and
+publishes the fault PC before observable release. The explicit frame stack and
+driver handle operations that can call JavaScript, throw or suspend. The
+object, conversion and iterator algorithms retain their semantic ownership
+in their respective modules; none dispatches compiler `Instruction` values.
 
-The redesign keeps stack instructions and the complete language frontend.
-It introduces explicit JS frames, one execution driver, domain-owned callback
-state and concentrated slot ownership. The final architecture, the delivered
-stages and the measured results are recorded in the
-[primitive VM overview](primitive-vm.md).
+Publication selects ordinary, cache-aware and numeric span opcodes. Ordinary
+local and argument reads enter directly, with no specialization probe. A
+numeric span hit skips its following generic words; a failed guard executes
+the same position's ordinary read and then those generic words. The verifier
+rejects any span with a control-flow entry into its middle. Field and array
+cache misses similarly enter the new execution flow's general handlers.
+The field cache retained by published code is read-only; writes use the
+general property operation without an unused write-cache allocation.
+Quickening may change only an authenticated same-width opcode pair and
+preserves word offsets. Static boundary checks happen at publication and
+frame entry, rather than on every instruction visit.
 
 ## State and semantic boundaries
 

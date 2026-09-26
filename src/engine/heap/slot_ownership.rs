@@ -230,6 +230,7 @@ impl Runtime {
 
     /// Internal-value form of [`Runtime::try_release_slot_value`]: on `Ready`
     /// the value is replaced with `undefined` and its edges are released.
+    #[cfg(test)]
     pub(crate) fn try_release_slot_value_jsvalue(
         &self,
         value: &mut JsValue,
@@ -246,30 +247,6 @@ impl Runtime {
         let old = std::mem::replace(value, JsValue::Undefined);
         self.release_jsvalue(old)?;
         Ok(true)
-    }
-
-    /// Commit one ordinary owning-root release already proven `Ready` in the
-    /// same operation, with no callback, allocation or reference decrease in
-    /// between. The caller owns that proof; debug builds re-check it so a
-    /// broken invariant panics here instead of leaking or double-releasing.
-    pub(crate) fn release_slot_value_jsvalue_ready(
-        &self,
-        value: &mut JsValue,
-    ) -> Result<(), RuntimeError> {
-        #[cfg(debug_assertions)]
-        debug_assert_eq!(
-            self.slot_value_release_readiness_jsvalue(value)?,
-            SlotReleaseReadiness::Ready,
-            "slot release proof changed without a callback"
-        );
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_storage(
-            crate::engine::api::profiling::OwnedStorageEvent::HotRelease {
-                heap_root: matches!(value, JsValue::Object(_) | JsValue::Symbol(_)),
-            },
-        );
-        let old = std::mem::replace(value, JsValue::Undefined);
-        self.release_jsvalue(old)
     }
 }
 
@@ -514,7 +491,8 @@ mod tests {
         };
         let code = runtime.snapshot_function_bytecode(&bytecode).unwrap();
         let key = code
-            .code
+            .exec
+            .test_ir()
             .iter()
             .find_map(|op| match op {
                 Instruction::GetField(index) => Some(*index),

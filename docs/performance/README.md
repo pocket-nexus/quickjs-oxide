@@ -1,5 +1,11 @@
 # Safe Rust 性能改善：已完成候选与测量入口
 
+> 当前执行架构（2026-09-27）：本工作树从 `f879c351` 原地替换了旧
+> `FusionPlan` 和 `vm/run`，发布后的函数使用唯一 `ExecCode` 字流，
+> `vm/execute.rs` 是唯一解释循环。下方各轮候选、接口和成绩都是历史
+> 收据，不代表这次重写的性能。新架构的正确性与性能裁决见
+> [VM 重写收据](receipts/vm-rewrite-2026-09-27/README.md)。
+
 > 本轮进展（2026-09-26，受测产品 `ae81f090`）：继续优化普通自有属性读取、materialized 数组读取、发布 local 初始化事实与标量帧清理，见[实现、逐片与累计证据](receipts/shared-paths-2026-09-26/README.md)。相对 main 同引擎代码基线，固定工作量 combined 指令 −13.24%；其中包含此前收益。新增属性片使 DeltaBlue/Splay 指令 −8.00%/−5.37%，新增数组片使 Crypto 再 −12.79%；调用片尚未证明整体加速。2,167 项 profiling 库测试及 Clippy 通过。四批八 isolated 加 combined 测量共约 8 分 16 秒；耗时仍标受干扰，非原版 V8 Score。
 
 后续优化先按[优化与 Profile 原则](principles.md)判断方向、候选和阶段性回退。当前仓库仍允许以性能证据推动跨模块执行架构改造；下方记录的历史候选、范围和门槛不限制新方案。

@@ -10,7 +10,7 @@ pub(crate) enum CompilePhase {
     Resolution,
     Lowering,
     Blocks,
-    Fusion,
+    Encode,
     Relocation,
     Publish,
 }
@@ -22,7 +22,7 @@ impl CompilePhase {
             Self::Resolution => &mut costs.resolution,
             Self::Lowering => &mut costs.lowering,
             Self::Blocks => &mut costs.blocks,
-            Self::Fusion => &mut costs.fusion,
+            Self::Encode => &mut costs.encode,
             Self::Relocation => &mut costs.relocation,
             Self::Publish => &mut costs.publish,
         }
@@ -223,13 +223,13 @@ mod tests {
         let outer = CostProfile::start();
         let mut parent = PhaseTimer::start(CompilePhase::Parse);
         let inner = CostProfile::start();
-        let mut child = PhaseTimer::start(CompilePhase::Fusion);
+        let mut child = PhaseTimer::start(CompilePhase::Encode);
         child.0.take().unwrap().finish(5);
         drop(inner);
         parent.0.take().unwrap().finish(10);
         let costs = outer.snapshot();
         assert_eq!(costs.parse.exclusive_ns, 10);
-        assert_eq!(costs.fusion.attempts, 0);
+        assert_eq!(costs.encode.attempts, 0);
     }
     #[test]
     fn runtime_and_compile_nesting_share_one_exclusive_clock() {

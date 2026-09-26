@@ -10,9 +10,9 @@ pub(crate) use cost::record_call_preparation;
 
 pub(crate) use cost::record_owned_call_storage;
 pub use cost::{
-    CallBufferCost, CallPreparationCost, CallsiteCost, CostProfile, CostSnapshot, FunctionSiteKey,
-    FusionDispatchCost, FusionSiteCost, FusionSiteKey, FusionStaticCost, OwnedStorageCost,
-    PhaseCost, SiteKey, VmPhaseCost,
+    CallBufferCost, CallPreparationCost, CallsiteCost, CostProfile, CostSnapshot,
+    ExecutionDispatchCost, ExecutionSiteCost, ExecutionSiteKey, ExecutionStaticCost,
+    FunctionSiteKey, OwnedStorageCost, PhaseCost, SiteKey, VmPhaseCost,
 };
 pub(crate) use cost::{
     CompilePhase, PhaseTimer, VmCallSample, cost_profile_active, record_compiler_storage,
@@ -228,7 +228,8 @@ pub(crate) use cost::{
 };
 #[cfg(feature = "profiling")]
 pub(crate) use cost::{
-    record_callsite_callee, record_fusion_dispatch, record_fusion_outcome, record_fusion_static,
+    record_callsite_callee, record_execution_dispatch, record_execution_outcome,
+    record_execution_static,
 };
 
 #[cfg(test)]

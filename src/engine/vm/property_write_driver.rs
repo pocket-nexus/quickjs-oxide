@@ -81,7 +81,7 @@ pub(super) fn write_progress(
     let (base, value, discarded_key) = {
         // Key conversion has completed; authenticate this no-callback owner
         // transfer once and end the borrow before entering object storage.
-        let mut slots = execution.slots.run_window(&mut parent.window)?;
+        let mut slots = execution.slots.borrow_frame_slots(&mut parent.window)?;
         slots.peek(if static_key.is_none() { 2 } else { 1 })?;
         let value = slots.pop()?;
         let discarded_key = if static_key.is_none() {

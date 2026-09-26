@@ -197,10 +197,7 @@ fn prepare_and_enter(
                         .release_jsvalue(discarded)
                         .map_err(runtime_error_to_vm_error)?;
                 }
-                frame.resume_pc = frame
-                    .fault_pc
-                    .checked_add(1)
-                    .ok_or_else(|| Error::internal("eval resume PC overflow"))?;
+                frame.resume_pc = frame.next_pc()?;
                 Ok(())
             })();
             if let Err(error) = cleanup {
@@ -239,10 +236,7 @@ fn prepare_and_enter(
                     .map(CallStep::Complete)
                     .map_err(runtime_error_to_vm_error);
             }
-            frame.resume_pc = frame
-                .fault_pc
-                .checked_add(1)
-                .ok_or_else(|| Error::internal("eval resume PC overflow"))?;
+            frame.resume_pc = frame.next_pc()?;
             Some(BytecodeCallRequest {
                 callable,
                 receiver: invocation.take_this(),
@@ -384,10 +378,7 @@ pub(super) fn apply(
             .map(CallStep::Complete)
             .map_err(runtime_error_to_vm_error);
     }
-    frame.resume_pc = frame
-        .fault_pc
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("apply eval resume PC overflow"))?;
+    frame.resume_pc = frame.next_pc()?;
     let request = BytecodeCallRequest {
         callable,
         receiver: std::mem::replace(&mut owners.receiver, JsValue::Undefined),
@@ -668,7 +659,7 @@ mod capture_tests {
                     &runtime,
                     &mut execution,
                     child_id,
-                    super::super::run::RunExit::Complete,
+                    super::super::execute::VmAction::Complete,
                     Some(Completion::Return(JsValue::Undefined)),
                 )
                 .unwrap();

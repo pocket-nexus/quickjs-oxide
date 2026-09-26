@@ -46,7 +46,7 @@ pub(crate) use execution::HostBoundaryGuard;
 
 mod frame;
 
-mod run;
+mod execute;
 
 mod stack;
 
@@ -102,5 +102,3 @@ mod property_write_driver;
 mod super_property_driver;
 
 mod predicate_driver;
-
-mod method_arguments;
