@@ -144,7 +144,7 @@ B2.2 的旧上界实验只把 `prop_read` 从 752→632 指令／轮（约 1.19 
 3. computed assignment 包含 Insert3/PutArrayEl；写跨度要保住原栈契约、尾部 Drop 和 run 的 property_generation 更新，不能仅写 heap 后跳 PC。
 4. 数组 canonical 叶仍做 release-readiness 与可变 Runtime 借用；新 Number-only 读明确使用短期共享借用，不能把通用事务包进新 API。
 
-[冻结规格](numeric-array-spans.md) §8 给出固定源码链接；13 种序列及栈代数来自这些规则。对 pin 上游源码另核对：project 实际使用 `u[++nextValue]` 等前缀更新，advect 的原顺序是 `d0[i0 + row1]`，不能以等价手写表达式冒充原始程序。
+[当时实施规格](numeric-array-spans.md) §8 给出固定源码链接；13 种序列及栈代数来自这些规则。对 pin 上游源码另核对：project 实际使用 `u[++nextValue]` 等前缀更新，advect 的原顺序是 `d0[i0 + row1]`，不能以等价手写表达式冒充原始程序。
 
 最初整理本文时尚无 Rust 编译或真实函数 PC。后续已用[捕获入口](probes/run_dump.py)和[test-only 探针](probes/dump_numeric_spans.rs)取得[发布覆盖总结](receipts/all-dense-6db6bfb0/README.md)，并完成[四方 V8 与 profile 总结](receipts/fourway-2026-09-25/README.md)。生成文件只保留在本机测量目录，不作为 PR 附件。
 

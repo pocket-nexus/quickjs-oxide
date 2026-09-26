@@ -127,13 +127,13 @@ RSS 的复核线为 `max(3%, 1 MiB)`，编译／首次执行复核线为 3%；�
 
 两轮有明确归因的候选调整仍达不到自身门槛：撤销该候选及仅为它新增的状态／入口，保留测试、配方和负结果报告。新形态、错误载体、数组写、调用缓存分别提交，便于逐项撤回。不合入长期默认关闭、但仍增加维护和布局成本的失败框架。
 
-## 5.1 B0 发布后 canonical 捕获（设计已冻结）
+## 5.1 当次 B0 发布后 canonical 捕获协议
 
 执行 [run_dump.py](probes/run_dump.py)，参数与完整路径见 [跨度规格](numeric-array-spans.md) §2。它只在新建 detached worktree 添加 ignored test 模块，不修改原工作区或产品 API；外部 checkout 必须是本协议的完整 pin，两份源文件 blob 必须未改。输出目录必须新建且在两个仓库之外。
 
 回执须包含解析后的完整 engine SHA、benchmark SHA、Rust/Cargo 版本、probe/runner/source SHA-256、诊断 patch、精确命令、退出码及原始 cargo.log。每个函数的发布后全部 OP 行保留 PC、stack contract 与控制流目标；am3/project/lin_solve/advect 必须各出现一次。零匹配测试、缺文件、编译失败或目标不全一律失败，不将 “0 tests passed” 当作完成。
 
-捕获后用生产 `FusionPlan` matcher 输出真实 site manifest，对照 flags 1–13，包含所有 slot/constant 编号和每站点拒绝原因。固定模板是实施规范，不是对未知真实 PC 的预先断言。动态覆盖和正式 Score 仍在独立运行中测量，不能使用这个 compile-only 诊断产物报性能。
+捕获后用当次生产 `FusionPlan` matcher 输出真实 site manifest，对照 flags 1–13，包含所有 slot/constant 编号和每站点拒绝原因。固定模板定义了该候选的匹配规则，不是对未知真实 PC 的预先断言，也不限制后续方案重新选取形态。动态覆盖和正式 Score 仍在独立运行中测量，不能使用这个 compile-only 诊断产物报性能。
 
 后续实施已用 Rust 1.94.1 完成四函数 capture；[完整 manifest 与回执](receipts/all-dense-6db6bfb0/README.md)记录 25 个已发布站点。本段以上保留探针本身的执行契约。
 

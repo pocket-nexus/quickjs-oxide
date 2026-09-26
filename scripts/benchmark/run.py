@@ -312,6 +312,10 @@ def main():
             for iteration in range(args.repeat):
                 order = list(engines) if iteration % 2 == 0 else list(reversed(engines))
                 for name in order:
+                    if digest(workload["path"]) != workload["sha256"]:
+                        raise ValueError(f"workload changed during measurement: {workload['case']}")
+                    if digest(engines[name]) != metadata["engines"][name]["sha256"]:
+                        raise ValueError(f"engine changed during measurement: {name}")
                     prefix = output / "raw" / f"{workload['case']}-{name}-{iteration}"
                     command = [str(engines[name]), workload["path"], *workload["args"]]
                     sample = run_sample(command, output, prefix, args.timeout)

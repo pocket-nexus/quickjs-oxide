@@ -1,21 +1,21 @@
-# 数值／数组跨度：冻结的实施规格 v1
+# 数值／数组跨度：已完成候选的实施规格 v1
 
 > 设计基线：`6f09205c51f8b34e3c7a90ce406739fe1dd07c48`（PR #6，生产源码与 R0 `f531f605` 相同）。
-> 本文取代 implementation.md 原 B0–B7 中“再选形态／意向接口”的部分。白名单、签名、接线位置和提交协议在此冻结；当前生产代码已实现全部 13 种形态，性能门禁尚未裁决。
+> 本文记录 #42 候选实施时采用的白名单、签名、接线位置和提交协议；当前生产代码已实现全部 13 种形态。这些约束用于解释和复核该候选，不是后续优化的永久架构边界。新的覆盖与成本证据可以改变内部表示、接口和执行入口，但必须保持可观察的 JS 语义、所有权与错误顺序，并重新验证新方案。
 > 已用 Rust 1.94.1 编译完整真实内核并取得四个目标函数的[发布后 dump 与 25 个站点 manifest](receipts/all-dense-6db6bfb0/README.md)。下面的符号序列仍是匹配器规范／源码推导，真实 PC 以 manifest 为准。静态站点不是动态覆盖或性能验收。
 
-## 1. 已确定的产品边界
+## 1. 该候选的实施边界
 
-不重写 `Instruction`，不修改 canonical 指令、PC、异常表或恢复 ABI；`FusionPlan` 保持 `Option<Rc<[u8]>>`。只新增下表 13 种短跨度，最长 9 条。不引入每 PC descriptor、可变 QuickOp、通用 register IR、TOS facade 或 adaptive counter。
+该候选没有重写 `Instruction`、canonical 指令、PC、异常表或恢复 ABI；`FusionPlan` 保持 `Option<Rc<[u8]>>`。它只新增下表 13 种短跨度，最长 9 条，没有引入每 PC descriptor、可变 QuickOp、通用 register IR、TOS facade 或 adaptive counter。这是当次对照实验的范围，不预先排除后续方案。
 
-P2 实施 R0–R3；P3 实施 R4、A0–A3；P4 实施 W0–W3。这些是冻结的白名单，不是待实现者自由选择的方向。四函数里 A0–A3、W2、W3 静态站点为零，已记录而未擅自扩大语法；增加形态必须独立改规格、测试和 A/B。`this`、closure/global producer 本版明确不支持；B4 只记录其覆盖缺口，不安排未设计的 captured 写入。
+P2 实施 R0–R3；P3 实施 R4、A0–A3；P4 实施 W0–W3。这是该候选的白名单。四函数里 A0–A3、W2、W3 静态站点为零，已记录而未在当次实验扩大语法；后续增加形态需要新的规格、测试和 A/B。`this`、closure/global producer 在该候选中未支持；B4 当时只记录其覆盖缺口。
 
 ### 1.1 Operand 的精确定义
 
 | 记号 | 允许的 canonical 指令 | 发布期要求 | 运行期要求 |
 | --- | --- | --- | --- |
 | `L(x)` | `GetLocal(x)` 或 `GetLocalCheck(x)` | x 在 locals 内，`kind == Normal` | `FrameBinding::Direct`，拒绝 Captured/Uninitialized/空槽 |
-| `P(x)` | `GetArg(x)` | 原发布验证器负责参数索引合法性 | 同样为 Direct；不能绕过现有 captured 参数臂 |
+| `P(x)` | `GetArg(x)` | 编译器绑定解析产生参数索引；matcher 不单独证明其范围 | 同样为 Direct，按实际帧窗口检查范围；不能绕过现有 captured 参数臂 |
 | `B(x)` | `L(x)` 或 `P(x)` | 同上 | 值为当前 Runtime 的 Object，进一步要求普通 dense Array |
 | `K` | `PushI32(v)`；或 `PushConst(k)` 且 constants[k] 为 `Value(Int/Float)` | 常量索引及数值种类已验证 | 读取原 Int/Float 表示，不将 String/BigInt 当 Number |
 | `N` | `L(x)`、`P(x)` 或 `K` | 同上 | `Number::Int/Float`；不做 ToPrimitive/ToNumber |
@@ -30,7 +30,7 @@ P2 实施 R0–R3；P3 实施 R4、A0–A3；P4 实施 W0–W3。这些是冻结
 
 本版不接受 `GetVarRef/GetVarRefCheck/PushThis/GetVar/GetField` 作为 producer，不跨 `Nop` 扫描，不包含 Call、getter、Proxy、ToPropKey、branch、catch、yield、await。`GetArrayEl2` 不在白名单；`GetArrayEl3` 仅允许 W3 的固定位置。
 
-### 1.2 冻结的 flags、长度和栈契约
+### 1.2 该候选的 flags、长度和栈契约
 
 S 是进入首 PC 时已有的操作数前缀，下表不会读取或修改 S。peak 是 canonical 相对 S 的最高额外深度，不能只检查融合后净增长。
 
@@ -84,7 +84,7 @@ python3 docs/performance/probes/run_dump.py \
 
 探针已完成 Rust 编译和真实运行；[覆盖总结](receipts/all-dense-6db6bfb0/README.md)记录四个目标函数的 flag、首末 PC 和拒绝分类。完整生成 dump 与 manifest 保留在本机测量目录，不提交到 PR。manifest 原始字段包括 source/function path、canonical 首末 PC、flag、slot/constant 编号、每条 opcode、peak/delta；不得由 JS 正则推算。
 
-**B0 不再承担选设计的工作。**它验证上述冻结设计在真实输入上的实际覆盖；不匹配就报告具体断点并停止扩大，不把“先 dump 再决定 API”重新留给下一位实现者。
+**该候选的 B0 用于核对已选设计的真实覆盖。**这个顺序只描述当次实施；后续方案应允许发布后 dump、动态覆盖和性能测量推翻候选形态与 API，不应把验证降为固定规格的验收。
 
 ## 3. 类型与 API：完整声明及所有权
 
@@ -371,8 +371,8 @@ read/acc/update 的所有 mutable slot 操作都在唯一 commit 内；W 的唯�
 - [现有数组叶路径](https://github.com/Eric-Song-Nop/quickjs-oxide/blob/6f09205c51f8b34e3c7a90ce406739fe1dd07c48/src/engine/object/ordinary_storage.rs)、[dense 前缀存储](https://github.com/Eric-Song-Nop/quickjs-oxide/blob/6f09205c51f8b34e3c7a90ce406739fe1dd07c48/src/engine/heap/object_storage.rs)、[run 接线](https://github.com/Eric-Song-Nop/quickjs-oxide/blob/6f09205c51f8b34e3c7a90ce406739fe1dd07c48/src/engine/vm/run.rs)。
 - [完整 Crypto 源码](https://github.com/ahaoboy/js-engine-benchmark/blob/2034d98fc8c5f8044e186267593f5d5ea5232caf/v8-v7/crypto.js)、[完整 NavierStokes 源码](https://github.com/ahaoboy/js-engine-benchmark/blob/2034d98fc8c5f8044e186267593f5d5ea5232caf/v8-v7/navier-stokes.js)。尤其 project 使用的是前缀索引更新，不应把等价手写 `row±1` 当原始语料。
 
-### 本次设计验证与剩余实测
+### 设计时验证记录与实施结果
 
-已核对源代码接口、符号序列的发射规则、flags 冲突、13 行独立栈代数和父 PR 身份。Python runner 通过语法／help 检查，以及模拟编译器的完整输出、零匹配、缺目标、编译失败四种工作流测试；四种均检查临时 worktree 清理和原工作区不变。这不是生产 stack_contract 测试或真实 Rust capture；Rust 探针只做源码 API 对照。本环境无 cargo/rustc，未执行 probe、Rust signature compile、Test262、性能或完整四函数 dump。
+最初设计稿核对了源代码接口、符号序列的发射规则、flags 冲突、13 行独立栈代数和父 PR 身份。Python runner 当时通过语法／help 检查，以及模拟编译器的完整输出、零匹配、缺目标、编译失败四种工作流测试；这些只是设计阶段证据。随后完成的真实 Rust capture、四函数 manifest、Test262 和性能测量分别见[发布后收据](receipts/all-dense-6db6bfb0/README.md)与[四方测量收据](receipts/fourway-2026-09-25/README.md)。
 
-因此本版关闭的是“白名单／API／函数级改造待决定”，不是把不存在的运行结果填进计划。真实 dump、生产 matcher manifest、签名编译测试和每片 A/B 仍是精确、可执行的验收工件；不得以本文档替代这些工件。
+本文记录这个已完成候选的设计与验证身份。后续优化须用新的真实负载证据决定实现形态；本规格不能代替新方案的测试和测量。

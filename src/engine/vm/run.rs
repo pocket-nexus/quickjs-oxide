@@ -3,6 +3,7 @@
 
 use crate::engine::api::error::Error;
 use crate::engine::code::bytecode::Instruction;
+use crate::engine::code::fusion::DirectSlot;
 use crate::engine::heap::{BytecodeConstant, RawValue, SlotReleaseReadiness};
 use crate::engine::value::JsValue;
 use crate::engine::value::number::operations::Number;
@@ -309,6 +310,36 @@ fn release_displaced(
 /// the same readiness/publication discipline as objects and symbols.
 fn primitive_release_owner(value: &JsValue) -> bool {
     immediate(value)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DirectWriteClass {
+    Number,
+    Ready,
+    NeedsBoundary,
+    Other,
+}
+
+#[inline]
+fn direct_write_class(
+    runtime: &crate::engine::api::runtime::Runtime,
+    binding: &FrameBinding,
+) -> Result<DirectWriteClass, Error> {
+    match binding {
+        FrameBinding::Direct(JsValue::Int(_) | JsValue::Float(_)) => Ok(DirectWriteClass::Number),
+        FrameBinding::Direct(old) => {
+            if runtime
+                .slot_value_release_readiness_jsvalue(old)
+                .map_err(runtime_error_to_vm_error)?
+                == SlotReleaseReadiness::Ready
+            {
+                Ok(DirectWriteClass::Ready)
+            } else {
+                Ok(DirectWriteClass::NeedsBoundary)
+            }
+        }
+        _ => Ok(DirectWriteClass::Other),
+    }
 }
 
 /// Fused "binding read + linked field read": complete the following GetField
@@ -1713,38 +1744,35 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             | Instruction::SetLocal(index)
             | Instruction::PutLocalCheck(index)
             | Instruction::SetLocalCheck(index) => {
-                if matches!(slots.local(*index)?, FrameBinding::Direct(old) if runtime.slot_value_release_readiness_jsvalue(old).map_err(runtime_error_to_vm_error)? == SlotReleaseReadiness::Ready)
+                let keep = matches!(
+                    instruction,
+                    Instruction::SetLocal(_) | Instruction::SetLocalCheck(_)
+                );
+                let write_class = direct_write_class(runtime, slots.local(*index)?)?;
+                if write_class == DirectWriteClass::Number
+                    && slots.store_proven_number_operand(DirectSlot::Local(*index), keep)
                 {
-                    let next = if matches!(
-                        instruction,
-                        Instruction::SetLocal(_) | Instruction::SetLocalCheck(_)
-                    ) {
+                    true
+                } else if matches!(
+                    write_class,
+                    DirectWriteClass::Number | DirectWriteClass::Ready
+                ) {
+                    let next = if keep {
                         copy_value(runtime, slots.peek(0)?)?
                     } else {
                         slots.pop()?
                     };
                     let old = slots.replace_local(*index, FrameBinding::Direct(next))?;
-                    release_displaced(runtime, old)?;
-                    true
-                } else if matches!(slots.local(*index)?, FrameBinding::Direct(old) if primitive_release_owner(old))
-                {
-                    let next = if matches!(
-                        instruction,
-                        Instruction::SetLocal(_) | Instruction::SetLocalCheck(_)
-                    ) {
-                        copy_value(runtime, slots.peek(0)?)?
+                    if write_class == DirectWriteClass::Number {
+                        // The authenticated previous binding is an inline Number.
+                        drop(old);
                     } else {
-                        slots.pop()?
-                    };
-                    let old = slots.replace_local(*index, FrameBinding::Direct(next))?;
-                    drop(old);
+                        release_displaced(runtime, old)?;
+                    }
                     true
-                } else if matches!(slots.local(*index)?, FrameBinding::Direct(_)) {
+                } else if write_class == DirectWriteClass::NeedsBoundary {
                     release_outside_slots!({
-                        let next = if matches!(
-                            instruction,
-                            Instruction::SetLocal(_) | Instruction::SetLocalCheck(_)
-                        ) {
+                        let next = if keep {
                             copy_value(runtime, slots.peek(0)?)?
                         } else {
                             slots.pop()?
@@ -1781,29 +1809,31 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                 }
             }
             Instruction::PutArg(index) | Instruction::SetArg(index) => {
-                if matches!(slots.parameter(*index)?, FrameBinding::Direct(old) if runtime.slot_value_release_readiness_jsvalue(old).map_err(runtime_error_to_vm_error)? == SlotReleaseReadiness::Ready)
+                let keep = matches!(instruction, Instruction::SetArg(_));
+                let write_class = direct_write_class(runtime, slots.parameter(*index)?)?;
+                if write_class == DirectWriteClass::Number
+                    && slots.store_proven_number_operand(DirectSlot::Argument(*index), keep)
                 {
-                    let next = if matches!(instruction, Instruction::SetArg(_)) {
+                    true
+                } else if matches!(
+                    write_class,
+                    DirectWriteClass::Number | DirectWriteClass::Ready
+                ) {
+                    let next = if keep {
                         copy_value(runtime, slots.peek(0)?)?
                     } else {
                         slots.pop()?
                     };
                     let old = slots.replace_parameter(*index, FrameBinding::Direct(next))?;
-                    release_displaced(runtime, old)?;
-                    true
-                } else if matches!(slots.parameter(*index)?, FrameBinding::Direct(old) if primitive_release_owner(old))
-                {
-                    let next = if matches!(instruction, Instruction::SetArg(_)) {
-                        copy_value(runtime, slots.peek(0)?)?
+                    if write_class == DirectWriteClass::Number {
+                        drop(old);
                     } else {
-                        slots.pop()?
-                    };
-                    let old = slots.replace_parameter(*index, FrameBinding::Direct(next))?;
-                    drop(old);
+                        release_displaced(runtime, old)?;
+                    }
                     true
-                } else if matches!(slots.parameter(*index)?, FrameBinding::Direct(_)) {
+                } else if write_class == DirectWriteClass::NeedsBoundary {
                     release_outside_slots!({
-                        let next = if matches!(instruction, Instruction::SetArg(_)) {
+                        let next = if keep {
                             copy_value(runtime, slots.peek(0)?)?
                         } else {
                             slots.pop()?

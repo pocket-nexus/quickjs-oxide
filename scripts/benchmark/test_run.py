@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 spec = importlib.util.spec_from_file_location("benchmark_run", Path(__file__).with_name("run.py"))
 runner = importlib.util.module_from_spec(spec)
@@ -55,6 +56,43 @@ class Results(unittest.TestCase):
             self.assertTrue(result["timed_out"])
             self.assertNotEqual(result["exit_code"], 0)
             self.assertIn("started", prefix.with_suffix(".stdout").read_text())
+
+    def test_changed_inputs_abort_before_next_sample(self):
+        for changed in ("workload", "engine"):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                workload_path = root / "workload.js"
+                workload_path.write_text("// frozen workload\n")
+                engine_path = root / "engine"
+                engine_path.write_text("frozen engine\n")
+                engine_path.chmod(0o755)
+                workload = {"case": "empty_loop", "path": str(workload_path), "args": [],
+                            "sha256": runner.digest(workload_path), "expected": ["empty_loop"]}
+                engine_sha256 = runner.digest(engine_path)
+                calls = []
+
+                def fake_sample(command, cwd, prefix, timeout):
+                    calls.append(command)
+                    stdout = prefix.with_suffix(".stdout")
+                    stderr = prefix.with_suffix(".stderr")
+                    stdout.write_text("__oxide_clock__:Date.now\nempty_loop 1 1\n")
+                    stderr.write_text("")
+                    path = workload_path if changed == "workload" else engine_path
+                    path.write_bytes(path.read_bytes() + b"changed\n")
+                    return {"command": command, "exit_code": 0, "timed_out": False,
+                            "process_wall_ns": 1, "stdout": str(stdout), "stderr": str(stderr)}
+
+                argv = ["run.py", "--suite", "microbench", "--source", str(workload_path),
+                        "--engine", f"candidate={engine_path}", "--repeat", "2",
+                        "--output", str(root / "results")]
+                with mock.patch.object(sys, "argv", argv), \
+                     mock.patch.object(runner, "prepare_microbench", return_value=([workload], {})), \
+                     mock.patch.object(runner, "machine_metadata", return_value={}), \
+                     mock.patch.object(runner, "binary_metadata", return_value={"sha256": engine_sha256}), \
+                     mock.patch.object(runner, "run_sample", side_effect=fake_sample):
+                    with self.assertRaisesRegex(ValueError, f"{changed} changed during measurement"):
+                        runner.main()
+                self.assertEqual(len(calls), 1)
 
 
 if __name__ == "__main__":

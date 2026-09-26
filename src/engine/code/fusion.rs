@@ -1,4 +1,7 @@
-//! Authenticated execution spans over canonical, verified instruction PCs.
+//! Authenticated execution spans over canonical instruction PCs. Compiler
+//! lowering verifies stack flow; publication checks selected metadata, while
+//! the matcher itself checks each span's shape, stack contract and interior
+//! control-flow entries. Internal drafts have no general publication verifier.
 //!
 //! The published bytecode and its source/relocation tables are never rewritten.
 //! A span is entered only at its first instruction, contains no external entry,
