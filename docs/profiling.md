@@ -123,6 +123,32 @@ are described below; total call allocations, total retain/release activity and
 compiler peak memory remain unavailable.
 Without the `profiling` feature, compiler and interpreter hooks are compiled out.
 
+### 普通调用分段抽样
+
+`bytecode.prepare` 只覆盖通用／owned 参数准备，不能代表普通直接调用。
+直接入口按伪随机序列约抽取 1/64 的调用，同一次入口的子阶段共享抽样决定，
+重入退出后恢复外层决定。`owned_execution_events["direct_timing.calls"]` 和
+`owned_execution_events["direct_timing.sampled_calls"]` 是实际观察到的全量入口数及被选入口数。
+`vm_phases` 中带 `.sampled` 后缀的 attempts 和纳秒总量只包含抽中阶段，
+不能当作所有调用的总耗时；每阶段最多保留 4096 对原始纳秒样本，
+超出部分仍累计 attempts 和时间，并增加 omitted_samples。
+
+| 阶段 | 覆盖范围 |
+| --- | --- |
+| `direct.prepare.sampled` | 直接入口内的选择、验证和认证；也可能选择 General／Native 或提前失败。 |
+| `direct.select.sampled` | 根据当前 callee 选择入口。 |
+| `ordinary.validate.sampled` | 普通调用操作数窗口和参数分类。 |
+| `ordinary.authenticate.sampled` | 普通 callee 认证，包含缓存命中检查。 |
+| `ordinary.install.sampled` | 普通帧安装。 |
+| `ordinary.install.slots.sampled` | 安装内部的操作数／局部变量窗口准备，是 install 的子阶段。 |
+
+准备、认证和安装的适用路径不同，attempts 不能直接互作分母。
+上述阶段不覆盖进入直接入口之前的派发，也不完整覆盖准备与安装之间的工作；
+不得相加后称为“完整调用成本”，不得与 plain 总耗时直接相除得到收益上界。
+抽样仍会扰动代码和被抽中调用，用于定位候选，性能准入使用 plain A/A 与 A/B。
+`ordinary_install.method/function` 与 `ordinary_install.args0/args1/args2/args3/args4plus`
+是全量安装事件，分别提供接收者形式和参数数量分布。
+
 ### 候选跨度与调用点逻辑诊断
 
 `oxide-compile-vm-cost-v1.fusion_diagnostics` 是逻辑事件计数，不采样耗时。

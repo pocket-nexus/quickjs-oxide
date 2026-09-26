@@ -282,9 +282,28 @@ impl OrdinaryCall {
         checked: crate::engine::vm::stack::CheckedOrdinaryCallOperands,
         tail: bool,
     ) -> Result<(), Error> {
+        #[cfg(feature = "profiling")]
+        let _timer =
+            crate::engine::api::profiling::PhaseTimer::start_vm_sampled("ordinary.install.sampled");
         use crate::engine::vm::frame::{Frame, ReturnOwner, ReturnTarget, ReturnValue};
         let count = checked.count();
         let method = checked.method();
+        #[cfg(feature = "profiling")]
+        {
+            use crate::engine::api::profiling::record_owned_execution_event as record;
+            record(if method {
+                "ordinary_install.method"
+            } else {
+                "ordinary_install.function"
+            });
+            record(match count {
+                0 => "ordinary_install.args0",
+                1 => "ordinary_install.args1",
+                2 => "ordinary_install.args2",
+                3 => "ordinary_install.args3",
+                _ => "ordinary_install.args4plus",
+            });
+        }
         let depth = execution.frames.depth() + 1;
         execution.call_storage.reserve_depth(depth)?;
         let frame = execution.frames.current_mut(parent)?;
@@ -311,15 +330,21 @@ impl OrdinaryCall {
         let prepared = execution.frames.prepare_push()?;
         let mut prepared = prepared;
         let frame = prepared.current_mut(parent)?;
-        let window = execution.slots.push_ordinary_frame(
-            runtime,
-            &self.executable.frame_layout(),
-            &mut frame.window,
-            checked,
-            &self.function,
-            self.executable.metadata.function_name_local,
-            self.executable.observes_arguments,
-        )?;
+        let window = {
+            #[cfg(feature = "profiling")]
+            let _timer = crate::engine::api::profiling::PhaseTimer::start_vm_sampled(
+                "ordinary.install.slots.sampled",
+            );
+            execution.slots.push_ordinary_frame(
+                runtime,
+                &self.executable.frame_layout(),
+                &mut frame.window,
+                checked,
+                &self.function,
+                self.executable.metadata.function_name_local,
+                self.executable.observes_arguments,
+            )?
+        };
         frame.resume_pc = resume;
         let (mut cold, frame_bytes) = execution.call_storage.vacant(caller_realm);
         cold.return_to = Some(ReturnTarget {

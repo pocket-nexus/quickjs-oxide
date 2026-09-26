@@ -66,7 +66,7 @@ sha256sum "$OUT"/micro/*.js > "$OUT/micro.sha256"
 
 对新增热路径入口的候选，优先保留 Base、Entry-only、Full 三种构建或等价的可解释对照。Entry-only 保留新入口／候选发现但不执行专用提交，用来观察准入与 codegen 税；Full 真正删除 canonical 工作。若方案是替换现有路径而非新增入口，应说明怎样测静态不适用和自然未命中成本，不必为满足这三个名称而增加产品代码。对照不是纯净的因果分解：编译器可能因永不命中而删代码或改变内联，因此须核对相关版本的反汇编。必要时增加 Full 二进制上的自然命中／自然未命中配对负载，不能凭几个总数就断言某一机制成本。
 
-固定诊断使用完全一致的工作量。先测同二进制 A/A，再用交错 ABBA／BAAB 顺序测 A/B；`run.py` 和 `fixed.py` 的 `--order abba-baab` 可复现完整交替块（`--repeat` 为 4 的倍数），默认顺序保留旧行为。至少两次独立串行测量轮，每轮至少五个独立进程样本。保留原始样本和顺序，不只存中位数。能取得退休指令计数时，确定性差异也要调查，不把其变化与 wall 调度噪声混为一谈。
+固定诊断使用完全一致的工作量。先测同二进制 A/A，再用交错 ABBA／BAAB 顺序测 A/B；`run.py` 和 `fixed.py` 的 `--order abba-baab` 可复现完整交替块（`--repeat` 为 4 的倍数），默认顺序保留旧行为。保留原始样本和顺序，不只存中位数。能取得退休指令计数时，确定性差异也要调查，不把其变化与 wall 调度噪声混为一谈。旧协议的“至少两轮、每轮每侧至少五个独立进程”适用于要求正式准入裁决的完整复核，**不是每次实现迭代的启动条件**；短轮若 A/A 分辨率不足，时间变化保持未裁决。
 
 ```sh
 # Linux perf 的单次示例；CPU 必须选主机允许的核，其他平台按可用工具记录等价事件。
@@ -87,20 +87,11 @@ python3 scripts/benchmark/fixed.py --manifest "$FIXED_MANIFEST" \
 
 退休指令只数真正退休的指令，不包含错误预测后丢弃的执行。`cache-references` 的具体事件依 CPU，不能翻译成全部内存访问或几百倍命中率差。cycles、绝对 branch-misses／操作、CPU 支持的前端／错误推测／后端指标分开报告；多路复用或不支持的计数器明确标注。不能单凭 miss rate 上升判断退化。没有可用计数器时，同机 A/A 可分辨的 wall 与正式 V8 Score 仍可裁决运行时间方向；退休指令、cycles 和缓存／预测归因保持“未测”，不得声称指令门禁已通过或旧指令债务已清偿。A/A 无法分辨的小幅时间变化同样保持“未裁决”。
 
-正式 v8-v7 保持原本 benchmark body、warmup、计时、断言和 Score 计算，不为固定工作量修改后还称其原版分数。它按时间窗口增加迭代，变快可以导致整个进程退休指令更多；因此正式运行不能直接比较总 instructions。固定工作量克隆只作诊断，必须单独标名并保留相同计算／校验。
+正式 v8-v7 保持原本 benchmark body、warmup、计时、断言和 Score 计算，不为固定工作量修改后还称其原版分数。它按时间窗口增加迭代，变快可以导致整个进程退休指令更多；因此正式运行不能直接比较总 instructions。
 
-```sh
-# SOURCE 是仓库外、checkout 到上文完整 pin 的干净上游目录。
-# BASE_BIN 与 NEW_BIN 都指向各自 plain release，且有配套 receipt。
-python3 scripts/benchmark/run.py --suite v8-v7 --source "$SOURCE" \
-  --engine base="$BASE_BIN" --engine candidate="$NEW_BIN" \
-  --repeat 8 --order abba-baab --timeout 3600 --output "$OUT/v8-isolated"
-python3 scripts/benchmark/run.py --suite v8-v7 --source "$SOURCE" \
-  --engine base="$BASE_BIN" --engine candidate="$NEW_BIN" \
-  --case all --repeat 8 --order abba-baab --timeout 3600 --output "$OUT/v8-combined"
-```
+开发迭代可用 [`iterate_v8.py`](../../scripts/benchmark/README.md#bounded-fixed-iteration-v8-comparison) 对 pinned 原始 body 做八项 isolated 与一项 combined 固定工作量对照。每个进程只加载一次上游 `base.js`，保留其中确定性的 `Math.random` 初始化；该 pin 没有独立 `ResetRNG` 方法。每个原始 Benchmark 执行一次 `Setup`、默认零次固定 warmup、冻结的 `run` 次数、一次 `TearDown`，原有内部校验照常执行。先用 baseline pilot 按子项校准，再冻结源码、driver、生成 JS hash 和运行次数；后续比较以 `--plan` 重放完全相同的工作量，不随候选快慢重新校准。A/A 和 A/B 依冻结的完整 ABBA-BAAB 块运行，预算不足可降为每侧两次的 ABBA。**单次调用**的 pilot、冻结与两类对照共用默认 600 秒硬截止；超时或未完成仍保留原始样本，不能输出总体指标。它报告的是固定迭代整进程时间及可用硬件计数器，不是原版自适应 V8 Score；并不保证任意机器在十分钟内完成。已知同机干扰要在收据中标注，脚本的机器快照不能证明环境空载；落在本轮 A/A 波动内的小变化标“未裁决”，不据此强制接受或撤销候选。
 
-两个输出目录运行前必须不存在。该工具默认 isolated 覆盖全部八项；失败、超时、漏分、被 error callback 吞掉的失败均使该组无效。超时只是一项预先冻结的资源上限，不允许静默删去慢项。受控计时可在外层绑定整个 runner；不得让两个完整套件并发运行。
+仅在准备发布原版 V8 Score 或声称达到总分目标时，另行规划 [`run.py`](../../scripts/benchmark/README.md#external-v8-v7-suite) 的完整 isolated 与 combined 配对复核及资源上限。该工具默认 isolated 覆盖全部八项；失败、超时、漏分、被 error callback 吞掉的失败均使该组无效。不能删去慢项、以短轮固定工作量比冒充 Score，或让两个完整套件并发运行。最终复核的重复次数与超时须在采样前固定并随原始结果保存，不要求每个研发切片重复小时级长跑。
 
 ## 4. 成本与覆盖报告
 
@@ -127,7 +118,7 @@ python3 scripts/benchmark/run.py --suite v8-v7 --source "$SOURCE" \
 
 **性能硬门：** 每片及阶段累计均比较相同固定矩阵。BigInt32/64/256、已特化数值／属性循环、数组读写、call0、字符串簇、类型／TDZ异常负载，已测得的确定性退休指令增长 >2% 必须阻断默认开启并归因／回退；不能称“每片 <2%”就忽略累计 >2%。没有计数器则该项未测，不能写成通过。时间类在 A/A 可分辨后出现 >2% 稳定退化也阻断；A/A 与候选差值同量级时保持未裁决，不能按中位数方向伪装通过。
 
-真实 V8 同时检查各子项和两种总分；任一子项稳定下降 >2% 必须处理，不用总分掩盖。P2 的 −30% 微指令／+3% 对应真实子分数是继续扩大投入的门槛，不是接受其他项回退的交换条件。
+正式原版 V8 准入同时检查各子项和两种总分；任一子项稳定下降 >2% 必须处理，不用总分掩盖。短轮固定迭代的几何平均与 combined 时间比只用于定位和筛选，不是这两种 Score。P2 的 −30% 微指令／+3% 对应真实子分数是继续扩大投入的历史门槛，不是接受其他项回退的交换条件。
 
 RSS 的复核线为 `max(3%, 1 MiB)`，编译／首次执行复核线为 3%；超过后必须证明来源并回收，未裁决不默认开启。零候选函数不应承担按 PC 的新增执行数组。#41 的额外错误分配需单独披露成本，即使未触及 RSS 线也不能省略。
 

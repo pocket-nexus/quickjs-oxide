@@ -169,6 +169,55 @@ and callsite entry counts, and any diagnostic omissions. The CLI's callsite
 scope covers selected ordinary driver entry only; it excludes other call and
 construct paths, so a zero count is not evidence that JavaScript did no calls.
 
+### Bounded fixed-iteration V8 comparison
+
+For implementation rounds, `iterate_v8.py` compares the eight pinned bodies
+separately and as one combined program. It uses **plain release** binaries with
+matching build configuration and receipts. The output must be a new directory
+outside both repositories:
+
+```sh
+python3 scripts/benchmark/iterate_v8.py \
+  --source ../js-engine-benchmark \
+  --baseline /absolute/baseline/release/qjs \
+  --candidate /absolute/candidate/release/qjs \
+  --darwin-counters --output /tmp/oxide-v8-iteration-1
+
+# Compare another pair against exactly the same generated work and run counts.
+python3 scripts/benchmark/iterate_v8.py \
+  --source ../js-engine-benchmark \
+  --baseline /absolute/other-baseline/release/qjs \
+  --candidate /absolute/other-candidate/release/qjs \
+  --plan /tmp/oxide-v8-iteration-1/freeze-plan.json \
+  --darwin-counters --output /tmp/oxide-v8-iteration-2
+```
+
+One invocation gives the baseline one pilot of each isolated suite and the
+combined program, then freezes per-suite `run` counts and all nine generated
+JS hashes in `freeze-plan.json` before A/A or A/B. `--plan` skips calibration,
+regenerates the same inputs and checks the source, driver, tooling and generated
+hashes; its saved order and repetition count also govern the replay. For each
+original Benchmark, the fixed driver calls `Setup` once, does zero warmup calls
+by default (`--warmup` changes that fixed count), invokes `run` a frozen number
+of times, and calls `TearDown` once. The original body and its internal checks
+are untouched. Each process loads the pinned `base.js` once; that version seeds
+deterministic `Math.random` there and has no separate `ResetRNG` function. The
+combined program loads the eight bodies in the original `run.js` order.
+
+The default requests four repetitions per engine in each of same-binary A/A
+and baseline/candidate A/B, in balanced ABBA-BAAB blocks. If the pilot predicts
+that even one `run` per Benchmark cannot fit this schedule, it falls back to
+two repetitions per engine in ABBA order. Pilot, freeze and both comparisons
+share a **600-second hard deadline**. A slower machine or workload can still
+finish incomplete; timeout, bad output, changed bytes or missing samples leave
+`summary.aggregate` null. Raw outputs and statuses remain in the new directory.
+The summary's eight-suite geometric mean and combined whole-process speed ratio
+are fixed-work diagnostics, **not the original adaptive V8-v7 Score**. Do not
+admit a small change within the observed A/A spread; annotate known concurrent
+work or other timing interference in the result receipt. The machine snapshot
+does not prove the host was isolated. The original-score runner above remains
+available for a separately planned final release check, not every iteration.
+
 ## Pinned QuickJS microbench
 
 ```sh

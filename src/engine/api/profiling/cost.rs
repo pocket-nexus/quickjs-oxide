@@ -15,7 +15,7 @@ pub(crate) use buffers::{
     record_call_buffer_share, record_call_raw_buffer_copies,
 };
 mod phases;
-pub(crate) use phases::{CompilePhase, PhaseTimer};
+pub(crate) use phases::{CompilePhase, PhaseTimer, VmCallSample};
 mod sites;
 pub use sites::{
     CallsiteCost, FunctionSiteKey, FusionDispatchCost, FusionSiteCost, FusionSiteKey,

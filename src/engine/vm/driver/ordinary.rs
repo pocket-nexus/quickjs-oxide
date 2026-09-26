@@ -40,6 +40,13 @@ pub(super) fn enter_selected(
     tail: bool,
     selected_native: Option<crate::engine::object::LinkedNativeSelection>,
 ) -> Result<Entry, Error> {
+    #[cfg(feature = "profiling")]
+    let _sample = crate::engine::api::profiling::VmCallSample::enter();
+    // End this scope before executing native code or installing the child.
+    // It covers the direct driver, unlike the legacy bytecode.prepare timer.
+    #[cfg(feature = "profiling")]
+    let prepare_timer =
+        crate::engine::api::profiling::PhaseTimer::start_vm_sampled("direct.prepare.sampled");
     let logical_depth = execution.frames.logical_active_depth(runtime);
     let frame = execution.frames.current_mut(id)?;
     let count = usize::from(count);
@@ -110,7 +117,13 @@ pub(super) fn enter_selected(
             profile_pc,
             callable_value,
         );
-        let selection_result = DirectSelection::select_jsvalue(runtime, callable_value);
+        let selection_result = {
+            #[cfg(feature = "profiling")]
+            let _timer = crate::engine::api::profiling::PhaseTimer::start_vm_sampled(
+                "direct.select.sampled",
+            );
+            DirectSelection::select_jsvalue(runtime, callable_value)
+        };
         match selection_result {
             Ok(DirectSelection::General) => return Ok(Entry::General),
             Ok(DirectSelection::Ordinary(ordinary)) => {
@@ -118,13 +131,23 @@ pub(super) fn enter_selected(
                 // ordinary installation. Authentication does not touch caller
                 // slots or reenter JavaScript; metadata errors still follow
                 // the original operand-domain error order.
-                let checked = transaction.validate_ordinary_call_operands(count, method)?;
-                Prepared::Ordinary(
+                let checked = {
+                    #[cfg(feature = "profiling")]
+                    let _timer = crate::engine::api::profiling::PhaseTimer::start_vm_sampled(
+                        "ordinary.validate.sampled",
+                    );
+                    transaction.validate_ordinary_call_operands(count, method)?
+                };
+                let call = {
+                    #[cfg(feature = "profiling")]
+                    let _timer = crate::engine::api::profiling::PhaseTimer::start_vm_sampled(
+                        "ordinary.authenticate.sampled",
+                    );
                     ordinary
                         .authenticate(runtime)
-                        .map_err(runtime_error_to_vm_error)?,
-                    checked,
-                )
+                        .map_err(runtime_error_to_vm_error)?
+                };
+                Prepared::Ordinary(call, checked)
             }
             Ok(DirectSelection::Native(native)) => {
                 if !transaction.validate_call_value_domains(runtime, count, method)? {
@@ -143,6 +166,8 @@ pub(super) fn enter_selected(
             }
         }
     };
+    #[cfg(feature = "profiling")]
+    drop(prepare_timer);
     match prepared {
         Prepared::Ordinary(call, checked) => {
             drop(transaction);

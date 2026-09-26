@@ -15,7 +15,8 @@ pub use cost::{
     PhaseCost, SiteKey, VmPhaseCost,
 };
 pub(crate) use cost::{
-    CompilePhase, PhaseTimer, cost_profile_active, record_compiler_storage, record_lowered_function,
+    CompilePhase, PhaseTimer, VmCallSample, cost_profile_active, record_compiler_storage,
+    record_lowered_function,
 };
 pub(crate) use cost::{
     record_call_buffer_capacity, record_call_buffer_initialized,
