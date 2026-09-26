@@ -547,8 +547,7 @@ impl<'source> Parser<'source> {
     }
 
     pub(in crate::engine::compiler) fn current(&self) -> &Token<'source> {
-        // Construction and every advance ensure the current token exists.
-        &self.tokens[self.cursor]
+        &self.token
     }
 
     pub(in crate::engine::compiler) fn advance(&mut self) -> Result<(), Error> {
@@ -558,25 +557,14 @@ impl<'source> Parser<'source> {
     /// Advance from a grammar delimiter to the first token of an expression,
     /// selecting RegExp only when the ordinary scanner sees a leading slash.
     pub(in crate::engine::compiler) fn advance_expression_start(&mut self) -> Result<(), Error> {
-        let start = self.current().span.end;
-        if self.tokens.len() > self.cursor + 1 {
-            self.tokens.truncate(self.cursor + 1);
-            self.lexer.seek(start);
-        }
-        let mut probe = self.lexer.clone();
-        probe.seek(start);
-        let next = self
-            .probe_token(&mut probe, LexicalGoal::Div)
-            .map_err(lex_error)?;
-        let goal = if matches!(
-            next.kind,
+        self.advance()?;
+        if matches!(
+            self.current().kind,
             TokenKind::Punctuator(Punctuator::Divide | Punctuator::DivideAssign)
         ) {
-            LexicalGoal::RegExp
-        } else {
-            LexicalGoal::Div
-        };
-        self.advance_with_goal(goal)
+            self.relex_current_with_goal(LexicalGoal::RegExp)?;
+        }
+        Ok(())
     }
 
     pub(in crate::engine::compiler) fn advance_with_goal(
@@ -584,37 +572,24 @@ impl<'source> Parser<'source> {
         goal: LexicalGoal,
     ) -> Result<(), Error> {
         if !self.at_eof() {
-            self.cursor += 1;
-            self.ensure_token_with_goal(self.cursor, goal)?;
-            // Probes only seek at or after the current token, so the committed
-            // prefix can never be requested again.
-            self.lookahead_invalidate_before(self.tokens[self.cursor].span.start.byte_offset);
+            let token = self.scan_next_token(goal)?;
+            self.previous_span = Some(self.token.span);
+            self.token = token;
+            self.lookahead_invalidate_before(token.span.start.byte_offset);
         }
         Ok(())
     }
 
-    pub(in crate::engine::compiler) fn ensure_token(&mut self, index: usize) -> Result<(), Error> {
-        self.ensure_token_with_goal(index, LexicalGoal::Div)
-    }
-
-    pub(in crate::engine::compiler) fn ensure_token_with_goal(
-        &mut self,
-        index: usize,
-        goal: LexicalGoal,
-    ) -> Result<(), Error> {
-        while self.tokens.len() <= index {
-            let start = self.lexer.current_position().byte_offset;
-            let context = self.lexer.context();
-            let token = match self.take_lookahead(start, goal, context) {
-                Some(token) => {
-                    self.lexer.seek(token.span.end);
-                    token
-                }
-                None => self.lexer.next_token_with_goal(goal).map_err(lex_error)?,
-            };
-            self.tokens.push(token);
+    fn scan_next_token(&mut self, goal: LexicalGoal) -> Result<Token<'source>, Error> {
+        let start = self.lexer.current_position().byte_offset;
+        let context = self.lexer.context();
+        match self.take_lookahead(start, goal, context) {
+            Some(token) => {
+                self.lexer.seek(token.span.end);
+                Ok(token)
+            }
+            None => self.lexer.next_token_with_goal(goal).map_err(lex_error),
         }
-        Ok(())
     }
 
     /// Rescan the current token after the parser has selected its lexical
@@ -628,10 +603,9 @@ impl<'source> Parser<'source> {
         let position = self.current().span.start;
         let line_terminator_before = self.current().line_terminator_before;
         self.lookahead_invalidate_from(position.byte_offset);
-        self.tokens.truncate(self.cursor);
         self.lexer.seek(position);
-        self.ensure_token_with_goal(self.cursor, goal)?;
-        self.tokens[self.cursor].line_terminator_before = line_terminator_before;
+        self.token = self.scan_next_token(goal)?;
+        self.token.line_terminator_before = line_terminator_before;
         Ok(())
     }
 
@@ -655,11 +629,10 @@ impl<'source> Parser<'source> {
         let position = self.current().span.start;
         let line_terminator_before = self.current().line_terminator_before;
         self.lookahead_invalidate_from(position.byte_offset);
-        self.tokens.truncate(self.cursor);
         self.lexer.seek(position);
         self.lexer.set_context(context);
-        self.ensure_token(self.cursor)?;
-        self.tokens[self.cursor].line_terminator_before = line_terminator_before;
+        self.token = self.scan_next_token(LexicalGoal::Div)?;
+        self.token.line_terminator_before = line_terminator_before;
         Ok(())
     }
 
@@ -669,17 +642,15 @@ impl<'source> Parser<'source> {
     pub(in crate::engine::compiler) fn set_future_lex_context(&mut self, context: LexContext) {
         let position = self.current().span.end;
         self.lookahead_invalidate_from(position.byte_offset);
-        self.tokens.truncate(self.cursor + 1);
         self.lexer.seek(position);
         self.lexer.set_context(context);
     }
 
     pub(in crate::engine::compiler) fn directive_prologue_has_use_strict(
         &self,
-        start: usize,
         inherited_strict: bool,
     ) -> Result<bool, Error> {
-        let position = self.tokens[start].span.start;
+        let position = self.current().span.start;
         let mut lexer = self.lexer.clone();
         lexer.seek(position);
         let mut context = lexer.context();

@@ -497,8 +497,8 @@ fn parameter_assignment_prescan_retains_quickjs_bits_at_the_depth_bound() {
     .unwrap();
     let parser = Parser {
         lexer,
-        tokens: vec![first],
-        cursor: 0,
+        token: first,
+        previous_span: None,
         current_function: 0,
         in_mode: InMode::Allow,
         functions: vec![root],
@@ -551,8 +551,8 @@ fn lookahead_test_parser(source: &str) -> Parser<'_> {
     .unwrap();
     Parser {
         lexer,
-        tokens: vec![first],
-        cursor: 0,
+        token: first,
+        previous_span: None,
         current_function: 0,
         in_mode: InMode::Allow,
         functions: vec![root],

@@ -253,8 +253,8 @@ impl<'source> Parser<'source> {
         let mut parser = Self {
             lexer,
             names,
-            tokens: vec![first_token],
-            cursor: 0,
+            token: first_token,
+            previous_span: None,
             current_function: 0,
             in_mode: InMode::Allow,
             anonymous_function_definition: None,
@@ -285,7 +285,7 @@ impl<'source> Parser<'source> {
             )?;
         }
         let strict =
-            inherited_strict || parser.directive_prologue_has_use_strict(0, inherited_strict)?;
+            inherited_strict || parser.directive_prologue_has_use_strict(inherited_strict)?;
         parser.relex_current_with_strict(strict)?;
         parser.functions[0].strict = strict;
         parser.functions[0].arguments_forbidden = arguments_forbidden;

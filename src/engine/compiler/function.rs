@@ -615,7 +615,7 @@ impl<'source> Parser<'source> {
         }
         self.expect_punctuator(Punctuator::LeftBrace)?;
 
-        let has_use_strict = self.directive_prologue_has_use_strict(self.cursor, parent_strict)?;
+        let has_use_strict = self.directive_prologue_has_use_strict(parent_strict)?;
         let strict = parent_strict || has_use_strict;
         child_context.strict = strict;
         self.relex_current_with_context(child_context)?;

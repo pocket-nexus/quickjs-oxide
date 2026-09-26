@@ -251,7 +251,7 @@ impl<'source> Parser<'source> {
             self.advance()?;
         }
         let has_use_strict = if block_body {
-            self.directive_prologue_has_use_strict(self.cursor, parent_strict)?
+            self.directive_prologue_has_use_strict(parent_strict)?
         } else {
             false
         };
@@ -296,10 +296,9 @@ impl<'source> Parser<'source> {
             self.parse_assignment()?;
             self.emit_instruction(Instruction::Return)?;
             let range_end = self
-                .tokens
-                .get(self.cursor.saturating_sub(1))
-                .map_or(self.current().span.start.byte_offset, |token| {
-                    token.span.end.byte_offset
+                .previous_span
+                .map_or(self.current().span.start.byte_offset, |span| {
+                    span.end.byte_offset
                 });
             self.relex_current_with_context(parent_context)?;
             range_end

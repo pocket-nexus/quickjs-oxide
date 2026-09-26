@@ -266,8 +266,8 @@ pub(in crate::engine::compiler) struct Parser<'source> {
     /// Sole name-interning authority. Every authored or synthetic compiler name
     /// is interned here once; resolution/lowering only read it back.
     pub(in crate::engine::compiler) names: NameTable,
-    pub(in crate::engine::compiler) tokens: Vec<Token<'source>>,
-    pub(in crate::engine::compiler) cursor: usize,
+    pub(in crate::engine::compiler) token: Token<'source>,
+    pub(in crate::engine::compiler) previous_span: Option<Span>,
     pub(in crate::engine::compiler) current_function: FunctionId,
     pub(in crate::engine::compiler) in_mode: InMode,
     pub(in crate::engine::compiler) functions: Vec<FunctionBuilder>,
