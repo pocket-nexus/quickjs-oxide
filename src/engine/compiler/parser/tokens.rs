@@ -90,13 +90,12 @@ impl<'source> Parser<'source> {
         &mut self,
         identifier: &Identifier<'source>,
     ) -> NameId {
+        if !identifier.has_escape {
+            return self.names.intern(identifier.raw);
+        }
         let mut binding = String::with_capacity(identifier.raw.len().saturating_add(1));
         binding.push('#');
-        if identifier.has_escape {
-            binding.push_str(&self.lexer.decode_identifier_text(identifier.raw));
-        } else {
-            binding.push_str(identifier.raw.strip_prefix('#').unwrap_or(identifier.raw));
-        }
+        binding.push_str(&self.lexer.decode_identifier_text(identifier.raw));
         self.names.intern(&binding)
     }
 
@@ -454,13 +453,13 @@ impl<'source> Parser<'source> {
         if identifier.escaped_reserved_word {
             return None;
         }
-        let label_name = self.identifier_text(identifier).into_owned();
         let mut lexer = self.lexer.clone();
         lexer.seek(self.current().span.end);
         let Ok(next) = self.probe_token(&mut lexer, LexicalGoal::Div) else {
             return None;
         };
-        matches!(next.kind, TokenKind::Punctuator(Punctuator::Colon)).then_some(label_name)
+        matches!(next.kind, TokenKind::Punctuator(Punctuator::Colon))
+            .then(|| self.identifier_text(identifier).into_owned())
     }
 
     /// QuickJS gates generator and pseudo-keyword `async function` declarations

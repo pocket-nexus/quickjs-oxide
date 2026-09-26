@@ -119,10 +119,8 @@ impl<'source> Parser<'source> {
         // QuickJS's `name0` is captured only when the AssignmentExpression
         // starts with the identifier token itself. Parenthesized lvalues are
         // valid References but intentionally do not trigger NamedEvaluation.
-        let direct_identifier_name = match &self.current().kind {
-            TokenKind::Identifier(identifier) => {
-                Some(self.identifier_text(identifier).into_owned())
-            }
+        let direct_identifier_name = match self.current().kind {
+            TokenKind::Identifier(identifier) => Some(self.intern_identifier(&identifier)),
             _ => None,
         };
         self.parse_conditional()?;
@@ -165,8 +163,7 @@ impl<'source> Parser<'source> {
             if let Some(target) =
                 self.promote_tail_identifier_get(IdentifierReferenceAccess::Get)?
             {
-                let infer_name =
-                    direct_identifier_name.as_deref() == Some(self.names.name(target.name));
+                let infer_name = direct_identifier_name == Some(target.name);
                 return self.parse_logical_identifier_assignment(target, logical, infer_name);
             }
             return self.parse_logical_member_assignment(logical);
@@ -238,7 +235,7 @@ impl<'source> Parser<'source> {
             self.parse_assignment()?;
             self.inherit_source_marker_at(rhs_start, source_offset(target.span)?)?;
             let anonymous_rhs = self.take_anonymous_function_definition();
-            if direct_identifier_name.as_deref() == Some(self.names.name(target.name))
+            if direct_identifier_name == Some(target.name)
                 && let Some(definition) = anonymous_rhs
             {
                 let name_constant = self.add_constant(IrConstant::Primitive(Value::String(

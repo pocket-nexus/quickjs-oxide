@@ -5,6 +5,7 @@
 //! keep the default SipHash because compiler input is untrusted.
 
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use crate::engine::value::{JsString, JsStringError};
 
@@ -13,9 +14,10 @@ pub(in crate::engine::compiler) struct NameId(u32);
 
 #[derive(Debug)]
 pub(in crate::engine::compiler) struct NameTable {
-    names: Vec<Box<str>>,
-    by_name: HashMap<Box<str>, NameId>,
-    js_strings: HashMap<NameId, JsString>,
+    names: Vec<Rc<str>>,
+    by_name: HashMap<Rc<str>, NameId>,
+    ascii_names: [Option<NameId>; 128],
+    js_strings: Vec<Option<JsString>>,
 }
 
 impl NameTable {
@@ -23,19 +25,24 @@ impl NameTable {
         Self {
             names: Vec::new(),
             by_name: HashMap::new(),
-            js_strings: HashMap::new(),
+            ascii_names: [None; 128],
+            js_strings: Vec::new(),
         }
     }
 
     pub(in crate::engine::compiler) fn intern(&mut self, name: &str) -> NameId {
-        if let Some(id) = self.by_name.get(name) {
-            return *id;
+        if let Some(id) = self.lookup(name) {
+            return id;
         }
         let id =
             NameId(u32::try_from(self.names.len()).expect("interned name count must fit in u32"));
-        let owned: Box<str> = name.into();
+        let owned: Rc<str> = name.into();
         self.names.push(owned.clone());
         self.by_name.insert(owned, id);
+        self.js_strings.push(None);
+        if let [byte @ 0..=127] = name.as_bytes() {
+            self.ascii_names[*byte as usize] = Some(id);
+        }
         id
     }
 
@@ -44,6 +51,9 @@ impl NameTable {
     }
 
     pub(in crate::engine::compiler) fn lookup(&self, name: &str) -> Option<NameId> {
+        if let [byte @ 0..=127] = name.as_bytes() {
+            return self.ascii_names[*byte as usize];
+        }
         self.by_name.get(name).copied()
     }
 
@@ -53,11 +63,11 @@ impl NameTable {
         &mut self,
         id: NameId,
     ) -> Result<JsString, JsStringError> {
-        if let Some(cached) = self.js_strings.get(&id) {
+        if let Some(cached) = &self.js_strings[id.0 as usize] {
             return Ok(cached.clone());
         }
         let string = JsString::try_from_utf8(&self.names[id.0 as usize])?;
-        self.js_strings.insert(id, string.clone());
+        self.js_strings[id.0 as usize] = Some(string.clone());
         Ok(string)
     }
 }
