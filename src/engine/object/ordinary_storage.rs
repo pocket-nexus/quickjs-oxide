@@ -94,6 +94,33 @@ fn locate(
     }))
 }
 
+// A materialized Array keeps indexed properties in its ordinary shape and
+// slots. Select a single own default data Number without constructing a key,
+// retaining an owner, or walking the prototype chain. Missing and exotic
+// properties must continue through the canonical [[Get]] operation.
+fn materialized_array_own_default_number(
+    state: &RuntimeState,
+    data: &crate::engine::heap::ObjectData,
+    index: u32,
+) -> Option<Number> {
+    let atom = Atom::from_immediate_integer(index)?;
+    let shape = state.heap.shape(data.shape).ok()?;
+    let slot = shape.find(AtomIdx::from_raw(atom.raw()))? as usize;
+    if shape.entries().get(slot)?.flags != PropertyFlags::data(true, true, true) {
+        return None;
+    }
+    let number = match data.slots.get(slot)? {
+        PropertySlot::Data(RawValue::Int(value)) => Some(Number::Int(*value)),
+        PropertySlot::Data(RawValue::Float(value)) => Some(Number::Float(*value)),
+        _ => None,
+    }?;
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_execution_event(
+        "array_materialized_own_number_read",
+    );
+    Some(number)
+}
+
 // The shared physical selector used by both single-step Set and the local
 // missing-receiver walk. It neither roots handles nor performs observable work.
 enum BorrowedSet {
@@ -1184,8 +1211,10 @@ impl Runtime {
 }
 
 impl Runtime {
-    /// Read a Number from an existing dense Array element while its base owner
-    /// remains in the frame. The heap borrow ends before the Copy result leaves.
+    /// Read an own Number from a genuine Array while its base owner remains in
+    /// the frame. Dense elements and materialized default data slots qualify;
+    /// a hole or a non-default descriptor falls back to canonical [[Get]].
+    /// The heap borrow ends before the Copy result leaves.
     pub(crate) fn peek_dense_number(&self, base: &JsValue, index: u32) -> Option<Number> {
         let JsValue::Object(id) = base else {
             return None;
@@ -1195,9 +1224,15 @@ impl Runtime {
         if !matches!(data.kind, ObjectKind::Array) {
             return None;
         }
-        match data.dense_array_value(index)? {
-            RawValue::Int(value) => Some(Number::Int(*value)),
-            RawValue::Float(value) => Some(Number::Float(*value)),
+        match &data.payload {
+            ObjectPayload::Array { dense: Some(dense) } => match dense.get(index as usize)? {
+                RawValue::Int(value) => Some(Number::Int(*value)),
+                RawValue::Float(value) => Some(Number::Float(*value)),
+                _ => None,
+            },
+            ObjectPayload::Array { dense: None } => {
+                materialized_array_own_default_number(&state, data, index)
+            }
             _ => None,
         }
     }
@@ -1294,11 +1329,19 @@ impl Runtime {
         }
         let mut state = self.0.state.try_borrow_mut().ok()?;
         let data = state.heap.object(*object).ok()?;
-        if matches!(
-            (data.kind, &data.payload),
-            (ObjectKind::Array, ObjectPayload::Array { .. })
-        ) {
-            return immediate_value_jsvalue(data.dense_array_value(index)?);
+        if matches!(data.kind, ObjectKind::Array) {
+            match &data.payload {
+                ObjectPayload::Array { dense: Some(dense) } => {
+                    return immediate_value_jsvalue(dense.get(index as usize)?);
+                }
+                ObjectPayload::Array { dense: None } => {
+                    return match materialized_array_own_default_number(&state, data, index)? {
+                        Number::Int(value) => Some(JsValue::Int(value)),
+                        Number::Float(value) => Some(JsValue::Float(value)),
+                    };
+                }
+                _ => {}
+            }
         }
         if !include_typed {
             return None;
@@ -1470,6 +1513,87 @@ mod dense_array_read_tests {
     }
 
     #[test]
+    fn materialized_array_own_default_numbers_use_the_shared_read_leaf() {
+        let runtime = Runtime::new();
+        let base = runtime
+            .into_jsvalue(receiver(
+                &runtime,
+                "(function(){let a=[];a[5]=5;a[2]=-0;a[4]=NaN;return a})()",
+            ))
+            .unwrap();
+        let JsValue::Object(id) = &base else {
+            panic!("array");
+        };
+        let before = runtime.0.state.borrow().heap.object_strong_count(*id);
+        assert!(matches!(
+            runtime.peek_dense_number(&base, 5),
+            Some(Number::Int(5))
+        ));
+        assert!(matches!(
+            runtime.peek_dense_number(&base, 2),
+            Some(Number::Float(value)) if value == 0.0 && value.is_sign_negative()
+        ));
+        assert!(matches!(
+            runtime.peek_dense_number(&base, 4),
+            Some(Number::Float(value)) if value.is_nan()
+        ));
+        assert!(matches!(
+            runtime.try_array_immediate_read(&base, 5),
+            Some(JsValue::Int(5))
+        ));
+        assert!(matches!(
+            runtime.try_array_immediate_read(&base, 2),
+            Some(JsValue::Float(value)) if value == 0.0 && value.is_sign_negative()
+        ));
+        assert!(runtime.peek_dense_number(&base, 3).is_none());
+        assert!(runtime.try_array_immediate_read(&base, 3).is_none());
+        assert!(runtime.peek_dense_number(&base, u32::MAX).is_none());
+        assert_eq!(
+            runtime.0.state.borrow().heap.object_strong_count(*id),
+            before
+        );
+        runtime.release_jsvalue(base).unwrap();
+    }
+
+    #[test]
+    fn materialized_array_read_checks_each_own_descriptor_and_hole() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let base = runtime
+            .into_jsvalue(
+                context
+                    .eval(
+                        "globalThis.readEffects=0;globalThis.readArray=(function(){\
+                         let a=[3,4];Object.defineProperty(a,'0',{writable:false});\
+                         Object.setPrototypeOf(a,{get 1(){readEffects++;return 19}});return a\
+                         })();readArray",
+                    )
+                    .unwrap(),
+            )
+            .unwrap();
+        assert!(runtime.peek_dense_number(&base, 0).is_none());
+        assert!(runtime.try_array_immediate_read(&base, 0).is_none());
+        assert!(matches!(
+            runtime.peek_dense_number(&base, 1),
+            Some(Number::Int(4))
+        ));
+        assert!(matches!(
+            runtime.try_array_immediate_read(&base, 1),
+            Some(JsValue::Int(4))
+        ));
+        assert_eq!(context.eval("readEffects").unwrap(), Value::Int(0));
+        assert_eq!(
+            context.eval("delete readArray[1]").unwrap(),
+            Value::Bool(true)
+        );
+        assert!(runtime.peek_dense_number(&base, 1).is_none());
+        assert!(runtime.try_array_immediate_read(&base, 1).is_none());
+        assert_eq!(context.eval("readArray[1]").unwrap(), Value::Int(19));
+        assert_eq!(context.eval("readEffects").unwrap(), Value::Int(1));
+        runtime.release_jsvalue(base).unwrap();
+    }
+
+    #[test]
     fn dense_number_peek_declines_slow_exotic_and_foreign_receivers() {
         for expression in [
             "[, 1]",
@@ -1536,11 +1660,6 @@ mod dense_array_read_tests {
         for (source, index, suffix) in [
             (
                 "(function(){let a=[];a[3]=3;a[1]=1;return a})()",
-                1,
-                "own_default_number",
-            ),
-            (
-                "(function(){let a=[];a[3]=3;a[1]=1;return a})()",
                 2,
                 "missing_own_index",
             ),
@@ -1589,6 +1708,25 @@ mod dense_array_read_tests {
             );
             runtime.release_jsvalue(base).unwrap();
         }
+
+        let runtime = Runtime::new();
+        let base = runtime
+            .into_jsvalue(receiver(
+                &runtime,
+                "(function(){let a=[];a[3]=3;a[1]=1;return a})()",
+            ))
+            .unwrap();
+        assert!(matches!(
+            runtime.peek_dense_number(&base, 1),
+            Some(Number::Int(1))
+        ));
+        // Writes still require dense storage, so the write diagnostic keeps
+        // describing this materialized own slot as a write miss.
+        assert_eq!(
+            runtime.diagnose_dense_number_write_miss(&base, 1),
+            "array_materialized.own_default_number"
+        );
+        runtime.release_jsvalue(base).unwrap();
     }
 
     #[cfg(feature = "profiling")]
