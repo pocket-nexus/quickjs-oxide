@@ -297,7 +297,7 @@ mod tests {
     fn dense_outcomes_include_guard_misses_and_static_noncandidate_visits() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        context.eval("function read(a,i){return a[i]}").unwrap();
+        let _ = context.eval("function read(a,i){return a[i]}").unwrap();
         let profile = CostProfile::start();
         assert_eq!(context.eval("read([11],0)").unwrap(), Value::Int(11));
         assert_eq!(context.eval("read([11],'0')").unwrap(), Value::Int(11));

@@ -1630,13 +1630,7 @@ mod tests {
             // owner before tearing down the execution. The next root query
             // cannot start while this execution is active, and raw AtomIdx
             // slots may be reused after their final owner is released.
-            let atom = runtime
-                .0
-                .state
-                .borrow()
-                .atoms
-                .brand(*atom_index)
-                .unwrap();
+            let atom = runtime.0.state.borrow().atoms.brand(*atom_index).unwrap();
             names.push(
                 crate::engine::object::PrivateNameRef::from_borrowed_atom(runtime.clone(), atom)
                     .unwrap(),
