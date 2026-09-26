@@ -24,7 +24,7 @@ class ManifestTests(unittest.TestCase):
     def test_relocation_preserves_byte_identity(self):
         self.write([self.item])
         result = load_workloads(self.report, self.directory, ['loop'])
-        self.assertEqual(result[0]['path'], str(self.source))
+        self.assertEqual(result[0]['path'], str(self.source.resolve()))
         self.assertEqual(result[0]['expected'], '42\n')
 
     def test_changed_workload_is_rejected(self):
