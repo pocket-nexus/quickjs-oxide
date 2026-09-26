@@ -81,7 +81,8 @@ fn peek_number(
     base: &Instruction,
     key: Number,
 ) -> Option<Number> {
-    peek_proven_number(slots, runtime, direct_slot(base)?, key)
+    let base = slots.direct_value(direct_slot(base)?)?;
+    runtime.peek_dense_number(base, index_from_number(key)?)
 }
 
 fn apply_number_binary(op: &Instruction, left: Number, right: Number) -> Option<Number> {
