@@ -1441,7 +1441,7 @@ impl SlotStore {
         self.replace_local_current(window, index, value)
     }
 
-    #[inline]
+    #[inline(always)]
     fn replace_local_current(
         &mut self,
         window: &FrameWindow,
@@ -1548,6 +1548,7 @@ impl SlotStore {
         self.replace_parameter_current(window, index, value)
     }
 
+    #[inline(always)]
     fn replace_parameter_current(
         &mut self,
         window: &FrameWindow,

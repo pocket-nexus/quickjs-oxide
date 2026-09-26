@@ -575,7 +575,7 @@ impl RunSlots<'_> {
             .store_proven_number_operand_current(self.window, destination, keep)
     }
 
-    #[inline]
+    #[inline(always)]
     pub(in crate::engine::vm) fn replace_local(
         &mut self,
         index: u16,
@@ -584,6 +584,7 @@ impl RunSlots<'_> {
         self.store.replace_local_current(self.window, index, value)
     }
 
+    #[inline(always)]
     pub(in crate::engine::vm) fn replace_parameter(
         &mut self,
         index: u16,
