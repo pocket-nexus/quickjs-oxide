@@ -17,6 +17,7 @@
 | Entry choice 初始候选 | `3f17738c9bfa461758451bf3ca2724888c077424` |
 | Entry choice 固定负载受测产物 | `315035b5dba805b033dad5187d187b360e39ceff` |
 | 本轮集成版 plain 构建 | `d6a168e2` |
+| 集成版加普通写入分类内联的受测候选 | `8c38bc32a316aa6eb4fdf6540b448d0163770671` |
 
 普通计时构建为 release、fat LTO、CGU=1，无 PGO/profiling。诊断构建另存，逻辑事件不作为普通版耗时或 Score。macOS 原生 `/usr/bin/time -l` 在此主机提供整进程退休指令、cycles、最大 RSS 和 peak footprint；不是 Linux `perf ...:u` 的用户态专用口径。Instruments CPU Counters 的初步能力探针因时间限制终止、目标收到 SIGKILL，仅作为工具能力记录；它不能支持任何缓存、分支预测或瓶颈比例结论。
 
@@ -29,6 +30,19 @@ Current 和 Parent 构建启动于工具完善期间，完整 Cargo verbose 日�
 ARM64 普通版中，整个函数没有融合计划时已有一次跳转进入普通路径。存在其他融合站点、当前 GetLocal 的 flag 为零时，仍执行多个 selector 的条件分支。候选保留原 u8 sidecar、canonical 指令和 PC，仅把互斥的五类候选改成一次选择，并显式绕过零 flag；Number 未命中后的字符串 Add 桥和动态回落维持原有顺序。不能由源码 if 数量直接推导机器指令收益，后续以受测产物的反汇编核对。
 
 实际反汇编中，计划存在且 GetLocal flag=0 的准入路径从 10 条条件分支加 1 条无条件分支变为 5 条条件分支；`run::run` 按下一个符号估计的布局范围为 20,680→20,704 字节，栈帧仍为 `0x780`。这不是零分支，也不是预测失败次数。Current 与加入诊断后的普通构建、Choice 与 `d6a168e2` 集成后的普通构建，各自比较的 `run` 及七个融合 helper 的地址与指令字均完全相同；后一对 `run` 为 5,176 条 ARM64 指令。该检查覆盖八个选定符号，不声称整二进制相同。原始反汇编与比较 JSON 位于上述外部目录的 `series/codegen-{current,instrumentation,choice,integrated}`。
+
+### 事实的建立、使用与失效
+
+| 阶段 | 当前证据／表示 | 使用范围与失效边界 |
+| --- | --- | --- |
+| Rust 构建 | 私有 `FusionEntry(u8)`、穷尽的 `LocalFusionChoice` 分支和 safe Rust 检查 | 保证实现能处理所有枚举分支；不证明某个 JS 值是 Number，也不保证内联提示一定生效。 |
+| JS 函数发布 | 生产 matcher 按候选检查形态和内部控制流入口；Dense 13 类另有显式 `stack_contract` 核验，将一个候选 flag 与不可变 canonical code 一起发布 | 静态事实只属于该已发布函数与原 PC。没有把某次调用的值类型放进静态 flag；后续重新发布的函数使用自己的计划。 |
+| 每次指令派发 | 从当前函数、当前 `pc.fault` 读取一次 entry，flag=0 退出选择，否则只进入一个候选分支 | `LocalFusionChoice` 是本次派发的临时选择，不是跨调用缓存。帧切换、重入或挂起后不能复用它。GetArg 的单一 Dense 入口没有增加同类选择层。 |
+| 候选动态守卫 | 各 handler 按原契约检查当前槽绑定和类型；Dense 另查数组、索引和容量，写路径预检 `property_generation` | 借用只在当前 handler 内有效；不跨用户代码、释放、重入或挂起。各 handler 的 guard miss 按其原契约保持原槽、深度、heap、owner 和 PC，继续当前 canonical 指令。异常仍走原异常出口，不能冒充 miss 后再执行一次。 |
+| 成功提交 | 复用原 handler 的提交边界；只有成功后才推进 `pc.resume` | Number 运算不新增拥有式临时值；数组写仍在完成可失败检查后提交。字符串 Add 桥、getter／Proxy／转换与释放顺序沿用原路径。 |
+| 普通写入分类 | `direct_write_class` 判断当前旧绑定；内联实验只改注解 | 不延长 readiness 证明的作用域，不跨释放或 JS 执行复用结论。对象等 owner 仍走原来的 ready／boundary 路径。 |
+
+这里删的是互斥候选的重复准入选择，没有删完 handler 内部的静态重验，也没有实现“所有静态不适用指令零额外派发”。原有 13 类跨度的详细提交证明仍见 [历史候选契约](../../numeric-array-spans.md)；它不是未来必须保留 u8、签名或 helper 边界的理由。
 
 ## 结果
 
@@ -67,6 +81,18 @@ RSS 复核门槛是左侧中位数的 `max(3%, 1 MiB)`，本组约 6 MiB 的工�
 
 集成版 `d6a168e2` 的 plain 构建已与受测 Choice `315035b5` 对照：选定的 8 个 VM 符号（`run`、两个 numeric local helper、五个 Dense helper）的地址与 ARM64 指令字逐条相同，其中 `run` 比较了 5,176 条指令。可复核对照在 `/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/series/codegen-integrated/comparison-choice.json`（SHA-256 `733ef288f79cd228285ae4dd583309991bc5aadc6a7243602f3fc7d80de837f4`）及同目录反汇编；它只证明这些选定符号相同，**不证明整个二进制相同**。
 
+### 修订探针与普通写入分类内联
+
+修订后的两个探针分别完成 A/A 和两轮交错 A/B，共 96/96 个有效样本，完整分布及原始哈希见 [revised-summary.json](revised-summary.json)。Current→集成入口的 flag=0 指令数为 −0.4718%／−0.4930%；**真正无计划函数则为 +0.6539%／+0.6718%**，对应同二进制 A/A 仅 +0.0055%。该独立回退保留，不能用旧同名探针的下降或后续切片的收益抵消。
+
+现有反汇编显示，no-plan 的 GetLocal 在两版都通过同样形态的四条指令直达 canonical `RunSlots::local`，不会执行 flag load 或 choice/helper；canonical 起始段也相同。每 300 万轮多退休约 2,400 万条指令的来源仍未定位，不能称为“布局噪声”。后续需要覆盖整个循环的动态机器 PC 归因，而不是继续只数该入口的静态分支。
+
+对象普通写回的生成代码发现了具体额外工作：Current 的 `direct_write_class` 被 outlined，另建栈帧、调用 readiness，再包装和解码分类结果。`8c38bc32` 将该 helper 改为 `#[inline(always)]`；受测 ARM64 产物已没有该独立符号及其调用，仍保留 Number 分类和必要 readiness 检查。它是本次 codegen 选择，不是永久 API 契约。该单行候选已以 `9df1969f` 接入当前实验分支。
+
+两轮 Integrated→Inline 的对象负载指令数下降 1.45%／1.42%，没有其他项出现重复且大于 0.1% 的指令增长。直接 Parent→Inline 中，局部变量搬运 −22.46%、参数搬运 −20.13%、对象搬运 −1.06%。但对象搬运的 **cycles +6.81%、wall +5.03%** 仍是需保留的受干扰不利观测，不能宣布时间回退已修复。三批共 960/960 样本输出有效，RSS 最大中位数差 264 KiB，未越过 1 MiB 复核线。完整 20 项、五种指标、每侧 8 样本的分布与身份见 [inline-summary.json](inline-summary.json)。
+
+另用相同构建配置直接重建 B37、R0，与 Inline 分别交错测量 20 项；每批 320/320 样本有效。数组读取退休指令相对两个历史分母分别 −63.142%／−63.119%，局部变量搬运 −26.779%／−26.682%，参数搬运 −24.824%／−24.831%。这些是整个版本跨度的累计结果，不能全归给本轮入口或单行内联注解。`type_error`、`tdz` 有小于 0.36% 的正差；两组历史对照加两轮 Inline 对照的 80 个项目中，无指令增长超过 2% 或 RSS 越过 `max(3%, 1 MiB)` 的项目。完整统计见 [cumulative-summary.json](cumulative-summary.json)；这只核对固定工作量的指令与 RSS 门槛，不能替代时间／V8 准入。
+
 ### 真实 V8 逻辑覆盖：找出该删的工作
 
 另用外部 pinned v8-v7 源码原始 body，为八个子项分别运行一次固定 Setup/run/TearDown 并保存 `-d --profile-json`；这是执行覆盖诊断，**不是** adaptive Score 或普通版耗时。完整各 suite 的静态站点、动态 PC、融合各类尝试/命中/失败、callsite、omission、原始路径与 SHA-256 在 [profile-summary.json](profile-summary.json)；外部分析在 `/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/analysis-profile/README.md`。profile 原始结果 `/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-26-task1-3/v8-fixed-profile/results.json` 的 SHA-256 为 `3c4d0409f07d1af116805a4c58de8f696f84dc9045ffa85a9d3ca011f17c3746`；仓库 summary 的 SHA-256 为 `8b9d6bf3ff3ba87bfe3575d4461f1eb8555174817d99485edd7ccf1598759a74`。
@@ -86,6 +112,10 @@ RSS 复核门槛是左侧中位数的 `max(3%, 1 MiB)`，本组约 6 MiB 的工�
 
 融合事件的 omission 均为零；通用 VM phase 样本有非零 omission，按 suite 逐项保存在 summary。上述结果支持下一轮调查普通路径、Crypto 数组表示和调用点成本；不构成任何一种候选的收益上界。正式 V8 时序测量仍需独立完成，本文件当前不作准入或整体性能声明。
 
+诊断标签优先级在 `b4a5f446` 修正后另行构建、重跑八项固定 V8。去除元数据中的提交／文件路径／时间后，八项 `functions`、`dispatch`、`sites`、`callsites` 的完整记录以及 omission 均逐项一致，包括 Crypto 的上述失败分布。复核结果及 v2 原始 SHA 见 [profile-v2-summary.json](profile-v2-summary.json)。这是逻辑事件一致性，不代表普通构建的时间或 Score 相同。
+
+Crypto 的静态原因链也已核对：BigInteger 的 fresh Array 从空 dense 存储开始，`bnpSquareTo` 的倒序清零可首先写入大于当前 dense 长度的索引；普通 indexed definition 随即通过 `materialize_dense_array` 将 dense 值搬入通用属性槽，并将 dense 置为 None。当前实现不会自动恢复 dense 表示。该规则足以解释这种首次高位写为何破坏后续快路径；但 profile 没有 Array 身份与转换 PC，其他写入和目标复用也可能参与，不能将全部 1,490,963 次失败归因于同一处代码。`bnpSquareTo` PC 24 到具体源行的对应仍待该函数的发布后 opcode 表确认。
+
 ## 正确性与工具验证
 
 完整命令、源码身份、退出状态、日志与报告 SHA-256 见 [validation-summary.json](validation-summary.json)。这些验证属于不同冻结点，不能合称为最新 HEAD 的一次全量通过：
@@ -98,4 +128,4 @@ RSS 复核门槛是左侧中位数的 `max(3%, 1 MiB)`，本组约 6 MiB 的工�
 | profiling 标签修正 `b4a5f446` | `dense_diagnostic_priority_` 两项定向测试 | 初次与保存日志的回放均为 2/2 通过。此前的 2,134 项全量测试没有覆盖这次后续修正。 |
 | 工具检查 | benchmark Python 单测、源码布局检查 | 分别 37/37 通过、625 个可达 Rust 文件通过。Python 日志未自证执行时的精确 Git 提交。 |
 
-另行构建的 inline 候选 `8c38bc32` 仅用于注解实验，尚未并入集成版；上述全量测试不覆盖它。完整 Test262 使用冻结的 `d6a168e2` 工作树，后续只改探针和诊断标签的提交不在该全量结果中。
+另行构建的 inline 候选 `8c38bc32` 仅改变一个内联注解，已以 `9df1969f` 并入当前实验分支；上述全量测试不覆盖它。完整 Test262 使用冻结的 `d6a168e2` 工作树，后续探针、诊断标签及内联注解提交不在该全量结果中。受测候选的固定矩阵输出校验另见各测量收据，不冒充最新 HEAD 的全量 Test262。
