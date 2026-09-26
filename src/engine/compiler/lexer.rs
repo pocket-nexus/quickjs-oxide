@@ -656,7 +656,15 @@ impl<'a> Lexer<'a> {
             return self.scan_template(false, false);
         }
 
-        let line_terminator_before = self.skip_trivia()?;
+        // Most tokens in minified input have no leading trivia. Only enter
+        // the trivia loop for bytes that can actually start it (including
+        // Annex B HTML comments and the offset-zero hashbang).
+        let line_terminator_before = match self.source.as_bytes().get(self.offset) {
+            Some(&byte) if byte >= 0x80 || ASCII_FLAGS[byte as usize] & MAY_START_TRIVIA != 0 => {
+                self.skip_trivia()?
+            }
+            _ => false,
+        };
         let start = self.current_position();
 
         if self.offset == self.source.len() {
@@ -682,24 +690,40 @@ impl<'a> Lexer<'a> {
             ));
         }
 
-        let ch = self.peek_char().expect("checked non-empty source");
-        let kind = match ch {
-            '\'' | '"' => self.scan_string()?,
-            c if c == TEMPLATE_QUOTE => {
-                return self.scan_template(true, line_terminator_before);
+        let byte = self.source.as_bytes()[self.offset];
+        let dispatch = ASCII_DISPATCH
+            .get(byte as usize)
+            .copied()
+            .unwrap_or(ScanKind::Slow);
+        let kind = match dispatch {
+            ScanKind::Single(punctuator) => {
+                self.offset += 1;
+                self.column = self.column.saturating_add(1);
+                TokenKind::Punctuator(punctuator)
             }
-            '0'..='9' => self.scan_number(false)?,
-            '.' if self
-                .source
-                .as_bytes()
-                .get(self.offset + 1)
-                .is_some_and(u8::is_ascii_digit) =>
+            ScanKind::Identifier => self.scan_identifier(false)?,
+            ScanKind::Number => self.scan_number(false)?,
+            ScanKind::String => self.scan_string()?,
+            ScanKind::Template => return self.scan_template(true, line_terminator_before),
+            ScanKind::Dot
+                if self
+                    .source
+                    .as_bytes()
+                    .get(self.offset + 1)
+                    .is_some_and(u8::is_ascii_digit) =>
             {
                 self.scan_number(true)?
             }
-            c if is_identifier_start(c) || c == '\\' => self.scan_identifier(false)?,
-            '#' => self.scan_identifier(true)?,
-            _ => self.scan_punctuator()?,
+            ScanKind::Private => self.scan_identifier(true)?,
+            ScanKind::Slow => {
+                let ch = self.peek_char().expect("checked non-empty source");
+                if is_identifier_start(ch) || ch == '\\' {
+                    self.scan_identifier(false)?
+                } else {
+                    self.scan_punctuator()?
+                }
+            }
+            ScanKind::Dot | ScanKind::Punctuator => self.scan_punctuator()?,
         };
 
         Ok(Token {
@@ -1035,6 +1059,7 @@ impl<'a> Lexer<'a> {
         // though the public identifier value excludes it.
         let mut value_utf16_len = usize::from(private);
         let mut has_escape = false;
+        let mut identifier_flags = 0u8;
         let mut first = true;
 
         loop {
@@ -1048,10 +1073,12 @@ impl<'a> Lexer<'a> {
                         is_ascii_identifier_continue_byte(byte)
                     };
                     if valid {
+                        identifier_flags |= ASCII_FLAGS[byte as usize];
                         let bytes = self.source.as_bytes();
                         let mut end = self.offset + 1;
                         while let Some(&next) = bytes.get(end) {
                             if next < 0x80 && is_ascii_identifier_continue_byte(next) {
+                                identifier_flags |= ASCII_FLAGS[next as usize];
                                 end += 1;
                             } else {
                                 break;
@@ -1165,6 +1192,7 @@ impl<'a> Lexer<'a> {
                 is_identifier_continue(ch)
             };
             if valid {
+                identifier_flags |= NOT_KEYWORD;
                 self.bump_char();
                 value_utf16_len = RuntimeJsString::checked_length_with_limit(
                     value_utf16_len,
@@ -1207,7 +1235,10 @@ impl<'a> Lexer<'a> {
         let raw = &self.source[raw_start..self.offset];
         let keyword_hint = match &value {
             Some(value) => keyword_from_str(value),
-            None => keyword_from_str(&raw[usize::from(private)..]),
+            None if identifier_flags & NOT_KEYWORD == 0 => {
+                keyword_from_str(&raw[usize::from(private)..])
+            }
+            None => None,
         };
         let active_keyword = keyword_hint.filter(|keyword| self.keyword_is_active(*keyword));
         let identifier = Identifier {
@@ -2528,12 +2559,88 @@ fn is_ascii_identifier_continue(ch: char) -> bool {
     is_ascii_identifier_start(ch) || ch.is_ascii_digit()
 }
 
+// Scanner tables keep the common ASCII path independent of Unicode decoding.
+// V8's scanner uses the same combined classification/keyword-candidate idea.
+const IDENTIFIER_START: u8 = 1;
+const IDENTIFIER_CONTINUE: u8 = 2;
+const NOT_KEYWORD: u8 = 4;
+const MAY_START_TRIVIA: u8 = 8;
+const ASCII_FLAGS: [u8; 128] = {
+    let mut table = [0; 128];
+    let mut byte = 0u8;
+    while byte < 128 {
+        let start = byte.is_ascii_alphabetic() || matches!(byte, b'_' | b'$');
+        table[byte as usize] = if start {
+            IDENTIFIER_START | IDENTIFIER_CONTINUE
+        } else if byte.is_ascii_digit() {
+            IDENTIFIER_CONTINUE
+        } else {
+            0
+        };
+        if !byte.is_ascii_lowercase() {
+            table[byte as usize] |= NOT_KEYWORD;
+        }
+        if matches!(
+            byte,
+            b' ' | b'\t' | b'\r' | b'\n' | 0x0b | 0x0c | b'/' | b'<' | b'-' | b'#'
+        ) {
+            table[byte as usize] |= MAY_START_TRIVIA;
+        }
+        byte += 1;
+    }
+    table
+};
+
+#[derive(Clone, Copy)]
+enum ScanKind {
+    Single(Punctuator),
+    Identifier,
+    Number,
+    String,
+    Template,
+    Dot,
+    Private,
+    Punctuator,
+    Slow,
+}
+
+const ASCII_DISPATCH: [ScanKind; 128] = {
+    let mut table = [ScanKind::Punctuator; 128];
+    let mut byte = 0u8;
+    while byte < 128 {
+        if ASCII_FLAGS[byte as usize] & IDENTIFIER_START != 0 {
+            table[byte as usize] = ScanKind::Identifier;
+        }
+        if byte.is_ascii_digit() {
+            table[byte as usize] = ScanKind::Number;
+        }
+        byte += 1;
+    }
+    table[b'\\' as usize] = ScanKind::Slow;
+    table[b'\'' as usize] = ScanKind::String;
+    table[b'"' as usize] = ScanKind::String;
+    table[b'`' as usize] = ScanKind::Template;
+    table[b'.' as usize] = ScanKind::Dot;
+    table[b'#' as usize] = ScanKind::Private;
+    table[b'{' as usize] = ScanKind::Single(Punctuator::LeftBrace);
+    table[b'}' as usize] = ScanKind::Single(Punctuator::RightBrace);
+    table[b'(' as usize] = ScanKind::Single(Punctuator::LeftParen);
+    table[b')' as usize] = ScanKind::Single(Punctuator::RightParen);
+    table[b'[' as usize] = ScanKind::Single(Punctuator::LeftBracket);
+    table[b']' as usize] = ScanKind::Single(Punctuator::RightBracket);
+    table[b';' as usize] = ScanKind::Single(Punctuator::Semicolon);
+    table[b',' as usize] = ScanKind::Single(Punctuator::Comma);
+    table[b':' as usize] = ScanKind::Single(Punctuator::Colon);
+    table[b'~' as usize] = ScanKind::Single(Punctuator::BitNot);
+    table
+};
+
 fn is_ascii_identifier_start_byte(byte: u8) -> bool {
-    byte.is_ascii_alphabetic() || matches!(byte, b'_' | b'$')
+    ASCII_FLAGS[byte as usize] & IDENTIFIER_START != 0
 }
 
 fn is_ascii_identifier_continue_byte(byte: u8) -> bool {
-    is_ascii_identifier_start_byte(byte) || byte.is_ascii_digit()
+    ASCII_FLAGS[byte as usize] & IDENTIFIER_CONTINUE != 0
 }
 
 fn is_identifier_start(ch: char) -> bool {
