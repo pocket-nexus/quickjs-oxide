@@ -1,0 +1,3137 @@
+{
+  "schema": "oxide-complete-parser-performance-v1",
+  "main_commit": "2ed79f4649ca9ce438cad481ecfc89120e8d01be",
+  "candidate_engine_commit": "5765fa00df7e6f25d0345305987bab19de27b5e4",
+  "baseline_probe_note": "e2f79560 adds the same observation boundary to main; no parsing algorithm changes",
+  "platform": {
+    "cpu": "Apple M1",
+    "model": "MacBookAir10,1",
+    "logical_cpus": 8,
+    "memory_bytes": 17179869184,
+    "os": "macOS 26.6.2",
+    "target": "aarch64-apple-darwin"
+  },
+  "boundary": {
+    "goal": "Script",
+    "parser_and_interner_initialization": "included",
+    "function_bodies": "all parsed",
+    "oxide_result": "complete owning FunctionTree, including parse-time IR and RegExp validation",
+    "boa_result": "complete ScriptParser(false) AST through parse_eval(false), Annex B enabled",
+    "separate_scope_resolution_lowering_publication": "excluded",
+    "source_io_and_result_teardown": "excluded",
+    "javascript_execution": "none"
+  },
+  "release_settings": {
+    "optimization_level": 3,
+    "lto": "fat",
+    "codegen_units": 1,
+    "profiling": false
+  },
+  "builds": {
+    "main": {
+      "binary_sha256": "2e8ba0c1d4ceba53d8b84cbcf19a784ad40637de1613d33e73a313bb6c1a1d70",
+      "source_sha256": "8e79bc27fa253ab33d1c43fb5c21dbfb38367de347e77a9c71d2aab8d08c4286",
+      "cargo_lock_sha256": "2f39699385f7eaede8d9132a717e072f98f47760efb52304e4522467669e4fc0",
+      "dependency_commit": "e2f7956018cbc8122ed9f102e45942552c7d0a99",
+      "source_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "features": [
+        "test-support"
+      ],
+      "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2\n",
+      "rustflags": null,
+      "encoded_rustflags": null
+    },
+    "boa": {
+      "binary_sha256": "4fce40398585e25944d9f5db4e33d2ad30ab751d299cecc80c7fc57f76a36c9d",
+      "source_sha256": "11ed7f29596704c9e7ff5d8e7699024a87e25646a91fc3d40513bbfbbd67abe9",
+      "cargo_lock_sha256": "c20710aecec4cb168b15c68a4d1168a58f9a2274bf293b5ed27d4a493664ca4a",
+      "boundary": "complete ScriptParser(false), no analyze_scope; initialization included",
+      "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2\n"
+    },
+    "candidate": {
+      "binary_sha256": "0026baad7df43c5a04d084976ced0fb40726e9206a03ca49c8092f47b2e33704",
+      "source_sha256": "8e79bc27fa253ab33d1c43fb5c21dbfb38367de347e77a9c71d2aab8d08c4286",
+      "cargo_lock_sha256": "2f39699385f7eaede8d9132a717e072f98f47760efb52304e4522467669e4fc0",
+      "dependency_commit": "5765fa00df7e6f25d0345305987bab19de27b5e4",
+      "source_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "features": [
+        "test-support"
+      ],
+      "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2\n",
+      "rustflags": null,
+      "encoded_rustflags": null
+    }
+  },
+  "corpora": {
+    "primary": {
+      "workloads": [
+        {
+          "case": "richards",
+          "bytes": 25817,
+          "sha256": "3a6a75ed44921a21ccb5d651c4fa40e1168cc398497f5783f70f520b5880f816"
+        },
+        {
+          "case": "deltablue",
+          "bytes": 35694,
+          "sha256": "0d09178b33846768ca0c46893b9f615ce820ce4eb1aca0537ca21d3bf9647807"
+        },
+        {
+          "case": "crypto",
+          "bytes": 58084,
+          "sha256": "8be5c62888023de8a555264fbb3a7474435382686c9af887d8db981a4975fd63"
+        },
+        {
+          "case": "raytrace",
+          "bytes": 38037,
+          "sha256": "6a2859cbe7aeb2c18ae8e256135f1ca20ef0265a5889636791dbabc11608be41"
+        },
+        {
+          "case": "earley-boyer",
+          "bytes": 205246,
+          "sha256": "d027baa0505e868e7e1273a4d64804f2806ebfad724bc20d44298e7789e6b102"
+        },
+        {
+          "case": "regexp",
+          "bytes": 121340,
+          "sha256": "90098a6d8c417a629558396814e23bb64a881c1d0d9d1c7e376c35c4c5642883"
+        },
+        {
+          "case": "splay",
+          "bytes": 20787,
+          "sha256": "ecb56713721fcdc54a040d237fd4155cee4524c1ecbe7be47d1d0efac1dae8fa"
+        },
+        {
+          "case": "navier-stokes",
+          "bytes": 22731,
+          "sha256": "02f0aa6d195bae84d9c19da850cb98a883b6e535f2e9a38d11000e7aa5170c79"
+        }
+      ],
+      "repository": "ahaoboy/js-engine-benchmark",
+      "revision": "2034d98fc8c5f8044e186267593f5d5ea5232caf",
+      "source_file_sha256": {
+        "base.js": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+        "richards.js": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11",
+        "deltablue.js": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9",
+        "crypto.js": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af",
+        "raytrace.js": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb",
+        "earley-boyer.js": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01",
+        "regexp.js": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602",
+        "splay.js": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d",
+        "navier-stokes.js": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84"
+      },
+      "run_js_sha256": "f13e44c0c4c70a9eb7bdab79956cab9faf59be8b9bec97f98f21548e01d9f938"
+    },
+    "diagnostics": {
+      "workloads": [
+        {
+          "case": "syntax-mixed-65536",
+          "bytes": 65038,
+          "sha256": "6ea50fb81026ad88f34bd8ec068b0c710429a721e5fa5ad18c5f34f17e7725c7"
+        },
+        {
+          "case": "syntax-mixed-524288",
+          "bytes": 521816,
+          "sha256": "2c5497cff321e693b8bf81558e185d1b51e5a86534605f4b8078b97cd7e151a0"
+        },
+        {
+          "case": "syntax-mixed-4194304",
+          "bytes": 4253390,
+          "sha256": "1308dd8b9146895d07fcc2730fff809419705e2c7bb48b98f023b558918401e7"
+        },
+        {
+          "case": "functions-65536",
+          "bytes": 65192,
+          "sha256": "68400ccae4e8587ec672ca234bd6076e4ea7fb3c3a7d698d4599e83d7343fa68"
+        },
+        {
+          "case": "functions-524288",
+          "bytes": 521902,
+          "sha256": "cac3d63bf923af0ac2f5c57d9ba21cdc80f1d2d8c7fbf9d1f898e580badfa993"
+        },
+        {
+          "case": "functions-4194304",
+          "bytes": 4249394,
+          "sha256": "bea469e52cffce8ce08baef152741fe403913aa1c6a5354c430932385826f39e"
+        },
+        {
+          "case": "expressions-65536",
+          "bytes": 64988,
+          "sha256": "3a00a2db9bcc9bd74bf879e0e3eef8ec70c2dcd881bcda8252c1bfc76cca9066"
+        },
+        {
+          "case": "expressions-524288",
+          "bytes": 521472,
+          "sha256": "da5c637c9e3edf5eafa1da69ac0b765e942d5ed239586d3e81c8f9332d034b44"
+        },
+        {
+          "case": "expressions-4194304",
+          "bytes": 4261384,
+          "sha256": "9680f76007deb49a015f92a713c07d66aff2d6e50438e33b36dc2fe76d153984"
+        }
+      ],
+      "generator_sha256": "59de9fcc1888775ba1f5d3b56de319b66930ec604944e78435838fd8621ff895",
+      "node_syntax_check": "v24.21.0"
+    },
+    "aggregate": {
+      "workloads": [
+        {
+          "case": "all",
+          "bytes": 459054,
+          "sha256": "777f2c2ea9fcf3b8c7db198f758f2e7bd2113c4f8a347ea7323e13c85b4d9946"
+        }
+      ],
+      "repository": "ahaoboy/js-engine-benchmark",
+      "revision": "2034d98fc8c5f8044e186267593f5d5ea5232caf",
+      "source_file_sha256": {
+        "base.js": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+        "richards.js": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11",
+        "deltablue.js": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9",
+        "crypto.js": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af",
+        "raytrace.js": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb",
+        "earley-boyer.js": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01",
+        "regexp.js": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602",
+        "splay.js": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d",
+        "navier-stokes.js": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84"
+      },
+      "run_js_sha256": "f13e44c0c4c70a9eb7bdab79956cab9faf59be8b9bec97f98f21548e01d9f938"
+    }
+  },
+  "preparation": {
+    "script": "scripts/benchmark/prepare_frontend_corpus.py",
+    "sha256": "4a41d310e47f10c81b2a94e5f9352d22e574f0994e683a14ed02a76538cf8449",
+    "primary_hashes_reproduced_after_metadata_cleanup": true
+  },
+  "measurements": [
+    {
+      "name": "primary",
+      "created_utc": "2026-09-26T03:32:25Z",
+      "repeat": 15,
+      "cases": 8,
+      "successful_samples": 360,
+      "order": "serial, alternating per repetition",
+      "runner_sha256": "e442a61eb6fa7f81c7c0c65505b9e33b51a953c1278e6514eec481e50edc5e2d",
+      "original_results_sha256": "63262663d4f328afd1fb4d716c4bbf4620887b2619dfdc004bc7e13c4f566023",
+      "boa_over_candidate": 3.00560041533331,
+      "main_over_candidate": 1.8926009966452202,
+      "summary": [
+        {
+          "case": "richards",
+          "engine": "boa",
+          "samples": 15,
+          "successful": 15,
+          "failures": [],
+          "eligible": true,
+          "bytes": 25817,
+          "metrics": {
+            "ns": {
+              "raw": [
+                2206583,
+                1871209,
+                1733000,
+                1706333,
+                1742250,
+                1702750,
+                1569458,
+                1790333,
+                2301000,
+                1721000,
+                1712792,
+                1684708,
+                1711125,
+                2372125,
+                1554375
+              ],
+              "minimum": 1554375,
+              "median": 1721000,
+              "maximum": 2372125,
+              "stdev": 255482.37538731092
+            },
+            "mb_per_second": 15.00116211504939
+          }
+        },
+        {
+          "case": "richards",
+          "engine": "main",
+          "samples": 15,
+          "successful": 15,
+          "failures": [],
+          "eligible": true,
+          "bytes": 25817,
+          "metrics": {
+            "ns": {
+              "raw": [
+                1372583,
+                1005375,
+                1390625,
+                986125,
+                1006667,
+                1003084,
+                923667,
+                994208,
+                1039166,
+                921458,
+                1002166,
+                1001750,
+                1040958,
+                1052334,
+                1000166
+              ],
+              "minimum": 921458,
+              "median": 1003084,
+              "maximum": 1390625,
+              "stdev": 139675.44005549164
+            },
+            "mb_per_second": 25.73762516399424
+          }
+        },
+        {
+          "case": "richards",
+          "engine": "candidate",
+          "samples": 15,
+          "successful": 15,
+          "failures": [],
+          "eligible": true,
+          "bytes": 25817,
+          "metrics": {
+            "ns": {
+              "raw": [
+                906000,
+                581209,
+                588208,
+                583375,
+                777333,
+                610375,
+                632500,
+                578000,
+                614417,
+                582542,
+                626417,
+                591125,
+                850375,
+                575584,
+                588417
+              ],
+              "minimum": 575584,
+              "median": 591125,
+              "maximum": 906000,
+              "stdev": 107186.35725612703
+            },
+            "mb_per_second": 43.67434975681962
+          }
+        },
+        {
+          "case": "deltablue",
+          "engine": "boa",
+          "samples": 15,
+          "successful": 15,
+          "failures": [],
+          "eligible": true,
+          "bytes": 35694,
+          "metrics": {
+            "ns": {
+              "raw": [
+                2252125,
+                2462750,
+                2390875,
+                2208750,
+                2368750,
+                2674000,
+                2537792,
+                2473500,
+                2447500,
+                3757250,
+                2830292,
+                2500208,
+                2441416,
+                3248291,
+                2595583
+              ],
+              "minimum": 2208750,
+              "median": 2473500,
+              "maximum": 3757250,
+              "stdev": 403912.28395529266
+            },
+            "mb_per_second": 14.430563978168587
+          }
+        },
+        {
+          "case": "deltablue",
+          "engine": "main",
+          "samples": 15,
+          "successful": 15,
+          "failures": [],
+          "eligible": true,
+          "bytes": 35694,
+          "metrics": {
+            "ns": {
+              "raw": [
+                1412333,
+                1598916,
+                1396500,
+                1406917,
+                1627041,
+                1454750,
+                2148333,
+                2131250,
+                1903167,
+                1707875,
+                2102750,
+                1876458,
+                1542250,
+                1473458,
+                1546167
+              ],
+              "minimum": 1396500,
+              "median": 1598916,
+              "maximum": 2148333,
+              "stdev": 274644.7151520531
+            },
+            "mb_per_second": 22.323874424922884
+          }
+        },
+        {
+          "case": "deltablue",
+          "engine": "candidate",
+          "samples": 15,
+          "successful": 15,
+          "failures": [],
+          "eligible": true,
+          "bytes": 35694,
+          "metrics": {
+            "ns": {
+              "raw": [
+                819083,
+                812083,
+                811542,
+                824000,
+                1517375,
+                773042,
+                795625,
+                859375,
+                814375,
+                895750,
+                880583,
+                810333,
+                810000,
+                830500,
+                898833
+              ],
+              "minimum": 773042,
+              "median": 819083,
+              "maximum": 1517375,
+              "stdev": 180938.1457003891
+            },
+            "mb_per_second": 43.57800125262031
+          }
+        },
+        {
+          "case": "crypto",
+          "engine": "boa",
+          "samples": 15,
+          "successful": 15,
+          "failures": [],
+          "eligible": true,
+          "bytes": 58084,
+          "metrics": {
+            "ns": {
+              "raw": [
+                7230875,
+                6176833,
+                6077042,
+                6236041,
+                6567417,
+                6920709,
+                6156000,
+                6135834,
+                6452083,
+                6211500,
+                6058708,
+                5938083,
+                6525208,
+                6637542,
+                7373458
+              ],
+              "minimum": 5938083,
+              "median": 6236041,
+              "maximum": 7373458,
+              "stdev": 435498.49303164997
+            },
+            "mb_per_second": 9.314242802444692
+          }
+        },
+        {
+          "case": "crypto",
+          "engine": "main",
+          "samples": 15,
+          "successful": 15,
+          "failures": [],
+          "eligible": true,
+          "bytes": 58084,
+          "metrics": {
+            "ns": {
+              "raw": [
+                3425083,
+                3867667,
+                3412875,
+                3411875,
+                4211917,
+                3407583,
+                3207334,
+                3488542,
+                3496125,
+                3992917,
+                3354875,
+                3391375,
+                3399208,
+                3408542,
+                3446084
+              ],
+              "minimum": 3207334,
+              "median": 3412875,
+              "maximum": 4211917,
+              "stdev": 272907.72129234625
+            },
+            "mb_per_second": 17.019082152144453
+          }
+        },
+        {
+          "case": "crypto",
+          "engine": "candidate",
+          "samples": 15,
+          "successful": 15,
+          "failures": [],
+          "eligible": true,
+          "bytes": 58084,
+          "metrics": {
+            "ns": {
+              "raw": [
+                2248958,
+                1914167,
+                1814375,
+                1818875,
+                1889291,
+                2631709,
+                1986709,
+                1825292,
+                2423042,
+                1852792,
+                1676708,
+                1986125,
+                1884834,
+                2510708,
+                2668875
+              ],
+              "minimum": 1676708,
+              "median": 1914167,
+              "maximum": 2668875,
+              "stdev": 329496.310565225
+            },
+            "mb_per_second": 30.344269857332197
+          }
+        },
+        {
+          "case": "raytrace",
+          "engine": "boa",
+          "samples": 15,
+          "successful": 15,
+          "failures": [],
+          "eligible": true,
+          "bytes": 38037,
+          "metrics": {
+            "ns": {
+              "raw": [
+                3343292,
+                3125166,
+                3159375,
+                3042167,
+                3072167,
+                3154083,
+                2815875,
+                3040333,
+                3073958,
+                3078917,
+                3051375,
+                2870042,
+                2930709,
+                3028000,
+                3082709
+              ],
+              "minimum": 2815875,
+              "median": 3072167,
+              "maximum": 3343292,
+              "stdev": 124950.63176017425
+            },
+            "mb_per_second": 12.38116287298184
+          }
+        },
+        {
+          "case": "raytrace",
+          "engine": "main",
+          "samples": 15,
+          "successful": 15,
+          "failures": [],
+          "eligible": true,
+          "bytes": 38037,
+          "metrics": {
+            "ns": {
+              "raw": [
+                2265292,
+                2285167,
+                2339625,
+                2280334,
+                2246417,
+                2249833,
+                2299375,
+                2249708,
+                2089416,
+                2226708,
+                2295416,
+                2938292,
+                2228583,
+                2259458,
+                2216291
+              ],
+              "minimum": 2089416,
+              "median": 2259458,
+              "maximum": 2938292,
+              "stdev": 185577.28915339778
+            },
+            "mb_per_second": 16.834568290271385
+          }
+        },
+        {
+          "case": "raytrace",
+          "engine": "candidate",
+          "samples": 15,
+          "successful": 15,
+          "failures": [],
+          "eligible": true,
+          "bytes": 38037,
+          "metrics": {
+            "ns": {
+              "raw": [
+                1162125,
+                1307041,
+                1833667,
+                1154667,
+                1167292,
+                1168584,
+                1349542,
+                1143666,
+                1146458,
+                1148958,
+                1178333,
+                1162500,
+                1249500,
+                1605458,
+                1079750
+              ],
+              "minimum": 1079750,
+              "median": 1167292,
+              "maximum": 1833667,
+              "stdev": 204188.89800511402
+            },
+            "mb_per_second": 32.58567693430607
+          }
+        },
+        {
+          "case": "earley-boyer",
+          "engine": "boa",
+          "samples": 15,
+          "successful": 15,
+          "failures": [],
+          "eligible": true,
+          "bytes": 205246,
+          "metrics": {
+            "ns": {
+              "raw": [
+                22249250,
+                24632083,
+                22818083,
+                23471958,
+                23479709,
+                22992292,
+                21569667,
+                32752375,
+                24847583,
+                24383625,
+                24516750,
+                24170875,
+                23273666,
+                22920792,
+                24807584
+              ],
+              "minimum": 21569667,
+              "median": 23479709,
+              "maximum": 32752375,
+              "stdev": 2561919.3899263963
+            },
+            "mb_per_second": 8.741420091705566
+          }
+        },
+        {
+          "case": "earley-boyer",
+          "engine": "main",
+          "samples": 15,
+          "successful": 15,
+          "failures": [],
+          "eligible": true,
+          "bytes": 205246,
+          "metrics": {
+            "ns": {
+              "raw": [
+                18785083,
+                19648000,
+                20338375,
+                19836125,
+                17990625,
+                18271416,
+                17103584,
+                57336625,
+                20905958,
+                20936791,
+                19212792,
+                19451208,
+                19259708,
+                19622334,
+                18736334
+              ],
+              "minimum": 17103584,
+              "median": 19451208,
+              "maximum": 57336625,
+              "stdev": 9877492.174356854
+            },
+            "mb_per_second": 10.55183822002212
+          }
+        },
+        {
+          "case": "earley-boyer",
+          "engine": "candidate",
+          "samples": 15,
+          "successful": 15,
+          "failures": [],
+          "eligible": true,
+          "bytes": 205246,
+          "metrics": {
+            "ns": {
+              "raw": [
+                7533333,
+                6737250,
+                7222916,
+                7537000,
+                6945625,
+                7409500,
+                7016709,
+                39682041,
+                7026958,
+                6680625,
+                6844375,
+                6367500,
+                7561792,
+                7736125,
+                6987500
+              ],
+              "minimum": 6367500,
+              "median": 7026958,
+              "maximum": 39682041,
+              "stdev": 8417581.15395448
+            },
+            "mb_per_second": 29.208371531464966
+          }
+        },
+        {
+          "case": "regexp",
+          "engine": "boa",
+          "samples": 15,
+          "successful": 15,
+          "failures": [],
+          "eligible": true,
+          "bytes": 121340,
+          "metrics": {
+            "ns": {
+              "raw": [
+                8046875,
+                8765125,
+                7894875,
+                7862834,
+                8335291,
+                7915375,
+                7885417,
+                7829417,
+                8348708,
+                8982958,
+                8074959,
+                8001042,
+                7641792,
+                8275417,
+                8717958
+              ],
+              "minimum": 7641792,
+              "median": 8046875,
+              "maximum": 8982958,
+              "stdev": 391814.12790667295
+            },
+            "mb_per_second": 15.079145631067961
+          }
+        },
+        {
+          "case": "regexp",
+          "engine": "main",
+          "samples": 15,
+          "successful": 15,
+          "failures": [],
+          "eligible": true,
+          "bytes": 121340,
+          "metrics": {
+            "ns": {
+              "raw": [
+                4734584,
+                4243333,
+                4585000,
+                5532667,
+                4566667,
+                4720667,
+                5608000,
+                4333875,
+                4328292,
+                4517084,
+                4226333,
+                5463250,
+                5197500,
+                4375917,
+                4239417
+              ],
+              "minimum": 4226333,
+              "median": 4566667,
+              "maximum": 5608000,
+              "stdev": 495280.55297916994
+            },
+            "mb_per_second": 26.570800980233503
+          }
+        },
+        {
+          "case": "regexp",
+          "engine": "candidate",
+          "samples": 15,
+          "successful": 15,
+          "failures": [],
+          "eligible": true,
+          "bytes": 121340,
+          "metrics": {
+            "ns": {
+              "raw": [
+                2600291,
+                2395583,
+                2677250,
+                2441791,
+                2578583,
+                2390167,
+                2527458,
+                3000375,
+                2526500,
+                2373750,
+                3112916,
+                2392334,
+                2509458,
+                2335625,
+                2526375
+              ],
+              "minimum": 2335625,
+              "median": 2526375,
+              "maximum": 3112916,
+              "stdev": 224278.94570021503
+            },
+            "mb_per_second": 48.02929098015932
+          }
+        },
+        {
+          "case": "splay",
+          "engine": "boa",
+          "samples": 15,
+          "successful": 15,
+          "failures": [],
+          "eligible": true,
+          "bytes": 20787,
+          "metrics": {
+            "ns": {
+              "raw": [
+                1270666,
+                1406125,
+                1360583,
+                1249417,
+                1264250,
+                1248084,
+                1388292,
+                1349208,
+                1408125,
+                1358834,
+                1439209,
+                1279666,
+                1393333,
+                1387500,
+                1406667
+              ],
+              "minimum": 1248084,
+              "median": 1360583,
+              "maximum": 1439209,
+              "stdev": 66348.43726957166
+            },
+            "mb_per_second": 15.278009500339193
+          }
+        },
+        {
+          "case": "splay",
+          "engine": "main",
+          "samples": 15,
+          "successful": 15,
+          "failures": [],
+          "eligible": true,
+          "bytes": 20787,
+          "metrics": {
+            "ns": {
+              "raw": [
+                761334,
+                823916,
+                764084,
+                1097333,
+                829833,
+                1462792,
+                837958,
+                819625,
+                1599042,
+                819833,
+                1361209,
+                825375,
+                814833,
+                849125,
+                836250
+              ],
+              "minimum": 761334,
+              "median": 829833,
+              "maximum": 1599042,
+              "stdev": 277059.42030130513
+            },
+            "mb_per_second": 25.049618417199603
+          }
+        },
+        {
+          "case": "splay",
+          "engine": "candidate",
+          "samples": 15,
+          "successful": 15,
+          "failures": [],
+          "eligible": true,
+          "bytes": 20787,
+          "metrics": {
+            "ns": {
+              "raw": [
+                452916,
+                471333,
+                466542,
+                455541,
+                457958,
+                516917,
+                454834,
+                480750,
+                498208,
+                517083,
+                499625,
+                489875,
+                497083,
+                489125,
+                490750
+              ],
+              "minimum": 452916,
+              "median": 489125,
+              "maximum": 517083,
+              "stdev": 21797.110570855377
+            },
+            "mb_per_second": 42.498338870431894
+          }
+        },
+        {
+          "case": "navier-stokes",
+          "engine": "boa",
+          "samples": 15,
+          "successful": 15,
+          "failures": [],
+          "eligible": true,
+          "bytes": 22731,
+          "metrics": {
+            "ns": {
+              "raw": [
+                2048541,
+                2087208,
+                2714541,
+                2038375,
+                2011208,
+                2798458,
+                2007833,
+                2018708,
+                1893917,
+                1885166,
+                1930125,
+                2041250,
+                2026833,
+                2094750,
+                2637916
+              ],
+              "minimum": 1885166,
+              "median": 2038375,
+              "maximum": 2798458,
+              "stdev": 301753.2065751746
+            },
+            "mb_per_second": 11.151530017783774
+          }
+        },
+        {
+          "case": "navier-stokes",
+          "engine": "main",
+          "samples": 15,
+          "successful": 15,
+          "failures": [],
+          "eligible": true,
+          "bytes": 22731,
+          "metrics": {
+            "ns": {
+              "raw": [
+                1164125,
+                1179417,
+                1181042,
+                1187042,
+                1156667,
+                1125750,
+                1099458,
+                1084250,
+                1158708,
+                1163375,
+                1172666,
+                1082417,
+                1054959,
+                1088583,
+                1359875
+              ],
+              "minimum": 1054959,
+              "median": 1158708,
+              "maximum": 1359875,
+              "stdev": 72256.64223229387
+            },
+            "mb_per_second": 19.61753953541358
+          }
+        },
+        {
+          "case": "navier-stokes",
+          "engine": "candidate",
+          "samples": 15,
+          "successful": 15,
+          "failures": [],
+          "eligible": true,
+          "bytes": 22731,
+          "metrics": {
+            "ns": {
+              "raw": [
+                678333,
+                694250,
+                688750,
+                684042,
+                625833,
+                680167,
+                683791,
+                640458,
+                685792,
+                631375,
+                683084,
+                705667,
+                673750,
+                624708,
+                691500
+              ],
+              "minimum": 624708,
+              "median": 683084,
+              "maximum": 705667,
+              "stdev": 26732.430555057137
+            },
+            "mb_per_second": 33.27702010294488
+          }
+        }
+      ]
+    },
+    {
+      "name": "primary-confirmation",
+      "created_utc": "2026-09-26T03:33:01Z",
+      "repeat": 31,
+      "cases": 8,
+      "successful_samples": 744,
+      "order": "serial, alternating per repetition",
+      "runner_sha256": "e442a61eb6fa7f81c7c0c65505b9e33b51a953c1278e6514eec481e50edc5e2d",
+      "original_results_sha256": "6532a169edca78b87bdc10b08c833d25a3194bd3a207b355602decc8a910fdb0",
+      "boa_over_candidate": 3.047122239191723,
+      "main_over_candidate": 1.8849054576153248,
+      "summary": [
+        {
+          "case": "richards",
+          "engine": "boa",
+          "samples": 31,
+          "successful": 31,
+          "failures": [],
+          "eligible": true,
+          "bytes": 25817,
+          "metrics": {
+            "ns": {
+              "raw": [
+                1984958,
+                2270084,
+                1585959,
+                1582334,
+                1649958,
+                1710958,
+                1706417,
+                1590375,
+                1557000,
+                2017708,
+                1503000,
+                1612500,
+                1573125,
+                1571250,
+                1569125,
+                1587209,
+                1595166,
+                1762958,
+                1563000,
+                1669208,
+                2180917,
+                1589333,
+                2540708,
+                1616625,
+                2279584,
+                1587583,
+                2873875,
+                1570500,
+                1572375,
+                1638917,
+                1575667
+              ],
+              "minimum": 1503000,
+              "median": 1595166,
+              "maximum": 2873875,
+              "stdev": 332730.9712213053
+            },
+            "mb_per_second": 16.18452248856859
+          }
+        },
+        {
+          "case": "richards",
+          "engine": "main",
+          "samples": 31,
+          "successful": 31,
+          "failures": [],
+          "eligible": true,
+          "bytes": 25817,
+          "metrics": {
+            "ns": {
+              "raw": [
+                1247417,
+                923833,
+                931458,
+                947084,
+                951792,
+                1008542,
+                922333,
+                867917,
+                864208,
+                1152000,
+                924292,
+                1171416,
+                932125,
+                915166,
+                990333,
+                992875,
+                992583,
+                1005125,
+                919333,
+                1013209,
+                916250,
+                920416,
+                918875,
+                933458,
+                933333,
+                913708,
+                919291,
+                938125,
+                943167,
+                1010000,
+                988792
+              ],
+              "minimum": 864208,
+              "median": 933458,
+              "maximum": 1247417,
+              "stdev": 84476.85020493032
+            },
+            "mb_per_second": 27.657377193189195
+          }
+        },
+        {
+          "case": "richards",
+          "engine": "candidate",
+          "samples": 31,
+          "successful": 31,
+          "failures": [],
+          "eligible": true,
+          "bytes": 25817,
+          "metrics": {
+            "ns": {
+              "raw": [
+                1577750,
+                588500,
+                552708,
+                543916,
+                565666,
+                552833,
+                559542,
+                542166,
+                546083,
+                553209,
+                542666,
+                511958,
+                545167,
+                587458,
+                550458,
+                538709,
+                595250,
+                580708,
+                577750,
+                579084,
+                542959,
+                530167,
+                549167,
+                586250,
+                541792,
+                1056125,
+                541250,
+                593584,
+                553000,
+                543458,
+                585208
+              ],
+              "minimum": 511958,
+              "median": 552833,
+              "maximum": 1577750,
+              "stdev": 202213.25552254432
+            },
+            "mb_per_second": 46.699455350892585
+          }
+        },
+        {
+          "case": "deltablue",
+          "engine": "boa",
+          "samples": 31,
+          "successful": 31,
+          "failures": [],
+          "eligible": true,
+          "bytes": 35694,
+          "metrics": {
+            "ns": {
+              "raw": [
+                2197417,
+                2412292,
+                2268708,
+                2438000,
+                2379916,
+                2246542,
+                3096542,
+                2197291,
+                2188709,
+                3222417,
+                2256667,
+                2617291,
+                2339458,
+                2517666,
+                3479167,
+                2374833,
+                2328834,
+                2371500,
+                2443708,
+                2432208,
+                2707584,
+                3084792,
+                2381042,
+                2375958,
+                2414541,
+                2236458,
+                3112417,
+                2815958,
+                2452958,
+                2215958,
+                2322291
+              ],
+              "minimum": 2188709,
+              "median": 2381042,
+              "maximum": 3479167,
+              "stdev": 341730.0149677995
+            },
+            "mb_per_second": 14.990915741931474
+          }
+        },
+        {
+          "case": "deltablue",
+          "engine": "main",
+          "samples": 31,
+          "successful": 31,
+          "failures": [],
+          "eligible": true,
+          "bytes": 35694,
+          "metrics": {
+            "ns": {
+              "raw": [
+                1315083,
+                1401167,
+                1317833,
+                1307917,
+                1396333,
+                1280750,
+                1282500,
+                1399292,
+                1296917,
+                1308292,
+                1282125,
+                1370792,
+                1581792,
+                1710125,
+                1310000,
+                1386750,
+                1404250,
+                1407875,
+                2323250,
+                1517583,
+                1440833,
+                1601541,
+                1381625,
+                1332709,
+                1400541,
+                1387584,
+                1411667,
+                1288583,
+                1405833,
+                1314166,
+                1363125
+              ],
+              "minimum": 1280750,
+              "median": 1386750,
+              "maximum": 2323250,
+              "stdev": 195589.8421213368
+            },
+            "mb_per_second": 25.739318550567873
+          }
+        },
+        {
+          "case": "deltablue",
+          "engine": "candidate",
+          "samples": 31,
+          "successful": 31,
+          "failures": [],
+          "eligible": true,
+          "bytes": 35694,
+          "metrics": {
+            "ns": {
+              "raw": [
+                1726958,
+                828708,
+                756292,
+                826584,
+                874417,
+                740917,
+                751208,
+                802500,
+                1353375,
+                727500,
+                749709,
+                835833,
+                1138708,
+                947792,
+                745208,
+                798833,
+                763167,
+                742125,
+                801417,
+                821375,
+                834209,
+                910542,
+                737416,
+                866917,
+                803250,
+                738958,
+                802916,
+                743541,
+                760042,
+                801375,
+                808417
+              ],
+              "minimum": 727500,
+              "median": 802500,
+              "maximum": 1726958,
+              "stdev": 205494.0505618447
+            },
+            "mb_per_second": 44.478504672897195
+          }
+        },
+        {
+          "case": "crypto",
+          "engine": "boa",
+          "samples": 31,
+          "successful": 31,
+          "failures": [],
+          "eligible": true,
+          "bytes": 58084,
+          "metrics": {
+            "ns": {
+              "raw": [
+                6349792,
+                5813959,
+                6973958,
+                5710334,
+                5614708,
+                5641500,
+                6123166,
+                6478417,
+                6265209,
+                6193750,
+                5888042,
+                6300750,
+                6389958,
+                5650875,
+                6325375,
+                5666833,
+                6247667,
+                6039375,
+                6083166,
+                5730250,
+                6331083,
+                5715542,
+                6570292,
+                6074833,
+                6155166,
+                5686458,
+                6226834,
+                5798833,
+                6641042,
+                5843792,
+                6851417
+              ],
+              "minimum": 5614708,
+              "median": 6123166,
+              "maximum": 6973958,
+              "stdev": 368854.908454201
+            },
+            "mb_per_second": 9.48594240299871
+          }
+        },
+        {
+          "case": "crypto",
+          "engine": "main",
+          "samples": 31,
+          "successful": 31,
+          "failures": [],
+          "eligible": true,
+          "bytes": 58084,
+          "metrics": {
+            "ns": {
+              "raw": [
+                3613791,
+                3173250,
+                3400000,
+                3748708,
+                3235167,
+                3131791,
+                3935083,
+                3443584,
+                3374709,
+                3225834,
+                3385959,
+                3201583,
+                3258125,
+                3143084,
+                3190916,
+                3128625,
+                3255000,
+                3171500,
+                3322541,
+                3189250,
+                3292916,
+                4253167,
+                3835125,
+                3215333,
+                3135292,
+                3391250,
+                3257875,
+                3187333,
+                3455541,
+                3853791,
+                3405208
+              ],
+              "minimum": 3128625,
+              "median": 3258125,
+              "maximum": 4253167,
+              "stdev": 276884.8286525629
+            },
+            "mb_per_second": 17.827431421446384
+          }
+        },
+        {
+          "case": "crypto",
+          "engine": "candidate",
+          "samples": 31,
+          "successful": 31,
+          "failures": [],
+          "eligible": true,
+          "bytes": 58084,
+          "metrics": {
+            "ns": {
+              "raw": [
+                2324333,
+                1711291,
+                1819291,
+                1937625,
+                1805375,
+                1866666,
+                1831167,
+                1804625,
+                1695875,
+                2620125,
+                1661917,
+                1801167,
+                1682292,
+                1659500,
+                1669208,
+                1619458,
+                2059000,
+                1666958,
+                2232541,
+                1677667,
+                1833167,
+                1693208,
+                1863958,
+                1723250,
+                1676000,
+                1829750,
+                2228375,
+                1676583,
+                1668000,
+                1675583,
+                1803666
+              ],
+              "minimum": 1619458,
+              "median": 1801167,
+              "maximum": 2620125,
+              "stdev": 232179.52592464176
+            },
+            "mb_per_second": 32.247981447583705
+          }
+        },
+        {
+          "case": "raytrace",
+          "engine": "boa",
+          "samples": 31,
+          "successful": 31,
+          "failures": [],
+          "eligible": true,
+          "bytes": 38037,
+          "metrics": {
+            "ns": {
+              "raw": [
+                3073333,
+                2820709,
+                2820875,
+                2855791,
+                2821458,
+                2860750,
+                2982083,
+                2895000,
+                2829667,
+                2813500,
+                2799833,
+                2876958,
+                2947667,
+                2857625,
+                2835708,
+                2982083,
+                2828833,
+                3090375,
+                2811541,
+                3313834,
+                2970416,
+                2968167,
+                3448583,
+                3427250,
+                2943917,
+                2889083,
+                3201000,
+                3638833,
+                2832541,
+                2867750,
+                3036834
+              ],
+              "minimum": 2799833,
+              "median": 2889083,
+              "maximum": 3638833,
+              "stdev": 214192.60076908272
+            },
+            "mb_per_second": 13.165769207738235
+          }
+        },
+        {
+          "case": "raytrace",
+          "engine": "main",
+          "samples": 31,
+          "successful": 31,
+          "failures": [],
+          "eligible": true,
+          "bytes": 38037,
+          "metrics": {
+            "ns": {
+              "raw": [
+                2072250,
+                2093458,
+                2099583,
+                2100708,
+                2275084,
+                2334417,
+                2229417,
+                2074083,
+                2067917,
+                2148958,
+                2143292,
+                2179042,
+                2067292,
+                2067333,
+                2071125,
+                2242750,
+                2055125,
+                2065083,
+                2324375,
+                2092166,
+                2882084,
+                2066583,
+                2377083,
+                2083875,
+                2713959,
+                2701916,
+                2174875,
+                2170000,
+                2059125,
+                2652208,
+                2147875
+              ],
+              "minimum": 2055125,
+              "median": 2143292,
+              "maximum": 2882084,
+              "stdev": 222957.20935303366
+            },
+            "mb_per_second": 17.74699854242912
+          }
+        },
+        {
+          "case": "raytrace",
+          "engine": "candidate",
+          "samples": 31,
+          "successful": 31,
+          "failures": [],
+          "eligible": true,
+          "bytes": 38037,
+          "metrics": {
+            "ns": {
+              "raw": [
+                1174417,
+                1156334,
+                1887291,
+                1099458,
+                1144250,
+                1076583,
+                1109500,
+                1142917,
+                1092375,
+                1520417,
+                1167208,
+                1157208,
+                1069750,
+                1584000,
+                1110292,
+                1097083,
+                1101750,
+                1075833,
+                1076084,
+                1063125,
+                1128041,
+                1072333,
+                1077917,
+                1157917,
+                1080459,
+                1066250,
+                1086583,
+                1157750,
+                1069500,
+                1094250,
+                1084084
+              ],
+              "minimum": 1063125,
+              "median": 1099458,
+              "maximum": 1887291,
+              "stdev": 178222.43957993522
+            },
+            "mb_per_second": 34.596137369503886
+          }
+        },
+        {
+          "case": "earley-boyer",
+          "engine": "boa",
+          "samples": 31,
+          "successful": 31,
+          "failures": [],
+          "eligible": true,
+          "bytes": 205246,
+          "metrics": {
+            "ns": {
+              "raw": [
+                20921541,
+                22822959,
+                21120375,
+                20533500,
+                20842667,
+                22191833,
+                21701959,
+                21624459,
+                20892625,
+                22443625,
+                22467459,
+                21409125,
+                21014708,
+                21403750,
+                21899625,
+                21321084,
+                21391459,
+                22091375,
+                21908500,
+                21606791,
+                21801125,
+                21230208,
+                21001541,
+                21257208,
+                21871583,
+                20932667,
+                21725625,
+                22491625,
+                22188583,
+                22945250,
+                22133416
+              ],
+              "minimum": 20533500,
+              "median": 21624459,
+              "maximum": 22945250,
+              "stdev": 619947.0827110296
+            },
+            "mb_per_second": 9.491381957809905
+          }
+        },
+        {
+          "case": "earley-boyer",
+          "engine": "main",
+          "samples": 31,
+          "successful": 31,
+          "failures": [],
+          "eligible": true,
+          "bytes": 205246,
+          "metrics": {
+            "ns": {
+              "raw": [
+                17954084,
+                17986292,
+                17439958,
+                16999541,
+                18342625,
+                18152083,
+                17413334,
+                16795458,
+                17019250,
+                17820916,
+                17595792,
+                18536542,
+                16979917,
+                16966583,
+                17786042,
+                17186584,
+                17022000,
+                16760750,
+                17235042,
+                18596584,
+                17294417,
+                17122500,
+                17551375,
+                18392042,
+                17130708,
+                17393709,
+                17396334,
+                17983417,
+                17828666,
+                17492458,
+                18374875
+              ],
+              "minimum": 16760750,
+              "median": 17439958,
+              "maximum": 18596584,
+              "stdev": 536951.2862010454
+            },
+            "mb_per_second": 11.768721002653791
+          }
+        },
+        {
+          "case": "earley-boyer",
+          "engine": "candidate",
+          "samples": 31,
+          "successful": 31,
+          "failures": [],
+          "eligible": true,
+          "bytes": 205246,
+          "metrics": {
+            "ns": {
+              "raw": [
+                5877166,
+                6575375,
+                6098625,
+                5798292,
+                6775958,
+                5941291,
+                5935250,
+                6821208,
+                5899375,
+                5937458,
+                5954584,
+                6360916,
+                5686917,
+                5857583,
+                6595333,
+                5951291,
+                5829167,
+                6481625,
+                5909791,
+                6202583,
+                7096625,
+                6468875,
+                5949208,
+                6508750,
+                6093125,
+                5884958,
+                6247834,
+                6655833,
+                5865042,
+                5939542,
+                6006208
+              ],
+              "minimum": 5686917,
+              "median": 5954584,
+              "maximum": 7096625,
+              "stdev": 363201.51885764906
+            },
+            "mb_per_second": 34.46857076833579
+          }
+        },
+        {
+          "case": "regexp",
+          "engine": "boa",
+          "samples": 31,
+          "successful": 31,
+          "failures": [],
+          "eligible": true,
+          "bytes": 121340,
+          "metrics": {
+            "ns": {
+              "raw": [
+                8075666,
+                7950292,
+                7362917,
+                16596792,
+                8456459,
+                7886917,
+                7980000,
+                8107875,
+                8410292,
+                9187292,
+                8886208,
+                8316333,
+                8931292,
+                8399291,
+                9457667,
+                8573458,
+                7828292,
+                7635208,
+                7445792,
+                8276666,
+                8622250,
+                7428750,
+                7601833,
+                7679875,
+                8135417,
+                8321708,
+                7763375,
+                8558792,
+                8173833,
+                7401792,
+                7255833
+              ],
+              "minimum": 7255833,
+              "median": 8135417,
+              "maximum": 16596792,
+              "stdev": 1614920.219278231
+            },
+            "mb_per_second": 14.915031399128035
+          }
+        },
+        {
+          "case": "regexp",
+          "engine": "main",
+          "samples": 31,
+          "successful": 31,
+          "failures": [],
+          "eligible": true,
+          "bytes": 121340,
+          "metrics": {
+            "ns": {
+              "raw": [
+                4333834,
+                4394250,
+                4227583,
+                24582333,
+                4424917,
+                4819167,
+                4586250,
+                4346333,
+                5196959,
+                5176875,
+                4642083,
+                4425750,
+                4818667,
+                5081250,
+                4877833,
+                4619833,
+                4231708,
+                4228458,
+                4744041,
+                4248417,
+                4537625,
+                5034500,
+                4572375,
+                4395708,
+                4614125,
+                4565250,
+                4540625,
+                5146500,
+                4437791,
+                4378000,
+                5163791
+              ],
+              "minimum": 4227583,
+              "median": 4572375,
+              "maximum": 24582333,
+              "stdev": 3597085.713571584
+            },
+            "mb_per_second": 26.537630881106647
+          }
+        },
+        {
+          "case": "regexp",
+          "engine": "candidate",
+          "samples": 31,
+          "successful": 31,
+          "failures": [],
+          "eligible": true,
+          "bytes": 121340,
+          "metrics": {
+            "ns": {
+              "raw": [
+                2450875,
+                2340667,
+                2306917,
+                2428750,
+                3449667,
+                2414375,
+                2564208,
+                2499708,
+                2565334,
+                2715750,
+                2522750,
+                2346833,
+                2515292,
+                2501541,
+                2661667,
+                2523750,
+                2367750,
+                2437417,
+                2418792,
+                2354750,
+                2330083,
+                2424333,
+                2368583,
+                2354000,
+                2318250,
+                2562708,
+                3951125,
+                2558125,
+                2516625,
+                2361167,
+                2433291
+              ],
+              "minimum": 2306917,
+              "median": 2437417,
+              "maximum": 3951125,
+              "stdev": 333716.8604971257
+            },
+            "mb_per_second": 49.78220796851749
+          }
+        },
+        {
+          "case": "splay",
+          "engine": "boa",
+          "samples": 31,
+          "successful": 31,
+          "failures": [],
+          "eligible": true,
+          "bytes": 20787,
+          "metrics": {
+            "ns": {
+              "raw": [
+                1251959,
+                1255583,
+                1252833,
+                1252750,
+                1242875,
+                1255500,
+                1278209,
+                1248500,
+                1303916,
+                1250792,
+                1311500,
+                1254209,
+                1245166,
+                1572041,
+                1340417,
+                1283166,
+                1228125,
+                1305666,
+                1249084,
+                1256917,
+                1367000,
+                1336084,
+                1266625,
+                1240834,
+                1263208,
+                1250417,
+                1254125,
+                1352209,
+                1824125,
+                1313042,
+                1240417
+              ],
+              "minimum": 1228125,
+              "median": 1255583,
+              "maximum": 1824125,
+              "stdev": 116583.91880406074
+            },
+            "mb_per_second": 16.555655818850685
+          }
+        },
+        {
+          "case": "splay",
+          "engine": "main",
+          "samples": 31,
+          "successful": 31,
+          "failures": [],
+          "eligible": true,
+          "bytes": 20787,
+          "metrics": {
+            "ns": {
+              "raw": [
+                756167,
+                767375,
+                769250,
+                781667,
+                761750,
+                1489458,
+                767417,
+                756333,
+                810834,
+                762958,
+                826250,
+                762375,
+                771542,
+                796500,
+                819750,
+                759667,
+                833000,
+                769333,
+                844875,
+                767833,
+                821792,
+                800125,
+                791834,
+                766166,
+                772584,
+                777125,
+                758000,
+                751000,
+                756250,
+                756042,
+                756250
+              ],
+              "minimum": 751000,
+              "median": 769250,
+              "maximum": 1489458,
+              "stdev": 130158.19627754395
+            },
+            "mb_per_second": 27.022424439389017
+          }
+        },
+        {
+          "case": "splay",
+          "engine": "candidate",
+          "samples": 31,
+          "successful": 31,
+          "failures": [],
+          "eligible": true,
+          "bytes": 20787,
+          "metrics": {
+            "ns": {
+              "raw": [
+                516625,
+                458083,
+                465083,
+                455417,
+                455042,
+                467958,
+                449250,
+                521417,
+                467500,
+                558375,
+                454708,
+                465000,
+                459708,
+                456625,
+                494250,
+                479208,
+                1041958,
+                462500,
+                457416,
+                463750,
+                493000,
+                456750,
+                456250,
+                466792,
+                464000,
+                460583,
+                462667,
+                473208,
+                460542,
+                448459,
+                525959
+              ],
+              "minimum": 448459,
+              "median": 463750,
+              "maximum": 1041958,
+              "stdev": 105436.58931994934
+            },
+            "mb_per_second": 44.823719676549864
+          }
+        },
+        {
+          "case": "navier-stokes",
+          "engine": "boa",
+          "samples": 31,
+          "successful": 31,
+          "failures": [],
+          "eligible": true,
+          "bytes": 22731,
+          "metrics": {
+            "ns": {
+              "raw": [
+                2150583,
+                1882792,
+                2286625,
+                1871250,
+                1880666,
+                1867375,
+                1860917,
+                1868792,
+                1863500,
+                2002292,
+                1857875,
+                2320250,
+                1890708,
+                2360833,
+                1863625,
+                1868625,
+                1871750,
+                1864041,
+                1971833,
+                1864583,
+                1895417,
+                1871958,
+                1899375,
+                1873125,
+                1886042,
+                1866208,
+                1920250,
+                2029334,
+                1882250,
+                2040708,
+                2030625
+              ],
+              "minimum": 1857875,
+              "median": 1882250,
+              "maximum": 2360833,
+              "stdev": 142481.98187939264
+            },
+            "mb_per_second": 12.076504183822554
+          }
+        },
+        {
+          "case": "navier-stokes",
+          "engine": "main",
+          "samples": 31,
+          "successful": 31,
+          "failures": [],
+          "eligible": true,
+          "bytes": 22731,
+          "metrics": {
+            "ns": {
+              "raw": [
+                1068875,
+                1071042,
+                1111459,
+                1071875,
+                1068500,
+                1081291,
+                1114042,
+                1059791,
+                1073375,
+                1244709,
+                1158250,
+                1069959,
+                1068708,
+                1080792,
+                1065125,
+                1071917,
+                1155625,
+                1082542,
+                1214250,
+                1074875,
+                1220208,
+                1070458,
+                1655750,
+                1089667,
+                1062417,
+                1133708,
+                1080084,
+                1073541,
+                1064084,
+                1167875,
+                1205334
+              ],
+              "minimum": 1059791,
+              "median": 1080084,
+              "maximum": 1655750,
+              "stdev": 112545.71351407123
+            },
+            "mb_per_second": 21.045585343362184
+          }
+        },
+        {
+          "case": "navier-stokes",
+          "engine": "candidate",
+          "samples": 31,
+          "successful": 31,
+          "failures": [],
+          "eligible": true,
+          "bytes": 22731,
+          "metrics": {
+            "ns": {
+              "raw": [
+                646375,
+                624625,
+                708208,
+                695708,
+                693458,
+                639250,
+                630167,
+                687583,
+                630167,
+                634166,
+                1119125,
+                621167,
+                635625,
+                620459,
+                628459,
+                619791,
+                633125,
+                627666,
+                640250,
+                624417,
+                633042,
+                637750,
+                632375,
+                649125,
+                630333,
+                684916,
+                713583,
+                629958,
+                761542,
+                786500,
+                695208
+              ],
+              "minimum": 619791,
+              "median": 635625,
+              "maximum": 1119125,
+              "stdev": 93305.31780035801
+            },
+            "mb_per_second": 35.76165191740413
+          }
+        }
+      ]
+    },
+    {
+      "name": "diagnostics",
+      "created_utc": "2026-09-26T03:33:49Z",
+      "repeat": 5,
+      "cases": 9,
+      "successful_samples": 135,
+      "order": "serial, alternating per repetition",
+      "runner_sha256": "e442a61eb6fa7f81c7c0c65505b9e33b51a953c1278e6514eec481e50edc5e2d",
+      "original_results_sha256": "3a91fd6a4de99f792152f2eb2e074e034528bd8df809b2794a84cecf5ccc9917",
+      "boa_over_candidate": 2.6778725415005384,
+      "main_over_candidate": 1.8633200231793605,
+      "summary": [
+        {
+          "case": "syntax-mixed-65536",
+          "engine": "boa",
+          "samples": 5,
+          "successful": 5,
+          "failures": [],
+          "eligible": true,
+          "bytes": 65038,
+          "metrics": {
+            "ns": {
+              "raw": [
+                6900417,
+                6766625,
+                7095583,
+                7185166,
+                7462125
+              ],
+              "minimum": 6766625,
+              "median": 7095583,
+              "maximum": 7462125,
+              "stdev": 268214.70512110257
+            },
+            "mb_per_second": 9.165983964953972
+          }
+        },
+        {
+          "case": "syntax-mixed-65536",
+          "engine": "main",
+          "samples": 5,
+          "successful": 5,
+          "failures": [],
+          "eligible": true,
+          "bytes": 65038,
+          "metrics": {
+            "ns": {
+              "raw": [
+                5910000,
+                6426916,
+                5845125,
+                5364541,
+                6406666
+              ],
+              "minimum": 5364541,
+              "median": 5910000,
+              "maximum": 6426916,
+              "stdev": 442462.3608334386
+            },
+            "mb_per_second": 11.004737732656514
+          }
+        },
+        {
+          "case": "syntax-mixed-65536",
+          "engine": "candidate",
+          "samples": 5,
+          "successful": 5,
+          "failures": [],
+          "eligible": true,
+          "bytes": 65038,
+          "metrics": {
+            "ns": {
+              "raw": [
+                4585000,
+                3166667,
+                3155625,
+                3171917,
+                3187917
+              ],
+              "minimum": 3155625,
+              "median": 3171917,
+              "maximum": 4585000,
+              "stdev": 632676.501720429
+            },
+            "mb_per_second": 20.50431962753124
+          }
+        },
+        {
+          "case": "syntax-mixed-524288",
+          "engine": "boa",
+          "samples": 5,
+          "successful": 5,
+          "failures": [],
+          "eligible": true,
+          "bytes": 521816,
+          "metrics": {
+            "ns": {
+              "raw": [
+                56374792,
+                56269875,
+                55467459,
+                62366875,
+                61512167
+              ],
+              "minimum": 55467459,
+              "median": 56374792,
+              "maximum": 62366875,
+              "stdev": 3265745.0059764003
+            },
+            "mb_per_second": 9.25619379668842
+          }
+        },
+        {
+          "case": "syntax-mixed-524288",
+          "engine": "main",
+          "samples": 5,
+          "successful": 5,
+          "failures": [],
+          "eligible": true,
+          "bytes": 521816,
+          "metrics": {
+            "ns": {
+              "raw": [
+                43333833,
+                41989042,
+                43666834,
+                41131833,
+                43556667
+              ],
+              "minimum": 41131833,
+              "median": 43333833,
+              "maximum": 43666834,
+              "stdev": 1121232.3501900488
+            },
+            "mb_per_second": 12.041768841450052
+          }
+        },
+        {
+          "case": "syntax-mixed-524288",
+          "engine": "candidate",
+          "samples": 5,
+          "successful": 5,
+          "failures": [],
+          "eligible": true,
+          "bytes": 521816,
+          "metrics": {
+            "ns": {
+              "raw": [
+                25584500,
+                24832625,
+                24272667,
+                22738458,
+                25320416
+              ],
+              "minimum": 22738458,
+              "median": 24832625,
+              "maximum": 25584500,
+              "stdev": 1129403.11762705
+            },
+            "mb_per_second": 21.0133242055562
+          }
+        },
+        {
+          "case": "syntax-mixed-4194304",
+          "engine": "boa",
+          "samples": 5,
+          "successful": 5,
+          "failures": [],
+          "eligible": true,
+          "bytes": 4253390,
+          "metrics": {
+            "ns": {
+              "raw": [
+                531634416,
+                481047542,
+                471403125,
+                489709917,
+                477297417
+              ],
+              "minimum": 471403125,
+              "median": 481047542,
+              "maximum": 531634416,
+              "stdev": 24086385.924972456
+            },
+            "mb_per_second": 8.84193271691221
+          }
+        },
+        {
+          "case": "syntax-mixed-4194304",
+          "engine": "main",
+          "samples": 5,
+          "successful": 5,
+          "failures": [],
+          "eligible": true,
+          "bytes": 4253390,
+          "metrics": {
+            "ns": {
+              "raw": [
+                343893750,
+                325502041,
+                329872750,
+                334380709,
+                340219833
+              ],
+              "minimum": 325502041,
+              "median": 334380709,
+              "maximum": 343893750,
+              "stdev": 7466141.74170758
+            },
+            "mb_per_second": 12.720201511385634
+          }
+        },
+        {
+          "case": "syntax-mixed-4194304",
+          "engine": "candidate",
+          "samples": 5,
+          "successful": 5,
+          "failures": [],
+          "eligible": true,
+          "bytes": 4253390,
+          "metrics": {
+            "ns": {
+              "raw": [
+                194667459,
+                191388417,
+                196595209,
+                191763959,
+                195889208
+              ],
+              "minimum": 191388417,
+              "median": 194667459,
+              "maximum": 196595209,
+              "stdev": 2374418.318309518
+            },
+            "mb_per_second": 21.8495172323588
+          }
+        },
+        {
+          "case": "functions-65536",
+          "engine": "boa",
+          "samples": 5,
+          "successful": 5,
+          "failures": [],
+          "eligible": true,
+          "bytes": 65192,
+          "metrics": {
+            "ns": {
+              "raw": [
+                6092000,
+                6102166,
+                6694375,
+                6271084,
+                6112708
+              ],
+              "minimum": 6092000,
+              "median": 6112708,
+              "maximum": 6694375,
+              "stdev": 256652.44394082826
+            },
+            "mb_per_second": 10.664994958044781
+          }
+        },
+        {
+          "case": "functions-65536",
+          "engine": "main",
+          "samples": 5,
+          "successful": 5,
+          "failures": [],
+          "eligible": true,
+          "bytes": 65192,
+          "metrics": {
+            "ns": {
+              "raw": [
+                4066792,
+                4220916,
+                4615209,
+                4831084,
+                5092000
+              ],
+              "minimum": 4066792,
+              "median": 4615209,
+              "maximum": 5092000,
+              "stdev": 423572.7353881503
+            },
+            "mb_per_second": 14.125470807497559
+          }
+        },
+        {
+          "case": "functions-65536",
+          "engine": "candidate",
+          "samples": 5,
+          "successful": 5,
+          "failures": [],
+          "eligible": true,
+          "bytes": 65192,
+          "metrics": {
+            "ns": {
+              "raw": [
+                2249250,
+                2259167,
+                2234625,
+                2385000,
+                2288084
+              ],
+              "minimum": 2234625,
+              "median": 2259167,
+              "maximum": 2385000,
+              "stdev": 60159.80488415833
+            },
+            "mb_per_second": 28.856653802042967
+          }
+        },
+        {
+          "case": "functions-524288",
+          "engine": "boa",
+          "samples": 5,
+          "successful": 5,
+          "failures": [],
+          "eligible": true,
+          "bytes": 521902,
+          "metrics": {
+            "ns": {
+              "raw": [
+                50452000,
+                50445792,
+                52646958,
+                51098000,
+                52413791
+              ],
+              "minimum": 50445792,
+              "median": 51098000,
+              "maximum": 52646958,
+              "stdev": 1058590.805714465
+            },
+            "mb_per_second": 10.213746134878077
+          }
+        },
+        {
+          "case": "functions-524288",
+          "engine": "main",
+          "samples": 5,
+          "successful": 5,
+          "failures": [],
+          "eligible": true,
+          "bytes": 521902,
+          "metrics": {
+            "ns": {
+              "raw": [
+                33568208,
+                34154458,
+                34373000,
+                33917542,
+                35947416
+              ],
+              "minimum": 33568208,
+              "median": 34154458,
+              "maximum": 35947416,
+              "stdev": 919218.3785658336
+            },
+            "mb_per_second": 15.280640670684923
+          }
+        },
+        {
+          "case": "functions-524288",
+          "engine": "candidate",
+          "samples": 5,
+          "successful": 5,
+          "failures": [],
+          "eligible": true,
+          "bytes": 521902,
+          "metrics": {
+            "ns": {
+              "raw": [
+                18400500,
+                18356375,
+                17519917,
+                18505666,
+                21712792
+              ],
+              "minimum": 17519917,
+              "median": 18400500,
+              "maximum": 21712792,
+              "stdev": 1621492.4532536375
+            },
+            "mb_per_second": 28.363468384011306
+          }
+        },
+        {
+          "case": "functions-4194304",
+          "engine": "boa",
+          "samples": 5,
+          "successful": 5,
+          "failures": [],
+          "eligible": true,
+          "bytes": 4249394,
+          "metrics": {
+            "ns": {
+              "raw": [
+                430571250,
+                421171208,
+                423819834,
+                424222500,
+                415969125
+              ],
+              "minimum": 415969125,
+              "median": 423819834,
+              "maximum": 430571250,
+              "stdev": 5295150.278234962
+            },
+            "mb_per_second": 10.026416083207659
+          }
+        },
+        {
+          "case": "functions-4194304",
+          "engine": "main",
+          "samples": 5,
+          "successful": 5,
+          "failures": [],
+          "eligible": true,
+          "bytes": 4249394,
+          "metrics": {
+            "ns": {
+              "raw": [
+                298726208,
+                302136333,
+                296818000,
+                290892209,
+                300510917
+              ],
+              "minimum": 290892209,
+              "median": 298726208,
+              "maximum": 302136333,
+              "stdev": 4350034.959438407
+            },
+            "mb_per_second": 14.225045831934505
+          }
+        },
+        {
+          "case": "functions-4194304",
+          "engine": "candidate",
+          "samples": 5,
+          "successful": 5,
+          "failures": [],
+          "eligible": true,
+          "bytes": 4249394,
+          "metrics": {
+            "ns": {
+              "raw": [
+                176327792,
+                173789958,
+                171238750,
+                172031417,
+                171255417
+              ],
+              "minimum": 171238750,
+              "median": 172031417,
+              "maximum": 176327792,
+              "stdev": 2165439.6519064438
+            },
+            "mb_per_second": 24.701267210976933
+          }
+        },
+        {
+          "case": "expressions-65536",
+          "engine": "boa",
+          "samples": 5,
+          "successful": 5,
+          "failures": [],
+          "eligible": true,
+          "bytes": 64988,
+          "metrics": {
+            "ns": {
+              "raw": [
+                6968959,
+                7459708,
+                7346042,
+                6848959,
+                6999833
+              ],
+              "minimum": 6848959,
+              "median": 6999833,
+              "maximum": 7459708,
+              "stdev": 263202.7578117296
+            },
+            "mb_per_second": 9.284221494998523
+          }
+        },
+        {
+          "case": "expressions-65536",
+          "engine": "main",
+          "samples": 5,
+          "successful": 5,
+          "failures": [],
+          "eligible": true,
+          "bytes": 64988,
+          "metrics": {
+            "ns": {
+              "raw": [
+                4569000,
+                4915541,
+                4539416,
+                4967917,
+                4994417
+              ],
+              "minimum": 4539416,
+              "median": 4915541,
+              "maximum": 4994417,
+              "stdev": 223925.90581417774
+            },
+            "mb_per_second": 13.22092522471077
+          }
+        },
+        {
+          "case": "expressions-65536",
+          "engine": "candidate",
+          "samples": 5,
+          "successful": 5,
+          "failures": [],
+          "eligible": true,
+          "bytes": 64988,
+          "metrics": {
+            "ns": {
+              "raw": [
+                2319125,
+                2386042,
+                2302375,
+                2718584,
+                2527917
+              ],
+              "minimum": 2302375,
+              "median": 2386042,
+              "maximum": 2718584,
+              "stdev": 174081.2933583043
+            },
+            "mb_per_second": 27.236737660108247
+          }
+        },
+        {
+          "case": "expressions-524288",
+          "engine": "boa",
+          "samples": 5,
+          "successful": 5,
+          "failures": [],
+          "eligible": true,
+          "bytes": 521472,
+          "metrics": {
+            "ns": {
+              "raw": [
+                58936375,
+                57105417,
+                57751583,
+                56438625,
+                57355708
+              ],
+              "minimum": 56438625,
+              "median": 57355708,
+              "maximum": 58936375,
+              "stdev": 925737.736029919
+            },
+            "mb_per_second": 9.09189369609037
+          }
+        },
+        {
+          "case": "expressions-524288",
+          "engine": "main",
+          "samples": 5,
+          "successful": 5,
+          "failures": [],
+          "eligible": true,
+          "bytes": 521472,
+          "metrics": {
+            "ns": {
+              "raw": [
+                33898292,
+                33825250,
+                33032375,
+                34573709,
+                33766583
+              ],
+              "minimum": 33032375,
+              "median": 33825250,
+              "maximum": 34573709,
+              "stdev": 547137.5737926431
+            },
+            "mb_per_second": 15.416648805256429
+          }
+        },
+        {
+          "case": "expressions-524288",
+          "engine": "candidate",
+          "samples": 5,
+          "successful": 5,
+          "failures": [],
+          "eligible": true,
+          "bytes": 521472,
+          "metrics": {
+            "ns": {
+              "raw": [
+                18374958,
+                18855167,
+                18129000,
+                17437083,
+                19242667
+              ],
+              "minimum": 17437083,
+              "median": 18374958,
+              "maximum": 19242667,
+              "stdev": 692502.6477036027
+            },
+            "mb_per_second": 28.379493438842147
+          }
+        },
+        {
+          "case": "expressions-4194304",
+          "engine": "boa",
+          "samples": 5,
+          "successful": 5,
+          "failures": [],
+          "eligible": true,
+          "bytes": 4261384,
+          "metrics": {
+            "ns": {
+              "raw": [
+                483029083,
+                477196875,
+                474562791,
+                490700375,
+                487849166
+              ],
+              "minimum": 474562791,
+              "median": 483029083,
+              "maximum": 490700375,
+              "stdev": 6839618.617064039
+            },
+            "mb_per_second": 8.822209986888097
+          }
+        },
+        {
+          "case": "expressions-4194304",
+          "engine": "main",
+          "samples": 5,
+          "successful": 5,
+          "failures": [],
+          "eligible": true,
+          "bytes": 4261384,
+          "metrics": {
+            "ns": {
+              "raw": [
+                280520333,
+                282590625,
+                268137458,
+                281718375,
+                284636167
+              ],
+              "minimum": 268137458,
+              "median": 281718375,
+              "maximum": 284636167,
+              "stdev": 6538342.33666759
+            },
+            "mb_per_second": 15.126397062314448
+          }
+        },
+        {
+          "case": "expressions-4194304",
+          "engine": "candidate",
+          "samples": 5,
+          "successful": 5,
+          "failures": [],
+          "eligible": true,
+          "bytes": 4261384,
+          "metrics": {
+            "ns": {
+              "raw": [
+                145104333,
+                145185959,
+                141140083,
+                140904709,
+                151988500
+              ],
+              "minimum": 140904709,
+              "median": 145104333,
+              "maximum": 151988500,
+              "stdev": 4485071.300300833
+            },
+            "mb_per_second": 29.367723981061268
+          }
+        }
+      ]
+    },
+    {
+      "name": "aggregate",
+      "created_utc": "2026-09-26T03:34:07Z",
+      "repeat": 5,
+      "cases": 1,
+      "successful_samples": 15,
+      "order": "serial, alternating per repetition",
+      "runner_sha256": "e442a61eb6fa7f81c7c0c65505b9e33b51a953c1278e6514eec481e50edc5e2d",
+      "original_results_sha256": "a2ee69cd474f487816be943c6abaefa8b1faf0a01d0cd61f83b3688415efeb7c",
+      "boa_over_candidate": 3.371760913972517,
+      "main_over_candidate": 2.3022994008719624,
+      "summary": [
+        {
+          "case": "all",
+          "engine": "boa",
+          "samples": 5,
+          "successful": 5,
+          "failures": [],
+          "eligible": true,
+          "bytes": 459054,
+          "metrics": {
+            "ns": {
+              "raw": [
+                42163875,
+                40284584,
+                41074708,
+                41664708,
+                42475917
+              ],
+              "minimum": 40284584,
+              "median": 41664708,
+              "maximum": 42475917,
+              "stdev": 876501.0704849709
+            },
+            "mb_per_second": 11.017813925397006
+          }
+        },
+        {
+          "case": "all",
+          "engine": "main",
+          "samples": 5,
+          "successful": 5,
+          "failures": [],
+          "eligible": true,
+          "bytes": 459054,
+          "metrics": {
+            "ns": {
+              "raw": [
+                28449417,
+                27885208,
+                28682750,
+                28183625,
+                30352291
+              ],
+              "minimum": 27885208,
+              "median": 28449417,
+              "maximum": 30352291,
+              "stdev": 964768.8983407891
+            },
+            "mb_per_second": 16.135796385563893
+          }
+        },
+        {
+          "case": "all",
+          "engine": "candidate",
+          "samples": 5,
+          "successful": 5,
+          "failures": [],
+          "eligible": true,
+          "bytes": 459054,
+          "metrics": {
+            "ns": {
+              "raw": [
+                12368208,
+                11590500,
+                12464250,
+                11721833,
+                12356958
+              ],
+              "minimum": 11590500,
+              "median": 12356958,
+              "maximum": 12464250,
+              "stdev": 410256.299652059
+            },
+            "mb_per_second": 37.149434351075726
+          }
+        }
+      ]
+    }
+  ],
+  "load_note": "Own builds, tests and sampling were stopped during measurement. Other qjs/Node benchmarks and interactive desktop processes remained active; these are shared-machine measurements.",
+  "load": [
+    {
+      "measurement": "matrix-5",
+      "before": {
+        "utc": "2026-09-26T03:32:24Z",
+        "load_average": [
+          6.8994140625,
+          18.85302734375,
+          24.888671875
+        ],
+        "swap": "total = 11264.00M  used = 9785.50M  free = 1478.50M  (encrypted)",
+        "other_qjs_benchmark_cpu_percent": [
+          94.9
+        ],
+        "other_node_process_cpu_percent_over_25": []
+      },
+      "after": {
+        "utc": "2026-09-26T03:32:29Z",
+        "load_average": [
+          6.6669921875,
+          18.60595703125,
+          24.76611328125
+        ],
+        "swap": "total = 11264.00M  used = 9785.50M  free = 1478.50M  (encrypted)",
+        "other_qjs_benchmark_cpu_percent": [
+          97.9
+        ],
+        "other_node_process_cpu_percent_over_25": []
+      }
+    },
+    {
+      "measurement": "matrix-5-confirm",
+      "before": {
+        "utc": "2026-09-26T03:33:01Z",
+        "load_average": [
+          6.95458984375,
+          17.515625,
+          24.15576171875
+        ],
+        "swap": "total = 11264.00M  used = 9769.50M  free = 1494.50M  (encrypted)",
+        "other_qjs_benchmark_cpu_percent": [
+          99.3
+        ],
+        "other_node_process_cpu_percent_over_25": []
+      },
+      "after": {
+        "utc": "2026-09-26T03:33:08Z",
+        "load_average": [
+          6.7978515625,
+          17.3076171875,
+          24.04345703125
+        ],
+        "swap": "total = 11264.00M  used = 9761.50M  free = 1502.50M  (encrypted)",
+        "other_qjs_benchmark_cpu_percent": [
+          99.9
+        ],
+        "other_node_process_cpu_percent_over_25": []
+      }
+    }
+  ]
+}

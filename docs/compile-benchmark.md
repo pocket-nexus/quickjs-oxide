@@ -1,5 +1,8 @@
 # 编译器前端（lexer/parser）基线与剖析
 
+PR #40 之后的完整 parser-only 优化与新测量边界见
+[lexer/parser 性能](performance/lexer-parser.md)。本页的历史 compile 与 parse+scope 结果保留原口径。
+
 本文件是前端基准与剖析的方案与结果记录。**本分支只关心 compiler 本身的性能**：
 范围限于 **A 跨引擎 compile 基线** 与 **B Oxide 前端剖析**。生成代码质量
 （静态体积、执行指令数）与运行期性能不在本分支，见 §7.5 的后续设计；按收益
