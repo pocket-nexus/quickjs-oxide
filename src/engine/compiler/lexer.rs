@@ -1292,7 +1292,11 @@ impl<'a> Lexer<'a> {
         let private = raw.starts_with('#');
         let start = raw.as_ptr() as usize - self.source.as_ptr() as usize;
         let mut lexer = self.clone();
-        lexer.seek(self.position_at(start));
+        // This token was already validated; decoding returns only its text,
+        // never a diagnostic position. Keep the absolute byte offset for the
+        // SourceText side tables, without replaying the entire source prefix
+        // to compute an unused line/column for every escaped identifier.
+        lexer.offset = start;
         match lexer.scan_identifier_with_value(private) {
             Ok((_, Some(value))) => value,
             _ => raw[usize::from(private)..].to_owned(),
@@ -1349,20 +1353,6 @@ impl<'a> Lexer<'a> {
         };
         debug_assert!(part.invalid_escape.is_none());
         Ok(cooked.expect("cooked sink present").into_js_string())
-    }
-
-    /// Recomputes the position of a trusted source offset by replaying the
-    /// scanner's own advancement rules. Only used by the cold decode path.
-    fn position_at(&self, byte_offset: usize) -> Position {
-        let mut lexer = self.clone();
-        lexer.offset = 0;
-        lexer.line = 1;
-        lexer.column = 1;
-        while lexer.offset < byte_offset {
-            lexer.bump_char();
-        }
-        debug_assert_eq!(lexer.offset, byte_offset);
-        lexer.current_position()
     }
 
     fn scan_identifier_escape(&mut self) -> Result<u32, LexError> {
@@ -2893,6 +2883,34 @@ mod tests {
             Lexer::new(r"if\x61").next_token().unwrap().kind,
             TokenKind::Keyword(Keyword::If)
         ));
+    }
+
+    #[test]
+    fn escaped_identifier_decode_and_rewind_after_a_long_minified_line() {
+        let source = format!("{}\\u0061\\u{{62}}é;\r\n\\u{{10400}};", "x;".repeat(4096));
+        let mut lexer = Lexer::new(&source);
+        let mut escaped = Vec::new();
+        loop {
+            let token = lexer.next_token().unwrap();
+            if let TokenKind::Identifier(identifier) = token.kind {
+                if identifier.has_escape {
+                    escaped.push((token, identifier));
+                }
+            }
+            if matches!(token.kind, TokenKind::Eof) {
+                break;
+            }
+        }
+        assert_eq!(escaped[0].0.span.start, Position::new(8192, 1, 8193));
+        assert_eq!(escaped[1].0.span.start.line, 2);
+        assert_eq!(escaped[1].0.span.start.column, 1);
+        for ((token, identifier), expected) in escaped.into_iter().zip(["abé", "𐐀"]) {
+            assert_eq!(lexer.decode_identifier_text(identifier.raw), expected);
+            lexer.seek(token.span.start);
+            let replayed = lexer.next_token().unwrap();
+            assert_eq!(replayed.kind, token.kind);
+            assert_eq!(replayed.span, token.span);
+        }
     }
 
     #[test]
