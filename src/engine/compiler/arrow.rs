@@ -445,6 +445,9 @@ impl<'source> Parser<'source> {
     pub(super) fn arrow_head_ahead(&self) -> Option<ArrowHead> {
         match &self.current().kind {
             TokenKind::Identifier(_) => {
+                if !self.arrow_may_follow_current() {
+                    return None;
+                }
                 let mut lexer = self.lexer.clone();
                 lexer.seek(self.current().span.end);
                 let next = self.probe_token(&mut lexer, LexicalGoal::Div).ok()?;
@@ -469,6 +472,9 @@ impl<'source> Parser<'source> {
         if !matches!(self.current().kind, TokenKind::Keyword(_)) {
             return false;
         }
+        if !self.arrow_may_follow_current() {
+            return false;
+        }
         let mut lexer = self.lexer.clone();
         lexer.seek(self.current().span.end);
         let Ok(arrow) = self.probe_token(&mut lexer, LexicalGoal::Div) else {
@@ -476,6 +482,22 @@ impl<'source> Parser<'source> {
         };
         !arrow.line_terminator_before
             && matches!(arrow.kind, TokenKind::Punctuator(Punctuator::Arrow))
+    }
+
+    /// Reject the ordinary ASCII non-arrow cases before cloning the lexer and
+    /// maintaining its token cache. Comments/Unicode still use the complete
+    /// scanner, including Annex B trivia and LineTerminator restrictions.
+    fn arrow_may_follow_current(&self) -> bool {
+        let bytes = self.lexer.source().as_bytes();
+        let mut offset = self.current().span.end.byte_offset;
+        while matches!(bytes.get(offset), Some(b' ' | b'\t' | 0x0b | 0x0c)) {
+            offset += 1;
+        }
+        match bytes.get(offset) {
+            Some(b'=') => bytes.get(offset + 1) == Some(&b'>'),
+            Some(b'/' | b'<' | b'-' | 0x80..=0xff) => true,
+            _ => false,
+        }
     }
 
     pub(super) fn async_arrow_ahead(&self) -> Option<ArrowHead> {

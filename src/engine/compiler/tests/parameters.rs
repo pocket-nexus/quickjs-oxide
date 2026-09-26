@@ -672,6 +672,43 @@ fn nested_arrow_probe_summaries_respect_regexp_newlines_context_and_depth() {
 }
 
 #[test]
+fn ascii_arrow_rejection_defers_comments_and_unicode_to_the_lexer() {
+    use crate::engine::compiler::arrow::ArrowHead;
+    for (trivia, expected) in [
+        ("", true),
+        (" \t\u{b}\u{c}", true),
+        ("\n", false),
+        ("/* ordinary */", true),
+        ("/*\u{2028}*/", false),
+        ("\u{a0}", true),
+        ("\u{2029}", false),
+        ("<!-- comment\n", false),
+    ] {
+        let source = format!("name{trivia}=> name");
+        let parser = lookahead_test_parser(&source);
+        assert_eq!(
+            parser.arrow_head_ahead(),
+            expected.then_some(ArrowHead::Identifier),
+            "{source:?}"
+        );
+    }
+    for source in [
+        "name.member",
+        "name()",
+        "name == value",
+        "name /= 2",
+        "name --",
+        "name / 2",
+    ] {
+        assert_eq!(
+            lookahead_test_parser(source).arrow_head_ahead(),
+            None,
+            "{source}"
+        );
+    }
+}
+
+#[test]
 fn parameter_expression_binding_patterns_publish_the_quickjs_argument_scope_abi() {
     let script = compile_unlinked_script(
         "(function(left,[a,b=left],{c},right=a+b+c){return left+a+b+c+right})",
