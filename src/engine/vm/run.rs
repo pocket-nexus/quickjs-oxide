@@ -3,7 +3,7 @@
 
 use crate::engine::api::error::Error;
 use crate::engine::code::bytecode::Instruction;
-use crate::engine::code::fusion::{DirectSlot, LocalFusionChoice};
+use crate::engine::code::fusion::{DenseSpanKind, DirectSlot, LocalFusionChoice};
 use crate::engine::heap::{BytecodeConstant, RawValue, SlotReleaseReadiness};
 use crate::engine::value::JsValue;
 use crate::engine::value::number::operations::Number;
@@ -17,6 +17,15 @@ use crate::engine::vm::stack::{RunSlots, copy_value};
 // transfer so the outlined driver bridge keeps its current call footprint.
 // Recheck the stage B measurements before widening any variant.
 const _: () = assert!(std::mem::size_of::<RunExit>() == 16);
+
+/// A published dense flag paired with the first operand already decoded by
+/// the matching GetLocal/GetLocalCheck or GetArg opcode arm. Only these arms
+/// construct it; the dense executor still checks the current binding/value.
+#[derive(Clone, Copy)]
+struct PublishedDenseEntry {
+    kind: DenseSpanKind,
+    first: DirectSlot,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum BindingSource {
@@ -1583,12 +1592,16 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                             );
                         }
                         LocalFusionChoice::Dense(kind) => {
+                            let entry = PublishedDenseEntry {
+                                kind,
+                                first: DirectSlot::Local(*index),
+                            };
                             if let Some(end) = fusion::try_numeric_span(
                                 &mut slots,
                                 runtime,
                                 executable,
                                 pc.fault,
-                                kind,
+                                entry,
                                 &mut frame.property_generation,
                             ) {
                                 #[cfg(feature = "profiling")]
@@ -1878,12 +1891,16 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
                     executable.fusion.entry(pc.fault).has_candidate(),
                 );
                 if let Some(kind) = executable.fusion.dense_span(pc.fault) {
+                    let entry = PublishedDenseEntry {
+                        kind,
+                        first: DirectSlot::Argument(*index),
+                    };
                     if let Some(end) = fusion::try_numeric_span(
                         &mut slots,
                         runtime,
                         executable,
                         pc.fault,
-                        kind,
+                        entry,
                         &mut frame.property_generation,
                     ) {
                         #[cfg(feature = "profiling")]

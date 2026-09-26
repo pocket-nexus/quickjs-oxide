@@ -5,6 +5,7 @@ use crate::engine::code::fusion::{DenseSpanKind, DirectSlot, NumericSource};
 use crate::engine::code::runtime::PublishedFunctionSnapshot;
 use crate::engine::heap::{BytecodeConstant, RawValue};
 use crate::engine::value::number::operations::Number;
+use crate::engine::vm::run::PublishedDenseEntry;
 use crate::engine::vm::stack::{NumberUpdate, NumericDestination, RunSlots};
 
 fn direct_slot(instruction: &Instruction) -> Option<DirectSlot> {
@@ -64,14 +65,23 @@ fn read_slot_number(
     Some((slot, slots.direct_value(slot)?.as_number_repr()?))
 }
 
+fn peek_proven_number(
+    slots: &RunSlots<'_>,
+    runtime: &Runtime,
+    base_slot: DirectSlot,
+    key: Number,
+) -> Option<Number> {
+    let base = slots.direct_value(base_slot)?;
+    runtime.peek_dense_number(base, index_from_number(key)?)
+}
+
 fn peek_number(
     slots: &RunSlots<'_>,
     runtime: &Runtime,
     base: &Instruction,
     key: Number,
 ) -> Option<Number> {
-    let base = slots.direct_value(direct_slot(base)?)?;
-    runtime.peek_dense_number(base, index_from_number(key)?)
+    peek_proven_number(slots, runtime, direct_slot(base)?, key)
 }
 
 fn apply_number_binary(op: &Instruction, left: Number, right: Number) -> Option<Number> {
@@ -180,9 +190,13 @@ pub(in crate::engine::vm::run) fn try_numeric_span(
     runtime: &Runtime,
     executable: &PublishedFunctionSnapshot,
     pc: usize,
-    kind: DenseSpanKind,
+    entry: PublishedDenseEntry,
     property_generation: &mut u64,
 ) -> Option<usize> {
+    let PublishedDenseEntry {
+        kind,
+        first: first_slot,
+    } = entry;
     macro_rules! miss {
         ($reason:expr) => {{
             #[cfg(feature = "profiling")]
@@ -220,7 +234,7 @@ pub(in crate::engine::vm::run) fn try_numeric_span(
                     );
                     (
                         take!(
-                            peek_number(slots, runtime, &code[0], key),
+                            peek_proven_number(slots, runtime, first_slot, key),
                             peek_miss(slots, runtime, &code[0], key)
                         ),
                         None,
@@ -238,7 +252,7 @@ pub(in crate::engine::vm::run) fn try_numeric_span(
                     let key = take!(apply_number_binary(&code[3], left, right), "source");
                     (
                         take!(
-                            peek_number(slots, runtime, &code[0], key),
+                            peek_proven_number(slots, runtime, first_slot, key),
                             peek_miss(slots, runtime, &code[0], key)
                         ),
                         None,
@@ -261,7 +275,7 @@ pub(in crate::engine::vm::run) fn try_numeric_span(
                     let key = if postfix { old } else { next };
                     (
                         take!(
-                            peek_number(slots, runtime, &code[0], key),
+                            peek_proven_number(slots, runtime, first_slot, key),
                             peek_miss(slots, runtime, &code[0], key)
                         ),
                         Some(NumberUpdate { slot, value: next }),
@@ -273,7 +287,7 @@ pub(in crate::engine::vm::run) fn try_numeric_span(
                         read_miss(slots, executable, &code[1])
                     );
                     let read = take!(
-                        peek_number(slots, runtime, &code[0], key),
+                        peek_proven_number(slots, runtime, first_slot, key),
                         peek_miss(slots, runtime, &code[0], key)
                     );
                     let right = take!(
@@ -300,12 +314,15 @@ pub(in crate::engine::vm::run) fn try_numeric_span(
         | DenseSpanKind::AccSetDrop
         | DenseSpanKind::AccIndexPut
         | DenseSpanKind::AccIndexSetDrop => {
-            let (DirectSlot::Local(acc_index), acc) = take!(
-                read_slot_number(slots, &code[0]),
-                read_miss(slots, executable, &code[0])
-            ) else {
+            let DirectSlot::Local(acc_index) = first_slot else {
                 miss!("source");
             };
+            let acc = take!(
+                slots
+                    .direct_value(first_slot)
+                    .and_then(|value| value.as_number_repr()),
+                read_miss(slots, executable, &code[0])
+            );
             let indexed = matches!(
                 kind,
                 DenseSpanKind::AccIndexPut | DenseSpanKind::AccIndexSetDrop
@@ -366,7 +383,7 @@ pub(in crate::engine::vm::run) fn try_numeric_span(
             let next_generation = take!(property_generation.checked_add(1), "generation");
             let (base_slot, key, value) = match kind {
                 DenseSpanKind::Store => (
-                    take!(direct_slot(&code[0]), "source"),
+                    first_slot,
                     take!(
                         read_number(slots, executable, &code[1]),
                         read_miss(slots, executable, &code[1])
@@ -386,7 +403,7 @@ pub(in crate::engine::vm::run) fn try_numeric_span(
                         peek_miss(slots, runtime, &code[2], source_key)
                     );
                     (
-                        take!(direct_slot(&code[0]), "source"),
+                        first_slot,
                         take!(
                             read_number(slots, executable, &code[1]),
                             read_miss(slots, executable, &code[1])
@@ -404,7 +421,7 @@ pub(in crate::engine::vm::run) fn try_numeric_span(
                         read_miss(slots, executable, &code[3])
                     );
                     (
-                        take!(direct_slot(&code[0]), "source"),
+                        first_slot,
                         take!(
                             read_number(slots, executable, &code[1]),
                             read_miss(slots, executable, &code[1])
@@ -418,7 +435,7 @@ pub(in crate::engine::vm::run) fn try_numeric_span(
                         read_miss(slots, executable, &code[1])
                     );
                     let old = take!(
-                        peek_number(slots, runtime, &code[0], key),
+                        peek_proven_number(slots, runtime, first_slot, key),
                         peek_miss(slots, runtime, &code[0], key)
                     );
                     let right = take!(
@@ -426,7 +443,7 @@ pub(in crate::engine::vm::run) fn try_numeric_span(
                         read_miss(slots, executable, &code[3])
                     );
                     (
-                        take!(direct_slot(&code[0]), "source"),
+                        first_slot,
                         key,
                         take!(apply_number_binary(&code[4], old, right), "source"),
                     )
@@ -650,6 +667,44 @@ mod tests {
             let mut context = runtime.new_context();
             assert_eq!(context.eval(source).unwrap(), Value::Int(42), "{source}");
             assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
+    }
+
+    #[test]
+    fn dense_first_operand_from_dispatch_matches_canonical_hit_and_fallback() {
+        for (source, expected) in [
+            ("(function(a,i){return a[i]})([42],0)", 42),
+            ("(function(){let a=[42],i=0;return a[i]})()", 42),
+            ("(function(){let a=[1],i=0;a[i]=41;return a[0]+1})()", 42),
+            ("(function(a,i,v){a[i]=v;return a[0]+1})([1],0,41)", 42),
+            (
+                "(function(){let n=0,a=[];Object.defineProperty(a,0,{get(){n++;return 41}});function read(x,i){return x[i]}return read(a,0)+n})()",
+                42,
+            ),
+            (
+                "(function(){let n=0,a=[];Object.defineProperty(a,0,{get(){n++;throw 7}});function read(x,i){return x[i]}try{read(a,0)}catch(e){return n*10+e}})()",
+                17,
+            ),
+            (
+                "(function(){let n=0,a=new Proxy([1],{set(t,k,v){if(k==='0')n++;return Reflect.set(t,k,v)}});function write(x,i,v){x[i]=v}write(a,0,41);return a[0]+n})()",
+                42,
+            ),
+        ] {
+            let runtime = Runtime::new();
+            let fused = runtime.new_context().eval(source).unwrap();
+            assert!(
+                runtime.0.state.borrow().active_frames.is_empty(),
+                "{source}"
+            );
+            let runtime = Runtime::new();
+            let canonical =
+                with_dense_candidates_disabled(|| runtime.new_context().eval(source)).unwrap();
+            assert!(
+                runtime.0.state.borrow().active_frames.is_empty(),
+                "{source}"
+            );
+            assert_eq!(fused, Value::Int(expected), "{source}");
+            assert_eq!(fused, canonical, "{source}");
         }
     }
 
