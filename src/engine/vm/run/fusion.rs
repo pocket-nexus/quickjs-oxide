@@ -442,6 +442,33 @@ mod local_add_tests {
     use crate::engine::api::{Runtime, Value};
 
     #[test]
+    fn mixed_fused_and_plain_local_reads_preserve_dynamic_misses() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(
+            context
+                .eval(
+                    r#"(()=>{
+                let conversions=0;
+                function step(initial) {
+                    let sum=initial, plain=41;
+                    for(let i=0;i<2;i++) {
+                        sum=sum+1;
+                        if(plain!==41) return null;
+                    }
+                    return sum;
+                }
+                let object={valueOf(){conversions++;return 5;}};
+                return step(0)===2 && step('x')==='x11'
+                    && step(object)===7 && conversions===1;
+            })()"#,
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+    }
+
+    #[test]
     fn numeric_literal_and_pair_accumulators_match_canonical_results() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();

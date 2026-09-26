@@ -3,7 +3,7 @@
 
 use crate::engine::api::error::Error;
 use crate::engine::code::bytecode::Instruction;
-use crate::engine::code::fusion::DirectSlot;
+use crate::engine::code::fusion::{DirectSlot, LocalFusionChoice};
 use crate::engine::heap::{BytecodeConstant, RawValue, SlotReleaseReadiness};
 use crate::engine::value::JsValue;
 use crate::engine::value::number::operations::Number;
@@ -1423,99 +1423,109 @@ pub(super) fn run(execution: &mut RunningExecution, id: FrameId) -> Result<RunEx
             }
             Instruction::GetLocal(index) | Instruction::GetLocalCheck(index) => {
                 let fusion_entry = executable.fusion.entry(pc.fault);
-                if let Some(instructions) = fusion_entry.local_add_span() {
-                    // S2/S4: a numeric pair or numeric literal completes
-                    // inside the scalar domain; every other kind keeps the
-                    // outlined primitive-addition bridge.
-                    if fusion::numeric_local_add(&mut slots, executable, pc.fault, *index).is_some()
-                    {
-                        #[cfg(feature = "profiling")]
-                        fusion::record_span(
-                            &executable.code[pc.fault..pc.fault + instructions],
-                            observed_depth,
-                        );
-                        pc.resume = pc.fault + instructions;
-                        continue;
-                    }
-                    let supported = match executable.code.get(pc.fault + 1) {
-                        Some(Instruction::GetLocal(right) | Instruction::GetLocalCheck(right)) => {
-                            slots.local_add_supported(runtime, *index, *right)?
+                if !fusion_entry.is_empty() {
+                    match fusion_entry.local_choice() {
+                        LocalFusionChoice::LocalAdd(instructions) => {
+                            // S2/S4: a numeric pair or numeric literal completes
+                            // inside the scalar domain; every other kind keeps the
+                            // outlined primitive-addition bridge.
+                            if fusion::numeric_local_add(&mut slots, executable, pc.fault, *index)
+                                .is_some()
+                            {
+                                #[cfg(feature = "profiling")]
+                                fusion::record_span(
+                                    &executable.code[pc.fault..pc.fault + instructions],
+                                    observed_depth,
+                                );
+                                pc.resume = pc.fault + instructions;
+                                continue;
+                            }
+                            let supported = match executable.code.get(pc.fault + 1) {
+                                Some(
+                                    Instruction::GetLocal(right)
+                                    | Instruction::GetLocalCheck(right),
+                                ) => slots.local_add_supported(runtime, *index, *right)?,
+                                Some(Instruction::PushConst(constant))
+                                    if matches!(
+                                        executable.constant(*constant),
+                                        Some(BytecodeConstant::Value(RawValue::String(_)))
+                                    ) =>
+                                {
+                                    slots.local_add_constant_supported(runtime, *index)?
+                                }
+                                _ => false,
+                            };
+                            if supported {
+                                return Ok(RunExit::AddLocal);
+                            }
                         }
-                        Some(Instruction::PushConst(constant))
-                            if matches!(
-                                executable.constant(*constant),
-                                Some(BytecodeConstant::Value(RawValue::String(_)))
-                            ) =>
-                        {
-                            slots.local_add_constant_supported(runtime, *index)?
+                        LocalFusionChoice::Update(update) => {
+                            if fusion::update_local(&mut slots, *index, update)? {
+                                #[cfg(feature = "profiling")]
+                                fusion::record_span(
+                                    &executable.code[pc.fault..pc.fault + update.instructions],
+                                    observed_depth,
+                                );
+                                pc.resume = pc.fault + update.instructions;
+                                continue;
+                            }
                         }
-                        _ => false,
-                    };
-                    if supported {
-                        return Ok(RunExit::AddLocal);
-                    }
-                }
-                if let Some(update) = fusion_entry.update() {
-                    if fusion::update_local(&mut slots, *index, update)? {
-                        #[cfg(feature = "profiling")]
-                        fusion::record_span(
-                            &executable.code[pc.fault..pc.fault + update.instructions],
-                            observed_depth,
-                        );
-                        pc.resume = pc.fault + update.instructions;
-                        continue;
-                    }
-                }
-                // S1: two direct producers, one numeric comparison, one
-                // conditional branch. Nothing is pushed or popped, so a guard
-                // miss leaves the canonical span start untouched.
-                if let Some(instructions) = fusion_entry.local_compare_branch() {
-                    if let Some(next) = fusion::local_compare_branch(
-                        &slots,
-                        &executable.code[pc.fault..],
-                        pc.fault,
-                        instructions,
-                    ) {
-                        #[cfg(feature = "profiling")]
-                        fusion::record_span(
-                            &executable.code[pc.fault..pc.fault + instructions],
-                            observed_depth,
-                        );
-                        pc.resume = next;
-                        continue;
-                    }
-                }
-                // S3: one direct object base completes one linked field read
-                // into the numeric accumulator. The location-cache peek is
-                // non-owning; every other shape stays canonical.
-                if let Some(instructions) = fusion_entry.local_field_add_span() {
-                    if fusion::numeric_local_field_add(
-                        &mut slots, runtime, executable, pc.fault, *index,
-                    )
-                    .is_some()
-                    {
-                        #[cfg(feature = "profiling")]
-                        fusion::record_span(
-                            &executable.code[pc.fault..pc.fault + instructions],
-                            observed_depth,
-                        );
-                        pc.resume = pc.fault + instructions;
-                        continue;
-                    }
-                }
-                if let Some(kind) = fusion_entry.dense_span() {
-                    if let Some(end) = fusion::try_numeric_span(
-                        &mut slots,
-                        runtime,
-                        executable,
-                        pc.fault,
-                        kind,
-                        &mut frame.property_generation,
-                    ) {
-                        #[cfg(feature = "profiling")]
-                        fusion::record_span(&executable.code[pc.fault..end], observed_depth);
-                        pc.resume = end;
-                        continue;
+                        // S1: two direct producers, one numeric comparison, one
+                        // conditional branch. Nothing is pushed or popped, so a guard
+                        // miss leaves the canonical span start untouched.
+                        LocalFusionChoice::CompareBranch(instructions) => {
+                            if let Some(next) = fusion::local_compare_branch(
+                                &slots,
+                                &executable.code[pc.fault..],
+                                pc.fault,
+                                instructions,
+                            ) {
+                                #[cfg(feature = "profiling")]
+                                fusion::record_span(
+                                    &executable.code[pc.fault..pc.fault + instructions],
+                                    observed_depth,
+                                );
+                                pc.resume = next;
+                                continue;
+                            }
+                        }
+                        // S3: one direct object base completes one linked field read
+                        // into the numeric accumulator. The location-cache peek is
+                        // non-owning; every other shape stays canonical.
+                        LocalFusionChoice::FieldAdd(instructions) => {
+                            if fusion::numeric_local_field_add(
+                                &mut slots, runtime, executable, pc.fault, *index,
+                            )
+                            .is_some()
+                            {
+                                #[cfg(feature = "profiling")]
+                                fusion::record_span(
+                                    &executable.code[pc.fault..pc.fault + instructions],
+                                    observed_depth,
+                                );
+                                pc.resume = pc.fault + instructions;
+                                continue;
+                            }
+                        }
+                        LocalFusionChoice::Dense(kind) => {
+                            if let Some(end) = fusion::try_numeric_span(
+                                &mut slots,
+                                runtime,
+                                executable,
+                                pc.fault,
+                                kind,
+                                &mut frame.property_generation,
+                            ) {
+                                #[cfg(feature = "profiling")]
+                                fusion::record_span(
+                                    &executable.code[pc.fault..end],
+                                    observed_depth,
+                                );
+                                pc.resume = end;
+                                continue;
+                            }
+                        }
+                        LocalFusionChoice::Canonical => {}
                     }
                 }
                 match slots.local(*index)? {
