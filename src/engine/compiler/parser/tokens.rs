@@ -623,27 +623,30 @@ impl<'source> Parser<'source> {
         goal: LexicalGoal,
     ) -> Result<(), Error> {
         if !self.at_eof() {
-            let token = self.scan_next_token(goal)?;
-            self.previous_end = Some(self.token.span.end.byte_offset);
-            self.token = token;
-            self.lookahead_invalidate_before(token.span.start.byte_offset);
+            let previous_end = self.token.span.end.byte_offset;
+            self.scan_next_token(goal)?;
+            self.previous_end = Some(previous_end);
+            self.lookahead_invalidate_before(self.token.span.start.byte_offset);
         }
         Ok(())
     }
 
     #[inline]
-    fn scan_next_token(&mut self, goal: LexicalGoal) -> Result<Token<'source>, Error> {
+    fn scan_next_token(&mut self, goal: LexicalGoal) -> Result<(), Error> {
         let start = self.lexer.current_position().byte_offset;
         let context = self.lexer.context();
-        let token = match self.take_lookahead(start, goal, context) {
+        match self.take_lookahead(start, goal, context) {
             Some(token) => {
                 self.lexer.seek(token.span.end);
-                Ok(token)
+                self.token = token;
             }
-            None => self.lexer.next_token_with_goal(goal).map_err(lex_error),
-        }?;
+            None => self
+                .lexer
+                .next_token_into(goal, &mut self.token)
+                .map_err(lex_error)?,
+        }
         self.token_context = (context, goal);
-        Ok(token)
+        Ok(())
     }
 
     /// Rescan the current token after the parser has selected its lexical
@@ -661,7 +664,7 @@ impl<'source> Parser<'source> {
         let line_terminator_before = self.current().line_terminator_before;
         self.lookahead_invalidate_from(position.byte_offset);
         self.lexer.seek(position);
-        self.token = self.scan_next_token(goal)?;
+        self.scan_next_token(goal)?;
         self.token.line_terminator_before = line_terminator_before;
         Ok(())
     }
@@ -691,7 +694,7 @@ impl<'source> Parser<'source> {
         let line_terminator_before = self.current().line_terminator_before;
         self.lookahead_invalidate_from(position.byte_offset);
         self.lexer.seek(position);
-        self.token = self.scan_next_token(LexicalGoal::Div)?;
+        self.scan_next_token(LexicalGoal::Div)?;
         self.token.line_terminator_before = line_terminator_before;
         Ok(())
     }

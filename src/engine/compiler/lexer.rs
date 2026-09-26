@@ -674,8 +674,27 @@ impl<'a> Lexer<'a> {
     }
 
     pub fn next_token_with_goal(&mut self, goal: LexicalGoal) -> Result<Token<'a>, LexError> {
+        let position = self.current_position();
+        let mut token = Token {
+            kind: TokenKind::Eof,
+            span: Span::new(position, position),
+            line_terminator_before: false,
+        };
+        self.next_token_into(goal, &mut token)?;
+        Ok(token)
+    }
+
+    /// Fill the committed parser token directly. Keeping the output separate
+    /// from Result avoids returning and copying the wide token through each
+    /// parser advancement layer. Errors leave the previous token untouched.
+    pub fn next_token_into(
+        &mut self,
+        goal: LexicalGoal,
+        token: &mut Token<'a>,
+    ) -> Result<(), LexError> {
         if goal == LexicalGoal::TemplateContinuation {
-            return self.scan_template(false, false);
+            *token = self.scan_template(false, false)?;
+            return Ok(());
         }
 
         // Most tokens in minified input have no leading trivia. Only enter
@@ -691,11 +710,12 @@ impl<'a> Lexer<'a> {
 
         if self.offset == self.source.len() {
             self.eof_emitted = true;
-            return Ok(Token {
+            *token = Token {
                 kind: TokenKind::Eof,
                 span: Span::new(start, start),
                 line_terminator_before,
-            });
+            };
+            return Ok(());
         }
 
         if self.invalid_source_byte_at(self.offset) {
@@ -704,7 +724,8 @@ impl<'a> Lexer<'a> {
 
         if goal == LexicalGoal::RegExp {
             if self.peek_char() == Some('/') {
-                return self.scan_regexp(start, line_terminator_before);
+                *token = self.scan_regexp(start, line_terminator_before)?;
+                return Ok(());
             }
             return Err(self.error_here(
                 LexErrorKind::ExpectedRegExp,
@@ -726,7 +747,10 @@ impl<'a> Lexer<'a> {
             ScanKind::Identifier => self.scan_identifier(false)?,
             ScanKind::Number => self.scan_number(false)?,
             ScanKind::String => self.scan_string()?,
-            ScanKind::Template => return self.scan_template(true, line_terminator_before),
+            ScanKind::Template => {
+                *token = self.scan_template(true, line_terminator_before)?;
+                return Ok(());
+            }
             ScanKind::Dot
                 if self
                     .source
@@ -748,11 +772,12 @@ impl<'a> Lexer<'a> {
             ScanKind::Dot | ScanKind::Punctuator => self.scan_punctuator()?,
         };
 
-        Ok(Token {
+        *token = Token {
             kind,
             span: Span::new(start, self.current_position()),
             line_terminator_before,
-        })
+        };
+        Ok(())
     }
 
     fn peek_char(&self) -> Option<char> {
