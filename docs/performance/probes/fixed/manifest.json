@@ -1,0 +1,152 @@
+{
+  "metadata": {
+    "suite": "project-authored-fixed-vm-diagnostics",
+    "generator": "docs/performance/probes/build_fixed_matrix.py",
+    "generator_sha256": "292e6acbcfa3d3ccdaee59835f680a42b07e3fc1d3aa401e1cff58c948928491",
+    "smoke": false,
+    "workloads": {
+      "workloads": [
+        {
+          "case": "fusion_hit",
+          "size": 3000000,
+          "path": "docs/performance/probes/fixed/fusion_hit.js",
+          "sha256": "39776e22973eb2e5ce15c1fb197a6b10c8487235a788f86b56783c564ef66422",
+          "expected": "3000000\n"
+        },
+        {
+          "case": "fusion_dynamic_miss",
+          "size": 180000,
+          "path": "docs/performance/probes/fixed/fusion_dynamic_miss.js",
+          "sha256": "46e9223f9d0aedb1b0900f317e419e3ac813e77b26768d28d954ff9b7ef21876",
+          "expected": "180000\n"
+        },
+        {
+          "case": "fusion_flag0",
+          "size": 3000000,
+          "path": "docs/performance/probes/fixed/fusion_flag0.js",
+          "sha256": "1b48f28344e148dcb425857a008881ec8aebf2d09d4c82f1b0ec4ebc52729ef6",
+          "expected": "41\n"
+        },
+        {
+          "case": "fusion_no_plan",
+          "size": 3000000,
+          "path": "docs/performance/probes/fixed/fusion_no_plan.js",
+          "sha256": "7d41f8cf6f6e823a498a4f78de7ae0ac6173d430cabdcd4fe1448a77e2008d80",
+          "expected": "41\n"
+        },
+        {
+          "case": "bigint_32",
+          "size": 120000,
+          "path": "docs/performance/probes/fixed/bigint_32.js",
+          "sha256": "a84164bd71444bf163ea6baa80f765e6207ab55b8562b54ba2fb93da70a1ea23",
+          "expected": "true\n"
+        },
+        {
+          "case": "bigint_64",
+          "size": 100000,
+          "path": "docs/performance/probes/fixed/bigint_64.js",
+          "sha256": "67850ccf30f33fc94e6d29705fb9d211bdb29524d0c4b405875f3a20082abf2b",
+          "expected": "true\n"
+        },
+        {
+          "case": "bigint_256",
+          "size": 40000,
+          "path": "docs/performance/probes/fixed/bigint_256.js",
+          "sha256": "8333a88e3b8a9233a34de8f50f43ed81e768cec846a0b0d590f795739d3c6dce",
+          "expected": "true\n"
+        },
+        {
+          "case": "prop_read",
+          "size": 2000000,
+          "path": "docs/performance/probes/fixed/prop_read.js",
+          "sha256": "5007faf685b95c6e379672a63dc4dbf267fee9d36b6a4c563139e534fdf8c714",
+          "expected": "6000000\n"
+        },
+        {
+          "case": "prop_write",
+          "size": 2000000,
+          "path": "docs/performance/probes/fixed/prop_write.js",
+          "sha256": "97f4a8cb424083dfe7bb10959dc03d9f58fe0bfdae76fb00b568e3475b5a02af",
+          "expected": "1999999\n"
+        },
+        {
+          "case": "array_read",
+          "size": 2000000,
+          "path": "docs/performance/probes/fixed/array_read.js",
+          "sha256": "e198b7a4f263a025b296aa6a49d77101603ee7c4ef0370c0cd6963711962b38d",
+          "expected": "5000000\n"
+        },
+        {
+          "case": "array_write",
+          "size": 2000000,
+          "path": "docs/performance/probes/fixed/array_write.js",
+          "sha256": "6dd6774ce289d1ab49815bd5fcc6d95c3635d18f54eed44deb65323ab56c0e9d",
+          "expected": "7999990\n"
+        },
+        {
+          "case": "call0",
+          "size": 800000,
+          "path": "docs/performance/probes/fixed/call0.js",
+          "sha256": "459fe42f4945b40fdd67ebd8c95c290c91166565d14e03a267f0457dfe1d71fa",
+          "expected": "800000\n"
+        },
+        {
+          "case": "string_bridge",
+          "size": 180000,
+          "path": "docs/performance/probes/fixed/string_bridge.js",
+          "sha256": "7608b1d40ed2beca65a61d0f81e90f81577f770582a3f8d670cb52c967a07304",
+          "expected": "180000\n"
+        },
+        {
+          "case": "type_error",
+          "size": 12000,
+          "path": "docs/performance/probes/fixed/type_error.js",
+          "sha256": "03ccfb292835721ce3afc41a305bb9740845760b6b5622ea2e486508367896fc",
+          "expected": "12000\n"
+        },
+        {
+          "case": "tdz",
+          "size": 12000,
+          "path": "docs/performance/probes/fixed/tdz.js",
+          "sha256": "3aceec38d4eeebc2802d558a9b5f190a0e9a17de62e9936b5e70b1ce9c928130",
+          "expected": "12000\n"
+        },
+        {
+          "case": "local_move",
+          "size": 6000000,
+          "path": "docs/performance/probes/fixed/local_move.js",
+          "sha256": "7d45fe48fa52802c4fb1bc2660c4b119502f46515bb71ca2ecdc118e3a70deb1",
+          "expected": "11999998\n"
+        },
+        {
+          "case": "argument_move",
+          "size": 6000000,
+          "path": "docs/performance/probes/fixed/argument_move.js",
+          "sha256": "ebcac47ef23bbdb7a6512db51caf44a9c022a3eaa76a9208d2ed83d3a286bc98",
+          "expected": "5999999\n"
+        },
+        {
+          "case": "number_owner_fallback",
+          "size": 1000000,
+          "path": "docs/performance/probes/fixed/number_owner_fallback.js",
+          "sha256": "54d23a2ad3dbaf647386912dea27747303350a289775efba09c061b3517c56e0",
+          "expected": "1000000\n"
+        },
+        {
+          "case": "object_move",
+          "size": 1000000,
+          "path": "docs/performance/probes/fixed/object_move.js",
+          "sha256": "48359d0b20525b04ae3c3652de9709afddcd6cbc495ded9f267bdc9f1c1fcbd6",
+          "expected": "2\n"
+        },
+        {
+          "case": "empty_loop",
+          "size": 10000000,
+          "path": "docs/performance/probes/fixed/empty_loop.js",
+          "sha256": "933c596eac99323051e3e73a510db3e62dfbc1810839529cebbb9356075d3ab2",
+          "expected": "10000000\n"
+        }
+      ]
+    }
+  }
+}
