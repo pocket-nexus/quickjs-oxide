@@ -271,7 +271,7 @@ pub(in crate::engine::compiler) struct Parser<'source> {
     /// Context of the current token, which can differ from the context selected
     /// for future scans (notably an async arrow's already-read parameter).
     pub(in crate::engine::compiler) token_context: (LexContext, LexicalGoal),
-    pub(in crate::engine::compiler) previous_span: Option<Span>,
+    pub(in crate::engine::compiler) previous_end: Option<usize>,
     pub(in crate::engine::compiler) current_function: FunctionId,
     pub(in crate::engine::compiler) in_mode: InMode,
     pub(in crate::engine::compiler) functions: Vec<FunctionBuilder>,

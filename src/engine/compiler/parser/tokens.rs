@@ -617,19 +617,21 @@ impl<'source> Parser<'source> {
         Ok(())
     }
 
+    #[inline]
     pub(in crate::engine::compiler) fn advance_with_goal(
         &mut self,
         goal: LexicalGoal,
     ) -> Result<(), Error> {
         if !self.at_eof() {
             let token = self.scan_next_token(goal)?;
-            self.previous_span = Some(self.token.span);
+            self.previous_end = Some(self.token.span.end.byte_offset);
             self.token = token;
             self.lookahead_invalidate_before(token.span.start.byte_offset);
         }
         Ok(())
     }
 
+    #[inline]
     fn scan_next_token(&mut self, goal: LexicalGoal) -> Result<Token<'source>, Error> {
         let start = self.lexer.current_position().byte_offset;
         let context = self.lexer.context();

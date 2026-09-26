@@ -844,10 +844,9 @@ impl<'source> Parser<'source> {
                     false,
                 )?;
 
+                let initializer_span = self.current().span;
                 let initializer_site = if self.consume_punctuator(Punctuator::Equal)? {
-                    let site = source_offset(
-                        self.previous_span.expect("consumed declaration identifier"),
-                    )?;
+                    let site = source_offset(initializer_span)?;
                     self.parse_assignment()?;
                     if let Some(definition) = self.take_anonymous_function_definition() {
                         let name_constant = self.add_constant(IrConstant::Primitive(

@@ -239,25 +239,25 @@ impl<'source> Parser<'source> {
     }
 
     /// Drops memoized scans the parser has already committed past.
-    pub(in crate::engine::compiler) fn lookahead_invalidate_before(&self, start: usize) {
-        self.lookahead.borrow_mut().invalidate_before(start);
+    pub(in crate::engine::compiler) fn lookahead_invalidate_before(&mut self, start: usize) {
+        self.lookahead.get_mut().invalidate_before(start);
     }
 
     /// Drops memoized scans invalidated by a goal or context change.
-    pub(in crate::engine::compiler) fn lookahead_invalidate_from(&self, start: usize) {
-        self.lookahead.borrow_mut().invalidate_from(start);
+    pub(in crate::engine::compiler) fn lookahead_invalidate_from(&mut self, start: usize) {
+        self.lookahead.get_mut().invalidate_from(start);
     }
 
     /// A commit-path scan consumes a token a probe already memoized. Scanning
     /// is a pure function of the key, so the committed token is byte-identical
     /// to a fresh scan; the lexer is repositioned by the caller.
     pub(in crate::engine::compiler) fn take_lookahead(
-        &self,
+        &mut self,
         start: usize,
         goal: LexicalGoal,
         context: LexContext,
     ) -> Option<Token<'source>> {
-        let token = self.lookahead.borrow().peek(start, goal, context);
+        let token = self.lookahead.get_mut().peek(start, goal, context);
         #[cfg(feature = "profiling")]
         if token.is_some() {
             counters::record_commit_hit();

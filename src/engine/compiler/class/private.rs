@@ -354,7 +354,7 @@ mod tests {
             ),
             lexer,
             token: first_token,
-            previous_span: None,
+            previous_end: None,
             current_function: 0,
             in_mode: InMode::Allow,
             functions: vec![root],

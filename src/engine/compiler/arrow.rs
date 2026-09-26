@@ -296,10 +296,8 @@ impl<'source> Parser<'source> {
             self.parse_assignment()?;
             self.emit_instruction(Instruction::Return)?;
             let range_end = self
-                .previous_span
-                .map_or(self.current().span.start.byte_offset, |span| {
-                    span.end.byte_offset
-                });
+                .previous_end
+                .unwrap_or(self.current().span.start.byte_offset);
             self.relex_current_with_context(parent_context)?;
             range_end
         };

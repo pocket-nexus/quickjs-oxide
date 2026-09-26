@@ -306,6 +306,9 @@ impl<'source> Parser<'source> {
         self.emit_with_site(operation, Some(site))
     }
 
+    // Let constant opcode callers specialize stack effects instead of paying
+    // a second runtime opcode dispatch for every emitted operation.
+    #[inline]
     pub(in crate::engine::compiler) fn emit_with_site(
         &mut self,
         operation: IrOp,

@@ -258,7 +258,7 @@ impl<'source> Parser<'source> {
             lexer,
             names,
             token: first_token,
-            previous_span: None,
+            previous_end: None,
             current_function: 0,
             in_mode: InMode::Allow,
             anonymous_function_definition: None,
