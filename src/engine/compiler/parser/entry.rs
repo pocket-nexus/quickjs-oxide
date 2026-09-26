@@ -297,8 +297,13 @@ impl<'source> Parser<'source> {
         #[cfg(feature = "profiling")]
         crate::engine::compiler::diagnostics::sample_ir_storage(
             crate::engine::api::profiling::CompilePhase::Parse,
-            crate::engine::compiler::diagnostics::arena_bytes(&parser.functions),
-            parser.functions.iter().map(|builder| &builder.ir),
+            crate::engine::compiler::diagnostics::arena_bytes(&parser.functions)
+                + parser
+                    .functions
+                    .iter()
+                    .map(FunctionBuilder::owned_record_bytes)
+                    .sum::<u64>(),
+            parser.functions.iter().map(|builder| builder.ir.as_ref()),
         );
         Ok(FunctionTree {
             functions: parser

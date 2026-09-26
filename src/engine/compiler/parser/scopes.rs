@@ -7,7 +7,6 @@ use crate::engine::compiler::model::scope::IrScope;
 use crate::engine::compiler::model::scope::ScopeId;
 use crate::engine::compiler::model::scope::ScopeKind;
 use crate::engine::compiler::parser::context::Parser;
-use std::collections::HashMap;
 
 impl<'source> Parser<'source> {
     pub(in crate::engine::compiler) fn push_scope(&mut self, kind: ScopeKind) -> ScopeId {
@@ -21,7 +20,7 @@ impl<'source> Parser<'source> {
             kind,
             is_parameter_initializer,
             bindings: Vec::new(),
-            bindings_by_name: HashMap::new(),
+            bindings_by_name: None,
         });
         function.ops.push(SpannedIrOp {
             op: IrOp::EnterScope(scope),

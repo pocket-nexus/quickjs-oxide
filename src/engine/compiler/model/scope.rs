@@ -1,6 +1,7 @@
 //! Lexical scope identities and declaration-order indexes shared by compilation stages.
 
 use super::bindings::BindingId;
+use crate::engine::compiler::model::bindings::IrBinding;
 use crate::engine::compiler::names::NameId;
 use std::collections::HashMap;
 
@@ -45,11 +46,47 @@ pub(in crate::engine::compiler) struct IrScope {
     pub(in crate::engine::compiler) bindings: Vec<BindingId>,
     /// Last binding in declaration order for each name. The ordered list remains
     /// authoritative for validation, lowering and observable declaration order.
-    pub(in crate::engine::compiler) bindings_by_name: HashMap<NameId, BindingId>,
+    pub(in crate::engine::compiler) bindings_by_name: Option<Box<HashMap<NameId, BindingId>>>,
 }
 
 impl IrScope {
-    pub(in crate::engine::compiler) fn binding_named(&self, name: NameId) -> Option<BindingId> {
-        self.bindings_by_name.get(&name).copied()
+    pub(in crate::engine::compiler) fn binding_named(
+        &self,
+        name: NameId,
+        bindings: &[IrBinding],
+    ) -> Option<BindingId> {
+        if let Some(index) = &self.bindings_by_name {
+            return index.get(&name).copied();
+        }
+        self.bindings.iter().rev().copied().find(|id| {
+            bindings
+                .get(id.0)
+                .is_some_and(|binding| binding.name == name)
+        })
+    }
+
+    pub(in crate::engine::compiler) fn index_binding(
+        &mut self,
+        name: NameId,
+        binding: BindingId,
+        bindings: &[IrBinding],
+    ) {
+        if let Some(index) = &mut self.bindings_by_name {
+            index.insert(name, binding);
+        } else if self.bindings.len() > 8 {
+            self.rebuild_name_index(bindings);
+        }
+    }
+
+    pub(in crate::engine::compiler) fn rebuild_name_index(&mut self, bindings: &[IrBinding]) {
+        if self.bindings.len() <= 8 {
+            self.bindings_by_name = None;
+            return;
+        }
+        let index = self.bindings_by_name.get_or_insert_with(Box::default);
+        index.clear();
+        for &binding in &self.bindings {
+            index.insert(bindings[binding.0].name, binding);
+        }
     }
 }

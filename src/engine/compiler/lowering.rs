@@ -67,7 +67,7 @@ struct ScopedFunctionEntry {
     local: u16,
 }
 
-fn captured_locals_by_function(functions: &[FunctionIr]) -> Result<Vec<Vec<bool>>, Error> {
+fn captured_locals_by_function(functions: &[Box<FunctionIr>]) -> Result<Vec<Vec<bool>>, Error> {
     let mut captured = functions
         .iter()
         .map(|function| vec![false; function.locals.len()])
@@ -279,8 +279,9 @@ pub(super) fn lower_unlinked_tree(
     #[cfg(feature = "profiling")]
     crate::engine::compiler::diagnostics::sample_ir_storage(
         crate::engine::api::profiling::CompilePhase::Lowering,
-        crate::engine::compiler::diagnostics::arena_bytes(&tree_functions),
-        tree_functions.iter(),
+        crate::engine::compiler::diagnostics::arena_bytes(&tree_functions)
+            + (tree_functions.len() * size_of::<FunctionIr>()) as u64,
+        tree_functions.iter().map(Box::as_ref),
     );
     let function_count = tree_functions.len();
     let captured_locals = captured_locals_by_function(&tree_functions)?;
@@ -315,7 +316,7 @@ pub(super) fn lower_unlinked_tree(
     let mut lowered = (0..function_count).map(|_| None).collect::<Vec<_>>();
 
     for function_id in (0..function_count).rev() {
-        let mut function = functions[function_id]
+        let mut function = *functions[function_id]
             .take()
             .ok_or_else(|| Error::internal("function IR was lowered more than once"))?;
         let retain_semantic_names = retains_semantic_names[function_id];
@@ -1567,7 +1568,7 @@ mod tests {
 
         let (strict, _, names) = make_function(true);
         let tree = FunctionTree {
-            functions: vec![strict],
+            functions: vec![Box::new(strict)],
             names,
             source: "".into(),
             filename: JsString::from_static("<strict-with-metadata>"),

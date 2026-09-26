@@ -723,6 +723,7 @@ impl<'source> Parser<'source> {
                 ..SourceOffset::try_from_usize(closing_brace.end.byte_offset)
                     .map_err(|error| Error::internal(error.to_string()))?,
         );
+        self.functions[child].finish_parsing()?;
         self.current_function = parent;
 
         let constant = self.add_constant(IrConstant::Child(child))?;

@@ -569,9 +569,7 @@ impl FunctionIr {
             declaration_span,
         });
         self.scopes[storage_scope.0].bindings.push(binding);
-        self.scopes[storage_scope.0]
-            .bindings_by_name
-            .insert(name, binding);
+        self.scopes[storage_scope.0].index_binding(name, binding, &self.bindings);
         binding
     }
 
@@ -607,19 +605,13 @@ impl FunctionIr {
         scope: ScopeId,
         name: NameId,
     ) -> Option<BindingId> {
-        self.scopes[scope.0].binding_named(name)
+        self.scopes[scope.0].binding_named(name, &self.bindings)
     }
 
     /// Rare late function-name insertion changes order after normal appends.
     /// Rebuild once there, rather than burdening every name lookup with a scan.
     pub(in crate::engine::compiler) fn rebuild_scope_name_index(&mut self, scope: ScopeId) {
-        let scope = &mut self.scopes[scope.0];
-        scope.bindings_by_name.clear();
-        for &binding in &scope.bindings {
-            scope
-                .bindings_by_name
-                .insert(self.bindings[binding.0].name, binding);
-        }
+        self.scopes[scope.0].rebuild_name_index(&self.bindings);
     }
 
     pub(in crate::engine::compiler) fn binding_id_from_scope(
@@ -680,7 +672,9 @@ impl FunctionIr {
 
 #[derive(Debug)]
 pub(in crate::engine::compiler) struct FunctionTree {
-    pub(in crate::engine::compiler) functions: Vec<FunctionIr>,
+    // Boxed elements keep wide IR records stationary while the arena grows.
+    #[allow(clippy::vec_box)]
+    pub(in crate::engine::compiler) functions: Vec<Box<FunctionIr>>,
     pub(in crate::engine::compiler) names: NameTable,
     pub(in crate::engine::compiler) source: SourceText,
     pub(in crate::engine::compiler) filename: JsString,

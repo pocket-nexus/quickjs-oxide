@@ -117,8 +117,11 @@ pub(super) fn resolve_identifiers(tree: &mut FunctionTree) -> Result<(), Error> 
     #[cfg(feature = "profiling")]
     crate::engine::compiler::diagnostics::sample_ir_storage(
         crate::engine::api::profiling::CompilePhase::Resolution,
-        crate::engine::compiler::diagnostics::arena_bytes(&tree.functions),
-        tree.functions.iter(),
+        crate::engine::compiler::diagnostics::arena_bytes(&tree.functions)
+            + (tree.functions.len()
+                * size_of::<crate::engine::compiler::model::ir::function::FunctionIr>())
+                as u64,
+        tree.functions.iter().map(Box::as_ref),
     );
     install_eval_variable_objects(tree)?;
     validate_scope_graph(tree)?;
@@ -235,8 +238,11 @@ pub(super) fn resolve_identifiers(tree: &mut FunctionTree) -> Result<(), Error> 
     #[cfg(feature = "profiling")]
     crate::engine::compiler::diagnostics::sample_ir_storage(
         crate::engine::api::profiling::CompilePhase::Resolution,
-        crate::engine::compiler::diagnostics::arena_bytes(&tree.functions),
-        tree.functions.iter(),
+        crate::engine::compiler::diagnostics::arena_bytes(&tree.functions)
+            + (tree.functions.len()
+                * size_of::<crate::engine::compiler::model::ir::function::FunctionIr>())
+                as u64,
+        tree.functions.iter().map(Box::as_ref),
     );
 
     validate_scope_graph(tree)

@@ -308,6 +308,7 @@ impl<'source> Parser<'source> {
                 ..SourceOffset::try_from_usize(range_end)
                     .map_err(|error| Error::internal(error.to_string()))?,
         );
+        self.functions[child].finish_parsing()?;
         self.current_function = parent;
         let constant = self.add_constant(IrConstant::Child(child))?;
         self.emit(IrOp::MakeClosure(constant))?;
