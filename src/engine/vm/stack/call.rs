@@ -11,7 +11,7 @@ impl SlotStore {
         function: &crate::engine::object::ObjectRef,
         function_name: Option<u16>,
         observes_arguments: bool,
-    ) -> Result<FrameWindow, Error> {
+    ) -> Result<(FrameWindow, crate::engine::vm::CallInput), Error> {
         self.check_current(parent)?;
         if parent.id != checked.window_id || parent.depth != checked.depth {
             return Err(Error::internal(
@@ -90,24 +90,43 @@ impl SlotStore {
             self.slots[index] = Some(FrameBinding::Direct(JsValue::Undefined));
         }
         for (index, definition) in layout.locals().iter().enumerate() {
-            self.slots[parameters_end + index] = Some(
-                super::super::call::prepare::initial_local_binding(
-                    runtime,
-                    definition.is_lexical,
-                    function_name == Some(index as u16),
-                    function,
-                )
-                .map_err(runtime_error_to_vm_error)?,
-            );
+            let binding = match super::super::call::prepare::initial_local_binding(
+                runtime,
+                definition.is_lexical,
+                function_name == Some(index as u16),
+                function,
+            ) {
+                Ok(binding) => binding,
+                Err(error) => {
+                    // Parameters and preceding locals were installed only in
+                    // the unpublished suffix. The caller still owns every
+                    // outgoing operand, including the method receiver.
+                    let _ = self.clear_unpublished(runtime, original_end..parameters_end + index);
+                    return Err(runtime_error_to_vm_error(error));
+                }
+            };
+            self.slots[parameters_end + index] = Some(binding);
         }
+        // All allocation and retain failures have completed. The checked
+        // receiver moves into CallInput as the same owner edge: no duplicate
+        // and no release. No fallible work may follow this transfer.
+        let receiver = if method {
+            let Some(FrameBinding::Direct(receiver)) = self.slots[start - 2].take() else {
+                unreachable!("validated ordinary receiver must be direct")
+            };
+            receiver
+        } else {
+            JsValue::Undefined
+        };
+        let input = crate::engine::vm::CallInput::new(runtime, receiver, JsValue::Undefined, None);
         for index in 0..count {
             self.slots[base + index] = self.slots[start + index].take();
         }
-        for index in start - 1 - usize::from(method)..start {
-            if let Some(binding) = self.slots[index].take() {
-                release_binding(runtime, binding)?;
-            }
-        }
+        let Some(FrameBinding::Direct(JsValue::Object(callee))) = self.slots[start - 1].take()
+        else {
+            unreachable!("authenticated ordinary callee must be a direct object")
+        };
+        runtime.release_object_handle(callee);
         parent.depth -= consumed;
         self.active_end = end;
         let id = self.next_window;
@@ -150,17 +169,20 @@ impl SlotStore {
                 );
             }
         }
-        Ok(FrameWindow {
-            owner: self.owner.clone(),
-            id,
-            base,
-            original_end,
-            parameters_end,
-            locals_end,
-            end,
-            depth: 0,
-            actual_count: count,
-        })
+        Ok((
+            FrameWindow {
+                owner: self.owner.clone(),
+                id,
+                base,
+                original_end,
+                parameters_end,
+                locals_end,
+                end,
+                depth: 0,
+                actual_count: count,
+            },
+            input,
+        ))
     }
 }
 
@@ -209,7 +231,7 @@ mod tests {
             )
             .unwrap();
         let checked = checked_operands(&mut slots, &mut parent, 1, false);
-        let child = slots
+        let (child, input) = slots
             .push_ordinary_frame(
                 &runtime,
                 &executable.frame_layout(),
@@ -220,6 +242,7 @@ mod tests {
                 false,
             )
             .unwrap();
+        drop(input);
         assert!(child.original_arguments().is_empty());
         assert_eq!(slots.actual_argument_count(&child).unwrap(), 1);
         assert!(matches!(
@@ -242,7 +265,7 @@ mod tests {
             .push(&mut parent, JsValue::Object(marker.into_handle()))
             .unwrap();
         let checked = checked_operands(&mut slots, &mut parent, 1, false);
-        let child = slots
+        let (child, input) = slots
             .push_ordinary_frame(
                 &runtime,
                 &executable.frame_layout(),
@@ -253,6 +276,7 @@ mod tests {
                 false,
             )
             .unwrap();
+        drop(input);
         assert_eq!(child.original_arguments().len(), 1);
         let replaced = slots
             .replace_parameter(&child, 0, FrameBinding::Direct(JsValue::Undefined))
@@ -317,6 +341,138 @@ mod tests {
             .unwrap();
         let _ = stale;
         slots.clear_frame(&runtime, parent).unwrap();
+    }
+
+    #[test]
+    fn method_receiver_owner_moves_to_call_input_until_frame_teardown() {
+        let runtime = Runtime::new();
+        let context = runtime.new_context();
+        let function = runtime.new_object(None).unwrap();
+        let receiver = runtime.new_object(None).unwrap();
+        let receiver_id = receiver.object_id();
+        let mut executable = PublishedFunctionSnapshot::empty_for_test(context.realm);
+        executable.metadata.max_stack = 4;
+        let mut slots = SlotStore::new(32);
+        let mut parent = slots
+            .push_frame(
+                &runtime,
+                &executable.frame_layout(),
+                storage(vec![
+                    JsValue::Object(receiver.into_handle()),
+                    JsValue::Object(function.clone().into_handle()),
+                ]),
+            )
+            .unwrap();
+        assert_eq!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(receiver_id),
+            Ok(1)
+        );
+        let checked = checked_operands(&mut slots, &mut parent, 0, true);
+        let (child, input) = slots
+            .push_ordinary_frame(
+                &runtime,
+                &executable.frame_layout(),
+                &mut parent,
+                checked,
+                &function,
+                None,
+                false,
+            )
+            .unwrap();
+        assert!(matches!(
+            &input.this_value,
+            JsValue::Object(id) if *id == receiver_id
+        ));
+        assert_eq!(slots.depth(&parent), 0);
+        assert!(slots.slots[parent.operands().start].is_none());
+        assert_eq!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(receiver_id),
+            Ok(1)
+        );
+        runtime.run_gc().unwrap();
+        assert!(runtime.0.state.borrow().heap.object(receiver_id).is_ok());
+        drop(input);
+        runtime.run_gc().unwrap();
+        assert!(runtime.0.state.borrow().heap.object(receiver_id).is_err());
+        slots.clear_frame(&runtime, child).unwrap();
+        slots.clear_frame(&runtime, parent).unwrap();
+    }
+
+    #[test]
+    fn failed_method_argument_copy_keeps_receiver_and_rolls_back_suffix() {
+        let runtime = Runtime::new();
+        let context = runtime.new_context();
+        let function = runtime.new_object(None).unwrap();
+        let receiver = runtime.new_object(None).unwrap();
+        let receiver_id = receiver.object_id();
+        let first = runtime.new_object(None).unwrap();
+        let blocked = runtime.new_object(None).unwrap();
+        let stale_handle = blocked.into_handle();
+        runtime
+            .release_jsvalue(JsValue::Object(stale_handle))
+            .unwrap();
+        runtime.run_gc().unwrap();
+        let mut executable = PublishedFunctionSnapshot::empty_for_test(context.realm);
+        executable.metadata.max_stack = 4;
+        let mut slots = SlotStore::new(32);
+        let mut parent = slots
+            .push_frame(
+                &runtime,
+                &executable.frame_layout(),
+                storage(vec![
+                    JsValue::Object(receiver.into_handle()),
+                    JsValue::Object(function.clone().into_handle()),
+                    JsValue::Object(first.into_handle()),
+                    JsValue::Object(stale_handle),
+                ]),
+            )
+            .unwrap();
+        let end = slots.active_end;
+        let checked = checked_operands(&mut slots, &mut parent, 2, true);
+        assert!(
+            slots
+                .push_ordinary_frame(
+                    &runtime,
+                    &executable.frame_layout(),
+                    &mut parent,
+                    checked,
+                    &function,
+                    None,
+                    false,
+                )
+                .is_err()
+        );
+        assert_eq!(slots.active_end, end);
+        assert_eq!(slots.depth(&parent), 4);
+        assert!(slots.slots[end..].iter().all(Option::is_none));
+        assert_eq!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(receiver_id),
+            Ok(1)
+        );
+        runtime.run_gc().unwrap();
+        assert!(runtime.0.state.borrow().heap.object(receiver_id).is_ok());
+        let stale = slots
+            .replace_operand(&parent, 0, JsValue::Undefined)
+            .unwrap();
+        let _ = stale;
+        slots.clear_frame(&runtime, parent).unwrap();
+        runtime.run_gc().unwrap();
+        assert!(runtime.0.state.borrow().heap.object(receiver_id).is_err());
     }
 
     #[test]
