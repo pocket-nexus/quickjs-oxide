@@ -54,7 +54,7 @@ pub(super) fn enter_selected(
         .frame_transaction(&mut profile_body.window)?;
     #[cfg(not(feature = "profiling"))]
     let mut transaction = execution.slots.frame_transaction(&mut frame.window)?;
-    transaction.peek(count + usize::from(method))?;
+    let entry_operand = transaction.peek(count + usize::from(method))?;
     enum Prepared {
         Ordinary(
             crate::engine::vm::call::ordinary::OrdinaryCall,
@@ -72,7 +72,11 @@ pub(super) fn enter_selected(
         if !transaction.validate_call_value_domains(runtime, count, method)? {
             return Ok(Entry::General);
         }
-        let linked = transaction.peek(count)?;
+        let linked = if method {
+            transaction.peek(count)?
+        } else {
+            entry_operand
+        };
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_callsite_callee(
             runtime,
@@ -94,7 +98,11 @@ pub(super) fn enter_selected(
         );
         Prepared::Native(callable, selected)
     } else {
-        let callable_value = transaction.peek(count)?;
+        let callable_value = if method {
+            transaction.peek(count)?
+        } else {
+            entry_operand
+        };
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_callsite_callee(
             runtime,
@@ -321,6 +329,17 @@ pub(super) fn finish(
 
 #[cfg(test)]
 mod layout_tests {
+    #[test]
+    fn nonmethod_zero_argument_call_keeps_ordinary_native_and_general_entries() {
+        use crate::engine::api::{Runtime, Value};
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let source = "(()=>{function invoke(f){return f()}let calls=0;function ordinary(){calls++;return 42}let first=invoke(ordinary);let second=invoke(Math.max);let error=false;try{invoke(7)}catch(e){error=e instanceof TypeError}return first===42&&second===-Infinity&&error&&calls===1})()";
+        assert_eq!(context.eval(source).unwrap(), Value::Bool(true));
+        assert_eq!(runtime.0.active_frame_depth.get(), 0);
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
     #[test]
     fn ordinary_operand_proof_preserves_method_receiver_and_proxy_fallback() {
         use crate::engine::api::{Runtime, Value};
