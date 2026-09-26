@@ -137,7 +137,7 @@ def complete_geomeans(ratios, engines, workloads):
     return aggregates
 
 
-def write_report(output, results, ratios, metric, engines):
+def write_report(output, results, ratios, metric, engines, aggregates):
     lines = [f"# Front-end {metric} matrix", "",
              "Each sample is one fresh process; the probe prints exactly one ns line. "
              "Runtime/Context construction, source I/O and teardown are excluded. "
@@ -155,6 +155,10 @@ def write_report(output, results, ratios, metric, engines):
         lines.extend(["", f"Speed relative to {engines[0]} (only cases fully successful on both engines):", ""])
         for ratio in ratios:
             lines.append(f"- {ratio['case']}/{ratio['engine']}: {ratio['ratio']:.4g}×")
+    if aggregates:
+        lines.extend(["", "Geometric means over the complete selected corpus:", ""])
+        for aggregate in aggregates:
+            lines.append(f"- {aggregate['engine']}: {aggregate['ratio']:.4g}× {aggregate['reference']} ({aggregate['cases']} cases)")
     lines.extend(["", "Failed, incomplete and timed-out samples stay visible and are excluded from ratios. "
                       "This report never infers a whole-engine score from a subset.", ""])
     (output / "report.md").write_text("\n".join(lines))
@@ -236,9 +240,10 @@ def main():
                     journal.flush()
                     print(f"{workload['case']} {name} #{iteration + 1}: {status}", flush=True)
     results, ratios = summarize(samples, list(engines), workloads)
+    aggregates = complete_geomeans(ratios, list(engines), workloads)
     (output / "results.json").write_text(json.dumps({**metadata, "samples": samples, "summary": results,
-                                                     "ratios": ratios, "complete_geomeans": complete_geomeans(ratios, list(engines), workloads)}, indent=2) + "\n")
-    write_report(output, results, ratios, args.metric, list(engines))
+                                                     "ratios": ratios, "complete_geomeans": aggregates}, indent=2) + "\n")
+    write_report(output, results, ratios, args.metric, list(engines), aggregates)
     print(output / "report.md")
     return 0 if all(sample["status"] == "ok" for sample in samples) else 1
 

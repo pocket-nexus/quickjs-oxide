@@ -43,8 +43,9 @@ boa_interner = "=0.22.0"
 lto = "fat"
 codegen-units = 1
 ''')
-    # Resolve once, then freeze the complete dependency graph for this receipt.
-    subprocess.run(["cargo", "generate-lockfile", "--manifest-path", str(output / "Cargo.toml")], check=True)
+    # Keep the reference's entire dependency graph reproducible, including
+    # transitive crates whose current compatible versions may have changed.
+    shutil.copyfile(ROOT / "scripts/benchmark/probes/boa_parse_probe.lock", output / "Cargo.lock")
     command = ["cargo", "build", "--locked", "--release", "--manifest-path", str(output / "Cargo.toml")]
     with (output / "build.log").open("w") as log:
         subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, check=True)
