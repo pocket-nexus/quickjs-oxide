@@ -497,10 +497,12 @@ impl RunSlots<'_> {
         Ok(local_add_values(left, right))
     }
 
+    #[inline(always)]
     pub(in crate::engine::vm) fn local(&self, index: u16) -> Result<&FrameBinding, Error> {
         self.store.local_current(self.window, index)
     }
 
+    #[inline(always)]
     pub(in crate::engine::vm) fn parameter(&self, index: u16) -> Result<&FrameBinding, Error> {
         self.store.parameter_current(self.window, index)
     }
