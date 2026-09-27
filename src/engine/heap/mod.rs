@@ -187,10 +187,11 @@ impl RawId {
     }
 }
 
-// Realm payloads are cold and boxed so every arena slot stays compact.
+// Objects stay inline in the shared arena. Boxed realm and bytecode payloads
+// do not force an extra allocation onto ordinary object creation.
+#[allow(clippy::large_enum_variant)]
 enum NodeData {
     Object(ObjectData),
-    Shape(Shape),
     Context(Box<ContextData>),
     FunctionBytecode(Box<FunctionBytecodeData>),
 }
@@ -199,7 +200,6 @@ impl NodeData {
     const fn kind(&self) -> HeapNodeKind {
         match self {
             Self::Object(_) => HeapNodeKind::Object,
-            Self::Shape(_) => HeapNodeKind::Shape,
             Self::Context(_) => HeapNodeKind::Context,
             Self::FunctionBytecode(_) => HeapNodeKind::FunctionBytecode,
         }
@@ -208,7 +208,6 @@ impl NodeData {
     fn edges(&self) -> Edges {
         match self {
             Self::Object(object) => object_edges(object),
-            Self::Shape(shape) => shape_edges(shape).into(),
             Self::Context(context) => context_edges(context).into(),
             Self::FunctionBytecode(bytecode) => function_bytecode_edges(bytecode).into(),
         }
@@ -311,6 +310,7 @@ pub struct Heap {
     slots: profiling::ArenaStorage<ArenaSlot>,
     free: Vec<u32>,
     var_refs: AuxiliaryArena<VarRefData>,
+    shapes: AuxiliaryArena<Shape>,
     #[cfg(not(feature = "profiling"))]
     leaf_slots: Vec<LeafSlot>,
     #[cfg(feature = "profiling")]
@@ -325,6 +325,8 @@ pub struct Heap {
     alloc_sites: Vec<Option<gc::AllocSite>>,
     #[cfg(debug_assertions)]
     leaf_alloc_sites: Vec<Option<gc::AllocSite>>,
+    #[cfg(feature = "profiling")]
+    collection_scratch_peak_bytes: usize,
 }
 
 impl Default for Heap {

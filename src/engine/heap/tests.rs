@@ -60,12 +60,12 @@ fn captured_cells_use_compact_storage_and_distinct_arena_identity() {
         .unwrap();
 
     assert!(size_of::<auxiliary_arena::AuxiliarySlot<VarRefData>>() < size_of::<ArenaSlot>());
-    assert_eq!(object.debug_index(), second.index);
-    assert_eq!(object.debug_generation(), second.generation);
+    assert_eq!(object.debug_index(), first.index);
+    assert_eq!(object.debug_generation(), first.generation);
     assert_eq!(
         heap.slots.len(),
-        2,
-        "shared storage contains only shape and object"
+        1,
+        "shared storage contains only the object"
     );
     assert_eq!(heap.var_refs.slots.len(), 2);
     assert!(heap.live_node(RawId::VarRef(second)).is_err());
@@ -144,11 +144,15 @@ fn captured_cell_reservation_aborts_after_edge_retain_failure() {
         index: 77,
         generation: 1,
     };
-    assert!(heap
-        .allocate_var_ref(VarRefData::local(RawValue::Object(missing)))
-        .is_err());
+    assert!(
+        heap.allocate_var_ref(VarRefData::local(RawValue::Object(missing)))
+            .is_err()
+    );
     assert_eq!(heap.counts().var_ref_nodes, 0);
-    assert!(matches!(heap.var_refs.slots[0].state, AuxiliaryState::Vacant));
+    assert!(matches!(
+        heap.var_refs.slots[0].state,
+        AuxiliaryState::Vacant
+    ));
     assert_eq!(heap.var_refs.free, vec![0]);
     let cell = heap
         .allocate_var_ref(VarRefData::local(RawValue::Int(4)))
@@ -189,6 +193,63 @@ fn captured_cell_replacement_preserves_owned_transfer_and_retained_update() {
     assert_eq!(heap.counts().live, 0);
 }
 
+#[test]
+fn shapes_use_compact_storage_and_reused_generation_is_distinct() {
+    let mut heap = Heap::new();
+    let first = empty_shape(&mut heap);
+    let object = leaf(&mut heap, first);
+    assert!(size_of::<auxiliary_arena::AuxiliarySlot<Shape>>() < size_of::<ArenaSlot>());
+    assert_eq!(first.index, object.index);
+    assert_eq!(first.generation, object.generation);
+    assert_eq!(heap.slots.len(), 1);
+    assert_eq!(heap.shapes.slots.len(), 1);
+    assert!(heap.live_node(RawId::Shape(first)).is_err());
+
+    heap.release_shape(first).unwrap();
+    let cleanup = heap.release_object(object).unwrap();
+    assert_eq!(cleanup.finalized_shapes, 1);
+    assert_eq!(cleanup.finalized_shape_ids, vec![first]);
+    let second = empty_shape(&mut heap);
+    assert_eq!(second.index, first.index);
+    assert_ne!(second.generation, first.generation);
+    assert!(matches!(heap.shape(first), Err(HeapError::Stale { .. })));
+    assert!(heap.shape(second).is_ok());
+    heap.release_shape(second).unwrap();
+}
+
+#[test]
+fn shape_reservation_aborts_and_saturated_generation_retires() {
+    let mut heap = Heap::new();
+    let missing = ObjectId {
+        index: 77,
+        generation: 1,
+    };
+    assert!(
+        heap.allocate_shape(Shape::new(Some(missing), []).unwrap())
+            .is_err()
+    );
+    assert_eq!(heap.counts().shape_nodes, 0);
+    assert!(matches!(heap.shapes.slots[0].state, AuxiliaryState::Vacant));
+    assert_eq!(heap.shapes.free, vec![0]);
+
+    let shape = empty_shape(&mut heap);
+    heap.shapes.slots[shape.index as usize].generation = u32::MAX;
+    let saturated = ShapeId {
+        index: shape.index,
+        generation: u32::MAX,
+    };
+    heap.set_strong_count_for_test(RawId::Shape(saturated), u32::MAX);
+    heap.retain_raw_fast(RawId::Shape(saturated));
+    heap.release_raw_no_drain(RawId::Shape(saturated)).unwrap();
+    assert_eq!(heap.shape_strong_count(saturated), Ok(u32::MAX));
+    heap.set_strong_count_for_test(RawId::Shape(saturated), 1);
+    heap.release_shape(saturated).unwrap();
+    assert!(matches!(
+        heap.shapes.slots[shape.index as usize].state,
+        AuxiliaryState::Retired
+    ));
+}
+
 fn empty_shape(heap: &mut Heap) -> ShapeId {
     heap.allocate_shape(Shape::new(None, []).unwrap()).unwrap()
 }
@@ -202,24 +263,28 @@ fn small_edge_transactions_preflight_duplicates_and_late_failure() {
     let second = RawId::Shape(second);
     heap.retain_edges_transactionally(&[]).unwrap();
     heap.retain_edges_transactionally(&[first]).unwrap();
-    assert_eq!(heap.live_node(first).unwrap().strong.get(), 2);
+    assert_eq!(heap.shapes.live(first).unwrap().strong.get(), 2);
     heap.retain_edges_transactionally(&[first, first]).unwrap();
-    assert_eq!(heap.live_node(first).unwrap().strong.get(), 4);
-    heap.live_node_mut(second).unwrap().strong.set(u32::MAX);
+    assert_eq!(heap.shapes.live(first).unwrap().strong.get(), 4);
+    heap.shapes.live_mut(second).unwrap().strong.set(u32::MAX);
     assert!(heap.retain_edges_transactionally(&[first, second]).is_err());
     assert_eq!(
-        heap.live_node(first).unwrap().strong.get(),
+        heap.shapes.live(first).unwrap().strong.get(),
         4,
         "later edge failure must not retain the first"
     );
-    heap.live_node_mut(first).unwrap().strong.set(u32::MAX - 1);
+    heap.shapes
+        .live_mut(first)
+        .unwrap()
+        .strong
+        .set(u32::MAX - 1);
     assert!(heap.retain_edges_transactionally(&[first, first]).is_err());
-    assert_eq!(heap.live_node(first).unwrap().strong.get(), u32::MAX - 1);
-    heap.live_node_mut(first).unwrap().strong.set(1);
-    heap.live_node_mut(second).unwrap().strong.set(1);
+    assert_eq!(heap.shapes.live(first).unwrap().strong.get(), u32::MAX - 1);
+    heap.shapes.live_mut(first).unwrap().strong.set(1);
+    heap.shapes.live_mut(second).unwrap().strong.set(1);
     heap.retain_edges_transactionally(&[first, second]).unwrap();
-    assert_eq!(heap.live_node(first).unwrap().strong.get(), 2);
-    assert_eq!(heap.live_node(second).unwrap().strong.get(), 2);
+    assert_eq!(heap.shapes.live(first).unwrap().strong.get(), 2);
+    assert_eq!(heap.shapes.live(second).unwrap().strong.get(), 2);
 }
 
 #[derive(Default)]

@@ -85,7 +85,8 @@ impl Heap {
         let mut heap = Self::new();
         heap.slots.trace = trace.clone();
         heap.leaf_slots.trace = trace.clone();
-        heap.var_refs.slots.trace = trace;
+        heap.var_refs.slots.trace = trace.clone();
+        heap.shapes.slots.trace = trace;
         heap
     }
 
@@ -122,6 +123,18 @@ impl Heap {
                 size_of::<u32>(),
             ),
             storage(
+                "shape_arena_slots",
+                self.shapes.slots.len(),
+                self.shapes.slots.capacity(),
+                size_of::<auxiliary_arena::AuxiliarySlot<Shape>>(),
+            ),
+            storage(
+                "shape_arena_free_indices",
+                self.shapes.free.len(),
+                self.shapes.free.capacity(),
+                size_of::<u32>(),
+            ),
+            storage(
                 "leaf_arena_slots",
                 self.leaf_slots.len(),
                 self.leaf_slots.capacity(),
@@ -139,6 +152,13 @@ impl Heap {
                 self.zero_queue.capacity(),
                 size_of::<RawId>(),
             ),
+            MemoryCategory {
+                name: "collection_scratch_peak",
+                count: None,
+                used_bytes: None,
+                capacity_bytes: Some(self.collection_scratch_peak_bytes),
+                basis: "non-resident high-water capacity; trial arrays, reachability arrays, worklist and anchors; not additive to current storage",
+            },
         ];
         let mut properties = storage("property_slots", 0, 0, 1);
         let mut arrays = logical("arrays", 0);
@@ -172,6 +192,18 @@ impl Heap {
         property_keys.count = Some(0);
         property_keys.basis = "linked-name-count; deduplicated map slice bytes including unused slots; excludes Rc headers and auxiliary atom references";
         let mut seen_property_keys = HashSet::new();
+        let mut shape_entries = storage(
+            "shape_entries",
+            0,
+            0,
+            size_of::<crate::engine::object::shape::ShapeEntry>(),
+        );
+        let mut shape_lookup = storage("shape_lookup_minimum", 0, 0, size_of::<(AtomIdx, u32)>());
+        shape_lookup.basis =
+            "lower-bound-hashmap-entry-storage; excludes control bytes and allocator overhead";
+        let mut shape_dictionary_headers = storage("shape_dictionary_headers", 0, 0, 1);
+        let mut shape_dictionary_links = storage("shape_dictionary_links", 0, 0, 1);
+        shape_dictionary_links.count = None;
         for slot in &self.slots {
             let node = match &slot.state {
                 SlotState::Live(node) | SlotState::ZeroQueued(node) => node,
@@ -286,6 +318,35 @@ impl Heap {
                 Some(_) | None => {}
             }
         }
+        for slot in &self.shapes.slots {
+            let shape = match &slot.state {
+                AuxiliaryState::Live(node) | AuxiliaryState::ZeroQueued(node) => &node.data,
+                _ => continue,
+            };
+            let backing = shape.backing_storage();
+            add_storage(
+                &mut shape_entries,
+                backing.entries_len,
+                backing.entries_capacity,
+                size_of::<crate::engine::object::shape::ShapeEntry>(),
+            );
+            add_storage(
+                &mut shape_lookup,
+                backing.lookup_len,
+                backing.lookup_capacity,
+                size_of::<(AtomIdx, u32)>(),
+            );
+            add_storage(
+                &mut shape_dictionary_headers,
+                backing.dictionary_header_bytes,
+                backing.dictionary_header_bytes,
+                1,
+            );
+            *shape_dictionary_links.used_bytes.as_mut().unwrap() +=
+                backing.dictionary_links_used_bytes;
+            *shape_dictionary_links.capacity_bytes.as_mut().unwrap() +=
+                backing.dictionary_links_capacity_bytes;
+        }
         result.extend([
             properties,
             arrays,
@@ -301,6 +362,10 @@ impl Heap {
             copy_sources,
             property_keys,
             executable_projections,
+            shape_entries,
+            shape_lookup,
+            shape_dictionary_headers,
+            shape_dictionary_links,
         ]);
         result
     }
