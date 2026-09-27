@@ -183,6 +183,7 @@ fn bytecode(
 ) -> FunctionBytecodeDraft {
     FunctionBytecodeDraft {
         code: code.clone(),
+        numeric_regions: Box::new([]),
         constants: constants.into(),
         property_key_atoms: None,
         realm,

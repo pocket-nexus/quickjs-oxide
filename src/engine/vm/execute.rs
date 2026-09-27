@@ -9,6 +9,7 @@ use crate::engine::code::bytecode::{
 };
 use crate::engine::code::exec::PublishedDecoded;
 use crate::engine::code::exec_opcode::Opcode;
+use crate::engine::code::region::{DirectSource, NumberSource};
 use crate::engine::heap::{BytecodeConstant, RawValue};
 use crate::engine::value::JsValue;
 use crate::engine::value::number::operations::Number;
@@ -18,6 +19,26 @@ use crate::engine::vm::execution::RunningExecution;
 use crate::engine::vm::frame::FrameId;
 use crate::engine::vm::frames::ActiveFrameToken;
 use crate::engine::vm::stack::{DirectSlot, FrameSlots, FrameTransaction, copy_value};
+
+#[cfg(test)]
+thread_local! {
+    static NUMERIC_REGION_HITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn test_numeric_region_hits<T>(run: impl FnOnce() -> T) -> (T, usize) {
+    let previous = NUMERIC_REGION_HITS.replace(0);
+    struct Restore(usize);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            NUMERIC_REGION_HITS.set(self.0);
+        }
+    }
+    let _restore = Restore(previous);
+    let result = run();
+    let hits = NUMERIC_REGION_HITS.get();
+    (result, hits)
+}
 
 /// Short-lived access to one frame's slots and execution word cursor. The
 /// transaction owns the frame window; `with_slots` ends its borrow before a
@@ -375,6 +396,65 @@ pub(super) fn execute_frame(
                 if let Some(action) = read_local::<false>(&mut cursor, runtime, index)? {
                     return Ok(action);
                 }
+            }
+            Opcode::NumericArrayAccumulate => {
+                let region = executable
+                    .exec
+                    .numeric_region(operand)
+                    .ok_or_else(|| Error::internal("published numeric region is missing"))?;
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_execution_dispatch(
+                    runtime, executable, pc, true,
+                );
+                let hit = cursor.with_slots(|slots| {
+                    if !slots.has_operand_capacity(region.peak as usize) {
+                        return Ok(false);
+                    }
+                    // Snapshot all inputs before taking the exclusive destination
+                    // access. This also handles aliases between any sources.
+                    if slots.immediate_local(region.destination).is_none() {
+                        return Ok(false);
+                    }
+                    let Some(base) = slots.direct_value(region_direct_slot(region.array)) else {
+                        return Ok(false);
+                    };
+                    let Some(index) = region_number(slots, region.index).and_then(array_index)
+                    else {
+                        return Ok(false);
+                    };
+                    let Some(element) = runtime.peek_dense_number(base, index) else {
+                        return Ok(false);
+                    };
+                    let Some(scale) = region_number(slots, region.scale) else {
+                        return Ok(false);
+                    };
+                    let Some(destination) = slots.admit_numeric_local(region.destination) else {
+                        return Ok(false);
+                    };
+                    let old = destination.old;
+                    destination.commit(old.add(element.mul(scale)));
+                    Ok(true)
+                })?;
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_execution_outcome(
+                    runtime,
+                    executable,
+                    pc,
+                    "numeric_array_accumulate",
+                    if hit { None } else { Some("guard") },
+                );
+                if hit {
+                    #[cfg(test)]
+                    NUMERIC_REGION_HITS.set(NUMERIC_REGION_HITS.get() + 1);
+                    cursor.advance(decoded.operand(1) as usize);
+                    continue;
+                }
+                if let Some(action) = read_local::<false>(&mut cursor, runtime, region.destination)?
+                {
+                    return Ok(action);
+                }
+                cursor.advance(decoded.operand(2) as usize);
+                continue;
             }
             Opcode::UpdateLocalDiscard | Opcode::UpdateLocalDiscardCheck => {
                 let index = published_u16(operand & 0x1fff);
@@ -1500,6 +1580,30 @@ pub(super) fn execute_frame(
         }
         cursor.advance(next);
     }
+}
+
+#[inline(always)]
+fn region_direct_slot(source: DirectSource) -> DirectSlot {
+    match source {
+        DirectSource::Local(index) => DirectSlot::Local(index),
+        DirectSource::Argument(index) => DirectSlot::Argument(index),
+    }
+}
+
+#[inline(always)]
+fn region_number(slots: &FrameSlots<'_>, source: NumberSource) -> Option<Number> {
+    match source {
+        NumberSource::Direct(DirectSource::Local(index)) => slots.immediate_local(index),
+        NumberSource::Direct(DirectSource::Argument(index)) => slots.immediate_parameter(index),
+        NumberSource::Immediate(value) => Some(Number::Int(value)),
+        NumberSource::Constant { value, .. } => Some(value),
+    }
+}
+
+#[inline(always)]
+fn array_index(value: Number) -> Option<u32> {
+    let value = value.float();
+    (value >= 0.0 && value < f64::from(u32::MAX) && value.trunc() == value).then_some(value as u32)
 }
 
 #[inline(always)]

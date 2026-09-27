@@ -207,6 +207,7 @@ pub(crate) fn record_execution_static(runtime: &Runtime, executable: &PublishedF
             Opcode::GetLocal
                 | Opcode::GetLocalCheck
                 | Opcode::NumberLocalInc
+                | Opcode::NumericArrayAccumulate
                 | Opcode::DensePreUpdateLocal
                 | Opcode::DenseReadLocal
                 | Opcode::BorrowedFieldLocal
@@ -259,6 +260,7 @@ pub(crate) fn record_execution_static(runtime: &Runtime, executable: &PublishedF
                 | Opcode::DenseIndexBinaryLocal
                 | Opcode::DenseIndexBinaryArg
                 | Opcode::DenseAccIndexSetDrop
+                | Opcode::NumericArrayAccumulate
         ));
         if !is_local && !is_arg {
             continue;
@@ -268,6 +270,7 @@ pub(crate) fn record_execution_static(runtime: &Runtime, executable: &PublishedF
         let specialized = matches!(
             opcode,
             Opcode::NumberLocalInc
+                | Opcode::NumericArrayAccumulate
                 | Opcode::NumberArgInc
                 | Opcode::DensePreUpdateLocal
                 | Opcode::DensePreUpdateArg

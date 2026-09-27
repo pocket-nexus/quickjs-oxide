@@ -233,6 +233,7 @@ impl TryFrom<PrimitiveValue> for UnlinkedConstant {
 #[derive(Debug)]
 pub struct UnlinkedFunction {
     code: Vec<Instruction>,
+    numeric_regions: Vec<super::region::NumericRegion>,
     constants: Vec<UnlinkedConstant>,
     metadata: FunctionMetadata,
     parameter_environment: Option<ParameterEnvironmentLayout>,
@@ -351,6 +352,7 @@ pub struct UnlinkedFunctionDebug {
 /// Owned pieces crossing the one-way publication boundary.
 pub struct UnlinkedFunctionParts {
     pub code: Vec<Instruction>,
+    pub numeric_regions: Vec<super::region::NumericRegion>,
     pub constants: Vec<UnlinkedConstant>,
     pub metadata: FunctionMetadata,
     pub parameter_environment: Option<ParameterEnvironmentLayout>,
@@ -376,6 +378,7 @@ impl UnlinkedFunction {
     ) -> Self {
         Self {
             code,
+            numeric_regions: Vec::new(),
             constants,
             metadata,
             parameter_environment: None,
@@ -435,6 +438,16 @@ impl UnlinkedFunction {
     #[must_use]
     pub fn with_debug(mut self, debug: UnlinkedFunctionDebug) -> Self {
         self.debug = Some(debug);
+        self
+    }
+
+    /// Attach sparse compiler plans; publication authenticates every entry.
+    #[must_use]
+    pub(crate) fn with_numeric_regions(
+        mut self,
+        regions: Vec<super::region::NumericRegion>,
+    ) -> Self {
+        self.numeric_regions = regions;
         self
     }
 
@@ -503,6 +516,7 @@ impl UnlinkedFunction {
     pub fn into_parts(self) -> UnlinkedFunctionParts {
         UnlinkedFunctionParts {
             code: self.code,
+            numeric_regions: self.numeric_regions,
             constants: self.constants,
             metadata: self.metadata,
             parameter_environment: self.parameter_environment,

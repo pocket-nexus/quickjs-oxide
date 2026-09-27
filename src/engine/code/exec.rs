@@ -2,6 +2,7 @@
 //! a 16-bit short operand. Wide operands occupy following 32-bit words.
 //! Compiler instructions are consumed by `encode` and never retained here.
 
+use crate::engine::heap::{BytecodeConstant, RawValue};
 use std::cell::Cell;
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -13,12 +14,31 @@ use super::bytecode::{
 use super::exec_opcode::Opcode;
 use super::function::metadata::{ClosureVariableKind, VariableDefinition};
 use super::instruction::{Operand, OperandContract};
+use super::region::{DirectSource, NumberSource, NumericRegion};
 
 const OPCODE_MASK: u16 = 0x03ff;
 const COUNT_SHIFT: u16 = 10;
 const WIDE_FIRST: u16 = 0x1000;
 const WIDTH_SHIFT: u16 = 13;
 const RESERVED_MASK: u16 = 0x8000;
+
+#[cfg(test)]
+thread_local! {
+    static SUPPRESS_NUMERIC_REGIONS: Cell<bool> = const { Cell::new(false) };
+}
+
+#[cfg(test)]
+pub(crate) fn without_numeric_regions<T>(run: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SUPPRESS_NUMERIC_REGIONS.set(self.0);
+        }
+    }
+    let previous = SUPPRESS_NUMERIC_REGIONS.replace(true);
+    let _restore = Restore(previous);
+    run()
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ExecCodeError {
@@ -91,6 +111,7 @@ impl PublishedDecoded<'_> {
 pub(crate) struct ExecCode {
     words: Rc<[Cell<u32>]>,
     boundaries: Rc<[u32]>,
+    regions: Option<Rc<[NumericRegion]>>,
     /// Compiler assertions inspect the exact prepublication IR. This field is
     /// absent from product builds and never participates in execution.
     #[cfg(test)]
@@ -110,6 +131,7 @@ impl ExecCode {
         Self {
             words: Rc::from([]),
             boundaries: Rc::from([0]),
+            regions: None,
             #[cfg(test)]
             test_ir: Rc::from([]),
         }
@@ -120,25 +142,38 @@ impl ExecCode {
     pub(crate) fn encode_with_locals(
         code: &[Instruction],
         locals: &[VariableDefinition],
+        arguments: &[VariableDefinition],
+        regions: &[NumericRegion],
+        constants: &[BytecodeConstant],
     ) -> Result<Self, ExecCodeError> {
-        Self::encode_internal(code, Some(locals))
+        #[cfg(test)]
+        let regions = if SUPPRESS_NUMERIC_REGIONS.get() {
+            &[]
+        } else {
+            regions
+        };
+        Self::encode_internal(code, Some(locals), Some(arguments), regions, constants)
     }
 
     #[cfg(test)]
     pub(crate) fn encode(code: &[Instruction]) -> Result<Self, ExecCodeError> {
-        Self::encode_internal(code, None)
+        Self::encode_internal(code, None, None, &[], &[])
     }
 
     fn encode_internal(
         code: &[Instruction],
         locals: Option<&[VariableDefinition]>,
+        arguments: Option<&[VariableDefinition]>,
+        regions: &[NumericRegion],
+        constants: &[BytecodeConstant],
     ) -> Result<Self, ExecCodeError> {
-        let opcodes = select_opcodes(code, locals);
+        validate_region_plans(code, locals, arguments, regions, constants)?;
+        let opcodes = select_opcodes(code, locals, regions);
         let mut boundaries = Vec::with_capacity(code.len() + 1);
         let mut length = 0u32;
         for (source, &opcode) in opcodes.iter().enumerate() {
             boundaries.push(length);
-            let operands = published_operands(code, source, opcode);
+            let operands = published_operands(code, source, opcode, regions);
             let count = operands.len();
             if count != usize::from(opcode.operand_count()) {
                 return Err(ExecCodeError::BadOperandCount);
@@ -155,7 +190,7 @@ impl ExecCode {
         boundaries.push(length);
         let mut words = Vec::with_capacity(length as usize);
         for (source, &opcode) in opcodes.iter().enumerate() {
-            let operands = published_operands(code, source, opcode);
+            let operands = published_operands(code, source, opcode, regions);
             let count = operands.len();
             let first_wide = count > 0 && !operands[0].short;
             let width = 1 + count - usize::from(count != 0 && !first_wide);
@@ -186,6 +221,7 @@ impl ExecCode {
         let result = Self {
             words: words.into_iter().map(Cell::new).collect::<Vec<_>>().into(),
             boundaries: boundaries.into(),
+            regions: (!regions.is_empty()).then(|| regions.to_vec().into()),
             #[cfg(test)]
             test_ir: code.to_vec().into(),
         };
@@ -218,15 +254,15 @@ impl ExecCode {
         }
         let mut operands = [0; 3];
         let mut cursor = pc.checked_add(1).ok_or(ExecCodeError::TooLong)?;
-        for index in 0..usize::from(count) {
+        for (index, slot) in operands.iter_mut().enumerate().take(usize::from(count)) {
             if index == 0 && !first_wide {
-                operands[index] = if opcode == Opcode::PushI32 {
+                *slot = if opcode == Opcode::PushI32 {
                     u32::from_ne_bytes(i32::from(word as i16).to_ne_bytes())
                 } else {
                     u32::from(word as u16)
                 };
             } else {
-                operands[index] = self
+                *slot = self
                     .words
                     .get(cursor as usize)
                     .ok_or(ExecCodeError::Truncated)?
@@ -280,6 +316,8 @@ impl ExecCode {
         }
         let mut pc = 0u32;
         let mut entries = HashSet::new();
+        let mut seen_regions =
+            vec![false; self.regions.as_ref().map_or(0, |regions| regions.len())];
         for &expected in self.boundaries.iter().take(self.boundaries.len() - 1) {
             if pc != expected {
                 return Err(ExecCodeError::InvalidBoundary);
@@ -294,6 +332,26 @@ impl ExecCode {
                 }
                 entries.insert(target);
             }
+            if decoded.opcode == Opcode::NumericArrayAccumulate {
+                let Some(seen) = seen_regions.get_mut(decoded.operand(0) as usize) else {
+                    return Err(ExecCodeError::InvalidTarget);
+                };
+                if *seen {
+                    return Err(ExecCodeError::InvalidTarget);
+                }
+                *seen = true;
+                for index in [1, 2] {
+                    let target = decoded.operand(index);
+                    if target == self.words.len() as u32
+                        || self.boundaries.binary_search(&target).is_err()
+                    {
+                        return Err(ExecCodeError::InvalidTarget);
+                    }
+                    if index == 1 {
+                        entries.insert(target);
+                    }
+                }
+            }
             if decoded.opcode == Opcode::Gosub {
                 entries.insert(decoded.next_pc);
             }
@@ -302,7 +360,13 @@ impl ExecCode {
         if pc != self.words.len() as u32 {
             return Err(ExecCodeError::InvalidBoundary);
         }
+        if seen_regions.iter().any(|seen| !seen) {
+            return Err(ExecCodeError::InvalidTarget);
+        }
         for source in 0..self.instruction_len() {
+            if self.opcode_at_source(source) == Some(Opcode::NumericArrayAccumulate) {
+                self.verify_numeric_region(source, &entries)?;
+            }
             if self.opcode_at_source(source) == Some(Opcode::FieldAccSetDrop) {
                 let first = self.decode(self.boundaries[source])?;
                 let packed = first.operand(1);
@@ -741,6 +805,58 @@ impl ExecCode {
         Ok(())
     }
 
+    pub(crate) fn numeric_region(&self, index: u32) -> Option<&NumericRegion> {
+        self.regions.as_deref()?.get(index as usize)
+    }
+
+    fn verify_numeric_region(
+        &self,
+        source: usize,
+        entries: &HashSet<u32>,
+    ) -> Result<(), ExecCodeError> {
+        let first = self.decode(self.boundaries[source])?;
+        let region = self
+            .numeric_region(first.operand(0))
+            .ok_or(ExecCodeError::InvalidTarget)?;
+        let start = region.start as usize;
+        let end = region.end as usize;
+        if start != source
+            || end != start + 9
+            || end >= self.instruction_len()
+            || first.operand(1) != self.boundaries[end]
+            || first.operand(2) != self.boundaries[start + 1]
+            || (start + 1..end).any(|index| entries.contains(&self.boundaries[index]))
+            || region.peak != 3
+        {
+            return Err(ExecCodeError::InvalidTarget);
+        }
+        let expected = [
+            Opcode::GetLocal,
+            direct_opcode(region.array),
+            number_opcode(region.index),
+            Opcode::GetArrayEl,
+            number_opcode(region.scale),
+            Opcode::Mul,
+            Opcode::Add,
+            Opcode::SetLocal,
+            Opcode::Drop,
+        ];
+        for (offset, &opcode) in expected.iter().enumerate().skip(1) {
+            let decoded = self.decode(self.boundaries[start + offset])?;
+            if decoded.opcode != opcode {
+                return Err(ExecCodeError::InvalidTarget);
+            }
+        }
+        if self.decode(self.boundaries[start + 7])?.operand(0) != u32::from(region.destination)
+            || !verify_number_operand(self, start + 2, region.index)?
+            || !verify_number_operand(self, start + 4, region.scale)?
+            || self.decode(self.boundaries[start + 1])?.operand(0) != direct_index(region.array)
+        {
+            return Err(ExecCodeError::InvalidTarget);
+        }
+        Ok(())
+    }
+
     #[inline]
     pub(crate) fn source_pc(&self, exec_pc: u32) -> Option<u32> {
         self.boundaries
@@ -771,6 +887,18 @@ impl ExecCode {
     #[cfg(feature = "profiling")]
     pub(crate) fn boundary_len(&self) -> usize {
         self.boundaries.len()
+    }
+
+    #[cfg(feature = "profiling")]
+    pub(crate) fn region_storage_identity(&self) -> usize {
+        self.regions.as_ref().map_or(0, |regions| {
+            Rc::as_ptr(regions) as *const NumericRegion as usize
+        })
+    }
+
+    #[cfg(feature = "profiling")]
+    pub(crate) fn region_len(&self) -> usize {
+        self.regions.as_ref().map_or(0, |regions| regions.len())
     }
 
     pub(crate) fn instruction_len(&self) -> usize {
@@ -1093,7 +1221,66 @@ fn field_acc_shape(
     Some((*acc, *base, field))
 }
 
-fn select_opcodes(code: &[Instruction], locals: Option<&[VariableDefinition]>) -> Vec<Opcode> {
+fn direct_opcode(source: DirectSource) -> Opcode {
+    match source {
+        DirectSource::Local(_) => Opcode::GetLocal,
+        DirectSource::Argument(_) => Opcode::GetArg,
+    }
+}
+
+fn direct_index(source: DirectSource) -> u32 {
+    match source {
+        DirectSource::Local(index) | DirectSource::Argument(index) => u32::from(index),
+    }
+}
+
+fn number_opcode(source: NumberSource) -> Opcode {
+    match source {
+        NumberSource::Direct(source) => direct_opcode(source),
+        NumberSource::Immediate(_) => Opcode::PushI32,
+        NumberSource::Constant { .. } => Opcode::PushConst,
+    }
+}
+
+fn number_matches_raw(source: NumberSource, raw: &BytecodeConstant) -> bool {
+    let NumberSource::Constant { value, .. } = source else {
+        return false;
+    };
+    let actual = match raw {
+        BytecodeConstant::Value(RawValue::Int(value)) => f64::from(*value),
+        BytecodeConstant::Value(RawValue::Float(value)) => *value,
+        _ => return false,
+    };
+    value.float().to_bits() == actual.to_bits()
+}
+
+fn instruction_matches_number(
+    instruction: &Instruction,
+    source: NumberSource,
+    constants: &[BytecodeConstant],
+) -> bool {
+    match (instruction, source) {
+        (Instruction::GetLocal(a), NumberSource::Direct(DirectSource::Local(b)))
+        | (Instruction::GetArg(a), NumberSource::Direct(DirectSource::Argument(b))) => *a == b,
+        (Instruction::PushI32(a), NumberSource::Immediate(b)) => *a == b,
+        (Instruction::PushConst(a), NumberSource::Constant { index, .. }) => {
+            *a == index
+                && constants
+                    .get(index as usize)
+                    .is_some_and(|raw| number_matches_raw(source, raw))
+        }
+        _ => false,
+    }
+}
+
+fn validate_region_plans(
+    code: &[Instruction],
+    locals: Option<&[VariableDefinition]>,
+    arguments: Option<&[VariableDefinition]>,
+    regions: &[NumericRegion],
+    constants: &[BytecodeConstant],
+) -> Result<(), ExecCodeError> {
+    let mut occupied_until = 0usize;
     let mut entries = HashSet::new();
     for (pc, instruction) in code.iter().enumerate() {
         for operand in instruction.operand_contract().0.into_iter().flatten() {
@@ -1104,6 +1291,111 @@ fn select_opcodes(code: &[Instruction], locals: Option<&[VariableDefinition]>) -
         if matches!(instruction, Instruction::Gosub(_)) {
             entries.insert(pc + 1);
         }
+    }
+    for region in regions {
+        let start = region.start as usize;
+        let end = region.end as usize;
+        let Some(span) = code.get(start..end) else {
+            return Err(ExecCodeError::InvalidTarget);
+        };
+        if start < occupied_until
+            || end != start + 9
+            || end >= code.len()
+            || region.peak != 3
+            || (start + 1..end).any(|pc| entries.contains(&pc))
+            || !matches!(span[0], Instruction::GetLocal(index) if index == region.destination)
+            || !matches!(span[1], Instruction::GetLocal(index) if region.array == DirectSource::Local(index))
+                && !matches!(span[1], Instruction::GetArg(index) if region.array == DirectSource::Argument(index))
+            || !instruction_matches_number(&span[2], region.index, constants)
+            || !matches!(span[3], Instruction::GetArrayEl)
+            || !instruction_matches_number(&span[4], region.scale, constants)
+            || !matches!(span[5], Instruction::Mul)
+            || !matches!(span[6], Instruction::Add)
+            || !matches!(span[7], Instruction::SetLocal(index) if index == region.destination)
+            || !matches!(span[8], Instruction::Drop)
+        {
+            return Err(ExecCodeError::InvalidTarget);
+        }
+        let Some(locals) = locals else {
+            return Err(ExecCodeError::InvalidTarget);
+        };
+        if !locals
+            .get(region.destination as usize)
+            .is_some_and(|definition| {
+                definition.kind == ClosureVariableKind::Normal
+                    && !definition.is_lexical
+                    && !definition.is_const
+            })
+        {
+            return Err(ExecCodeError::InvalidTarget);
+        }
+        for source in [
+            region.array,
+            match region.index {
+                NumberSource::Direct(source) => source,
+                _ => region.array,
+            },
+            match region.scale {
+                NumberSource::Direct(source) => source,
+                _ => region.array,
+            },
+        ] {
+            if let DirectSource::Local(index) = source {
+                if !locals.get(index as usize).is_some_and(|definition| {
+                    definition.kind == ClosureVariableKind::Normal && !definition.is_lexical
+                }) {
+                    return Err(ExecCodeError::InvalidTarget);
+                }
+            } else if let DirectSource::Argument(index) = source {
+                if arguments.is_none_or(|arguments| (index as usize) >= arguments.len()) {
+                    return Err(ExecCodeError::InvalidTarget);
+                }
+            }
+        }
+        occupied_until = end;
+    }
+    Ok(())
+}
+
+fn verify_number_operand(
+    code: &ExecCode,
+    source: usize,
+    value: NumberSource,
+) -> Result<bool, ExecCodeError> {
+    let decoded = code.decode(code.boundaries[source])?;
+    Ok(match value {
+        NumberSource::Direct(direct) => {
+            decoded.opcode == direct_opcode(direct) && decoded.operand(0) == direct_index(direct)
+        }
+        NumberSource::Immediate(value) => {
+            decoded.opcode == Opcode::PushI32 && decoded.signed_operand(0) == value
+        }
+        NumberSource::Constant { index, .. } => {
+            decoded.opcode == Opcode::PushConst && decoded.operand(0) == index
+            // The linked constant and its range were checked before
+            // encoding; the word verifier checks immutable identity.
+        }
+    })
+}
+
+fn select_opcodes(
+    code: &[Instruction],
+    locals: Option<&[VariableDefinition]>,
+    regions: &[NumericRegion],
+) -> Vec<Opcode> {
+    let mut entries = HashSet::new();
+    for (pc, instruction) in code.iter().enumerate() {
+        for operand in instruction.operand_contract().0.into_iter().flatten() {
+            if let Operand::Target(target) = operand {
+                entries.insert(target as usize);
+            }
+        }
+        if matches!(instruction, Instruction::Gosub(_)) {
+            entries.insert(pc + 1);
+        }
+    }
+    for region in regions {
+        entries.insert(region.start as usize);
     }
     let direct_source = |instruction: &Instruction| match instruction {
         Instruction::GetLocal(index) => locals.is_none_or(|definitions| {
@@ -1384,6 +1676,15 @@ fn select_opcodes(code: &[Instruction], locals: Option<&[VariableDefinition]>) -
             _ => {}
         }
     }
+    for region in regions {
+        let start = region.start as usize;
+        let end = region.end as usize;
+        // Generic interior words remain in the same stream for a guard miss.
+        for pc in start.saturating_sub(8)..end {
+            opcodes[pc] = Opcode::from_instruction(&code[pc]);
+        }
+        opcodes[start] = Opcode::NumericArrayAccumulate;
+    }
     opcodes
 }
 
@@ -1396,7 +1697,36 @@ fn encoded_operands(contract: OperandContract) -> Vec<EncodedOperand> {
         .collect()
 }
 
-fn published_operands(code: &[Instruction], source: usize, opcode: Opcode) -> Vec<EncodedOperand> {
+fn published_operands(
+    code: &[Instruction],
+    source: usize,
+    opcode: Opcode,
+    regions: &[NumericRegion],
+) -> Vec<EncodedOperand> {
+    if opcode == Opcode::NumericArrayAccumulate {
+        let (index, region) = regions
+            .iter()
+            .enumerate()
+            .find(|(_, region)| region.start as usize == source)
+            .expect("planned region has no descriptor");
+        return vec![
+            EncodedOperand {
+                bits: index as u32,
+                short: index <= usize::from(u16::MAX),
+                target: false,
+            },
+            EncodedOperand {
+                bits: region.end,
+                short: false,
+                target: true,
+            },
+            EncodedOperand {
+                bits: region.start + 1,
+                short: false,
+                target: true,
+            },
+        ];
+    }
     let mut operands = encoded_operands(code[source].operand_contract());
     if opcode == Opcode::FieldAccSetDrop {
         let (base, field) = match (&code[source + 1], &code[source + 2]) {
@@ -1707,7 +2037,12 @@ mod tests {
         assert_eq!(code.decode(4).unwrap().signed_operand(0), -1);
         assert_eq!(code.source_pc(3), None);
         code.verify().unwrap();
-        assert!(code.disassemble().unwrap().contains("PushConst"));
+        assert!(
+            code.disassemble()
+                .unwrap()
+                .lines()
+                .any(|line| { line.split_whitespace().any(|word| word == "PushConst") })
+        );
         let header = code.words[0].get();
         code.words[0].set(header ^ (1 << (16 + WIDTH_SHIFT)));
         assert_eq!(code.verify(), Err(ExecCodeError::InvalidHeader));
@@ -2084,13 +2419,13 @@ mod tests {
         let normal = [local(ClosureVariableKind::Normal, false)];
         let special = [local(ClosureVariableKind::FunctionName, false)];
         assert_eq!(
-            ExecCode::encode_with_locals(&read, &normal)
+            ExecCode::encode_with_locals(&read, &normal, &[], &[], &[])
                 .unwrap()
                 .opcode_at_source(0),
             Some(Opcode::NumberLocalInc)
         );
         assert_eq!(
-            ExecCode::encode_with_locals(&read, &special)
+            ExecCode::encode_with_locals(&read, &special, &[], &[], &[])
                 .unwrap()
                 .opcode_at_source(0),
             Some(Opcode::GetLocal)
@@ -2107,16 +2442,81 @@ mod tests {
         let writable = [normal[0], local(ClosureVariableKind::Normal, false)];
         let constant = [normal[0], local(ClosureVariableKind::Normal, true)];
         assert_eq!(
-            ExecCode::encode_with_locals(&update, &writable)
+            ExecCode::encode_with_locals(&update, &writable, &[], &[], &[])
                 .unwrap()
                 .opcode_at_source(0),
             Some(Opcode::DensePreUpdateLocal)
         );
         assert_eq!(
-            ExecCode::encode_with_locals(&update, &constant)
+            ExecCode::encode_with_locals(&update, &constant, &[], &[], &[])
                 .unwrap()
                 .opcode_at_source(0),
             Some(Opcode::GetLocal)
+        );
+    }
+
+    #[test]
+    fn numeric_region_publication_rejects_invalid_descriptors_and_entries() {
+        let local = VariableDefinition {
+            name: None,
+            is_lexical: false,
+            is_const: false,
+            is_parameter_initializer: false,
+            kind: ClosureVariableKind::Normal,
+        };
+        let code = [
+            Instruction::GetLocal(0),
+            Instruction::GetArg(0),
+            Instruction::PushI32(0),
+            Instruction::GetArrayEl,
+            Instruction::PushI32(2),
+            Instruction::Mul,
+            Instruction::Add,
+            Instruction::SetLocal(0),
+            Instruction::Drop,
+            Instruction::ReturnUndefined,
+        ];
+        let region = NumericRegion {
+            start: 0,
+            end: 9,
+            destination: 0,
+            array: DirectSource::Argument(0),
+            index: NumberSource::Immediate(0),
+            scale: NumberSource::Immediate(2),
+            peak: 3,
+        };
+        let published =
+            ExecCode::encode_with_locals(&code, &[local], &[local], &[region], &[]).unwrap();
+        assert_eq!(
+            published.opcode_at_source(0),
+            Some(Opcode::NumericArrayAccumulate)
+        );
+        let first = published.decode(0).unwrap();
+        assert_eq!(published.source_pc(first.operand(1)), Some(9));
+        assert_eq!(published.source_pc(first.operand(2)), Some(1));
+        for source in 1..9 {
+            let pc = published.exec_pc(source).unwrap();
+            assert_eq!(published.source_pc(pc), Some(source));
+        }
+        published.words[2].set(published.exec_pc(3).unwrap());
+        assert_eq!(published.verify(), Err(ExecCodeError::InvalidTarget));
+        let mut malformed = region;
+        malformed.peak = 2;
+        assert_eq!(
+            ExecCode::encode_with_locals(&code, &[local], &[local], &[malformed], &[]).unwrap_err(),
+            ExecCodeError::InvalidTarget
+        );
+        let mut entered = vec![Instruction::Goto(4)];
+        entered.extend(code);
+        let shifted = NumericRegion {
+            start: 1,
+            end: 10,
+            ..region
+        };
+        assert_eq!(
+            ExecCode::encode_with_locals(&entered, &[local], &[local], &[shifted], &[])
+                .unwrap_err(),
+            ExecCodeError::InvalidTarget
         );
     }
 

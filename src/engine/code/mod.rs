@@ -17,5 +17,6 @@ pub(crate) mod dynamic_source;
 
 pub(crate) mod exec;
 pub(crate) mod exec_opcode;
+pub(crate) mod region;
 
 mod executable;

@@ -1320,6 +1320,9 @@ impl Heap {
         let exec = crate::engine::code::exec::ExecCode::encode_with_locals(
             &bytecode.code,
             &bytecode.local_definitions,
+            &bytecode.argument_definitions,
+            &bytecode.numeric_regions,
+            &bytecode.constants,
         )
         .map_err(|_| HeapError::Invariant("execution encoding rejected authenticated bytecode"))?;
         let bytecode = FunctionBytecodeData {

@@ -229,7 +229,38 @@ pub(in crate::engine::vm) struct FrameSlots<'a> {
     pub(super) store: &'a mut SlotStore,
     pub(super) window: &'a mut FrameWindow,
 }
+
+/// An authenticated, short-lived numeric local. Required inputs must be read
+/// before admission so source/destination aliases preserve their old values.
+pub(in crate::engine::vm) struct AdmittedNumericLocal<'a> {
+    slot: &'a mut JsValue,
+    pub old: Number,
+}
+
+impl AdmittedNumericLocal<'_> {
+    #[inline(always)]
+    pub(in crate::engine::vm) fn commit(self, value: Number) {
+        *self.slot = match value {
+            Number::Int(value) => JsValue::Int(value),
+            Number::Float(value) => JsValue::Float(value),
+        };
+    }
+}
+
 impl FrameSlots<'_> {
+    pub(in crate::engine::vm) fn admit_numeric_local(
+        &mut self,
+        index: u16,
+    ) -> Option<AdmittedNumericLocal<'_>> {
+        let FrameBinding::Direct(slot) = self.store.slots[self.window.locals()]
+            .get_mut(index as usize)?
+            .as_mut()?
+        else {
+            return None;
+        };
+        let old = slot.as_number_repr()?;
+        Some(AdmittedNumericLocal { slot, old })
+    }
     pub(in crate::engine::vm) fn direct_value(&self, source: DirectSlot) -> Option<&JsValue> {
         let region = match source {
             DirectSlot::Local(_) => self.window.locals(),

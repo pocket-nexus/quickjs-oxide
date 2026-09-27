@@ -47,6 +47,8 @@ pub(crate) use execution::HostBoundaryGuard;
 mod frame;
 
 mod execute;
+#[cfg(test)]
+pub(crate) use execute::test_numeric_region_hits;
 
 mod stack;
 

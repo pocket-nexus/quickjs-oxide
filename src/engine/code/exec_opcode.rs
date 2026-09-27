@@ -206,6 +206,9 @@ pub(crate) enum Opcode {
     /// A published GetLocal + PushI32(1) + Add span. On a guard miss the
     /// same word acts as GetLocal and the following generic words run.
     NumberLocalInc,
+    /// Planned numeric Array read, multiplication, addition and direct local
+    /// commit. The original words remain the generic continuation.
+    NumericArrayAccumulate,
     NumberArgInc,
     /// Field reads with a direct location-cache probe in the execution loop.
     GetFieldCached,
@@ -439,6 +442,7 @@ const OPCODES: &[Opcode] = &[
     Opcode::ReturnDerived,
     Opcode::Throw,
     Opcode::NumberLocalInc,
+    Opcode::NumericArrayAccumulate,
     Opcode::NumberArgInc,
     Opcode::GetFieldCached,
     Opcode::GetField2Cached,
@@ -907,6 +911,7 @@ impl Opcode {
             Self::DensePostUpdateLocal
             | Self::DensePostUpdateLocalCheck
             | Self::DensePostUpdateArg => 3,
+            Self::NumericArrayAccumulate => 3,
         }
     }
 

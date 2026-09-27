@@ -144,6 +144,9 @@ impl Heap {
         let mut boundaries = storage("exec_boundaries", 0, 0, 1);
         boundaries.basis = "deduplicated-Rc-slice-inline-bytes; excludes Rc headers";
         let mut seen_boundaries = HashSet::new();
+        let mut regions = storage("exec_numeric_regions", 0, 0, 1);
+        regions.basis = "deduplicated-Rc-slice-inline-bytes; excludes Rc headers";
+        let mut seen_regions = HashSet::new();
         let mut executable_projections = storage("bytecode_executable_projections", 0, 0, 1);
         executable_projections.basis = "one initialized shared projection per bytecode node; excludes Rc headers and shared slice payloads";
         let mut property_keys = storage("bytecode_property_keys", 0, 0, 1);
@@ -211,6 +214,14 @@ impl Heap {
                             size_of::<u32>(),
                         );
                     }
+                    if seen_regions.insert(data.exec.region_storage_identity()) {
+                        add_storage(
+                            &mut regions,
+                            data.exec.region_len(),
+                            data.exec.region_len(),
+                            size_of::<crate::engine::code::region::NumericRegion>(),
+                        );
+                    }
                     if let Some(keys) = &data.property_key_atoms
                         && seen_property_keys.insert(Rc::as_ptr(keys))
                     {
@@ -248,6 +259,7 @@ impl Heap {
             bigint_nodes,
             code,
             boundaries,
+            regions,
             property_keys,
             executable_projections,
         ]);

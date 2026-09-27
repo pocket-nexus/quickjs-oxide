@@ -1,6 +1,42 @@
 use super::*;
 
 #[test]
+fn numeric_array_accumulate_is_selected_from_local_value_uses() {
+    use crate::engine::code::exec_opcode::Opcode;
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    let root = context
+        .compile(
+            "(function(array, i, scale) { var sum = 0; sum += array[i] * scale; return sum; })",
+        )
+        .unwrap();
+    let function = runtime.test_child_function_bytecode(&root, 0).unwrap();
+    let code = runtime.test_function_code(&function).unwrap();
+    let opcodes = runtime.test_function_exec_opcodes(&function).unwrap();
+    assert!(
+        opcodes.contains(&Opcode::NumericArrayAccumulate),
+        "{code:?} {opcodes:?}"
+    );
+    let start = opcodes
+        .iter()
+        .position(|opcode| *opcode == Opcode::NumericArrayAccumulate)
+        .unwrap();
+    assert_eq!(
+        &opcodes[start + 1..start + 9],
+        &[
+            Opcode::GetArg,
+            Opcode::GetArg,
+            Opcode::GetArrayEl,
+            Opcode::GetArg,
+            Opcode::Mul,
+            Opcode::Add,
+            Opcode::SetLocal,
+            Opcode::Drop,
+        ]
+    );
+}
+
+#[test]
 fn source_members_preserve_quickjs_reads_keys_references_and_method_receivers() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
