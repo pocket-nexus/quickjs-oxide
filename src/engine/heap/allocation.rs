@@ -7,12 +7,12 @@ impl Heap {
     /// [`Heap::release_shape`].  Atom references are owned by the caller until
     /// this succeeds, then by the shape until returned as cleanup.
     pub fn allocate_shape(&mut self, shape: Shape) -> Result<ShapeId, HeapError> {
-        let (index, generation) = self.reserve(HeapNodeKind::Shape)?;
+        let (index, generation) = self.shapes.reserve(HeapNodeKind::Shape)?;
         let id = ShapeId { index, generation };
         let edges = shape_edges(&shape);
 
         if let Err(error) = self.retain_edges_transactionally(&edges) {
-            self.abort_initializing(index)?;
+            self.shapes.abort_initializing(index)?;
             return Err(error);
         }
 
@@ -21,7 +21,7 @@ impl Heap {
             // It creates no GC edge and ignores mutations of ordinary newborns.
             self.object_mut(prototype)?.used_as_prototype = true;
         }
-        self.publish(index, NodeData::Shape(shape))?;
+        self.shapes.publish(index, shape)?;
         Ok(id)
     }
 
