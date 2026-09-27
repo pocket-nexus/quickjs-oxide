@@ -1,10 +1,12 @@
 # Captured-cell and shape storage
 
-This workstream follows the frozen PR #53 source at
-`10262309c580c43ba984b4f371acdc081147b4f0`. It delivers two complete
-implementations in one stacked PR: captured cells first, then shapes. The
-cell-only checkpoint is `161ae860`; the shape checkpoint is `b1c23e18`.
-Measurements and validation for the final tested commit belong in the
+This workstream began at frozen PR #53 source
+`10262309c580c43ba984b4f371acdc081147b4f0` and was then rebased onto
+the current #53 head `38e9eb86e2c2db8fb2e607c9f3ff611407941b4b`.
+It delivers two complete implementations in one stacked PR: captured cells
+first (`4eedc2aa`), then shapes (`4d79a7e3`). The original frozen-checkpoint
+measurements use cell-only `161ae860` and combined `ca70c00e`; the current
+head is measured separately. Identities, results and validation are in the
 [receipt](receipts/typed-arenas-2026-09-28/README.md).
 
 ## Contract
