@@ -16,6 +16,30 @@ fn object_property_cycle_is_collected_only_by_explicit_gc() {
 }
 
 #[test]
+fn shape_prototype_property_cycle_keeps_external_root_then_collects() {
+    let runtime = Runtime::new();
+    let baseline = runtime.heap_counts();
+    let prototype = runtime.new_object(None).unwrap();
+    let object = runtime.new_object(Some(&prototype)).unwrap();
+    let back = runtime.intern_property_key("back").unwrap();
+    assert!(set_property(&runtime, &prototype, &back, Value::Object(object.clone())).unwrap());
+    drop(prototype);
+
+    runtime.run_gc().unwrap();
+    let rooted = runtime.heap_counts();
+    assert!(rooted.object_nodes >= baseline.object_nodes + 2);
+    assert!(rooted.shape_nodes >= baseline.shape_nodes + 2);
+
+    drop(object);
+    let stats = runtime.run_gc().unwrap();
+    assert!(stats.cleanup.finalized_objects >= 2);
+    assert!(stats.cleanup.finalized_shapes >= 2);
+    let collected = runtime.heap_counts();
+    assert_eq!(collected.object_nodes, baseline.object_nodes);
+    assert_eq!(collected.shape_nodes, baseline.shape_nodes);
+}
+
+#[test]
 fn named_function_self_capture_cycle_is_collected() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
