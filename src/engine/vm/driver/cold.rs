@@ -143,7 +143,7 @@ pub(super) fn dispatch(
             )?;
             context.step(step)
         }
-        VmAction::Numeric(kind) => {
+        VmAction::Numeric { kind, .. } => {
             let step = super::super::frame_operations::numeric(
                 context.runtime,
                 context.execution,

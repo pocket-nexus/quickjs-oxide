@@ -81,19 +81,29 @@ pub(super) fn run(
                 }
             }
 
-            VmAction::Numeric(kind) => {
+            VmAction::Numeric { kind, fallthrough } => {
                 use crate::engine::vm::frame_operations::NumericProgress;
                 let Some(progress) =
                     crate::engine::vm::frame_operations::try_complete_primitive_numeric(
-                        runtime, execution, id, kind,
+                        runtime,
+                        execution,
+                        id,
+                        kind,
+                        fallthrough,
                     )?
                 else {
+                    #[cfg(feature = "profiling")]
+                    record_event("numeric_primitive_declined");
                     return Ok(Boundary::Exit(exit));
                 };
                 match progress {
                     NumericProgress::Completed => {
                         #[cfg(feature = "profiling")]
                         record_event("numeric_completed_in_same_frame");
+                        #[cfg(feature = "profiling")]
+                        if kind.primitive_arithmetic() {
+                            record_event("numeric_completed_with_carried_fallthrough");
+                        }
                     }
                     NumericProgress::Deferred(CallStep::Entered) => return Ok(Boundary::Entered),
                     NumericProgress::Deferred(CallStep::Complete(completion)) => {
@@ -253,10 +263,17 @@ fn invariant(message: &'static str) -> Error {
 #[cold]
 #[inline(never)]
 fn record_exit(result: &Result<VmAction, Error>) {
+    use crate::engine::api::profiling::record_owned_execution_layout as layout;
+    layout::<VmAction>("VmAction");
+    layout::<Result<VmAction, Error>>("Result<VmAction, Error>");
+    layout::<crate::engine::vm::frame::Frame>("Frame");
     record_event(match result {
         Ok(exit) => exit.diagnostic_name(),
         Err(_) => "execute_continuation.EngineError",
     });
+    if matches!(result, Ok(VmAction::Numeric { .. })) {
+        record_event("numeric_action_exit");
+    }
 }
 
 #[cfg(feature = "profiling")]
