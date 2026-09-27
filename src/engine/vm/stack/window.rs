@@ -933,4 +933,36 @@ mod primitive_transaction_tests {
         runtime.run_gc().unwrap();
         assert!(runtime.0.state.borrow().heap.object(object_id).is_err());
     }
+
+    #[test]
+    fn numeric_region_peak_capacity_rejects_before_any_operand_change() {
+        let runtime = Runtime::new();
+        let context = runtime.new_context();
+        let mut layout = PublishedFunctionSnapshot::empty_for_test(context.realm);
+        layout.metadata.max_stack = 2;
+        let mut store = SlotStore::new(2);
+        let mut window = store
+            .push_frame(
+                &runtime,
+                &layout.frame_layout(),
+                FrameStorage {
+                    original_arguments: vec![],
+                    parameters: vec![],
+                    locals: vec![],
+                    operands: vec![],
+                },
+            )
+            .unwrap();
+        {
+            let slots = store.borrow_frame_slots(&mut window).unwrap();
+            assert!(!slots.has_operand_capacity(3));
+            assert!(slots.has_operand_capacity(2));
+        }
+        assert_eq!(store.depth(&window), 0);
+        store.push(&mut window, JsValue::Int(7)).unwrap();
+        store.push(&mut window, JsValue::Int(8)).unwrap();
+        assert!(store.push(&mut window, JsValue::Int(9)).is_err());
+        assert_eq!(store.pop(&mut window).unwrap(), JsValue::Int(8));
+        assert_eq!(store.pop(&mut window).unwrap(), JsValue::Int(7));
+    }
 }
