@@ -28,8 +28,10 @@ pub(super) const IMMORTAL_STRONG: u32 = u32::MAX;
 struct CollectionScratch {
     shared_trial: Vec<Option<u32>>,
     var_ref_trial: Vec<Option<u32>>,
+    shape_trial: Vec<Option<u32>>,
     shared_reachable: Vec<bool>,
     var_ref_reachable: Vec<bool>,
+    shape_reachable: Vec<bool>,
 }
 
 impl CollectionScratch {
@@ -37,15 +39,18 @@ impl CollectionScratch {
         Self {
             shared_trial: vec![None; heap.slots.len()],
             var_ref_trial: vec![None; heap.var_refs.slots.len()],
+            shape_trial: vec![None; heap.shapes.slots.len()],
             shared_reachable: vec![false; heap.slots.len()],
             var_ref_reachable: vec![false; heap.var_refs.slots.len()],
+            shape_reachable: vec![false; heap.shapes.slots.len()],
         }
     }
 
     fn trial_mut(&mut self, id: RawId) -> Result<&mut Option<u32>, HeapError> {
         let slot = match id {
             RawId::VarRef(_) => self.var_ref_trial.get_mut(id.index() as usize),
-            RawId::Object(_) | RawId::Shape(_) | RawId::Context(_) | RawId::FunctionBytecode(_) => {
+            RawId::Shape(_) => self.shape_trial.get_mut(id.index() as usize),
+            RawId::Object(_) | RawId::Context(_) | RawId::FunctionBytecode(_) => {
                 self.shared_trial.get_mut(id.index() as usize)
             }
             RawId::String(_) | RawId::BigInt(_) => None,
@@ -59,7 +64,8 @@ impl CollectionScratch {
     fn mark(&mut self, id: RawId) -> Result<bool, HeapError> {
         let slot = match id {
             RawId::VarRef(_) => self.var_ref_reachable.get_mut(id.index() as usize),
-            RawId::Object(_) | RawId::Shape(_) | RawId::Context(_) | RawId::FunctionBytecode(_) => {
+            RawId::Shape(_) => self.shape_reachable.get_mut(id.index() as usize),
+            RawId::Object(_) | RawId::Context(_) | RawId::FunctionBytecode(_) => {
                 self.shared_reachable.get_mut(id.index() as usize)
             }
             RawId::String(_) | RawId::BigInt(_) => None,
@@ -71,17 +77,29 @@ impl CollectionScratch {
         *slot = true;
         Ok(new)
     }
+
+    #[cfg(feature = "profiling")]
+    fn capacity_bytes(&self) -> usize {
+        (self.shared_trial.capacity() + self.var_ref_trial.capacity() + self.shape_trial.capacity())
+            * std::mem::size_of::<Option<u32>>()
+            + (self.shared_reachable.capacity()
+                + self.var_ref_reachable.capacity()
+                + self.shape_reachable.capacity())
+                * std::mem::size_of::<bool>()
+    }
 }
 
 fn shared_raw_id(kind: HeapNodeKind, index: u32, generation: u32) -> RawId {
     match kind {
         HeapNodeKind::Object => RawId::Object(ObjectId { index, generation }),
-        HeapNodeKind::Shape => RawId::Shape(ShapeId { index, generation }),
         HeapNodeKind::Context => RawId::Context(ContextId { index, generation }),
         HeapNodeKind::FunctionBytecode => {
             RawId::FunctionBytecode(FunctionBytecodeId { index, generation })
         }
-        HeapNodeKind::VarRef | HeapNodeKind::String | HeapNodeKind::BigInt => {
+        HeapNodeKind::Shape
+        | HeapNodeKind::VarRef
+        | HeapNodeKind::String
+        | HeapNodeKind::BigInt => {
             unreachable!("non-shared node entered shared collection storage")
         }
     }
@@ -204,7 +222,8 @@ impl Heap {
     fn live_nonleaf_edges(&self, id: RawId) -> Result<Edges, HeapError> {
         match id {
             RawId::VarRef(_) => Ok(var_ref_edges(&self.var_refs.live(id)?.data)),
-            RawId::Object(_) | RawId::Shape(_) | RawId::Context(_) | RawId::FunctionBytecode(_) => {
+            RawId::Shape(_) => Ok(shape_edges(&self.shapes.live(id)?.data).into()),
+            RawId::Object(_) | RawId::Context(_) | RawId::FunctionBytecode(_) => {
                 Ok(self.live_node(id)?.data.edges())
             }
             RawId::String(_) | RawId::BigInt(_) => {
@@ -218,7 +237,10 @@ impl Heap {
             RawId::VarRef(_) => {
                 self.var_refs.live(id)?;
             }
-            RawId::Object(_) | RawId::Shape(_) | RawId::Context(_) | RawId::FunctionBytecode(_) => {
+            RawId::Shape(_) => {
+                self.shapes.live(id)?;
+            }
+            RawId::Object(_) | RawId::Context(_) | RawId::FunctionBytecode(_) => {
                 self.live_node(id)?;
             }
             RawId::String(_) | RawId::BigInt(_) => {
@@ -620,6 +642,12 @@ impl Heap {
                 examined_nodes = examined_nodes.saturating_add(1);
             }
         }
+        for (index, slot) in self.shapes.slots.iter().enumerate() {
+            if let AuxiliaryState::Live(node) = &slot.state {
+                scratch.shape_trial[index] = Some(node.strong.get());
+                examined_nodes = examined_nodes.saturating_add(1);
+            }
+        }
 
         // Subtract every internal incoming edge.  The remainder is precisely
         // the external root count, matching QuickJS's gc_decref phase.
@@ -650,6 +678,11 @@ impl Heap {
             for slot in &self.var_refs.slots {
                 if let AuxiliaryState::Live(node) = &slot.state {
                     subtract_edges(var_ref_edges(&node.data))?;
+                }
+            }
+            for slot in &self.shapes.slots {
+                if let AuxiliaryState::Live(node) = &slot.state {
+                    subtract_edges(shape_edges(&node.data).into())?;
                 }
             }
         }
@@ -683,6 +716,21 @@ impl Heap {
                 let id = RawId::VarRef(VarRefId {
                     index,
                     generation: self.var_refs.slots[index as usize].generation,
+                });
+                scratch.mark(id)?;
+                work.push_back(id);
+                external_root_nodes = external_root_nodes.saturating_add(1);
+            }
+        }
+        for index in 0..scratch.shape_trial.len() {
+            let count = scratch.shape_trial[index];
+            if count.is_some_and(|count| count != 0) {
+                let index = u32::try_from(index).map_err(|_| HeapError::Overflow {
+                    operation: "constructing a collection worklist",
+                })?;
+                let id = RawId::Shape(ShapeId {
+                    index,
+                    generation: self.shapes.slots[index as usize].generation,
                 });
                 scratch.mark(id)?;
                 work.push_back(id);
@@ -729,11 +777,15 @@ impl Heap {
                     index,
                     generation: slot.generation,
                 })),
-                NodeData::Shape(_) => {}
             }
         }
         for (index, slot) in self.var_refs.slots.iter().enumerate() {
             if matches!(slot.state, AuxiliaryState::Live(_)) && !scratch.var_ref_reachable[index] {
+                candidate_nodes = candidate_nodes.saturating_add(1);
+            }
+        }
+        for (index, slot) in self.shapes.slots.iter().enumerate() {
+            if matches!(slot.state, AuxiliaryState::Live(_)) && !scratch.shape_reachable[index] {
                 candidate_nodes = candidate_nodes.saturating_add(1);
             }
         }
@@ -742,7 +794,7 @@ impl Heap {
         // are active anchors. Mark each as a zombie before dropping its
         // outgoing edges so other candidate nodes can still release the old
         // generation.
-        for id in anchors {
+        for id in anchors.iter().copied() {
             if self.is_live(id) {
                 self.finalize_cycle_anchor(id, &mut cleanup)?;
                 cleanup.merge(self.drain_zero_queue()?);
@@ -758,6 +810,15 @@ impl Heap {
             return Err(HeapError::Invariant(
                 "cycle collection left an anchor zombie with incoming references",
             ));
+        }
+
+        #[cfg(feature = "profiling")]
+        {
+            let scratch_bytes = scratch.capacity_bytes()
+                + work.capacity() * std::mem::size_of::<RawId>()
+                + anchors.capacity() * std::mem::size_of::<RawId>();
+            self.collection_scratch_peak_bytes =
+                self.collection_scratch_peak_bytes.max(scratch_bytes);
         }
 
         Ok(GcStats {
@@ -1285,6 +1346,17 @@ impl Heap {
                 })?;
             return Ok(());
         }
+        if matches!(edge, RawId::Shape(_)) {
+            self.shapes
+                .live(edge)?
+                .strong
+                .get()
+                .checked_add(additional)
+                .ok_or(HeapError::Overflow {
+                    operation: "retaining outgoing heap edges",
+                })?;
+            return Ok(());
+        }
         self.live_node(edge)?
             .strong
             .get()
@@ -1314,6 +1386,18 @@ impl Heap {
         }
         if matches!(id, RawId::VarRef(_)) {
             let strong = &self.var_refs.live_mut(id)?.strong;
+            strong.set(
+                strong
+                    .get()
+                    .checked_add(additional)
+                    .ok_or(HeapError::Overflow {
+                        operation: "retaining a heap reference",
+                    })?,
+            );
+            return Ok(());
+        }
+        if matches!(id, RawId::Shape(_)) {
+            let strong = &self.shapes.live_mut(id)?.strong;
             strong.set(
                 strong
                     .get()
@@ -1389,6 +1473,11 @@ impl Heap {
             strong.set(strong.get().saturating_add(1));
             return;
         }
+        if matches!(id, RawId::Shape(_)) {
+            let strong = &self.shapes.live_fast(id).strong;
+            strong.set(strong.get().saturating_add(1));
+            return;
+        }
         let node = self.live_node_fast(id);
         node.strong.set(node.strong.get().saturating_add(1));
         #[cfg(debug_assertions)]
@@ -1439,6 +1528,13 @@ impl Heap {
         }
         if matches!(id, RawId::VarRef(_)) {
             let strong = &self.var_refs.live(id)?.strong;
+            strong.set(strong.get().checked_add(1).ok_or(HeapError::Overflow {
+                operation: "retaining a heap reference",
+            })?);
+            return Ok(());
+        }
+        if matches!(id, RawId::Shape(_)) {
+            let strong = &self.shapes.live(id)?.strong;
             strong.set(strong.get().checked_add(1).ok_or(HeapError::Overflow {
                 operation: "retaining a heap reference",
             })?);
@@ -1627,6 +1723,20 @@ impl Heap {
             }
             return false;
         }
+        if matches!(id, RawId::Shape(_)) {
+            let Ok(node) = self.shapes.live(id) else {
+                return false;
+            };
+            let strong = node.strong.get();
+            if strong == IMMORTAL_STRONG {
+                return true;
+            }
+            if strong > 1 {
+                node.strong.set(strong - 1);
+                return true;
+            }
+            return false;
+        }
         let Ok(index) = self.validate_slot_identity(id) else {
             return false;
         };
@@ -1701,6 +1811,12 @@ impl Heap {
         }
         if matches!(id, RawId::VarRef(_)) {
             if self.var_refs.release_no_drain(id)? {
+                self.zero_queue.push_back(id);
+            }
+            return Ok(());
+        }
+        if matches!(id, RawId::Shape(_)) {
+            if self.shapes.release_no_drain(id)? {
                 self.zero_queue.push_back(id);
             }
             return Ok(());
@@ -1873,6 +1989,15 @@ impl Heap {
                 self.var_refs.reclaim_vacant(id.index())?;
                 continue;
             }
+            if matches!(id, RawId::Shape(_)) {
+                let shape = self.shapes.detach_zero_queued(id)?;
+                let RawId::Shape(shape_id) = id else {
+                    unreachable!("validated shape queue entry changed kind");
+                };
+                self.finish_shape(shape_id, shape, &mut cleanup)?;
+                self.shapes.reclaim_vacant(id.index())?;
+                continue;
+            }
             let index = self.validate_slot_identity(id)?;
             let node = {
                 let slot = &mut self.slots[index];
@@ -1926,21 +2051,6 @@ impl Heap {
                     self.release_raw_no_drain(edge)?;
                 }
             }
-            NodeData::Shape(shape) => {
-                let RawId::Shape(shape_id) = id else {
-                    return Err(HeapError::Invariant(
-                        "shape payload finalized through a non-shape handle",
-                    ));
-                };
-                cleanup.finalized_shapes = cleanup.finalized_shapes.saturating_add(1);
-                cleanup.finalized_shape_ids.push(shape_id);
-                cleanup
-                    .atoms
-                    .extend(shape.entries().iter().map(|entry| entry.atom));
-                for edge in shape_edges(&shape) {
-                    self.release_raw_no_drain(edge)?;
-                }
-            }
             NodeData::Context(context) => {
                 cleanup.finalized_contexts = cleanup.finalized_contexts.saturating_add(1);
                 cleanup.atoms.extend(context_atoms(&context));
@@ -1968,6 +2078,23 @@ impl Heap {
         cleanup.finalized_var_refs = cleanup.finalized_var_refs.saturating_add(1);
         cleanup.atoms.extend(var_ref_atoms(&var_ref));
         for edge in var_ref_edges(&var_ref) {
+            self.release_raw_no_drain(edge)?;
+        }
+        Ok(())
+    }
+
+    fn finish_shape(
+        &mut self,
+        id: ShapeId,
+        shape: Shape,
+        cleanup: &mut HeapCleanup,
+    ) -> Result<(), HeapError> {
+        cleanup.finalized_shapes = cleanup.finalized_shapes.saturating_add(1);
+        cleanup.finalized_shape_ids.push(id);
+        cleanup
+            .atoms
+            .extend(shape.entries().iter().map(|entry| entry.atom));
+        for edge in shape_edges(&shape) {
             self.release_raw_no_drain(edge)?;
         }
         Ok(())
@@ -3028,6 +3155,7 @@ impl Heap {
                 .iter()
                 .chain(self.leaf_alloc_sites.iter())
                 .chain(self.var_refs.alloc_sites.iter())
+                .chain(self.shapes.alloc_sites.iter())
                 .filter(|site| site.is_some())
                 .count(),
         );
@@ -3067,6 +3195,15 @@ impl Heap {
                     printed += 1;
                 }
             }
+            for (index, slot) in self.shapes.slots.iter().enumerate() {
+                if printed == 8 {
+                    break;
+                }
+                if let AuxiliaryState::Live(node) = &slot.state {
+                    self.print_alloc_site(index, HeapNodeKind::Shape, node.strong.get(), "");
+                    printed += 1;
+                }
+            }
         }
     }
 
@@ -3096,16 +3233,19 @@ impl Heap {
 
     fn print_alloc_site(&self, index: usize, kind: HeapNodeKind, residual: u32, detail: &str) {
         eprintln!("[ledger] #{index} {kind:?} residual={residual} {detail}");
-        let (generation, sites) = if kind == HeapNodeKind::VarRef {
-            (
+        let (generation, sites) = match kind {
+            HeapNodeKind::VarRef => (
                 self.var_refs.slots.get(index).map(|slot| slot.generation),
                 &self.var_refs.alloc_sites,
-            )
-        } else {
-            (
+            ),
+            HeapNodeKind::Shape => (
+                self.shapes.slots.get(index).map(|slot| slot.generation),
+                &self.shapes.alloc_sites,
+            ),
+            _ => (
                 self.slots.get(index).map(|slot| slot.generation),
                 &self.alloc_sites,
-            )
+            ),
         };
         let site = sites
             .get(index)
@@ -3141,6 +3281,16 @@ impl Heap {
         for slot in &self.var_refs.slots {
             if let AuxiliaryState::Live(node) = &slot.state {
                 for edge in var_ref_edges(&node.data) {
+                    if !edge.is_leaf() && self.is_live(edge) {
+                        let count = incoming.entry(edge).or_default();
+                        *count = count.saturating_add(1);
+                    }
+                }
+            }
+        }
+        for slot in &self.shapes.slots {
+            if let AuxiliaryState::Live(node) = &slot.state {
+                for edge in shape_edges(&node.data) {
                     if !edge.is_leaf() && self.is_live(edge) {
                         let count = incoming.entry(edge).or_default();
                         *count = count.saturating_add(1);
@@ -3212,6 +3362,24 @@ impl Heap {
                 }
             }
         }
+        for (index, slot) in self.shapes.slots.iter().enumerate() {
+            if let AuxiliaryState::Live(node) = &slot.state {
+                let id = RawId::Shape(ShapeId {
+                    index: index as u32,
+                    generation: slot.generation,
+                });
+                let internal = incoming.get(&id).copied().unwrap_or(0);
+                let strong = node.strong.get() as usize;
+                if strong > internal {
+                    roots.push((
+                        HeapNodeKind::Shape,
+                        index,
+                        (strong - internal) as u32,
+                        String::new(),
+                    ));
+                }
+            }
+        }
         roots
     }
 
@@ -3258,6 +3426,17 @@ impl Heap {
                     .count();
                 if hits != 0 {
                     eprintln!("[incoming] from VarRef #{index} x{hits}");
+                }
+            }
+        }
+        for (index, slot) in self.shapes.slots.iter().enumerate() {
+            if let AuxiliaryState::Live(node) = &slot.state {
+                let hits = shape_edges(&node.data)
+                    .into_iter()
+                    .filter(|edge| *edge == target_id)
+                    .count();
+                if hits != 0 {
+                    eprintln!("[incoming] from Shape #{index} x{hits}");
                 }
             }
         }

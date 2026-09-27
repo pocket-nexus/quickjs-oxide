@@ -28,9 +28,9 @@ impl Heap {
     ) -> Result<&FunctionBytecodeData, HeapError> {
         match self.live_node(RawId::FunctionBytecode(id))?.data {
             NodeData::FunctionBytecode(ref bytecode) => Ok(bytecode),
-            NodeData::Object(_) | NodeData::Shape(_) | NodeData::Context(_) => Err(
-                HeapError::Invariant("typed bytecode lookup reached another node payload"),
-            ),
+            NodeData::Object(_) | NodeData::Context(_) => Err(HeapError::Invariant(
+                "typed bytecode lookup reached another node payload",
+            )),
         }
     }
 
