@@ -32,7 +32,7 @@ fn main() {
             ("resolution", snapshot.resolution),
             ("lowering", snapshot.lowering),
             ("blocks", snapshot.blocks),
-            ("fusion", snapshot.fusion),
+            ("encode", snapshot.encode),
             ("relocation", snapshot.relocation),
             ("publish", snapshot.publish),
         ] {

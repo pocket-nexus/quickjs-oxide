@@ -308,10 +308,7 @@ impl OrdinaryCall {
         execution.call_storage.reserve_depth(depth)?;
         let frame = execution.frames.current_mut(parent)?;
         let caller_realm = frame.executable.realm;
-        let resume = frame
-            .fault_pc
-            .checked_add(1)
-            .ok_or_else(|| Error::internal("call resume PC overflow"))?;
+        let resume = frame.next_pc()?;
         let receiver = if method {
             crate::engine::vm::stack::copy_value(
                 runtime,

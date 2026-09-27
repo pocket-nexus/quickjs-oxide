@@ -183,10 +183,7 @@ fn complete(
     if let Completion::Return(value) = completion {
         let frame = execution.frames.current_mut(id)?;
         execution.slots.push(&mut frame.window, value)?;
-        frame.resume_pc = frame
-            .fault_pc
-            .checked_add(1)
-            .ok_or_else(|| Error::internal("predicate resume PC overflow"))?;
+        frame.resume_pc = frame.next_pc()?;
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_instruction(depth);
         Ok(CallStep::Entered)

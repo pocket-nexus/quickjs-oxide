@@ -2,9 +2,9 @@
 use super::{
     Completion,
     exception::runtime_error_to_vm_error,
+    execute::VmAction,
     execution::RunningExecution,
     frame::{ConstructorReturn, FrameId, ReturnTarget},
-    run::RunExit,
 };
 use crate::engine::{
     api::{Error, runtime::Runtime},
@@ -21,10 +21,10 @@ pub(super) fn finish(
     runtime: &Runtime,
     execution: &mut RunningExecution,
     id: FrameId,
-    exit: RunExit,
+    exit: VmAction,
     forwarded: Option<Completion>,
 ) -> Result<FrameExit, Error> {
-    if exit != RunExit::Complete {
+    if exit != VmAction::Complete {
         return Err(Error::internal("driver did not handle a run exit"));
     }
     let mut frame = execution.frames.pop(id)?;

@@ -4,15 +4,19 @@
 
 | 类别 | Case | 要观察的路径 |
 | --- | --- | --- |
-| GetLocal 准入 | `fusion_hit`、`fusion_dynamic_miss` | 已发布候选的 Number 命中与 Object 转换导致的动态 miss |
-| 非候选 GetLocal | `fusion_flag0`、`fusion_no_plan` | 同函数有候选但当前 PC 为零 flag；整个函数无候选。两者的循环正文相同，前者只多一次循环外的数值加法 |
-| 基础执行 | `bigint_32/64/256`、`prop_read/write`、`array_read/write`、`call0`、`string_bridge` | 检查未命中及广泛路径的新增成本；`string_bridge` 特别覆盖字符串 `AddLocal` 回落 |
+| 数值专用操作 | `fusion_hit`、`fusion_dynamic_miss` | Number 计算与 Object 转换的不同成本；需核对当前发布的 opcode 与动态路径 |
+| 普通局部读取 | `fusion_flag0`、`fusion_no_plan` | 两者循环正文相同，前者多一次循环外的数值加法；名称保留历史输入身份 |
+| 基础执行 | `bigint_32/64/256`、`prop_read/write`、`array_read/write`、`call0`、`string_bridge` | 检查未命中及广泛路径的新增成本；`string_bridge` 覆盖字符串加法 |
 | 异常 | `type_error`、`tdz` | 每轮捕获并检查异常类型，防止优化改变 TypeError/TDZ 路径 |
 | 历史债务 | `local_move`、`argument_move`、`number_owner_fallback`、`object_move`、`empty_loop` | 原样复用 [普通 Number 写入探索收据](../receipts/ordinary-number-writes-2026-09-26/README.md)中的五份源码 |
 
-`fusion_*` 的名称描述拟诊断的候选类型，**不是单靠 JS 源码就已证明的发布后站点分类**。性能归因前应对当前编译器的发布后代码记录 flag 和 PC，确认 `fusion_flag0` 热循环确实为零 flag、`fusion_no_plan` 的 sidecar 确实为空，以及动态 miss 实际进入规范路径。静态上不存在的候选不应被“命中率”分母掩盖。
+`fusion_*` 沿用旧实验名称，**不是单靠 JS 源码就已证明的发布后站点分类**。
+#52 没有 `FusionPlan`、逐 PC flag 或 fusion sidecar。性能归因前应检查当前
+`ExecCode` 的普通／专用 opcode、执行字 PC 和实际命中／回落路径；现有计数器的
+覆盖限制见 [profiling](../../profiling.md)。静态上不存在的候选要单独报告，
+不应被“命中率”分母掩盖，也不能把旧名称解释为当前编译器的保证。
 
-2026-09-26 修订：原来两份非候选负载使用 `while(n>0)`，独立的比较与分支也可发布融合候选，因此旧名称不能证明整个函数无计划。现在两者使用相同的 `while(n)` 热循环，并在 `fusion.rs` 的发布器测试中检查实际编译后的 `FusionPlan`：`fusion_no_plan` 为 `None`，`fusion_flag0` 为 `Some` 且热循环局部读取的 flag 为零。旧测量收据保留原样；这次只需对下表两项使用新源码重新做 A/A 和交错 A/B，其余 18 项源码哈希未变。
+2026-09-26 的历史修订：原来两份非候选负载使用 `while(n>0)`，独立的比较与分支也可发布融合候选，因此旧名称不能证明整个函数无计划。两者改为相同的 `while(n)` 热循环，并由当时 `fusion.rs` 的发布器测试检查 `FusionPlan`：`fusion_no_plan` 为 `None`，`fusion_flag0` 为 `Some` 且热循环局部读取的 flag 为零。这仅描述旧实现的认证。旧测量收据保留原样；修订改变下表两项源码哈希，其余 18 项未变。
 
 | Case | 旧 JS SHA-256 | 新 JS SHA-256 |
 | --- | --- | --- |
@@ -31,3 +35,7 @@ python3 docs/performance/probes/build_fixed_matrix.py --smoke \
 `--smoke` 只把每项循环缩至八轮，通过 Node 核对生成器声明的预期输出，不计时也不验证 VM。正式固定工作量使用 `scripts/benchmark/fixed.py`，例如 `--manifest docs/performance/probes/fixed/manifest.json --workload-dir docs/performance/probes/fixed`；该 runner 会核对每份 JS 的 SHA-256 和 stdout，并交错执行所给引擎。`fixed.py` 报告的是进程 wall time；退休指令、cycles、分支和 cache 事件另按 [测量协议](../measurement.md)采集，同次记录完整二进制、构建和主机身份。先做 A/A，再做交错 A/B，同时保存逐项与累计结果。
 
 外部 V8 子项仍使用独立固定版本的 checkout；这里没有复制其源码，也不能由这个矩阵推导 V8 总分。
+
+`run_dump.py` 与 `dump_numeric_spans.rs` 保留作历史 `FusionPlan` 实验的复现工具，
+依赖对应收据的旧源码，不能直接用于 #52。编译 IR capture 也不等于发布后的
+`ExecCode` dump；新站点需要当前编码的独立检查或诊断支持。

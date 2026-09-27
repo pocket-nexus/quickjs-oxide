@@ -45,7 +45,7 @@ runtime exceptions 6 项、CLI evaluation 9 项，以及 Rust 1.88.0 的
 > 无 PGO）。测量：`taskset -c 2` + `perf stat -e instructions,cycles`
 > （perf 因 `perf_event_paranoid=2` 自动折算为 `instructions:u`）。
 >
-> 关系：原实验对应历史 [s3-b-plan.md](https://github.com/pocket-nexus/quickjs-oxide/blob/f531f6052cb497ce4707f01c276e8642e5e26788/docs/reports/s3-b-plan.md) §7 决策 3 的“B2.5 独立 spike”；当前收尾以 [新实施设计](../performance/implementation.md#a-error) 为准。
+> 关系：原实验对应历史 [s3-b-plan.md](https://github.com/pocket-nexus/quickjs-oxide/blob/f531f6052cb497ce4707f01c276e8642e5e26788/docs/reports/s3-b-plan.md) §7 决策 3 的“B2.5 独立 spike”；当时收尾方案见 [历史实施设计](https://github.com/pocket-nexus/quickjs-oxide/blob/996663f771afdabdc69d52c94bd4d2fb392e27b1/docs/performance/implementation.md#a-error)，不作为 #52 后的新实施要求。
 
 ## 0. TL;DR
 
@@ -299,7 +299,7 @@ CLI 端：语法错误与未捕获运行时错误的 stdout/stderr/退出码逐�
 
 ## 8. 原实验裁决与当前复验
 
-**原实验在 `fd9b4eac` 上判为正结果；恢复版 `04bb1a74` 在 R0 上的复验已发现 cycles、错误分配与 RSS 回退。** 当前集成分支按用户要求仍包含该实现，以便完成组合版归因；不得把原实验裁决当作当前接纳结论。
+**原实验在 `fd9b4eac` 上判为正结果；恢复版 `04bb1a74` 在 R0 上的复验已发现 cycles、错误分配与 RSS 回退。** 当时集成分支按用户要求仍包含该实现，以便完成组合版归因；不得把原实验裁决当作当前接纳结论。
 
 - 满足 issue 第 3 条“第 2 步证明正常路径机器码确实变短”的前置条件：
   详见 §3/§4/§5。

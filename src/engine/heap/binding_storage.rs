@@ -17,6 +17,7 @@ impl Heap {
 
     /// Trusted shared read for a live `VarRefId` held by an owning root.
     #[inline]
+    #[cfg(test)]
     pub(in crate::engine::heap) fn var_ref_fast(&self, id: VarRefId) -> &VarRefData {
         match &self.live_node_fast(RawId::VarRef(id)).data {
             NodeData::VarRef(var_ref) => var_ref,
@@ -26,6 +27,7 @@ impl Heap {
 
     /// Trusted mutable read for a live `VarRefId` held by an owning root.
     #[inline]
+    #[cfg(test)]
     pub(in crate::engine::heap) fn var_ref_fast_mut(&mut self, id: VarRefId) -> &mut VarRefData {
         match &mut self.live_node_fast_mut(RawId::VarRef(id)).data {
             NodeData::VarRef(var_ref) => var_ref,
@@ -109,6 +111,7 @@ impl Heap {
     /// Restricted equivalent of replacement for a mutable, initialized cell
     /// whose old and new values own no heap/atom/primitive-storage edge.
     /// Declining leaves both the cell and all pending cleanup untouched.
+    #[cfg(test)]
     pub(crate) fn try_replace_immediate_var_ref_value(
         &mut self,
         id: VarRefId,

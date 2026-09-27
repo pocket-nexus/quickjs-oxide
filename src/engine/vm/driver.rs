@@ -14,9 +14,9 @@ use crate::engine::vm::BytecodePc;
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{BytecodeCallRequest, CallableExecution};
 use crate::engine::vm::exception::runtime_error_to_vm_error;
+use crate::engine::vm::execute::{VmAction, execute_frame};
 use crate::engine::vm::execution::{ExecutionLimits, RunningExecution};
 use crate::engine::vm::frame::{Frame, FrameEntry, FrameId, ReturnTarget};
-use crate::engine::vm::run::{RunExit, run};
 
 pub(super) fn push_frame(
     execution: &mut RunningExecution,
@@ -71,10 +71,7 @@ fn push_direct_call_frame(
         .reserve_depth(execution.frames.depth() + 1)?;
     let mut prepared = execution.frames.prepare_push()?;
     let frame = prepared.current_mut(parent)?;
-    let resume = frame
-        .fault_pc
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("call resume PC overflow"))?;
+    let resume = frame.next_pc()?;
     let runtime = frame.cold.function.runtime().clone();
     let window = execution.slots.push_call_frame(
         &runtime,
@@ -508,10 +505,7 @@ pub(super) fn enter_call(
             operation: None,
         },
     };
-    frame.resume_pc = frame
-        .fault_pc
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("call resume PC overflow"))?;
+    frame.resume_pc = frame.next_pc()?;
     let entry = request.prepare(runtime, &mut execution.call_storage)?;
     push_frame(execution, entry)?;
     #[cfg(feature = "profiling")]
@@ -645,8 +639,7 @@ pub(super) fn resume(runtime: Runtime, entry: FrameEntry, pc: usize) -> Result<R
     let mut execution = RunningExecution::new(&runtime, ExecutionLimits::for_runtime(&runtime))?;
     let id = push_frame(&mut execution, entry)?;
     let frame = execution.frames.current_mut(id)?;
-    frame.resume_pc = pc;
-    frame.fault_pc = pc.saturating_sub(1);
+    frame.set_resume_pc(pc)?;
     run_frames_with_state(&runtime, execution, None, None, 0)
 }
 
@@ -711,24 +704,21 @@ fn run_frames_with_state(
                     #[cfg(feature = "profiling")]
                     let depth = execution.slots.depth(&frame.window) + operands;
                     execution.slots.push(&mut frame.window, value)?;
-                    frame.resume_pc = frame
-                        .fault_pc
-                        .checked_add(1)
-                        .ok_or_else(|| Error::internal("conversion resume PC overflow"))?;
+                    frame.resume_pc = frame.next_pc()?;
                     #[cfg(feature = "profiling")]
                     crate::engine::api::profiling::record_owned_instruction(depth);
                     continue;
                 }
                 Progress::Complete(completion) => {
                     forwarded = Some(completion);
-                    RunExit::Complete
+                    VmAction::Complete
                 }
                 Progress::Predicate(input) => {
                     match super::predicate_driver::converted(runtime, &mut execution, id, input)? {
                         CallStep::Entered => continue,
                         CallStep::Complete(completion) => {
                             forwarded = Some(completion);
-                            RunExit::Complete
+                            VmAction::Complete
                         }
                         CallStep::Bridge => {
                             return Err(Error::internal("converted predicate attempted replay"));
@@ -745,7 +735,7 @@ fn run_frames_with_state(
                         CallStep::Entered => continue,
                         CallStep::Complete(completion) => {
                             forwarded = Some(completion);
-                            RunExit::Complete
+                            VmAction::Complete
                         }
                         CallStep::Bridge => {
                             return Err(Error::internal(
@@ -764,7 +754,7 @@ fn run_frames_with_state(
                         CallStep::Entered => continue,
                         CallStep::Complete(completion) => {
                             forwarded = Some(completion);
-                            RunExit::Complete
+                            VmAction::Complete
                         }
                         CallStep::Bridge => {
                             return Err(Error::internal(
@@ -783,7 +773,7 @@ fn run_frames_with_state(
                         CallStep::Entered => continue,
                         CallStep::Complete(completion) => {
                             forwarded = Some(completion);
-                            RunExit::Complete
+                            VmAction::Complete
                         }
                         CallStep::Bridge => {
                             return Err(Error::internal(
@@ -794,7 +784,7 @@ fn run_frames_with_state(
                 }
             }
         } else if forwarded.is_some() {
-            RunExit::Complete
+            VmAction::Complete
         } else {
             let boundary = ready::run(runtime, &mut execution, id, &mut next_operation)?;
             id = execution
@@ -810,7 +800,7 @@ fn run_frames_with_state(
                 }
                 ready::Boundary::Complete(completion) => {
                     forwarded = Some(completion);
-                    RunExit::Complete
+                    VmAction::Complete
                 }
             }
         };
@@ -826,9 +816,9 @@ fn run_frames_with_state(
             conversion_prepared,
         )? {
             cold::Disposition::Entered => continue,
-            cold::Disposition::Complete | cold::Disposition::Rethrow => exit = RunExit::Complete,
-            cold::Disposition::Bridge => exit = RunExit::Bridge,
-            cold::Disposition::Suspend(kind) => exit = RunExit::Suspend(kind),
+            cold::Disposition::Complete | cold::Disposition::Rethrow => exit = VmAction::Complete,
+            cold::Disposition::Bridge => exit = VmAction::Bridge,
+            cold::Disposition::Suspend(kind) => exit = VmAction::Suspend(kind),
         }
         if matches!(forwarded, Some(Completion::Throw(_))) {
             let Some(Completion::Throw(value)) = forwarded.take() else {
@@ -842,7 +832,7 @@ fn run_frames_with_state(
                 }
             }
         }
-        if let RunExit::Suspend(kind) = exit {
+        if let VmAction::Suspend(kind) = exit {
             let suspension = super::suspend::OwnedSuspension::detach(&mut execution, id, kind)?;
             if let Some(target) = suspension.return_to {
                 let outcome = Box::new(suspension)
@@ -1050,10 +1040,9 @@ mod tests {
     }
 
     #[test]
-    fn same_frame_cold_loop_preserves_object_conversion_and_primitive_throw_finally() {
+    fn single_execution_stream_preserves_conversion_and_throw_finally() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        let costs = CostProfile::start();
         let result = context
             .eval(
                 "(function(){let events=''; let text='a';
@@ -1068,15 +1057,6 @@ mod tests {
         assert_eq!(
             result,
             Value::String(crate::engine::value::JsString::from_static("abbb2:vtf"))
-        );
-        let costs = costs.snapshot();
-        assert!(
-            costs
-                .owned_execution_events
-                .get("numeric_completed_in_run")
-                .copied()
-                .unwrap_or(0)
-                > 0
         );
         assert!(runtime.0.state.borrow().active_frames.is_empty());
     }
@@ -1097,7 +1077,7 @@ mod tests {
         let result = super::ready::run(&runtime, &mut execution, id, &mut identity).unwrap();
         assert!(matches!(
             result,
-            super::ready::Boundary::Exit(RunExit::Complete)
+            super::ready::Boundary::Exit(VmAction::Complete)
         ));
         assert_eq!(identity, u64::MAX);
         assert_eq!(
@@ -1344,7 +1324,6 @@ mod tests {
             let runtime = Runtime::new();
             let mut context = runtime.new_context();
             let call_entry = entry(&runtime, &mut context, source, vec![Value::Int(42)]);
-            let _code = call_entry.executable.code.clone();
             let profile = CostProfile::start();
             let completion =
                 execute(runtime.clone(), call_entry, ExecutionLimits::default()).unwrap();
@@ -1594,7 +1573,8 @@ mod tests {
             );
             let pc = entry
                 .executable
-                .code
+                .exec
+                .test_ir()
                 .iter()
                 .position(|op| {
                     matches!(
@@ -1606,8 +1586,10 @@ mod tests {
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
             let id = push_frame(&mut execution, entry).unwrap();
-            execution.frames.current_mut(id).unwrap().resume_pc = pc;
-            let RunExit::PrivateInitialize { index, kind } = run(&mut execution, id).unwrap()
+            let frame = execution.frames.current_mut(id).unwrap();
+            frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
+            let VmAction::PrivateInitialize { index, kind } =
+                execute_frame(&mut execution, id).unwrap()
             else {
                 panic!("expected private initialization boundary")
             };
@@ -1635,7 +1617,10 @@ mod tests {
                 crate::engine::object::PrivateNameRef::from_borrowed_atom(runtime.clone(), atom)
                     .unwrap(),
             );
-            assert_eq!(frame.resume_pc, pc + 1);
+            assert_eq!(
+                frame.resume_pc,
+                frame.executable.exec.exec_pc((pc + 1) as u32).unwrap() as usize
+            );
             drop(execution);
             assert!(runtime.0.state.borrow().active_frames.is_empty());
         }
@@ -2165,7 +2150,8 @@ mod tests {
         );
         let pc = entry
             .executable
-            .code
+            .exec
+            .test_ir()
             .iter()
             .position(|op| {
                 matches!(
@@ -2176,9 +2162,13 @@ mod tests {
             .unwrap();
         let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
         let id = push_frame(&mut execution, entry).unwrap();
-        execution.frames.current_mut(id).unwrap().resume_pc = pc;
+        let frame = execution.frames.current_mut(id).unwrap();
+        frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
         let op = super::super::environment_driver::Operation::CreateVariable;
-        assert_eq!(run(&mut execution, id).unwrap(), RunExit::Environment(op));
+        assert_eq!(
+            execute_frame(&mut execution, id).unwrap(),
+            VmAction::Environment(op)
+        );
         let before = execution.frames.current_mut(id).unwrap().fault_pc;
         assert!(matches!(
             super::super::environment_driver::step(&runtime, &mut execution, id, op).unwrap(),
@@ -2686,7 +2676,8 @@ mod tests {
             );
             let pc = entry
                 .executable
-                .code
+                .exec
+                .test_ir()
                 .iter()
                 .position(|op| matches!(op, Instruction::Apply(ApplyKind::Construct)))
                 .unwrap();
@@ -2694,7 +2685,7 @@ mod tests {
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
             let id = push_frame(&mut execution, entry).unwrap();
             let frame = execution.frames.current_mut(id).unwrap();
-            frame.resume_pc = pc;
+            frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
             for value in [constructor, new_target, Value::Object(carrier.clone())] {
                 execution
                     .slots
@@ -2703,8 +2694,8 @@ mod tests {
             }
             let profile = CostProfile::start();
             assert!(matches!(
-                run(&mut execution, id).unwrap(),
-                RunExit::Apply(ApplyKind::Construct)
+                execute_frame(&mut execution, id).unwrap(),
+                VmAction::Apply(ApplyKind::Construct)
             ));
             assert!(matches!(
                 super::super::apply_driver::step(
@@ -2813,7 +2804,8 @@ mod tests {
             };
             let pc = entry
                 .executable
-                .code
+                .exec
+                .test_ir()
                 .iter()
                 .position(|op| matches!(op, Instruction::Apply(found) if *found==kind))
                 .unwrap();
@@ -2821,7 +2813,7 @@ mod tests {
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
             let id = push_frame(&mut execution, entry).unwrap();
             let frame = execution.frames.current_mut(id).unwrap();
-            frame.resume_pc = pc;
+            frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
             for value in [function, Value::Undefined, array] {
                 execution
                     .slots
@@ -3322,7 +3314,8 @@ mod tests {
             );
             let pc = entry
                 .executable
-                .code
+                .exec
+                .test_ir()
                 .iter()
                 .position(|op| matches!(op, crate::engine::code::bytecode::Instruction::Append))
                 .unwrap();
@@ -3330,7 +3323,7 @@ mod tests {
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
             let id = push_frame(&mut execution, entry).unwrap();
             let frame = execution.frames.current_mut(id).unwrap();
-            frame.resume_pc = pc;
+            frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
             execution
                 .slots
                 .push(&mut frame.window, runtime.into_jsvalue(target).unwrap())
@@ -3408,7 +3401,8 @@ mod tests {
         );
         let pc = entry
             .executable
-            .code
+            .exec
+            .test_ir()
             .iter()
             .position(|op| {
                 matches!(
@@ -3421,7 +3415,7 @@ mod tests {
         let id = push_frame(&mut execution, entry).unwrap();
         let frame = execution.frames.current_mut(id).unwrap();
         // Start at the published element write; Append itself is not exercised here.
-        frame.resume_pc = pc;
+        frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
         execution
             .slots
             .push(
@@ -3445,8 +3439,8 @@ mod tests {
             .unwrap();
         let profile = CostProfile::start();
         assert!(matches!(
-            run(&mut execution, id).unwrap(),
-            RunExit::Environment(super::super::environment_driver::Operation::DefineArrayElement)
+            execute_frame(&mut execution, id).unwrap(),
+            VmAction::Environment(super::super::environment_driver::Operation::DefineArrayElement)
         ));
         assert!(matches!(
             super::super::environment_driver::step(
@@ -3459,7 +3453,10 @@ mod tests {
             CallStep::Entered
         ));
         let frame = execution.frames.current_mut(id).unwrap();
-        assert_eq!(frame.resume_pc, pc + 1);
+        assert_eq!(
+            frame.resume_pc,
+            frame.executable.exec.exec_pc((pc + 1) as u32).unwrap() as usize
+        );
         assert_eq!(execution.slots.depth(&frame.window), 2);
         assert_eq!(
             &runtime
@@ -3595,7 +3592,8 @@ mod tests {
             );
             let pc = entry
                 .executable
-                .code
+                .exec
+                .test_ir()
                 .iter()
                 .position(|op| {
                     matches!(
@@ -3627,7 +3625,7 @@ mod tests {
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
             let id = push_frame(&mut execution, entry).unwrap();
             let frame = execution.frames.current_mut(id).unwrap();
-            frame.resume_pc = pc;
+            frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
             execution
                 .slots
                 .push(&mut frame.window, runtime.into_jsvalue(callee).unwrap())
@@ -3641,7 +3639,8 @@ mod tests {
                 .unwrap();
             let profile = CostProfile::start();
             if let Some(extra) = retained {
-                let RunExit::ApplyEval(environment) = run(&mut execution, id).unwrap() else {
+                let VmAction::ApplyEval(environment) = execute_frame(&mut execution, id).unwrap()
+                else {
                     panic!("expected ApplyEval")
                 };
                 assert!(matches!(
@@ -3926,7 +3925,8 @@ mod tests {
             );
             let pc = entry
                 .executable
-                .code
+                .exec
+                .test_ir()
                 .iter()
                 .position(|op| {
                     matches!(
@@ -3938,10 +3938,11 @@ mod tests {
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
             let id = push_frame(&mut execution, entry).unwrap();
-            execution.frames.current_mut(id).unwrap().resume_pc = pc;
-            let RunExit::Environment(
+            let frame = execution.frames.current_mut(id).unwrap();
+            frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
+            let VmAction::Environment(
                 op @ super::super::environment_driver::Operation::GlobalReference(_),
-            ) = run(&mut execution, id).unwrap()
+            ) = execute_frame(&mut execution, id).unwrap()
             else {
                 panic!("expected global reference")
             };
@@ -3950,7 +3951,10 @@ mod tests {
                 CallStep::Entered
             ));
             let frame = execution.frames.current_mut(id).unwrap();
-            assert_eq!(frame.resume_pc, pc + 1);
+            assert_eq!(
+                frame.resume_pc,
+                frame.executable.exec.exec_pc((pc + 1) as u32).unwrap() as usize
+            );
             assert_eq!(execution.slots.depth(&frame.window), 1);
             let expected = if present {
                 Value::Object(runtime.global_object_for_realm(context.realm).unwrap())
@@ -3986,7 +3990,7 @@ mod tests {
                 "(function(o){with(o){return x=(function(){return 42})()}})"
             };
             let entry = entry(&runtime, &mut context, source, vec![object]);
-            assert!(entry.executable.code.iter().any(|op| matches!(
+            assert!(entry.executable.exec.test_ir().iter().any(|op| matches!(
                 op,
                 crate::engine::code::bytecode::Instruction::GlobalReference(_)
             )));
@@ -4073,7 +4077,8 @@ mod tests {
             );
             let pc = entry
                 .executable
-                .code
+                .exec
+                .test_ir()
                 .iter()
                 .position(|op| {
                     matches!(
@@ -4087,7 +4092,7 @@ mod tests {
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
             let id = push_frame(&mut execution, entry).unwrap();
             let frame = execution.frames.current_mut(id).unwrap();
-            frame.resume_pc = pc;
+            frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
             let base = if unresolved {
                 Value::Undefined
             } else {
@@ -4100,8 +4105,8 @@ mod tests {
                     runtime.into_jsvalue(base.clone()).unwrap(),
                 )
                 .unwrap();
-            let RunExit::Environment(op @ Operation::ReadReference { .. }) =
-                run(&mut execution, id).unwrap()
+            let VmAction::Environment(op @ Operation::ReadReference { .. }) =
+                execute_frame(&mut execution, id).unwrap()
             else {
                 panic!("expected reference read")
             };
@@ -4133,7 +4138,10 @@ mod tests {
             } else {
                 assert!(matches!(result, CallStep::Entered));
                 let frame = execution.frames.current_mut(id).unwrap();
-                assert_eq!(frame.resume_pc, pc + 1);
+                assert_eq!(
+                    frame.resume_pc,
+                    frame.executable.exec.exec_pc((pc + 1) as u32).unwrap() as usize
+                );
                 assert_eq!(execution.slots.depth(&frame.window), 2);
                 assert_eq!(
                     &runtime
@@ -4193,7 +4201,8 @@ mod tests {
             );
             let (pc, name) = entry
                 .executable
-                .code
+                .exec
+                .test_ir()
                 .iter()
                 .enumerate()
                 .find_map(|(pc, op)| match op {
@@ -4207,7 +4216,7 @@ mod tests {
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
             let id = push_frame(&mut execution, entry).unwrap();
             let frame = execution.frames.current_mut(id).unwrap();
-            frame.resume_pc = pc;
+            frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
             execution
                 .slots
                 .push(
@@ -4228,7 +4237,10 @@ mod tests {
                 strict,
                 check_presence: true,
             };
-            assert_eq!(run(&mut execution, id).unwrap(), RunExit::Environment(op));
+            assert_eq!(
+                execute_frame(&mut execution, id).unwrap(),
+                VmAction::Environment(op)
+            );
             let result = super::super::environment_driver::step(
                 &runtime,
                 &mut execution,
@@ -4265,7 +4277,10 @@ mod tests {
             } else {
                 assert!(matches!(result, CallStep::Entered));
                 let frame = execution.frames.current_mut(id).unwrap();
-                assert_eq!(frame.resume_pc, pc + 1);
+                assert_eq!(
+                    frame.resume_pc,
+                    frame.executable.exec.exec_pc((pc + 1) as u32).unwrap() as usize
+                );
                 assert_eq!(execution.slots.depth(&frame.window), 0);
                 assert_eq!(
                     runtime
@@ -4638,7 +4653,8 @@ mod tests {
         );
         let pc = entry
             .executable
-            .code
+            .exec
+            .test_ir()
             .iter()
             .position(|op| matches!(op, Instruction::RunClassStaticInitializer))
             .unwrap();
@@ -4693,14 +4709,15 @@ mod tests {
         let static_initializer = static_initializer.unwrap();
         let install_pc = entry
             .executable
-            .code
+            .exec
+            .test_ir()
             .iter()
             .position(|op| matches!(op, Instruction::InstallClassInstanceInitializer))
             .unwrap();
         let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
         let parent = push_frame(&mut execution, entry).unwrap();
         let frame = execution.frames.current_mut(parent).unwrap();
-        frame.resume_pc = install_pc;
+        frame.resume_pc = frame.executable.exec.exec_pc(install_pc as u32).unwrap() as usize;
         execution
             .slots
             .push(
@@ -4721,8 +4738,8 @@ mod tests {
             .unwrap();
         let profile = CostProfile::start();
         assert_eq!(
-            run(&mut execution, parent).unwrap(),
-            RunExit::ClassInitializer(InitializerKind::Install)
+            execute_frame(&mut execution, parent).unwrap(),
+            VmAction::ClassInitializer(InitializerKind::Install)
         );
         assert!(matches!(
             initializer(&runtime, &mut execution, parent, InitializerKind::Install).unwrap(),
@@ -4730,7 +4747,14 @@ mod tests {
         ));
         assert_eq!(execution.frames.current_id(), Some(parent));
         let frame = execution.frames.current_mut(parent).unwrap();
-        assert_eq!(frame.resume_pc, install_pc + 1);
+        assert_eq!(
+            frame.resume_pc,
+            frame
+                .executable
+                .exec
+                .exec_pc((install_pc + 1) as u32)
+                .unwrap() as usize
+        );
         assert_eq!(execution.slots.depth(&frame.window), 2);
         assert_eq!(
             &runtime
@@ -4744,7 +4768,7 @@ mod tests {
                 .unwrap(),
             runtime.root_value(&prototype).unwrap()
         );
-        frame.resume_pc = pc;
+        frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
         execution
             .slots
             .push(
@@ -4753,8 +4777,8 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            run(&mut execution, parent).unwrap(),
-            RunExit::ClassInitializer(InitializerKind::Static)
+            execute_frame(&mut execution, parent).unwrap(),
+            VmAction::ClassInitializer(InitializerKind::Static)
         );
         assert!(matches!(
             initializer(&runtime, &mut execution, parent, InitializerKind::Static).unwrap(),
@@ -4762,13 +4786,14 @@ mod tests {
         ));
         let child = execution.frames.current_id().unwrap();
         assert_ne!(child, parent);
-        let RunExit::InstantiateClosure(index) = run(&mut execution, child).unwrap() else {
+        let VmAction::InstantiateClosure(index) = execute_frame(&mut execution, child).unwrap()
+        else {
             panic!("expected static block closure")
         };
         super::super::closure_driver::instantiate(&runtime, &mut execution, child, index).unwrap();
         assert_eq!(
-            run(&mut execution, child).unwrap(),
-            RunExit::ClassInitializer(InitializerKind::Block)
+            execute_frame(&mut execution, child).unwrap(),
+            VmAction::ClassInitializer(InitializerKind::Block)
         );
         assert!(matches!(
             initializer(&runtime, &mut execution, child, InitializerKind::Block).unwrap(),
@@ -4776,7 +4801,10 @@ mod tests {
         ));
         let block = execution.frames.current_id().unwrap();
         assert_ne!(block, child);
-        assert_eq!(run(&mut execution, block).unwrap(), RunExit::Throw);
+        assert_eq!(
+            execute_frame(&mut execution, block).unwrap(),
+            VmAction::Throw
+        );
         let frame = execution.frames.current_mut(block).unwrap();
         assert_eq!(
             runtime
@@ -5046,7 +5074,8 @@ mod tests {
             );
             let pc = entry
                 .executable
-                .code
+                .exec
+                .test_ir()
                 .iter()
                 .position(|op| matches!(op, Instruction::DefineMethodComputed { .. }))
                 .unwrap();
@@ -5054,7 +5083,7 @@ mod tests {
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
             let id = push_frame(&mut execution, entry).unwrap();
             let frame = execution.frames.current_mut(id).unwrap();
-            frame.resume_pc = pc;
+            frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
             execution
                 .slots
                 .push(
@@ -5259,11 +5288,11 @@ mod tests {
             let weak = std::rc::Rc::downgrade(&runtime.0);
             let mut pending = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
             let parent = push_frame(&mut pending, entry).unwrap();
-            let RunExit::Call {
+            let VmAction::Call {
                 arguments,
                 method,
                 tail,
-            } = run(&mut pending, parent).unwrap()
+            } = execute_frame(&mut pending, parent).unwrap()
             else {
                 panic!("expected native probe call");
             };
@@ -7210,12 +7239,12 @@ mod tests {
                     &runtime,
                     &mut execution,
                     id,
-                    RunExit::ReleaseOperand { keep_top }
+                    VmAction::ReleaseOperand { keep_top }
                 )
                 .unwrap()
             );
             let frame = execution.frames.current_mut(id).unwrap();
-            assert_eq!(frame.resume_pc, frame.fault_pc + 1);
+            assert_eq!(frame.resume_pc, frame.next_pc().unwrap());
             assert_eq!(execution.slots.depth(&frame.window), usize::from(keep_top));
             runtime.run_gc().unwrap();
             assert!(runtime.0.state.borrow().heap.object(released_id).is_err());
@@ -8177,9 +8206,9 @@ mod tests {
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
             let frame = push_frame(&mut execution, entry).unwrap();
-            let RunExit::Call {
+            let VmAction::Call {
                 arguments, tail, ..
-            } = run(&mut execution, frame).unwrap()
+            } = execute_frame(&mut execution, frame).unwrap()
             else {
                 panic!("call")
             };
@@ -8283,7 +8312,8 @@ mod tests {
             );
             let pc = entry
                 .executable
-                .code
+                .exec
+                .test_ir()
                 .iter()
                 .position(|op| matches!(op, Instruction::DefineArrayEl))
                 .unwrap();
@@ -8294,7 +8324,7 @@ mod tests {
             // Supply a raw object key at this accepted instruction, without the
             // compiler's preceding ToPropKey. The following Drop must still
             // consume the retained key, then Return must receive the base.
-            frame.resume_pc = pc;
+            frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
             for value in [object.clone(), key, Value::Int(40)] {
                 execution
                     .slots

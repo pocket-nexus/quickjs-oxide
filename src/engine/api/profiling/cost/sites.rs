@@ -6,7 +6,7 @@ use super::current;
 #[cfg(feature = "profiling")]
 use crate::engine::api::runtime::Runtime;
 #[cfg(feature = "profiling")]
-use crate::engine::code::bytecode::Instruction;
+use crate::engine::code::exec_opcode::Opcode;
 #[cfg(feature = "profiling")]
 use crate::engine::code::runtime::PublishedFunctionSnapshot;
 #[cfg(feature = "profiling")]
@@ -38,13 +38,13 @@ pub struct SiteKey {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct FusionSiteKey {
+pub struct ExecutionSiteKey {
     pub site: SiteKey,
     pub kind: &'static str,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct FusionStaticCost {
+pub struct ExecutionStaticCost {
     /// Lossy UTF-8 copies of the published source identity; they retain no
     /// `JsString`, Atom, bytecode or Runtime owner. Stripped debug data is None.
     pub function_name: Option<String>,
@@ -54,23 +54,22 @@ pub struct FusionStaticCost {
     pub instructions: u64,
     pub direct_local_read_sites: u64,
     pub direct_argument_read_sites: u64,
-    /// A direct local/argument read with no fusion flag at publication.
-    pub unfused_read_sites: u64,
-    pub dense_candidate_sites: u64,
-    /// Direct local/argument reads that did not publish a dense span. Some
-    /// may publish a different span kind.
-    pub dense_noncandidate_read_sites: u64,
+    pub specialized_number_read_sites: u64,
+    pub cached_field_read_sites: u64,
+    pub dense_array_read_sites: u64,
+    /// Direct local/argument reads published as generic opcodes.
+    pub generic_read_sites: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct FusionDispatchCost {
+pub struct ExecutionDispatchCost {
     pub visits: u64,
-    /// Dynamic visits to a PC whose immutable fusion flag is zero.
-    pub static_noncandidate_visits: u64,
+    /// Dynamic visits to generic local/argument read opcodes.
+    pub generic_visits: u64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct FusionSiteCost {
+pub struct ExecutionSiteCost {
     pub attempts: u64,
     pub hits: u64,
     /// Guard misses preserve the canonical span. The `error` bucket denotes
@@ -176,49 +175,130 @@ fn source_identity(
 /// Register one executed immutable function's direct-read candidate inventory.
 /// Repeated calls at frame entry only perform a map lookup in diagnostic builds.
 #[cfg(feature = "profiling")]
-pub(crate) fn record_fusion_static(runtime: &Runtime, executable: &PublishedFunctionSnapshot) {
+pub(crate) fn record_execution_static(runtime: &Runtime, executable: &PublishedFunctionSnapshot) {
     let Some(collector) = current() else { return };
     let key = function_key(runtime, executable);
     let mut snapshot = collector.borrow_mut();
-    if snapshot.fusion_static.contains_key(&key) {
+    if snapshot.execution_static.contains_key(&key) {
         return;
     }
-    if snapshot.fusion_static.len() == MAX_FUNCTIONS {
-        snapshot.omitted_fusion_static_functions =
-            snapshot.omitted_fusion_static_functions.saturating_add(1);
+    if snapshot.execution_static.len() == MAX_FUNCTIONS {
+        snapshot.omitted_execution_static_functions = snapshot
+            .omitted_execution_static_functions
+            .saturating_add(1);
         return;
     }
     let (function_name, filename, definition_line_zero_based, definition_column_zero_based) =
         source_identity(runtime, executable);
-    let mut cost = FusionStaticCost {
+    let mut cost = ExecutionStaticCost {
         function_name,
         filename,
         definition_line_zero_based,
         definition_column_zero_based,
-        instructions: executable.code.len() as u64,
-        ..FusionStaticCost::default()
+        instructions: executable.exec.instruction_len() as u64,
+        ..ExecutionStaticCost::default()
     };
-    for (pc, instruction) in executable.code.iter().enumerate() {
+    for pc in 0..executable.exec.instruction_len() {
+        let Some(opcode) = executable.exec.opcode_at_source(pc) else {
+            continue;
+        };
         let is_local = matches!(
-            instruction,
-            Instruction::GetLocal(_) | Instruction::GetLocalCheck(_)
+            opcode,
+            Opcode::GetLocal
+                | Opcode::GetLocalCheck
+                | Opcode::NumberLocalInc
+                | Opcode::DensePreUpdateLocal
+                | Opcode::DenseReadLocal
+                | Opcode::BorrowedFieldLocal
+                | Opcode::CompareBranchLocal
+                | Opcode::CompareBranchLocalLt
+                | Opcode::UpdateLocalDiscard
+                | Opcode::UpdateLocalDiscardCheck
+                | Opcode::DensePostUpdateLocal
+                | Opcode::DensePostUpdateLocalCheck
+                | Opcode::DenseReadBinaryLocal
+                | Opcode::DenseIndexBinaryLocal
+                | Opcode::DenseAccIndexSetDrop
+                | Opcode::FieldAccSetDrop
         );
-        let is_arg = matches!(instruction, Instruction::GetArg(_));
+        let is_arg = matches!(
+            opcode,
+            Opcode::GetArg
+                | Opcode::NumberArgInc
+                | Opcode::DensePreUpdateArg
+                | Opcode::DenseReadArg
+                | Opcode::BorrowedFieldArg
+                | Opcode::CompareBranchArg
+                | Opcode::CompareBranchArgLt
+                | Opcode::DensePostUpdateArg
+                | Opcode::DenseReadBinaryArg
+                | Opcode::DenseIndexBinaryArg
+        );
+        cost.cached_field_read_sites += u64::from(matches!(
+            opcode,
+            Opcode::GetFieldCached
+                | Opcode::GetField2Cached
+                | Opcode::BorrowedFieldLocal
+                | Opcode::BorrowedFieldArg
+                | Opcode::FieldAccSetDrop
+        ));
+        cost.dense_array_read_sites += u64::from(matches!(
+            opcode,
+            Opcode::GetArrayElDense
+                | Opcode::GetArrayEl2Dense
+                | Opcode::GetArrayEl3Dense
+                | Opcode::DensePreUpdateLocal
+                | Opcode::DensePreUpdateArg
+                | Opcode::DenseReadLocal
+                | Opcode::DenseReadArg
+                | Opcode::DensePostUpdateLocal
+                | Opcode::DensePostUpdateLocalCheck
+                | Opcode::DensePostUpdateArg
+                | Opcode::DenseReadBinaryLocal
+                | Opcode::DenseReadBinaryArg
+                | Opcode::DenseIndexBinaryLocal
+                | Opcode::DenseIndexBinaryArg
+                | Opcode::DenseAccIndexSetDrop
+        ));
         if !is_local && !is_arg {
             continue;
         }
         cost.direct_local_read_sites += u64::from(is_local);
         cost.direct_argument_read_sites += u64::from(is_arg);
-        cost.unfused_read_sites += u64::from(!executable.fusion.entry(pc).has_candidate());
-        let dense = executable.fusion.dense_span(pc).is_some();
-        cost.dense_candidate_sites += u64::from(dense);
-        cost.dense_noncandidate_read_sites += u64::from(!dense);
+        let specialized = matches!(
+            opcode,
+            Opcode::NumberLocalInc
+                | Opcode::NumberArgInc
+                | Opcode::DensePreUpdateLocal
+                | Opcode::DensePreUpdateArg
+                | Opcode::DenseReadLocal
+                | Opcode::DenseReadArg
+                | Opcode::BorrowedFieldLocal
+                | Opcode::BorrowedFieldArg
+                | Opcode::CompareBranchLocal
+                | Opcode::CompareBranchArg
+                | Opcode::CompareBranchLocalLt
+                | Opcode::CompareBranchArgLt
+                | Opcode::UpdateLocalDiscard
+                | Opcode::UpdateLocalDiscardCheck
+                | Opcode::DensePostUpdateLocal
+                | Opcode::DensePostUpdateLocalCheck
+                | Opcode::DensePostUpdateArg
+                | Opcode::DenseReadBinaryLocal
+                | Opcode::DenseReadBinaryArg
+                | Opcode::DenseIndexBinaryLocal
+                | Opcode::DenseIndexBinaryArg
+                | Opcode::DenseAccIndexSetDrop
+                | Opcode::FieldAccSetDrop
+        );
+        cost.specialized_number_read_sites += u64::from(specialized);
+        cost.generic_read_sites += u64::from(!specialized);
     }
-    snapshot.fusion_static.insert(key, cost);
+    snapshot.execution_static.insert(key, cost);
 }
 
 #[cfg(feature = "profiling")]
-pub(crate) fn record_fusion_dispatch(
+pub(crate) fn record_execution_dispatch(
     runtime: &Runtime,
     executable: &PublishedFunctionSnapshot,
     pc: usize,
@@ -227,15 +307,17 @@ pub(crate) fn record_fusion_dispatch(
     let Some(collector) = current() else { return };
     let key = site_key(runtime, executable, pc);
     let mut snapshot = collector.borrow_mut();
-    if !snapshot.fusion_dispatch.contains_key(&key) && snapshot.fusion_dispatch.len() == MAX_SITES {
-        snapshot.omitted_fusion_dispatch_events =
-            snapshot.omitted_fusion_dispatch_events.saturating_add(1);
+    if !snapshot.execution_dispatch.contains_key(&key)
+        && snapshot.execution_dispatch.len() == MAX_SITES
+    {
+        snapshot.omitted_execution_dispatch_events =
+            snapshot.omitted_execution_dispatch_events.saturating_add(1);
         return;
     }
-    let cost = snapshot.fusion_dispatch.entry(key).or_default();
+    let cost = snapshot.execution_dispatch.entry(key).or_default();
     cost.visits = cost.visits.saturating_add(1);
-    cost.static_noncandidate_visits = cost
-        .static_noncandidate_visits
+    cost.generic_visits = cost
+        .generic_visits
         .saturating_add(u64::from(!has_candidate));
 }
 
@@ -243,7 +325,7 @@ pub(crate) fn record_fusion_dispatch(
 /// intentionally coarse. `error` denotes an exceptional termination rather
 /// than a guard miss; it is still an attempt in the logical outcome total.
 #[cfg(feature = "profiling")]
-pub(crate) fn record_fusion_outcome(
+pub(crate) fn record_execution_outcome(
     runtime: &Runtime,
     executable: &PublishedFunctionSnapshot,
     pc: usize,
@@ -251,17 +333,17 @@ pub(crate) fn record_fusion_outcome(
     miss: Option<&'static str>,
 ) {
     let Some(collector) = current() else { return };
-    let key = FusionSiteKey {
+    let key = ExecutionSiteKey {
         site: site_key(runtime, executable, pc),
         kind,
     };
     let mut snapshot = collector.borrow_mut();
-    if !snapshot.fusion_sites.contains_key(&key) && snapshot.fusion_sites.len() == MAX_SITES {
-        snapshot.omitted_fusion_outcome_events =
-            snapshot.omitted_fusion_outcome_events.saturating_add(1);
+    if !snapshot.execution_sites.contains_key(&key) && snapshot.execution_sites.len() == MAX_SITES {
+        snapshot.omitted_execution_outcome_events =
+            snapshot.omitted_execution_outcome_events.saturating_add(1);
         return;
     }
-    let cost = snapshot.fusion_sites.entry(key).or_default();
+    let cost = snapshot.execution_sites.entry(key).or_default();
     cost.attempts = cost.attempts.saturating_add(1);
     if let Some(reason) = miss {
         let count = cost.misses.entry(reason).or_default();
@@ -294,34 +376,34 @@ mod tests {
     use crate::engine::api::{Runtime, Value};
 
     #[test]
-    fn dense_outcomes_include_guard_misses_and_static_noncandidate_visits() {
+    fn execution_word_outcomes_separate_dense_hits_and_generic_reads() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        let _ = context.eval("function read(a,i){return a[i]}").unwrap();
+        let _ = context
+            .eval("function read(a,i){return a[i]}; let array=[11]")
+            .unwrap();
         let profile = CostProfile::start();
-        assert_eq!(context.eval("read([11],0)").unwrap(), Value::Int(11));
-        assert_eq!(context.eval("read([11],'0')").unwrap(), Value::Int(11));
-        assert_eq!(context.eval("read([11],-1)").unwrap(), Value::Undefined);
-        assert_eq!(context.eval("read([11],2)").unwrap(), Value::Undefined);
+        assert_eq!(context.eval("read(array,0)").unwrap(), Value::Int(11));
+        assert_eq!(context.eval("read(array,'0')").unwrap(), Value::Int(11));
+        assert_eq!(context.eval("read(array,-1)").unwrap(), Value::Undefined);
+        assert_eq!(context.eval("read(array,2)").unwrap(), Value::Undefined);
         let costs = profile.snapshot();
         let dense = costs
-            .fusion_sites
+            .execution_sites
             .iter()
-            .filter(|(key, _)| key.kind == "dense_read")
+            .filter(|(key, _)| key.kind == "dense_array_read")
             .map(|(_, cost)| cost)
             .collect::<Vec<_>>();
         assert!(!dense.is_empty(), "{costs:?}");
         let hits: u64 = dense.iter().map(|cost| cost.hits).sum();
         assert!(hits >= 1, "{costs:?}");
-        for reason in ["non_number", "index", "beyond_array_length"] {
-            assert!(
-                dense
-                    .iter()
-                    .any(|cost| cost.misses.get(reason).copied().unwrap_or(0) > 0),
-                "missing {reason}: {costs:?}"
-            );
-        }
-        for cost in costs.fusion_sites.values() {
+        assert!(
+            dense
+                .iter()
+                .any(|cost| cost.misses.get("guard").copied().unwrap_or(0) > 0),
+            "{costs:?}"
+        );
+        for cost in costs.execution_sites.values() {
             assert_eq!(
                 cost.attempts,
                 cost.hits + cost.misses.values().sum::<u64>(),
@@ -330,19 +412,19 @@ mod tests {
         }
         assert!(
             costs
-                .fusion_dispatch
+                .execution_dispatch
                 .values()
-                .any(|cost| cost.static_noncandidate_visits > 0),
+                .any(|cost| cost.generic_visits > 0),
             "{costs:?}"
         );
         assert!(
-            costs.fusion_static.values().any(
-                |cost| cost.dense_candidate_sites > 0 && cost.dense_noncandidate_read_sites > 0
-            ),
+            costs.execution_static.values().any(|cost| {
+                cost.dense_array_read_sites > 0 && cost.direct_argument_read_sites > 0
+            }),
             "{costs:?}"
         );
         assert!(
-            costs.fusion_static.values().any(|cost| {
+            costs.execution_static.values().any(|cost| {
                 cost.function_name.as_deref() == Some("read")
                     && cost.filename.is_some()
                     && cost.definition_line_zero_based.is_some()

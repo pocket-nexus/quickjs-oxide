@@ -402,6 +402,7 @@ impl Heap {
 
     /// Trusted mutable accessor paired with [`Heap::live_node_fast`].
     #[inline]
+    #[cfg(test)]
     pub(in crate::engine::heap) fn live_node_fast_mut(&mut self, id: RawId) -> &mut Node {
         debug_assert!(
             self.validate_slot_identity(id).is_ok(),

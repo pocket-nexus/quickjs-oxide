@@ -291,12 +291,12 @@ mod enabled {
             )?;
             writeln!(
                 out,
-                "parse={:?} resolution={:?} lowering={:?} blocks={:?} fusion={:?} relocation={:?} publish={:?}",
+                "parse={:?} resolution={:?} lowering={:?} blocks={:?} encode={:?} relocation={:?} publish={:?}",
                 costs.parse,
                 costs.resolution,
                 costs.lowering,
                 costs.blocks,
-                costs.fusion,
+                costs.encode,
                 costs.relocation,
                 costs.publish
             )?;
@@ -339,23 +339,23 @@ mod enabled {
                     phase.omitted_samples
                 )?;
             }
-            writeln!(out, "fusion_static={:?}", costs.fusion_static)?;
-            writeln!(out, "fusion_dispatch={:?}", costs.fusion_dispatch)?;
-            writeln!(out, "fusion_sites={:?}", costs.fusion_sites)?;
+            writeln!(out, "execution_static={:?}", costs.execution_static)?;
+            writeln!(out, "execution_dispatch={:?}", costs.execution_dispatch)?;
+            writeln!(out, "execution_sites={:?}", costs.execution_sites)?;
             writeln!(out, "callsites={:?}", costs.callsites)?;
             writeln!(
                 out,
                 "diagnostic_omissions: functions={} dispatch={} outcomes={} callsites={}",
-                costs.omitted_fusion_static_functions,
-                costs.omitted_fusion_dispatch_events,
-                costs.omitted_fusion_outcome_events,
+                costs.omitted_execution_static_functions,
+                costs.omitted_execution_dispatch_events,
+                costs.omitted_execution_outcome_events,
                 costs.omitted_callsite_events
             )?;
             return Ok(());
         }
         write!(
             out,
-            "{{\"schema\":\"oxide-compile-vm-cost-v1\",\"metadata\":"
+            "{{\"schema\":\"oxide-compile-vm-cost-v2\",\"metadata\":"
         )?;
         metadata(out)?;
         write!(
@@ -551,13 +551,13 @@ mod enabled {
 
         write!(
             out,
-            ",\"fusion_diagnostics\":{{\"basis\":\"logical-profiled-events; no timing; executed-functions-only; max 4096 functions, 16384 sites per category, 4 callee identities per callsite\",\"callsite_scope\":\"ordinary-driver-enter-selected-only; other call and construct paths are excluded\",\"omitted\":{{\"static_functions\":{},\"dispatch_events\":{},\"outcome_events\":{},\"callsite_events\":{}}},\"functions\":[",
-            costs.omitted_fusion_static_functions,
-            costs.omitted_fusion_dispatch_events,
-            costs.omitted_fusion_outcome_events,
+            ",\"execution_diagnostics\":{{\"basis\":\"logical-profiled-events; no timing; executed-functions-only; max 4096 functions, 16384 sites per category, 4 callee identities per callsite\",\"callsite_scope\":\"ordinary-driver-enter-selected-only; other call and construct paths are excluded\",\"omitted\":{{\"static_functions\":{},\"dispatch_events\":{},\"outcome_events\":{},\"callsite_events\":{}}},\"functions\":[",
+            costs.omitted_execution_static_functions,
+            costs.omitted_execution_dispatch_events,
+            costs.omitted_execution_outcome_events,
             costs.omitted_callsite_events
         )?;
-        for (index, (key, cost)) in costs.fusion_static.iter().enumerate() {
+        for (index, (key, cost)) in costs.execution_static.iter().enumerate() {
             if index != 0 {
                 write!(out, ",")?;
             }
@@ -573,17 +573,18 @@ mod enabled {
             optional_u32(out, cost.definition_column_zero_based)?;
             write!(
                 out,
-                ",\"instructions\":{},\"direct_local_read_sites\":{},\"direct_argument_read_sites\":{},\"unfused_read_sites\":{},\"dense_candidate_sites\":{},\"dense_noncandidate_read_sites\":{}}}",
+                ",\"instructions\":{},\"direct_local_read_sites\":{},\"direct_argument_read_sites\":{},\"specialized_number_read_sites\":{},\"cached_field_read_sites\":{},\"dense_array_read_sites\":{},\"generic_read_sites\":{}}}",
                 cost.instructions,
                 cost.direct_local_read_sites,
                 cost.direct_argument_read_sites,
-                cost.unfused_read_sites,
-                cost.dense_candidate_sites,
-                cost.dense_noncandidate_read_sites
+                cost.specialized_number_read_sites,
+                cost.cached_field_read_sites,
+                cost.dense_array_read_sites,
+                cost.generic_read_sites
             )?;
         }
         write!(out, "],\"dispatch\":[")?;
-        for (index, (key, cost)) in costs.fusion_dispatch.iter().enumerate() {
+        for (index, (key, cost)) in costs.execution_dispatch.iter().enumerate() {
             if index != 0 {
                 write!(out, ",")?;
             }
@@ -591,12 +592,12 @@ mod enabled {
             write_function_site_key(out, &key.function, Some(key.pc))?;
             write!(
                 out,
-                ",\"visits\":{},\"static_noncandidate_visits\":{}}}",
-                cost.visits, cost.static_noncandidate_visits
+                ",\"visits\":{},\"generic_visits\":{}}}",
+                cost.visits, cost.generic_visits
             )?;
         }
         write!(out, "],\"sites\":[")?;
-        for (index, (key, cost)) in costs.fusion_sites.iter().enumerate() {
+        for (index, (key, cost)) in costs.execution_sites.iter().enumerate() {
             if index != 0 {
                 write!(out, ",")?;
             }
@@ -647,7 +648,7 @@ mod enabled {
             ("resolution", costs.resolution),
             ("lowering", costs.lowering),
             ("blocks", costs.blocks),
-            ("fusion", costs.fusion),
+            ("encode", costs.encode),
             ("relocation", costs.relocation),
             ("publish", costs.publish),
         ]

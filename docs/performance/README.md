@@ -1,78 +1,47 @@
-# Safe Rust 性能改善：已完成候选与测量入口
+# Safe Rust 执行优化
 
-> 本轮进展（2026-09-26，受测产品 `ae81f090`）：继续优化普通自有属性读取、materialized 数组读取、发布 local 初始化事实与标量帧清理，见[实现、逐片与累计证据](receipts/shared-paths-2026-09-26/README.md)。相对 main 同引擎代码基线，固定工作量 combined 指令 −13.24%；其中包含此前收益。新增属性片使 DeltaBlue/Splay 指令 −8.00%/−5.37%，新增数组片使 Crypto 再 −12.79%；调用片尚未证明整体加速。2,167 项 profiling 库测试及 Clippy 通过。四批八 isolated 加 combined 测量共约 8 分 16 秒；耗时仍标受干扰，非原版 V8 Score。
+以 PR #52 `996663f771afdabdc69d52c94bd4d2fb392e27b1` 为新起点：
+发布后使用单一 `ExecCode` 字流，`vm/execute.rs` 是唯一指令循环。
+当前实现由[架构文档](../architecture.md)描述；下述路线是待实施设计。
 
-后续优化先按[优化与 Profile 原则](principles.md)判断方向、候选和阶段性回退。当前仓库仍允许以性能证据推动跨模块执行架构改造；下方记录的历史候选、范围和门槛不限制新方案。
+## 当前阅读入口
 
-> 上一轮裁决（2026-09-26，产品源码 `b280ec8b`）：五项计划的本轮实现、画像与候选取舍见[完整收据](receipts/plan-closure-2026-09-26/README.md)。保留发布静态事实、融合入口选择、Number 写回和 dense 恢复，消除普通读写的 29 处机器调用点；撤回 receiver 性能转移，保留失败所有权清理修复。20 项固定矩阵相对 Parent／上一集成版本未出现超过 2% 的指令回退；Object 的约 7% cycles 回退不再重现。2,158 项库测试、fast CI 和 focused Test262 通过。
-> 研发迭代使用八 isolated 加 combined 的固定工作量 A/A、A/B；最终四批各用 129–200 秒，采样截止为 600 秒。combined 退休指令相对 Parent／R0／B37 减少 6.15%／10.42%／10.84%，其中历史累计收益不能全归最后一片。**同机干扰下整体耗时仍未裁决；这些不是原版 V8 Score，也没有达到或证明 3–4 倍目标。** 原版 Score 留待专门的完整复核，不要求每个研发切片小时级长跑。
-> 上一轮（2026-09-26）：继续削减 Array dense 恢复的分配与验证、非 method 调用的重复 callee 读取，将前／后缀增减方向编码到发布计划，并细分 materialized 失败诊断。2,152 项库测试通过；仅测三项短探针共 12 个进程，小幅指令变化不作收益准入。见[当轮实现与收据](receipts/cost-follow-up-2026-09-26/README.md)。
-> 上一轮：完整倒序填充后的 Array dense 恢复、Dense 首操作数事实传递、普通调用单次参数校验已实现，并修正字典数组截断的命名键顺序。仅执行短探针和一次 Crypto 逻辑诊断；额外 helper 导致的数组读取指令回退已定位并修正。见[继续实施收据](receipts/follow-through-2026-09-26/README.md)。
-> 前一轮：测量与文档修正、八项 V8 的函数／PC 诊断、单次融合入口选择及普通写入分类内联已实现。原版 V8 时间采样按维护者要求在 RegExp 后停止；历史固定矩阵和执行契约见[入口实验收据](receipts/entry-choice-2026-09-26/README.md)。候选正式 Score 和整体时间准入仍未裁决。
-> 历史状态（2026-09-25）：#41 错误载体和 P2–P4 全部 13 种数值数组跨度已在集成分支实现；四函数[真实 manifest](receipts/all-dense-6db6bfb0/README.md)有 25 个已发布站点。完整[四方 benchmark、profile 与代码审查收据](receipts/fourway-2026-09-25/README.md)已归档。
-> 本轮已完成候选与测量证据的入口；取代原 `docs/reports/` 中的 S0–S3 规划、接线清单和混合实施计划。后续路线应由新的成本与覆盖证据决定，本文中的候选接口和接线方式不自动成为架构约束。
-> 文档基线：`f531f6052cb497ce4707f01c276e8642e5e26788`（main，PR #48）。
+- [优化与 Profile 原则](principles.md)：事实的建立阶段、有效作用域、所有权和证据要求。
+- [后续路线与 M1](roadmap.md)：三十项模式的去向；先连通 `sum += array[i] * scale` 的编译、准入、计算与一次提交。
+- [测量协议](measurement.md)：新系列对照 #52 与 Parent，分开编译、执行、适应、内存与延迟。
+- [诊断工具](../profiling.md)与[benchmark 工具](../../scripts/benchmark/README.md)：真实计数覆盖、运行入口与限制。
+- [固定工作量配方](probes/README.md)：工作量及输出契约；历史 case 名称不代表 #52 的 opcode 分类。
 
-下述四方成绩测于组合源码 `ac51577babb00f9eba60282652f817a79d85d5e9`。其后的 VM 改动在 2026-09-26 新系列中分别重建和测量；历史分数不能当作当前分支的成绩，也不与新系列的绝对数值相除。
+优化先删除重复工作，再测其机器成本和真实覆盖。单一候选的结果可以改变形态、
+接口及实施顺序；历史百分比门槛、旧 helper 边界和一次失败不限制新设计。
+保留 safe Rust、JavaScript 可观察语义、完整代际身份、root 与释放责任。
 
-普通 Number 写入最初的[探索性固定工作量收据](receipts/ordinary-number-writes-2026-09-26/README.md)记录了数值负载收益和对象负载回退，当时尚未通过完整性能门禁。最新收据另行记录 Number 撤回未能修复回退、普通读写内联后的组合复核；不得把旧状态或旧分数移用于当前源码。
+## 历史收据索引
 
-## 1. 历史结论与阅读入口
+每项结果只属于其记录的源码、工具链、负载和二进制。日期是实验系列日期，
+不是对当前 HEAD 的重新验证。#52 重写收据使用其记载的临时测量快照
+`e0c2037970e168c0cfd2a606b1558ab780020b41`，不能仅凭本次文档修改把它
+改称 #52 commit 的一次新测量。后续系列须重建明确的 #52 对照。
 
-**#41 与数值／数组执行块的既定代码已完成；当时受测组合版相对 R0 的原版 V8 combined Score 中位数从 115 升至 130（+13.0%）。** 旧独立候选的微负载回退与本次四方对照并列保留；调用专用化没有纳入本轮实现。
-
-| 工作 | 新裁决 | 原因 | 执行入口 |
-| --- | --- | --- | --- |
-| #41 紧凑错误载体 | 已恢复并集成；R0 独立复验出现 cycles／错误分配／RSS 回退 | 本次八项隔离几何平均单独 +6.4%，但旧微负载回退未消失 | [实施 A](implementation.md#a-error) |
-| #42 数值／数组执行块 | 13 种形态已完整接入；四函数静态发布 25 站点 | 单独八项隔离几何平均 +5.4%，NavierStokes +55%；真实动态覆盖见收据 | [实施 B](implementation.md#b-arrays) |
-| #43 调用专用化 | 当次移出主线，仅留 DeltaBlue 定向复评 | 四个 V8 子项中已归组的 JS 调用符号自时间为 0.96–10.46%，native 编组为 0.36–1.06%；内联与跨边界成本未被完整归组，不能据此给调用机制收益设上界 | [条件项](implementation.md#c-deferred) |
-| #44 S3 检查顺序 | 不采纳，不把重排留在默认路径 | 命中 +12、peek 失败 +43 指令／次，实际采样未发现需要的 acc 失败占比 | [证据与重开条件](evidence.md#e44) |
-
-旧差距数字来自 issue 评论，R0／#41 独立候选复验见[旧门禁收据](receipts/gates-2026-09-25/README.md)；本次[四方正式 benchmark 和 profile](receipts/fourway-2026-09-25/README.md)分别给出单独及组合结果。完整来源、测量版本及限制见 [证据账本](evidence.md) 和 [测量协议](measurement.md)。数组主线的 opcode、签名、生命周期及逐函数接线见 [实施规格 v1](numeric-array-spans.md)。
-
-## 2. 目标、边界与不变量
-
-目标由本轮维护者需求确定：在同协议重建的 PR #37 快照上，把原版 v8-v7 **总分提高到 3–4 倍**；同时报告相对本轮起点 R0 的净增量。这里的 3–4 倍是工程目标，不是现有实验已经证明的结果，更不是单个微循环的指令倍率。不得把 PR #37 已经取得的收益重新计入本轮收益。
-
-正式目标分母 B37 为 `3341ac456ea2719858fd6173e8dcd9123ad9e660`，它确实是 PR #37 的 head，但其自身是文档／receipt 提交；实施合入记录是 `26a5726a19efb0088c59d0325f6c3db3699b7048`。当前起点 R0 为 `f531f605...`。两者、每片父版本和更早的回退债务基线分别重建、分别报告，不能共用历史二进制或冻结绝对指令数。详见 [基线定义](measurement.md#baselines)。
-
-语义与项目硬边界：保持 safe Rust，workspace 的 `unsafe_code = "forbid"` 不变；无 JIT、动态机器码、copy-and-patch；完整 generation、已有可观察释放边界及对外 API、异常类型／消息／位置、容量错误、TDZ、getter／Proxy／转换顺序不因性能改造而退化。不能用延迟释放或切换 GC 掩盖成本。依据仍是 [parity 契约](../parity.md)。当次候选另外固定了当前 16B 值表示与 RC／循环回收，未开展 NaN-box 迁移；这是当次实验范围，不是未来内部表示的永久禁令。改变表示须单独证明语义和成本，不得把已有结果沿用为新方案证据。
-
-编译器、解析器、模块和 Test262 的独立契约文档不在本次清理范围。已完成的 D 阶段布局、shape 和 Map 改造属于基线，不再包装成新增收益。
-
-## 3. 总分目标的覆盖要求
-
-v8-v7 有八个子套件：Richards、DeltaBlue、Crypto、RayTrace、EarleyBoyer、RegExp、Splay、NavierStokes。总分的增益为各子项增益的几何平均：
-
-```text
-G = exp(sum(log(score_new[i] / score_base[i])) / 8)
-```
-
-只让 Crypto 与 NavierStokes 各快 4 倍，其余不变，总分只有约 1.414 倍；三个子项各快 4 倍也只有约 1.682 倍。RegExp 不变时，其余七项平均须约 3.51／4.88 倍，才能使总分达到 3／4 倍。这些是算术条件，不是预测。
-
-因此数组路线成功也不能直接宣布项目目标完成。这些算术条件要求审查整体覆盖，并不限制跨模块或大范围的架构优化。阶段性诊断应记录八项覆盖：基线时间／分数、候选动态覆盖、成功与失败分布、固定工作量变化和未覆盖成本；原版正式分数留到阶段性集成或发布裁决。没有 profile 的空白填“未测”，不能填 0，也不能把 `run::run` 之外的时间一概归给调用或 RC。
-
-#43 当次的符号自时间画像不足以证明调用机制的收益上界，也未提供足以投入大范围改造的正面证据。后续是否重开调用专项，应按新负载中的实际 callsite 分布、内联代码和跨边界成本重新裁决。
-
-## 4. 原实施顺序与当前状态
-
-下表保留 2026-09-25 当次的逐片准入设计。当时维护者要求完成既定代码，即使独立候选未达性能门槛也继续实现并记录结果；这是已发生的实施决策，不要求以后继续实现未达门槛的候选。新证据可以推翻候选形态、接口和投入顺序；新的性能回退须按测量协议处理。
-
-| 切片 | 交付物 | 启动与退出条件 |
+| 日期 | 收据 | 内容 |
 | --- | --- | --- |
-| P0：证据可复现化 | 四个固定探针入库、完整构建／负载 receipts、八子项基线、历史回退债务表 | 不改引擎；先解决工具链／上游版本不一致和原始产物不可取得的问题 |
-| P1：#41 收尾 | 原始候选可取、补测报告、单独引擎 PR | 空载 cycles／RSS／错误分配及语义全部通过后才接纳；不重做已被内联消除的 helper |
-| P2：数组读取跨度 | R0–R3（普通／数值索引／前后缀更新读）、失败计数、差分测试 | 当次按规格 flags 1–4 实施；完整函数 dump 核对覆盖 |
-| P3：数值数据流 | R4 与 A0–A3（flags 5–9），精确 Number 数据流与 local 提交 | P2 删除工作且真实子项有收益后启动；每个新形态独立 A/B |
-| P4：数组写 | W0–W3（flags 10–13），已有 dense 数值槽写回 | 不新增属性／扩容／捕获绑定；alias、赋值栈契约及 property_generation 按规格执行 |
-| P5：整套裁决 | 原版 isolated／combined、固定矩阵、编译／内存与一致性结果 | 同时通过逐片和累计门禁；报告距离 3–4 倍的缺口，不改分母 |
+| 2026-09-27 | [VM 重写](receipts/vm-rewrite-2026-09-27/README.md) | 单流替换、语义验证、固定工作量与原版 Score |
+| 2026-09-26 | [Shared paths](receipts/shared-paths-2026-09-26/README.md) | 自有属性、materialized 数组读、调用与帧清理 |
+| 2026-09-26 | [Plan closure](receipts/plan-closure-2026-09-26/README.md) | 静态事实、内联、候选取舍与累计证据 |
+| 2026-09-26 | [Cost follow-up](receipts/cost-follow-up-2026-09-26/README.md) | 存储恢复、callee 读取和短探针 |
+| 2026-09-26 | [Follow-through](receipts/follow-through-2026-09-26/README.md) | dense 恢复、首操作数与调用校验 |
+| 2026-09-26 | [Entry choice](receipts/entry-choice-2026-09-26/README.md) | 旧融合入口、非候选与自然 miss 成本 |
+| 2026-09-26 | [Number writes](receipts/ordinary-number-writes-2026-09-26/README.md) | 普通数值写入探索 |
+| 2026-09-25 | [Four-way](receipts/fourway-2026-09-25/README.md) | 错误载体/数组候选单独及组合 Score |
+| 2026-09-25 | [Gates](receipts/gates-2026-09-25/README.md) | 当次 #41 复验与负结果 |
+| 2026-09-25 | [Array manifest](receipts/all-dense-6db6bfb0/README.md) | 旧发布器的四函数、25 静态站点 |
+| 2026-09-25 | [R0](receipts/r0-d6080b38/README.md) | 旧 R0 数组读取的编译/发布覆盖 |
 
-P0 的真实 dump 已完成，P1 与 P2–P4 的代码已集成。测量仍必须串行，并分别报告 R0、R0+#41、R0+数组与组合版，不能把独立候选结果相加。
+[issues #41–#44 证据账本](evidence.md)、[历史报告](../reports/README.md)、
+[前端编译测量](../compile-benchmark.md)和[原语 VM 历史结果](../primitive-vm.md)
+保留各自来源。B37/R0/H0、旧 3–4 倍目标及实验门槛属于这些历史系列，
+不作为 #52 新路线的准入要求，也不因清理而成为已完成的收益。
 
-P2 当时拟定的继续门槛是目标固定探针退休指令下降至少 30%，并在至少一个对应真实 V8 子项上确认至少 3% 的 Score 改善；它们是该计划的投入门槛，不是已有测量或最终 3–4 倍的替代指标。后续投入应重新依据真实覆盖、净收益和回退成本裁决，允许调整内部表示、执行边界与候选集合；语义、所有权及错误顺序仍须验证。
-
-## 5. 文档与状态纪律
-
-本目录文档各司其职：[principles.md](principles.md) 指导后续优化和 Profile；本页记录当次决策与排程；[evidence.md](evidence.md) 记录事实、来源和未知项；[implementation.md](implementation.md) 记录阶段职责；[numeric-array-spans.md](numeric-array-spans.md) 保存已完成候选的 opcode、API、逐函数修改和测试契约；[measurement.md](measurement.md) 记录分母、实验和取舍方法。后续方案可删除或替换内部限制，须另记设计依据、日期、commit、测量和语义验证，避免把历史实施规格当作永久限制。
-
-上述受测组合包含 #41 和 #42 的产品代码；它的历史成绩不代表后续 VM 改动的成绩。旧 B1/C 的失败仍是设计输入；被删除的混合计划可由 Git 历史恢复。Rust 编译与四函数发布后 dump 已执行；静态 manifest 不能代替动态覆盖、Test262 full 或正式 Score。
+已删除的 performance slice、numeric span、verify/publication、lexer/parser
+及 Test262 migration 计划可在[清理前固定快照](https://github.com/pocket-nexus/quickjs-oxide/tree/996663f771afdabdc69d52c94bd4d2fb392e27b1/docs)
+查阅。现行语义与操作说明保存在当前指南；历史计划不再是实现指令。

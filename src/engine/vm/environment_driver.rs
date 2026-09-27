@@ -65,33 +65,6 @@ pub(super) enum Operation {
     },
 }
 
-/// Own global data can complete in the run borrow after its unresolved cell
-/// and immutable closure descriptor are authenticated. Every exotic case
-/// declines, retaining strict/TDZ errors, getters and lazy builtin creation.
-pub(super) fn try_global_own_read(
-    runtime: &Runtime,
-    executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
-    roots: &super::closure::ClosureSlots,
-    index: u16,
-) -> Result<Option<JsValue>, Error> {
-    use crate::engine::code::function::metadata::ClosureVariableName;
-    let Some(descriptor) = executable.closure_variables.get(usize::from(index)) else {
-        return Ok(None);
-    };
-    if descriptor.is_lexical || descriptor.kind.is_private() {
-        return Ok(None);
-    }
-    let ClosureVariableName::Atom(atom) = descriptor.name else {
-        return Ok(None);
-    };
-    let Some(root) = roots.get(usize::from(index)) else {
-        return Ok(None);
-    };
-    runtime
-        .try_read_unresolved_global(&root, executable.realm, atom)
-        .map_err(runtime_error_to_vm_error)
-}
-
 #[inline(never)]
 pub(super) fn step(
     runtime: &Runtime,
@@ -478,10 +451,7 @@ pub(super) fn step(
                     runtime, execution, id, step, value_use, depth,
                 );
             }
-            frame.resume_pc = frame
-                .fault_pc
-                .checked_add(1)
-                .ok_or_else(|| Error::internal("environment resume PC overflow"))?;
+            frame.resume_pc = frame.next_pc()?;
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_instruction(depth);
             if let Some((callable, receiver, arguments, value_use)) = request {

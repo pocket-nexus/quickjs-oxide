@@ -18,12 +18,13 @@ mod phases;
 pub(crate) use phases::{CompilePhase, PhaseTimer, VmCallSample};
 mod sites;
 pub use sites::{
-    CallsiteCost, FunctionSiteKey, FusionDispatchCost, FusionSiteCost, FusionSiteKey,
-    FusionStaticCost, SiteKey,
+    CallsiteCost, ExecutionDispatchCost, ExecutionSiteCost, ExecutionSiteKey, ExecutionStaticCost,
+    FunctionSiteKey, SiteKey,
 };
 #[cfg(feature = "profiling")]
 pub(crate) use sites::{
-    record_callsite_callee, record_fusion_dispatch, record_fusion_outcome, record_fusion_static,
+    record_callsite_callee, record_execution_dispatch, record_execution_outcome,
+    record_execution_static,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -109,7 +110,7 @@ pub struct CostSnapshot {
     pub resolution: PhaseCost,
     pub lowering: PhaseCost,
     pub blocks: PhaseCost,
-    pub fusion: PhaseCost,
+    pub encode: PhaseCost,
     pub relocation: PhaseCost,
     pub publish: PhaseCost,
     /// Successfully lowered function drafts, including nested functions.
@@ -137,17 +138,17 @@ pub struct CostSnapshot {
     pub vm_phases: std::collections::BTreeMap<&'static str, VmPhaseCost>,
     /// Published bytecode shape, recorded once per executed function in this
     /// scope; this is not an inventory of every compiled function.
-    pub fusion_static: std::collections::BTreeMap<FunctionSiteKey, FusionStaticCost>,
+    pub execution_static: std::collections::BTreeMap<FunctionSiteKey, ExecutionStaticCost>,
     /// Dynamic visits to direct local/argument producers, including sites with
     /// no published candidate. These are logical visits, not time samples.
-    pub fusion_dispatch: std::collections::BTreeMap<SiteKey, FusionDispatchCost>,
+    pub execution_dispatch: std::collections::BTreeMap<SiteKey, ExecutionDispatchCost>,
     /// Each attempted published span is recorded at its canonical starting PC.
-    pub fusion_sites: std::collections::BTreeMap<FusionSiteKey, FusionSiteCost>,
+    pub execution_sites: std::collections::BTreeMap<ExecutionSiteKey, ExecutionSiteCost>,
     /// Ordinary callsite callee identity observations. No JS owner is retained.
     pub callsites: std::collections::BTreeMap<SiteKey, CallsiteCost>,
-    pub omitted_fusion_static_functions: u64,
-    pub omitted_fusion_dispatch_events: u64,
-    pub omitted_fusion_outcome_events: u64,
+    pub omitted_execution_static_functions: u64,
+    pub omitted_execution_dispatch_events: u64,
+    pub omitted_execution_outcome_events: u64,
     pub omitted_callsite_events: u64,
 }
 

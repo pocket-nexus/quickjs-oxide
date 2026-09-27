@@ -45,7 +45,7 @@ pub(super) fn dispatch(
     runtime: &Runtime,
     execution: &mut RunningExecution,
     id: FrameId,
-    exit: RunExit,
+    exit: VmAction,
     forwarded: &mut Option<Completion>,
     conversion: &mut Option<super::super::conversion_driver::ConversionTask>,
     next_operation: &mut u64,
@@ -61,7 +61,7 @@ pub(super) fn dispatch(
         conversion_prepared,
     };
     Ok(match exit {
-        RunExit::Pure(operation) => {
+        VmAction::Pure(operation) => {
             let step = super::super::frame_operations::pure(
                 context.runtime,
                 context.execution,
@@ -70,7 +70,7 @@ pub(super) fn dispatch(
             )?;
             context.step(step)
         }
-        RunExit::CopyData {
+        VmAction::CopyData {
             target,
             source,
             excluded,
@@ -85,7 +85,7 @@ pub(super) fn dispatch(
             )?;
             context.step(step)
         }
-        RunExit::HomeObject => {
+        VmAction::HomeObject => {
             let step = super::super::frame_operations::home_object(
                 context.runtime,
                 context.execution,
@@ -93,7 +93,7 @@ pub(super) fn dispatch(
             )?;
             context.step(step)
         }
-        RunExit::GetSuper => {
+        VmAction::GetSuper => {
             let step = super::super::frame_operations::get_super(
                 context.runtime,
                 context.execution,
@@ -101,7 +101,7 @@ pub(super) fn dispatch(
             )?;
             context.step(step)
         }
-        RunExit::BindingError {
+        VmAction::BindingError {
             index,
             redeclaration,
         } => {
@@ -114,7 +114,7 @@ pub(super) fn dispatch(
             )?;
             context.step(step)
         }
-        RunExit::PrivateInitialize { index, kind } => {
+        VmAction::PrivateInitialize { index, kind } => {
             let step = super::super::frame_operations::private_initialize(
                 context.runtime,
                 context.execution,
@@ -124,7 +124,7 @@ pub(super) fn dispatch(
             )?;
             context.step(step)
         }
-        RunExit::PrivateAccess { source, access } => {
+        VmAction::PrivateAccess { source, access } => {
             let step = super::super::frame_operations::private_access(
                 context.runtime,
                 context.execution,
@@ -134,7 +134,7 @@ pub(super) fn dispatch(
             )?;
             context.step(step)
         }
-        RunExit::ForIn(next) => {
+        VmAction::ForIn(next) => {
             let step = super::super::frame_operations::for_in(
                 context.runtime,
                 context.execution,
@@ -143,7 +143,7 @@ pub(super) fn dispatch(
             )?;
             context.step(step)
         }
-        RunExit::Numeric(kind) => {
+        VmAction::Numeric(kind) => {
             let step = super::super::frame_operations::numeric(
                 context.runtime,
                 context.execution,
@@ -152,7 +152,7 @@ pub(super) fn dispatch(
             )?;
             context.step(step)
         }
-        RunExit::StrictEquality(negate) => {
+        VmAction::StrictEquality(negate) => {
             let step = super::super::frame_operations::strict_equality(
                 context.runtime,
                 context.execution,
@@ -161,7 +161,7 @@ pub(super) fn dispatch(
             )?;
             context.step(step)
         }
-        exit @ (RunExit::Arguments(_) | RunExit::Rest(_)) => {
+        exit @ (VmAction::Arguments(_) | VmAction::Rest(_)) => {
             let step = super::super::frame_operations::arguments(
                 context.runtime,
                 context.execution,
@@ -170,7 +170,7 @@ pub(super) fn dispatch(
             )?;
             context.step(step)
         }
-        RunExit::SetName(index) => {
+        VmAction::SetName(index) => {
             let step = super::super::frame_operations::set_name(
                 context.runtime,
                 context.execution,
@@ -179,7 +179,7 @@ pub(super) fn dispatch(
             )?;
             context.step(step)
         }
-        RunExit::InstantiateClosure(index) => {
+        VmAction::InstantiateClosure(index) => {
             let step = super::super::frame_operations::instantiate_closure(
                 context.runtime,
                 context.execution,
@@ -188,7 +188,7 @@ pub(super) fn dispatch(
             )?;
             context.step(step)
         }
-        RunExit::ResetCaptured(index) => {
+        VmAction::ResetCaptured(index) => {
             let step = super::super::frame_operations::reset_captured(
                 context.runtime,
                 context.execution,
@@ -197,7 +197,7 @@ pub(super) fn dispatch(
             )?;
             context.step(step)
         }
-        RunExit::CloseCaptured(index) => {
+        VmAction::CloseCaptured(index) => {
             let step = super::super::frame_operations::close_captured(
                 context.runtime,
                 context.execution,
@@ -206,7 +206,7 @@ pub(super) fn dispatch(
             )?;
             context.step(step)
         }
-        exit @ (RunExit::Catch(_) | RunExit::DropCatch | RunExit::NipCatch) => {
+        exit @ (VmAction::Catch(_) | VmAction::DropCatch | VmAction::NipCatch) => {
             let step = super::super::frame_operations::catch(
                 context.runtime,
                 context.execution,
@@ -215,7 +215,7 @@ pub(super) fn dispatch(
             )?;
             context.step(step)
         }
-        RunExit::Throw => {
+        VmAction::Throw => {
             let step = super::super::frame_operations::throw(
                 context.runtime,
                 context.execution,
@@ -223,7 +223,7 @@ pub(super) fn dispatch(
             )?;
             context.step(step)
         }
-        RunExit::Binding {
+        VmAction::Binding {
             source,
             index,
             write,
@@ -242,7 +242,7 @@ pub(super) fn dispatch(
             )?;
             context.step(step)
         }
-        RunExit::LexicalUninitialized(index) => {
+        VmAction::LexicalUninitialized(index) => {
             let step = super::super::frame_operations::lexical_uninitialized(
                 context.runtime,
                 context.execution,
@@ -251,7 +251,7 @@ pub(super) fn dispatch(
             )?;
             context.step(step)
         }
-        RunExit::InitializeDerived(index) => {
+        VmAction::InitializeDerived(index) => {
             let step = super::super::frame_operations::initialize_derived(
                 context.runtime,
                 context.execution,
@@ -260,7 +260,7 @@ pub(super) fn dispatch(
             )?;
             context.step(step)
         }
-        RunExit::ReturnDerived(index) => {
+        VmAction::ReturnDerived(index) => {
             let step = super::super::frame_operations::return_derived(
                 context.runtime,
                 context.execution,
@@ -269,7 +269,7 @@ pub(super) fn dispatch(
             )?;
             context.step(step)
         }
-        RunExit::NormalizeThis => {
+        VmAction::NormalizeThis => {
             let step = super::super::frame_operations::normalize_this(
                 context.runtime,
                 context.execution,
@@ -277,55 +277,56 @@ pub(super) fn dispatch(
             )?;
             context.step(step)
         }
-        RunExit::Call {
+        VmAction::Call {
             arguments,
             method,
             tail,
         } => call(&mut context, arguments, method, tail)?,
-        RunExit::Environment(super::super::environment_driver::Operation::Has { source, name }) => {
-            with_has(&mut context, source, name)?
-        }
-        RunExit::Environment(op) => environment(&mut context, op)?,
-        RunExit::DefineProperty { key, method } => define_property(&mut context, key, method)?,
-        RunExit::DefineClass { name, has_heritage } => {
+        VmAction::Environment(super::super::environment_driver::Operation::Has {
+            source,
+            name,
+        }) => with_has(&mut context, source, name)?,
+        VmAction::Environment(op) => environment(&mut context, op)?,
+        VmAction::DefineProperty { key, method } => define_property(&mut context, key, method)?,
+        VmAction::DefineClass { name, has_heritage } => {
             define_class(&mut context, name, has_heritage)?
         }
-        RunExit::ClassInitializer(mode) => class_initializer(&mut context, mode)?,
-        RunExit::Construct(count) => construct(&mut context, count)?,
-        RunExit::Apply(kind) => apply(&mut context, kind)?,
-        RunExit::InitDerivedConstructor => init_derived_constructor(&mut context)?,
-        RunExit::ConvertAdd => convert(&mut context, true, false)?,
-        RunExit::ApplyEval(environment) => apply_eval(&mut context, environment)?,
-        RunExit::Eval {
+        VmAction::ClassInitializer(mode) => class_initializer(&mut context, mode)?,
+        VmAction::Construct(count) => construct(&mut context, count)?,
+        VmAction::Apply(kind) => apply(&mut context, kind)?,
+        VmAction::InitDerivedConstructor => init_derived_constructor(&mut context)?,
+        VmAction::ConvertAdd => convert(&mut context, true, false)?,
+        VmAction::ApplyEval(environment) => apply_eval(&mut context, environment)?,
+        VmAction::Eval {
             arguments,
             environment,
         } => eval(&mut context, arguments, environment)?,
-        RunExit::Import => import(&mut context)?,
-        RunExit::Predicate(kind) => predicate(&mut context, kind)?,
-        RunExit::SuperProperty(kind) => super_property(&mut context, kind)?,
-        RunExit::SetProperty(key) => set_property(&mut context, key)?,
-        RunExit::GetField {
+        VmAction::Import => import(&mut context)?,
+        VmAction::Predicate(kind) => predicate(&mut context, kind)?,
+        VmAction::SuperProperty(kind) => super_property(&mut context, kind)?,
+        VmAction::SetProperty(key) => set_property(&mut context, key)?,
+        VmAction::GetField {
             index,
             keep_receiver,
         } => get_field(&mut context, index, keep_receiver)?,
-        RunExit::GetElement {
+        VmAction::GetElement {
             keep_receiver,
             keep_key,
         } => get_element(&mut context, keep_receiver, keep_key)?,
-        RunExit::ConvertPlus => convert(&mut context, false, false)?,
-        RunExit::ConvertPropertyKey => convert(&mut context, false, true)?,
+        VmAction::ConvertPlus => convert(&mut context, false, false)?,
+        VmAction::ConvertPropertyKey => convert(&mut context, false, true)?,
         #[cfg(all(test, feature = "profiling"))]
-        exit @ RunExit::ReleaseOperand { .. } => direct(&mut context, exit)?,
-        RunExit::Complete => {
+        exit @ VmAction::ReleaseOperand { .. } => direct(&mut context, exit)?,
+        VmAction::Complete => {
             if matches!(context.forwarded, Some(Completion::Throw(_))) {
                 Disposition::Rethrow
             } else {
                 Disposition::Complete
             }
         }
-        RunExit::Bridge => Disposition::Bridge,
-        RunExit::Suspend(kind) => Disposition::Suspend(kind),
-        RunExit::PrimitiveThrow | RunExit::AddLocal | RunExit::Materialize => {
+        VmAction::Bridge => Disposition::Bridge,
+        VmAction::Suspend(kind) => Disposition::Suspend(kind),
+        VmAction::Materialize => {
             return Err(Error::internal("resident-only exit reached cold dispatch"));
         }
     })
@@ -333,7 +334,7 @@ pub(super) fn dispatch(
 
 #[inline(never)]
 #[cfg(all(test, feature = "profiling"))]
-fn direct(context: &mut Context<'_>, exit: RunExit) -> Result<Disposition, Error> {
+fn direct(context: &mut Context<'_>, exit: VmAction) -> Result<Disposition, Error> {
     if super::super::frame_operations::complete_owned_slot(
         context.runtime,
         context.execution,
@@ -751,6 +752,6 @@ mod tests {
     #[test]
     fn cold_dispatch_carries_only_disposition_not_completion_owners() {
         assert!(size_of::<Disposition>() <= 8);
-        assert!(size_of::<RunExit>() <= 32);
+        assert!(size_of::<VmAction>() <= 32);
     }
 }

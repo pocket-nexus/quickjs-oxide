@@ -74,6 +74,7 @@ pub(in crate::engine::vm) fn release_frame_binding(
 /// operation boundary. Pending releases must take the canonical path because
 /// its RuntimeOperation drains them before observing the cell.
 #[inline]
+#[cfg(test)]
 pub(in crate::engine::vm) fn read_immediate_cell(
     runtime: &Runtime,
     root: &impl crate::engine::heap::roots::VarRefHandle,
@@ -97,34 +98,11 @@ pub(in crate::engine::vm) fn read_immediate_cell(
     }
 }
 
-/// Keep the scalar read cheap; only a non-immediate miss attempts an owned
-/// shared-borrow read. `None` declines to the ordinary binding path. The flag
-/// distinguishes profiling events; a trusted non-immediate read never fails,
-/// so a stale or sentinel cell panics instead of returning an error.
-#[inline]
-pub(in crate::engine::vm) fn read_run_cell(
-    runtime: &Runtime,
-    root: &impl crate::engine::heap::roots::VarRefHandle,
-) -> Option<(JsValue, bool)> {
-    if let Some(value) = read_immediate_cell(runtime, root) {
-        return Some((value, false));
-    }
-    if let Some(value) = runtime.read_owned_cell_fast(root) {
-        return Some((value, true));
-    }
-    // Cold decline: Symbols need an atom-table retain, and other cases fall
-    // back to the ordinary binding path when this returns `None`.
-    runtime
-        .try_read_owned_var_ref(root)
-        .ok()
-        .flatten()
-        .map(|value| (value, true))
-}
-
 /// Commit only a no-owner immediate replacement. The caller first proves its
 /// operand exists; no stack/heap mutation can occur between that peek and the
 /// successful write, so consuming that same immediate operand cannot fail.
 #[inline]
+#[cfg(test)]
 pub(in crate::engine::vm) fn try_write_immediate_cell(
     runtime: &Runtime,
     root: &impl crate::engine::heap::roots::VarRefHandle,
@@ -817,7 +795,6 @@ mod immediate_cell_tests {
     use crate::engine::value::Value;
 
     #[test]
-    #[cfg(feature = "profiling")]
     fn owned_cell_reads_keep_global_and_captured_function_identity() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
@@ -826,7 +803,6 @@ mod immediate_cell_tests {
                 .eval("let ownedCellGlobal = function() { return 7; };")
                 .unwrap(),
         );
-        let profile = crate::engine::api::profiling::CostProfile::start();
         assert_eq!(
             context
                 .eval(
@@ -843,13 +819,6 @@ mod immediate_cell_tests {
                 .unwrap(),
             Value::Bool(true)
         );
-        let cost = profile.snapshot();
-        for name in ["global_owned_cell_read", "captured_owned_cell_read"] {
-            assert!(
-                cost.owned_execution_events.get(name).copied().unwrap_or(0) > 0,
-                "{name}"
-            );
-        }
     }
 
     #[test]
@@ -1007,12 +976,10 @@ mod immediate_cell_tests {
     }
 
     #[test]
-    #[cfg(feature = "profiling")]
-    fn immediate_cell_write_profiles_prove_both_run_paths() {
+    fn owned_cell_writes_preserve_global_and_captured_values() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
         drop(context.eval("let profileWriteGlobal=1;").unwrap());
-        let profile = crate::engine::api::profiling::CostProfile::start();
         drop(
             context
                 .eval("profileWriteGlobal=2;profileWriteGlobal=3;")
@@ -1024,21 +991,7 @@ mod immediate_cell_tests {
                 .unwrap(),
             Value::Int(3)
         );
-        let cost = profile.snapshot();
-        assert!(
-            cost.owned_execution_events
-                .get("global_immediate_cell_write")
-                .copied()
-                .unwrap_or(0)
-                >= 2
-        );
-        assert!(
-            cost.owned_execution_events
-                .get("captured_immediate_cell_write")
-                .copied()
-                .unwrap_or(0)
-                >= 2
-        );
+        assert_eq!(context.eval("profileWriteGlobal").unwrap(), Value::Int(3));
     }
 
     #[test]
@@ -1133,12 +1086,10 @@ mod immediate_cell_tests {
     }
 
     #[test]
-    #[cfg(feature = "profiling")]
-    fn captured_immediate_reads_stay_in_the_authenticated_run() {
+    fn captured_reads_preserve_global_and_closure_values() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
         drop(context.eval("let immediateProfileGlobal=7;").unwrap());
-        let profile = crate::engine::api::profiling::CostProfile::start();
         assert_eq!(
             context.eval("immediateProfileGlobal").unwrap(),
             Value::Int(7)
@@ -1148,21 +1099,6 @@ mod immediate_cell_tests {
                 .eval("(()=>{let x=2;function get(){return x;}return get()+get();})()")
                 .unwrap(),
             Value::Int(4)
-        );
-        let cost = profile.snapshot();
-        assert!(
-            cost.owned_execution_events
-                .get("global_immediate_cell_read")
-                .copied()
-                .unwrap_or(0)
-                > 0
-        );
-        assert!(
-            cost.owned_execution_events
-                .get("captured_immediate_cell_read")
-                .copied()
-                .unwrap_or(0)
-                >= 2
         );
     }
 }

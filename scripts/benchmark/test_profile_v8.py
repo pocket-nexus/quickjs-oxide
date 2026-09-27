@@ -58,7 +58,7 @@ class FixedV8Profile(unittest.TestCase):
             path = Path(directory) / "profile.jsonl"
             record = {"schema": profiler.COST_SCHEMA,
                       "metadata": {"profiling_feature": True, "commit": "a" * 40},
-                      "fusion_diagnostics": {
+                      "execution_diagnostics": {
                           "callsite_scope": "ordinary-driver-enter-selected-only",
                           "omitted": {"static_functions": 1, "dispatch_events": 2,
                                       "outcome_events": 3, "callsite_events": 4},
@@ -68,12 +68,12 @@ class FixedV8Profile(unittest.TestCase):
                       "unavailable": ["compile-peak-memory"]}
             path.write_text(json.dumps(record) + "\n")
             summary = profiler.parse_cost_json(path, "a" * 40)
-            self.assertEqual(summary["fusion_omitted"]["callsite_events"], 4)
+            self.assertEqual(summary["execution_omitted"]["callsite_events"], 4)
             self.assertEqual(summary["vm_phase_omitted_samples"], {"run": 5})
-            self.assertEqual(summary["fusion_counts"]["functions"], 1)
+            self.assertEqual(summary["execution_counts"]["functions"], 1)
             with self.assertRaisesRegex(ValueError, "embedded commit"):
                 profiler.parse_cost_json(path, "b" * 40)
-            record["fusion_diagnostics"]["omitted"].pop("callsite_events")
+            record["execution_diagnostics"]["omitted"].pop("callsite_events")
             path.write_text(json.dumps(record) + "\n")
             with self.assertRaisesRegex(ValueError, "omission counters"):
                 profiler.parse_cost_json(path)

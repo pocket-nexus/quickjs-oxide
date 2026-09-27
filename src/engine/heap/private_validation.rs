@@ -2,7 +2,7 @@
 
 use super::{
     AuthenticatedPrivateBindings, BytecodeConstant, ClassInitializerKind, ClosureSource,
-    ClosureVariableKind, ClosureVariableName, ConstructorKind, EvalKind, FunctionBytecodeData,
+    ClosureVariableKind, ClosureVariableName, ConstructorKind, EvalKind, FunctionBytecodeDraft,
     FunctionKind, HashSet, Heap, HeapError, Instruction, PrivateNameSource,
     PublishedPrivateBindingRole,
 };
@@ -22,7 +22,7 @@ struct PublishedPrivateBindingInfo {
 }
 
 fn validate_published_private_binding_metadata(
-    bytecode: &FunctionBytecodeData,
+    bytecode: &FunctionBytecodeDraft,
 ) -> Result<Option<&AuthenticatedPrivateBindings>, HeapError> {
     let has_private_bindings = bytecode
         .local_definitions
@@ -189,7 +189,7 @@ fn validate_published_private_binding_metadata(
 }
 
 fn validate_published_private_source(
-    bytecode: &FunctionBytecodeData,
+    bytecode: &FunctionBytecodeDraft,
     source: PrivateNameSource,
 ) -> Result<PublishedPrivateBindingInfo, HeapError> {
     let authenticated =
@@ -247,7 +247,7 @@ enum PrivateCallableInitializerKind {
 
 fn validate_published_private_callable_initializer(
     heap: &Heap,
-    bytecode: &FunctionBytecodeData,
+    bytecode: &FunctionBytecodeDraft,
     pc: usize,
     binding_index: u16,
     accessor_role: Option<PublishedPrivateBindingRole>,
@@ -454,7 +454,7 @@ fn ordinary_private_closure_operand(instruction: &Instruction) -> Option<u16> {
 
 pub(super) fn validate_published_private_elements(
     heap: &Heap,
-    bytecode: &FunctionBytecodeData,
+    bytecode: &FunctionBytecodeDraft,
 ) -> Result<(), HeapError> {
     let mut initialization_counts = vec![0_u8; bytecode.local_definitions.len()];
     let mut scope_entry_counts = vec![0_u8; bytecode.local_definitions.len()];

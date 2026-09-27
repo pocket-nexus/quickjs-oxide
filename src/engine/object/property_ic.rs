@@ -4,6 +4,7 @@ use std::cell::Cell;
 
 use crate::engine::api::{runtime::Runtime, runtime_error::RuntimeError};
 use crate::engine::atom::{Atom, AtomIdx, AtomTable};
+#[cfg(test)]
 use crate::engine::code::bytecode::Instruction;
 use crate::engine::heap::{ContextId, Heap, ObjectId, ObjectKind, PropertySlot, RawValue, ShapeId};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -308,69 +309,54 @@ fn locate(
     }
 }
 
-/// Own writable data locations use the same domain/revision/revival guards.
-#[derive(Debug, Default)]
-pub(crate) struct PropertyWriteCache(PropertyReadCache);
-impl PropertyWriteCache {
-    pub(crate) fn slot(
-        &self,
-        heap: &Heap,
-        domain: u64,
-        realm: ContextId,
-        receiver: ObjectId,
-    ) -> Option<usize> {
-        self.0.read(heap, domain, realm, receiver)?;
-        let location = match self.0.state.get() {
-            State::Monomorphic(location) => location,
-            State::Polymorphic([first, _]) => first,
-            _ => return None,
-        };
-        if location.depth != 0 {
-            return None;
-        }
-        if matches!(heap.object(receiver).ok()?.kind, ObjectKind::Array) && location.slot == 0 {
-            return None;
-        }
-        let shape = heap.shape(location.shape).ok()?;
-        shape
-            .entries()
-            .get(location.slot as usize)?
-            .flags
-            .writable
-            .then_some(location.slot as usize)
-    }
-    pub(crate) fn miss(
-        &self,
-        heap: &Heap,
-        atoms: &AtomTable,
-        domain: u64,
-        realm: ContextId,
-        receiver: ObjectId,
-        atom: Atom,
-    ) {
-        self.0
-            .miss(heap, atoms, domain, realm, Some(receiver), atom);
-    }
-}
-#[derive(Debug)]
-enum PropertyCache {
-    Read(PropertyReadCache),
-    Write(PropertyWriteCache),
-}
 #[derive(Debug)]
 pub(crate) struct PropertyReadCacheTable {
     site_bits: Box<[u64]>,
     block_ranks: Box<[u32]>,
-    sites: Box<[PropertyCache]>,
+    sites: Box<[PropertyReadCache]>,
 }
 impl PropertyReadCacheTable {
+    pub(crate) fn new_exec(code: &crate::engine::code::exec::ExecCode) -> Self {
+        use crate::engine::code::exec_opcode::Opcode;
+        let mut bits = vec![0u64; code.word_len().div_ceil(64)];
+        let mut ranks = vec![0u32; bits.len()];
+        let mut sites = Vec::new();
+        let mut last_block = 0usize;
+        for source_pc in 0..code.instruction_len() {
+            let pc = code.exec_pc(source_pc as u32).expect("verified source PC") as usize;
+            while last_block <= pc / 64 && last_block < ranks.len() {
+                ranks[last_block] = sites.len() as u32;
+                last_block += 1;
+            }
+            if !matches!(
+                code.opcode_at_source(source_pc),
+                Some(
+                    Opcode::GetField
+                        | Opcode::GetField2
+                        | Opcode::GetFieldCached
+                        | Opcode::GetField2Cached
+                )
+            ) {
+                continue;
+            }
+            bits[pc / 64] |= 1u64 << (pc % 64);
+            sites.push(PropertyReadCache::default());
+        }
+        Self {
+            site_bits: bits.into_boxed_slice(),
+            block_ranks: ranks.into_boxed_slice(),
+            sites: sites.into_boxed_slice(),
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn new(code: &[Instruction]) -> Self {
         let count = code
             .iter()
             .filter(|instruction| {
                 matches!(
                     instruction,
-                    Instruction::GetField(_) | Instruction::GetField2(_) | Instruction::PutField(_)
+                    Instruction::GetField(_) | Instruction::GetField2(_)
                 )
             })
             .count();
@@ -381,15 +367,14 @@ impl PropertyReadCacheTable {
             if pc % 64 == 0 {
                 ranks[pc / 64] = u32::try_from(sites.len()).expect("bytecode site count fits u32");
             }
-            let cache = match instruction {
-                Instruction::GetField(_) | Instruction::GetField2(_) => {
-                    PropertyCache::Read(PropertyReadCache::default())
-                }
-                Instruction::PutField(_) => PropertyCache::Write(PropertyWriteCache::default()),
-                _ => continue,
-            };
+            if !matches!(
+                instruction,
+                Instruction::GetField(_) | Instruction::GetField2(_)
+            ) {
+                continue;
+            }
             bits[pc / 64] |= 1u64 << (pc % 64);
-            sites.push(cache);
+            sites.push(PropertyReadCache::default());
         }
         Self {
             site_bits: bits.into_boxed_slice(),
@@ -406,16 +391,7 @@ impl PropertyReadCacheTable {
         Some(self.block_ranks[pc / 64] as usize + (bits & (mask - 1)).count_ones() as usize)
     }
     pub(crate) fn site(&self, pc: usize) -> Option<&PropertyReadCache> {
-        match self.sites.get(self.site_index(pc)?)? {
-            PropertyCache::Read(cache) => Some(cache),
-            _ => None,
-        }
-    }
-    pub(crate) fn write_site(&self, pc: usize) -> Option<&PropertyWriteCache> {
-        match self.sites.get(self.site_index(pc)?)? {
-            PropertyCache::Write(cache) => Some(cache),
-            _ => None,
-        }
+        self.sites.get(self.site_index(pc)?)
     }
 }
 
@@ -473,7 +449,7 @@ mod tests {
             })
     }
     #[test]
-    fn sparse_site_rank_crosses_words_and_distinguishes_writes() {
+    fn sparse_site_rank_crosses_words_and_omits_writes() {
         let mut code = vec![Instruction::Nop; 130];
         code[0] = Instruction::GetField(0);
         code[63] = Instruction::PutField(1);
@@ -481,16 +457,14 @@ mod tests {
         code[65] = Instruction::PutField(3);
         code[129] = Instruction::GetField(4);
         let table = PropertyReadCacheTable::new(&code);
-        for (rank, pc) in [0, 63, 64, 65, 129].into_iter().enumerate() {
+        for (rank, pc) in [0, 64, 129].into_iter().enumerate() {
             assert_eq!(table.site_index(pc), Some(rank));
         }
-        for pc in [1, 62, 66, 128, 130, usize::MAX] {
+        for pc in [1, 62, 63, 65, 66, 128, 130, usize::MAX] {
             assert_eq!(table.site_index(pc), None);
         }
         assert!(table.site(0).is_some());
         assert!(table.site(63).is_none());
-        assert!(table.write_site(63).is_some());
-        assert!(table.write_site(64).is_none());
         assert_eq!(table.site_bits.len(), 3);
         assert_eq!(table.block_ranks.len(), 3);
         assert!(PropertyReadCacheTable::new(&[]).site(0).is_none());

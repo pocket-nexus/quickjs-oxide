@@ -266,10 +266,7 @@ pub(super) fn step(
             let frame = execution.frames.current_mut(id)?;
             frame.resume_pc = match target {
                 Some(target) => target,
-                None => frame
-                    .fault_pc
-                    .checked_add(1)
-                    .ok_or_else(|| Error::internal("pure operation resume PC overflow"))?,
+                None => frame.next_pc()?,
             };
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_instruction(depth);

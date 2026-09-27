@@ -98,7 +98,7 @@ fn compiler_vm_cost_report_labels_the_execution_path_and_failures() {
     let report = String::from_utf8(output.stderr).unwrap();
     let costs = report
         .lines()
-        .find(|line| line.contains("oxide-compile-vm-cost-v1"))
+        .find(|line| line.contains("oxide-compile-vm-cost-v2"))
         .unwrap();
     assert!(costs.contains("\"exclusive_ns\":"));
     assert!(!costs.contains("\"verify\""));
@@ -125,9 +125,9 @@ fn compiler_vm_cost_report_labels_the_execution_path_and_failures() {
     }
     assert!(costs.contains("\"lowered_functions\":2"));
     assert!(costs.contains("\"phase_totals_additive\":false"));
-    assert!(costs.contains("\"fusion_diagnostics\":{\"basis\":"));
-    assert!(costs.contains("\"static_noncandidate_visits\":"));
-    assert!(costs.contains("\"dense_candidate_sites\":"));
+    assert!(costs.contains("\"execution_diagnostics\":{\"basis\":"));
+    assert!(costs.contains("\"generic_visits\":"));
+    assert!(costs.contains("\"dense_array_read_sites\":"));
     assert!(costs.contains("\"function_name\":"));
     assert!(costs.contains("\"definition_line_zero_based\":"));
     assert!(costs.contains("\"callee_identity_changes\":"));
@@ -137,7 +137,7 @@ fn compiler_vm_cost_report_labels_the_execution_path_and_failures() {
     let report = String::from_utf8(failed.stderr).unwrap();
     let costs = report
         .lines()
-        .find(|line| line.contains("oxide-compile-vm-cost-v1"))
+        .find(|line| line.contains("oxide-compile-vm-cost-v2"))
         .unwrap();
     assert!(costs.contains("\"parse\":{\"attempts\":1,"));
     assert!(costs.contains("\"lowered_functions\":0"));
@@ -157,7 +157,7 @@ fn call_buffer_and_suspension_diagnostics_are_scoped_and_sampled() {
     let report = String::from_utf8(output.stderr).unwrap();
     let costs = report
         .lines()
-        .find(|line| line.contains("oxide-compile-vm-cost-v1"))
+        .find(|line| line.contains("oxide-compile-vm-cost-v2"))
         .unwrap();
     assert!(costs.contains("\"call_buffers_scope\":\"producer-local"));
     assert!(costs.contains("\"native.readable\":{\"capacity_growths\":"));

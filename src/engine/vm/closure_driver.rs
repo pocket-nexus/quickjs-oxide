@@ -90,10 +90,7 @@ pub(super) fn instantiate(
         .into_jsvalue(Value::Object(callable.into_object()))
         .map_err(runtime_error_to_vm_error)?;
     execution.slots.push(&mut frame.window, value)?;
-    frame.resume_pc = frame
-        .fault_pc
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("closure resume PC overflow"))?;
+    frame.resume_pc = frame.next_pc()?;
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_instruction(depth);
     Ok(())

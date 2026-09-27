@@ -1,22 +1,20 @@
-//! Reenter the same frame after cold operations which cannot wait or call JS.
-//! Opcode semantics remain in run and the shared cold completion helpers.
-use super::{CallStep, RunExit};
+//! Resume the single execution stream after operations that do not wait or call JS.
+//! Opcode semantics live in `execute_frame`; this module completes continuations.
+use super::{CallStep, VmAction};
 use crate::engine::api::error::Error;
 use crate::engine::api::runtime::Runtime;
-use crate::engine::vm::BytecodePc;
 use crate::engine::vm::Completion;
-use crate::engine::vm::exception::runtime_error_to_vm_error;
 use crate::engine::vm::execution::RunningExecution;
 use crate::engine::vm::frame::FrameId;
 
 pub(super) enum Boundary {
-    Exit(RunExit),
+    Exit(VmAction),
     /// An existing property/query helper scheduled work; revisit the outer
     /// driver's pending-call/frame checks instead of assuming this frame ran.
     Entered,
     /// Operand domains were checked and next_operation was advanced once.
     /// The outer driver constructs the waiting task without repeating either.
-    Conversion(RunExit),
+    Conversion(VmAction),
     Complete(Completion),
 }
 
@@ -28,25 +26,18 @@ pub(super) fn run(
     next_operation: &mut u64,
 ) -> Result<Boundary, Error> {
     loop {
-        let result = super::run(execution, id);
+        let result = super::execute_frame(execution, id);
         #[cfg(feature = "profiling")]
         record_exit(&result);
         // Ordinary Call/Return need no observable activation. Cold operations
         // may allocate an error, release an observable owner or invoke code.
-        if result.as_ref().map_or(true, RunExit::observes_activation) {
+        if result.as_ref().map_or(true, VmAction::observes_activation) {
             execution.frames.materialize(runtime)?;
         }
         let exit = result?;
         match exit {
-            RunExit::Materialize => continue,
-            RunExit::PrimitiveThrow => {
-                let thrown = execution
-                    .pending
-                    .take()
-                    .ok_or_else(|| invariant("resident arithmetic lost its exception"))?;
-                return Ok(Boundary::Complete(Completion::Throw(thrown)));
-            }
-            RunExit::Call {
+            VmAction::Materialize => continue,
+            VmAction::Call {
                 arguments,
                 method,
                 tail,
@@ -64,7 +55,7 @@ pub(super) fn run(
                     return Ok(boundary);
                 }
             }
-            RunExit::Complete => match super::ordinary::finish(runtime, execution, id)? {
+            VmAction::Complete => match super::ordinary::finish(runtime, execution, id)? {
                 super::ordinary::ReturnProgress::Declined => return Ok(Boundary::Exit(exit)),
                 super::ordinary::ReturnProgress::Returned => {
                     id = execution.frames.current_id().unwrap()
@@ -80,7 +71,7 @@ pub(super) fn run(
                 }
             },
             #[cfg(all(test, feature = "profiling"))]
-            RunExit::ReleaseOperand { .. } => {
+            VmAction::ReleaseOperand { .. } => {
                 if !crate::engine::vm::frame_operations::complete_owned_slot(
                     runtime, execution, id, exit,
                 )? {
@@ -90,7 +81,7 @@ pub(super) fn run(
                 }
             }
 
-            RunExit::Numeric(kind) => {
+            VmAction::Numeric(kind) => {
                 use crate::engine::vm::frame_operations::NumericProgress;
                 let Some(progress) =
                     crate::engine::vm::frame_operations::try_complete_primitive_numeric(
@@ -113,23 +104,8 @@ pub(super) fn run(
                     }
                 }
             }
-            RunExit::AddLocal => {
-                use crate::engine::vm::conversion_driver::PrimitiveCompletion;
-                match crate::engine::vm::conversion_driver::complete_local_add(
-                    runtime,
-                    execution,
-                    id,
-                    next_operation,
-                )? {
-                    PrimitiveCompletion::Completed => {}
-                    PrimitiveCompletion::Throw(value) => {
-                        return Ok(Boundary::Complete(Completion::Throw(value)));
-                    }
-                    _ => return Err(invariant("local addition lost its primitive guard")),
-                }
-            }
-            RunExit::ConvertPlus | RunExit::ConvertAdd => {
-                let addition = exit == RunExit::ConvertAdd;
+            VmAction::ConvertPlus | VmAction::ConvertAdd => {
+                let addition = exit == VmAction::ConvertAdd;
                 use crate::engine::vm::conversion_driver::PrimitiveCompletion;
                 match crate::engine::vm::conversion_driver::complete_primitives(
                     runtime,
@@ -146,46 +122,22 @@ pub(super) fn run(
                 }
             }
 
-            RunExit::GetField {
+            VmAction::GetField {
                 index,
                 keep_receiver,
             } => {
-                let mut selected_native = None;
-                let progress = crate::engine::vm::property_driver::read_progress_selected(
+                let progress = crate::engine::vm::property_driver::read_progress(
                     runtime,
                     execution,
                     id,
                     crate::engine::vm::property_driver::ReadKey::Static(index),
                     keep_receiver,
-                    &mut selected_native,
                 )?;
-                if let crate::engine::vm::property_driver::PropertyProgress::MethodCall(arguments) =
-                    progress
-                {
-                    let frame = execution.frames.current_mut(id)?;
-                    frame.fault_pc = frame.resume_pc;
-                    runtime
-                        .update_active_bytecode_pc(
-                            frame.active_frame,
-                            BytecodePc::new(frame.fault_pc),
-                        )
-                        .map_err(runtime_error_to_vm_error)?;
-                    if let Some(boundary) = enter_call(
-                        runtime,
-                        execution,
-                        &mut id,
-                        arguments,
-                        true,
-                        false,
-                        selected_native,
-                    )? {
-                        return Ok(boundary);
-                    }
-                } else if let Some(boundary) = property_boundary(progress) {
+                if let Some(boundary) = property_boundary(progress) {
                     return Ok(boundary);
                 }
             }
-            RunExit::GetElement {
+            VmAction::GetElement {
                 keep_receiver,
                 keep_key,
             } => {
@@ -210,7 +162,7 @@ pub(super) fn run(
                     return Ok(boundary);
                 }
             }
-            RunExit::SetProperty(key) => {
+            VmAction::SetProperty(key) => {
                 let frame = execution.frames.current_mut(id)?;
                 if key.is_none()
                     && matches!(
@@ -237,12 +189,12 @@ fn property_boundary(
 ) -> Option<Boundary> {
     use crate::engine::vm::property_driver::PropertyProgress;
     match progress {
-        PropertyProgress::Completed | PropertyProgress::MethodCall(_) => None,
+        PropertyProgress::Completed => None,
         PropertyProgress::Deferred(CallStep::Entered) => Some(Boundary::Entered),
         PropertyProgress::Deferred(CallStep::Complete(completion)) => {
             Some(Boundary::Complete(completion))
         }
-        PropertyProgress::Deferred(CallStep::Bridge) => Some(Boundary::Exit(RunExit::Bridge)),
+        PropertyProgress::Deferred(CallStep::Bridge) => Some(Boundary::Exit(VmAction::Bridge)),
     }
 }
 
@@ -275,11 +227,11 @@ fn enter_call(
                 Some(Boundary::Complete(completion))
             }
             super::ordinary::Entry::Native(CallStep::Bridge) => {
-                Some(Boundary::Exit(RunExit::Bridge))
+                Some(Boundary::Exit(VmAction::Bridge))
             }
             super::ordinary::Entry::General => {
                 execution.frames.materialize(runtime)?;
-                Some(Boundary::Exit(RunExit::Call {
+                Some(Boundary::Exit(VmAction::Call {
                     arguments,
                     method,
                     tail,
@@ -300,10 +252,10 @@ fn invariant(message: &'static str) -> Error {
 #[cfg(feature = "profiling")]
 #[cold]
 #[inline(never)]
-fn record_exit(result: &Result<RunExit, Error>) {
+fn record_exit(result: &Result<VmAction, Error>) {
     record_event(match result {
         Ok(exit) => exit.diagnostic_name(),
-        Err(_) => "run_exit.EngineError",
+        Err(_) => "execute_continuation.EngineError",
     });
 }
 

@@ -262,10 +262,7 @@ pub(super) fn initializer(
         };
         let frame = execution.frames.current_mut(id)?;
         let discarded = execution.slots.pop(&mut frame.window)?;
-        frame.resume_pc = frame
-            .fault_pc
-            .checked_add(1)
-            .ok_or_else(|| Error::internal("initializer resume PC overflow"))?;
+        frame.resume_pc = frame.next_pc()?;
         runtime
             .release_jsvalue(discarded)
             .map_err(runtime_error_to_vm_error)?;
@@ -364,10 +361,7 @@ fn finish_class_result(
             .release_jsvalue(discarded)
             .map_err(runtime_error_to_vm_error)?;
     }
-    frame.resume_pc = frame
-        .fault_pc
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("class definition resume PC overflow"))?;
+    frame.resume_pc = frame.next_pc()?;
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_instruction(depth);
     match result {
