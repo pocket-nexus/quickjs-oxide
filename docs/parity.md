@@ -20,7 +20,7 @@
 
 ## 2. 纯 Rust 边界与 oracle 规则
 
-所有交付给用户的产品实现都必须是 Rust：解释器、编译器、GC、RegExp、Unicode、BigInt、标准库、Worker、CLI、静态库/动态库和 C ABI 适配层均由 Rust 编译产生。允许经过审计的 `unsafe` 和 Rust 的系统调用绑定；“纯 Rust”不等于强制 `#![forbid(unsafe_code)]`。
+所有交付给用户的产品实现都必须是 Rust：解释器、编译器、GC、RegExp、Unicode、BigInt、标准库、Worker、CLI、静态库/动态库和 C ABI 适配层均由 Rust 编译产生。本路线保留 workspace `unsafe_code = "forbid"` 的 safe Rust 约束；未来宿主和 ABI 能力需在该约束下设计，不能由 parity 目标推定允许放宽它。
 
 以下行为禁止出现在产品构建或运行路径中：
 
@@ -33,14 +33,14 @@
 
 实现必须参考上游算法、状态机和不变量，而不是只参考语法示例。允许把上游逻辑重新表达为合适的 Rust 数据结构；不要求逐行翻译，也不要求内部地址、对象布局或优化完全相同，除非它们通过 C ABI、内存统计、终结时机或字节码格式变成可观察行为。每个核心模块应在模块文档或 source map 中注明对应的上游文件/符号，方便逐项审计。
 
-## 3. 可运行骨架必须走最终路径
+## 3. 可运行切片必须走产品路径
 
-第一版解释器可以只覆盖很窄的语法，但必须是最终架构上的纵向切片。推荐的最小真实路径是：
+增量实现可以只覆盖很窄的语法，但必须连通实际产品的编译、执行及生命周期。内部表示可以迭代，不存在预先固定的“最终架构”。核对路径包括：
 
 1. 按 `qjs.c::eval_file` / `eval_buf` 建立参数、脚本/模块判定和错误出口；
 2. 按 `JS_NewRuntime`、`JS_NewContext` 建立隔离的 heap/realm、atoms、intrinsics 和异常槽；
-3. 按 `next_token`、`js_parse_*` 和 `JS_EvalInternal` 完成词法、作用域分析并直接生成 `quickjs-opcode.h` 所映射的栈式字节码；
-4. 按 `JS_CallInternal` 的调用帧和栈效应执行字节码，正确传播 completion/exception；
+3. 对照 `next_token`、`js_parse_*` 和 `JS_EvalInternal` 的语义完成词法、作用域分析和编译；#52 发布单一 `ExecCode`，不要求复制 `quickjs-opcode.h` 的编码；
+4. 保持 `JS_CallInternal` 对应的调用、栈/资源限制与异常行为，通过产品执行器传播 completion/exception；
 5. 经 `JS_ExecutePendingJob` 排空 job，最后沿 `JS_FreeContext` / `JS_FreeRuntime` 释放资源。
 
 骨架从一开始就应使用真实的 `Value`、atom、string、object/shape、property descriptor、environment/closure、bytecode function 和 exception 表示；尚未实现的语法应明确报错。临时 AST evaluator、把所有值都降成 JSON、跳过 property descriptor、用 Rust panic 表示 JS throw，或调用 oracle 得到答案，都不是可保留的解释器骨架。
@@ -149,9 +149,10 @@ Rust-first API 可以更符合 Rust 习惯，但它不能代替 QuickJS 的嵌�
 
 若某个平台的 C ABI 尚未验证，只能声明该平台的 Rust API 可用，不能声明完整 QuickJS API parity。
 
+<a id="bytecode-compatibility"></a>
 ## 11. 字节码、BJSON 与 `qjsc` 门禁
 
-QuickJS 自己声明字节码与具体版本绑定、不应加载不可信输入；字节码是**版本绑定的缓存，不是接口**。因此本项目**不承诺与上游 BC5 互操作**：不读取官方 `JS_WriteObject`/`qjsc` 生成的字节码，也不要求官方基线读取本项目产物。原先的窄读取 API（`Context::read_trusted_scalar_script`/`read_trusted_ordinary_function`）、BC5 解码/编码设施、C oracle 字节码 fixtures 与 pinned-atom/opcode 门禁已随 verify 一起移除（2026-09-24 决策，见 `docs/verify-publication-plan.md`）。
+QuickJS 自己声明字节码与具体版本绑定、不应加载不可信输入；字节码是**版本绑定的缓存，不是接口**。因此本项目**不承诺与上游 BC5 互操作**：不读取官方 `JS_WriteObject`/`qjsc` 生成的字节码，也不要求官方基线读取本项目产物。原先的窄读取 API（`Context::read_trusted_scalar_script`/`read_trusted_ordinary_function`）、BC5 解码/编码设施、C oracle 字节码 fixtures 与 pinned-atom/opcode 门禁已在 2026-09-24 的简化中移除，历史结果见 [编译测量记录](compile-benchmark.md)。随后删除的独立 verify 阶段不等于取消编译器或 VM 的验证；当前 lowering、发布与执行契约见 [架构说明](architecture.md)。
 
 仍然有效的部分：
 

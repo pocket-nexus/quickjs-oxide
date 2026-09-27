@@ -1,29 +1,36 @@
 # 测量与性能取舍协议
 
-> 本协议提供可复核的测量方法；方向和回退取舍依照[优化与 Profile 原则](principles.md)。13 种跨度与 #41 已实现；一次完整[四方 V8 配对及定向 profile](receipts/fourway-2026-09-25/README.md)已完成。当次百分比门槛属于历史实验，不再充当新方向的自动淘汰规则。对新候选，覆盖、生成代码、A/A 和真实负载结果可以推翻预设形态与接口，也可以促使继续完成更大范围的改造。正式 benchmark／profiling 应避免与构建和其他测试重叠；已知干扰须记录，并按本轮 A/A 分辨率解释结果。当次 PR 只提交结果总结；原始样本和构建回执保留在本机测量目录，不作为该次仓库附件。
-> 与 [benchmark 工具说明](../../scripts/benchmark/README.md)、[Test262 契约](../test262.md) 配套。
+本协议以 PR #52 为新系列起点，设计与取舍依照[优化原则](principles.md)。
+测量用于检验工作是否消失、成本如何变化，不把旧候选的固定门槛移植成新架构
+的自动淘汰规则。与 [benchmark 工具说明](../../scripts/benchmark/README.md)、
+[Test262 契约](../test262.md)配套。
 
 <a id="baselines"></a>
 ## 1. 基线与比较身份
 
 | 名称 | 源码身份 | 用途 |
 | --- | --- | --- |
-| B37 | `3341ac456ea2719858fd6173e8dcd9123ad9e660` | 维护者 3–4 倍总分目标的固定分母；PR #37 head，不冒充实现提交 |
-| R0 | `f531f6052cb497ce4707f01c276e8642e5e26788` | 本轮新增优化的起点；文档 PR 不改变引擎源码 |
-| H0 | `3b759647d32ad9b16317d4760deb646eeedefec3` | pre-B2 历史回退债务分母；#42 使用的 `8a4b89d4` 据报告与其树相同 |
-| Parent | 本切片实际父提交 | 逐片增量 |
-| R1 | #41 接纳后的确切提交；未接纳则为 R0 | B 线工作基线，不能抹去 B37／R0／H0 的比较 |
-| Candidate | 本切片干净提交 | 受测产物；不能只报分支名 |
+| #52 | `996663f771afdabdc69d52c94bd4d2fb392e27b1` | 单流执行架构新起点，衡量累计变化 |
+| Parent | 本候选实际父提交的完整 SHA | 逐片增量 |
+| Candidate | 本次受测干净提交的完整 SHA | 候选产物；另记 tree、工具与二进制身份 |
 
-所有分母用该系列选定的同一工具链／target／flags 重建；绝不混用旧二进制。本轮新性能系列可使用 Rust 1.96.0，另以 1.88.0 执行最低版本／CI 兼容验证；版本不是永久限制，以实际回执为准。#42 的 1.88.0 性能数字与 #43 的 1.94.1 数字保留在各自历史系列，不直接相除。换机器、工具链、target 或有效编译配置时整套分母重建，另起 series id。
+报告 Candidate/#52 和 Candidate/Parent；两者相同时说明即可。所有分母
+使用该系列同一工具链、target、features 和有效 flags 重建，不混用旧二进制。
+换机器或构建配置则重建双方并另起 series id。性能工具链与 MSRV 验证分别
+记录，当前 MSRV 为 Rust 1.88；下面命令中的 1.96.0 是可替换的系列示例。
 
-全量成绩始终同时报告 Candidate/B37、Candidate/R0、Candidate/Parent。H0 只用于旧债务台账，不能替代更难的 B37 目标分母。历史 pre-A 的问题继续通过历史报告追踪，不得宣称本次文档整理已经清偿。
+B37 (`3341ac456ea2719858fd6173e8dcd9123ad9e660`)、R0
+(`f531f6052cb497ce4707f01c276e8642e5e26788`)、H0
+(`3b759647d32ad9b16317d4760deb646eeedefec3`) 和 R1 是
+[历史系列](README.md#历史收据索引)的对照身份。旧 3–4 倍 B37 目标不再是
+本路线的启动/验收要求；若另行报告该历史目标，仍必须重建其原分母。
+#52 重写收据的临时受测快照身份保持原样，本次文档更新不产生新测量。
 
 ## 2. 构建、机器与上游 pin
 
 使用普通 release、fat LTO、CGU=1，无 PGO、无 profiling。同一系列的双方在同一机器、相同配置下串行构建和测量；绑核不能代替整机隔离。记录 CPU／系统版本、可用硬件计数器、电源／频率策略、亲和性、内存状态、负载和是否存在其他会话；不支持的字段标未知。`run.py` 自动收集所在平台可取得的快照（macOS 包括 CPU 型号、物理内存、`pmset`、`vm_stat` 和 load average），微码、共享缓存干扰等仍需按主机能力补记。干扰或 A/A 波动足以覆盖候选时间差、交错结果无法区分时，cycles／wall 标“未裁决”，不作通过结论。已知同机干扰必须标注；它不自动抹掉在交错复测中持续分离的回退信号，也不能提供缓存或分支预测的因果解释。
 
-本轮外部 v8-v7 pin 为 `ahaoboy/js-engine-benchmark@2034d98fc8c5f8044e186267593f5d5ea5232caf`（#43 所用 checkout 的完整身份）；`run.py` 默认核对完整 SHA 和 tracked source 洁净度。未来系列可明确指定另一完整 pin（`--v8-source-commit`），并重建全部 bundle／分母，不把不同语料混算。每个生成 bundle 单独记录 SHA-256；pin 相同不代表旧的 `dist/` 一定由它生成，必须重新生成并保存生成器身份。QuickJS 对照仍用项目 pinned 2026-06-04 oracle，记录 C 编译器与 flags；跨引擎是诊断参考，不代替同源码 A/B。
+固定工作量与 V8 示例使用的外部 pin 为 `ahaoboy/js-engine-benchmark@2034d98fc8c5f8044e186267593f5d5ea5232caf`（#43 所用 checkout 的完整身份）；`run.py` 默认核对完整 SHA 和 tracked source 洁净度。未来系列可明确指定另一完整 pin（`--v8-source-commit`），并重建全部 bundle／分母，不把不同语料混算。每个生成 bundle 单独记录 SHA-256；pin 相同不代表旧的 `dist/` 一定由它生成，必须重新生成并保存生成器身份。QuickJS 对照仍用项目 pinned 2026-06-04 oracle，记录 C 编译器与 flags；跨引擎是诊断参考，不代替同源码 A/B。
 
 在每个干净 worktree 独立构建。可从当前工具 checkout 构建历史源码 worktree，源码与工具身份分开记录：
 
@@ -37,7 +44,7 @@ RUSTUP_TOOLCHAIN=1.96.0 python3 scripts/benchmark/build.py \
 
 `build.py` 回执记录源码 commit/tree、工具身份与脚本快照、二进制 hash、编译器、release profile 声明、环境覆盖、Cargo 配置文件 hash、完整构建命令及 stdout/stderr 日志；构建期间源码或工具脚本变化会拒绝回执。Cargo `--verbose` 实际执行的 qjs 与依赖 rustc 参数另作摘要。缓存命中的 crate 没有新 rustc 行，不能把声明值冒充实测有效参数；正式重建应使用新 target 目录并保存完整日志。`run.py` 在每次采样前复核工作负载与二进制 hash，并保存样本、顺序与机器快照；主机干扰状态和不支持的硬件指标仍需人工注明。不同 worktree 的 OUT 必须不同。
 
-本项目源码和计划目录内不 vendor 外部 benchmark。以下四个维护者重建探针保留为固定工作量配方；本次实施的[历史门禁总结](receipts/gates-2026-09-25/README.md)记录结果，原始负载与样本留在本机，不能混同外部 V8 正式 Score。
+本项目源码和计划目录内不 vendor 外部 benchmark。以下四个维护者重建探针保留为固定工作量配方；[历史门禁总结](receipts/gates-2026-09-25/README.md)记录结果，原始负载与样本留在本机，不能混同外部 V8 正式 Score。
 
 ```sh
 mkdir -p "$OUT/micro"
@@ -66,14 +73,14 @@ sha256sum "$OUT"/micro/*.js > "$OUT/micro.sha256"
 
 对新增热路径入口的候选，优先保留 Base、Entry-only、Full 三种构建或等价的可解释对照。Entry-only 保留新入口／候选发现但不执行专用提交，用来观察准入与 codegen 税；Full 真正删除 canonical 工作。若方案是替换现有路径而非新增入口，应说明怎样测静态不适用和自然未命中成本，不必为满足这三个名称而增加产品代码。对照不是纯净的因果分解：编译器可能因永不命中而删代码或改变内联，因此须核对相关版本的反汇编。必要时增加 Full 二进制上的自然命中／自然未命中配对负载，不能凭几个总数就断言某一机制成本。
 
-固定诊断使用完全一致的工作量。先测同二进制 A/A，再用交错 ABBA／BAAB 顺序测 A/B；`run.py` 和 `fixed.py` 的 `--order abba-baab` 可复现完整交替块（`--repeat` 为 4 的倍数），默认顺序保留旧行为。保留原始样本和顺序，不只存中位数。能取得退休指令计数时，确定性差异也要调查，不把其变化与 wall 调度噪声混为一谈。旧协议的“至少两轮、每轮每侧至少五个独立进程”适用于要求正式准入裁决的完整复核，**不是每次实现迭代的启动条件**；短轮若 A/A 分辨率不足，时间变化保持未裁决。
+固定诊断使用完全一致的工作量。先测同二进制 A/A，再用交错 ABBA／BAAB 顺序测 A/B；`run.py` 和 `fixed.py` 的 `--order abba-baab` 可复现完整交替块（`--repeat` 为 4 的倍数），默认顺序保留旧行为。保留原始样本和顺序，不只存中位数。能取得退休指令计数时，确定性差异也要调查，不把其变化与 wall 调度噪声混为一谈。重复次数根据待回答问题与 A/A 分辨率预先确定，并记入收据。短轮用于迭代；无法分辨的时间变化保持未裁决，不强制套用旧实验的轮数或样本数。
 
 ```sh
 # Linux perf 的单次示例；CPU 必须选主机允许的核，其他平台按可用工具记录等价事件。
-CPU=2
+PERF_CPU=2
 perf stat -x, -o "$OUT/array.perf.csv" \
   -e instructions:u,cycles:u,branches:u,branch-misses:u -- \
-  taskset -c "$CPU" "$OUT/plain/release/qjs" "$OUT/micro/array_read.js" \
+  taskset -c "$PERF_CPU" "$OUT/plain/release/qjs" "$OUT/micro/array_read.js" \
   > "$OUT/array.stdout" 2> "$OUT/array.stderr"
 ```
 
@@ -103,12 +110,12 @@ python3 scripts/benchmark/fixed.py --manifest "$FIXED_MANIFEST" \
 | --- | --- |
 | 构建 | 完整源码／树／patch／二进制／编译器／flags／profile／外部语料 hash |
 | 固定工作量 | 完整输出校验、操作数、wall、样本／离散度；可用时另记 instructions/op、cycles/op 与分支事件，缺失不得填 0 |
-| 候选覆盖 | canonical PC、attempts、命中、覆盖逻辑指令、每类 miss、非候选成本、cold/warm/megamorphic 分层 |
-| codegen | `run` 与所有受影响 helper 的调用清单、返回方式、栈帧、spill/reload、符号尺寸、规范化反汇编 |
+| 候选覆盖 | 函数身份与执行字 PC、attempts、命中、已覆盖的 miss 分类和静态不适用成本；后续适应机制另分 cold/warm/polymorphic/changing-type；未有 emitter 的项标未测 |
+| codegen | `execute_frame` 与所有受影响 helper 的调用清单、返回方式、栈帧、spill/reload、符号尺寸、规范化反汇编 |
 | 生命周期 | retain/release、值搬运、分配次数／字节、峰值 RSS、候选元数据、首次执行与编译时间 |
-| 正式成绩 | 八项 Score、isolated 几何平均、combined 原始 Score、B37/R0/Parent 三个分母 |
+| 正式成绩 | 八项 Score、isolated 几何平均、combined 原始 Score、#52/Parent 对照 |
 
-新增片没有触发的负载也必须检查。若 `run` 未变但 outlined helper 翻转内联，按 #44 仍视为真实生成代码变化。若退休指令明显改变，不应仅用“地址布局不同”解释；只有工作量接近时，才进一步检查前端供给、分支预测、缓存与频率因素。
+新增片没有触发的负载也必须检查。即使主循环未变，outlined helper 的内联变化仍是实际生成代码变化。若退休指令明显改变，不应仅用“地址布局不同”解释；只有工作量接近时，才进一步检查前端供给、分支预测、缓存与频率因素。
 
 ## 5. 决策、取舍与累计债务
 
@@ -120,20 +127,24 @@ python3 scripts/benchmark/fixed.py --manifest "$FIXED_MANIFEST" \
 
 **默认启用与目标声明：** 先固定拟回答的问题、基线和测量矩阵，再做完整复核。报告八项原版 V8 Score、isolated 几何平均、combined Score、固定工作量、RSS 与受影响的重要路径；说明每项稳定回退的幅度、原因、受益交换及尚待处理的债务。是否接受性能取舍由整体目标和影响决定，没有跨所有架构方案通用的单项 2% 自动否决线。P2 的 −30% 指令／+3% 子项收益、RSS `max(3%, 1 MiB)`、编译／首次执行 3% 复核线和“两轮后撤销”均归档为旧系列的实验条件；不能用它们阻断新方向。
 
-相对 H0 的旧 BigInt 债务继续单独保存同协议重测表。#41 的下降不能跨系列抵消 #37 的增长；也不能移动分母隐藏旧债务。声称 v8-v7 总分达到 3–4 倍时，仍需以 B37 为分母，完成八项原版 isolated 与 combined 复核。短轮固定迭代的几何平均与 combined 时间比用于诊断和筛选，不冒充原版 Score。旧候选若被撤销，保留测试、配方和负结果；方向是否继续由新的成本模型决定。
+历史债务和负结果留在原系列；不能将跨系列数字相减，或用文档清理宣称它们
+已消失。新路线的累计比较从 #52 开始。短轮固定迭代结果不冒充原版 Score。
+旧 `FusionPlan` capture 工具只适用于其原源码，方法与 25 站点结果见
+[历史 manifest](receipts/all-dense-6db6bfb0/README.md)；当前候选需检查实际
+`ExecCode`，不能沿用旧 flags/PC 证明覆盖。
 
-## 5.1 历史 B0 发布后 canonical 捕获协议
+### 分开四项成本
 
-本节只记录旧 `FusionPlan` 候选的实验方法和收据。当前发布格式是
-`ExecCode`，不得按本节的 matcher 或 flags 判定新执行器的覆盖与收益。
+| 维度 | 测量范围 |
+| --- | --- |
+| 编译 | parse、analysis/selection、encoding/verification、linking 与临时分配；未实现的阶段不填为已测 |
+| 执行 | 编译后固定 guest 工作量、dispatch、operand traffic、owner 操作、heap borrow、driver 边界 |
+| 适应 | 机制实现后分别测冷启动、升温、稳定、多态和类型变化；#52 的 test-only quickening 不是生产适应基线 |
+| 内存与延迟 | code、边界/元数据、frame capacity、live heap、峰值 writable memory 与最长连续工作区间 |
 
-执行 [run_dump.py](probes/run_dump.py)，参数与完整路径见 [跨度规格](numeric-array-spans.md) §2。它只在新建 detached worktree 添加 ignored test 模块，不修改原工作区或产品 API；外部 checkout 必须是本协议的完整 pin，两份源文件 blob 必须未改。输出目录必须新建且在两个仓库之外。
-
-回执须包含解析后的完整 engine SHA、benchmark SHA、Rust/Cargo 版本、probe/runner/source SHA-256、诊断 patch、精确命令、退出码及原始 cargo.log。每个函数的发布后全部 OP 行保留 PC、stack contract 与控制流目标；am3/project/lin_solve/advect 必须各出现一次。零匹配测试、缺文件、编译失败或目标不全一律失败，不将 “0 tests passed” 当作完成。
-
-捕获后用当次生产 `FusionPlan` matcher 输出真实 site manifest，对照 flags 1–13，包含所有 slot/constant 编号和每站点拒绝原因。固定模板定义了该候选的匹配规则，不是对未知真实 PC 的预先断言，也不限制后续方案重新选取形态。动态覆盖和正式 Score 仍在独立运行中测量，不能使用这个 compile-only 诊断产物报性能。
-
-后续实施已用 Rust 1.94.1 完成四函数 capture；[完整 manifest 与回执](receipts/all-dense-6db6bfb0/README.md)记录 25 个已发布站点。本段以上保留探针本身的执行契约。
+现有 `fixed.py`/`iterate_v8.py` 的进程计数包含启动、编译和退出。隔离后的
+execution-only、完整 retain/release、heap borrow 总数及最大无中断区间需要
+相应测量入口；缺少这些数据时明确未测，不能从部分 counters 推算。
 
 ## 6. 一致性与文档 PR 的验证边界
 
@@ -150,6 +161,9 @@ python3 scripts/checks/check-source-layout.py
 TEST262_WORKERS=2 ./scripts/test262/test-test262.sh --full
 ```
 
-PR #48 后，focused／full 对比身份行之后的完整结果正文，不能手工修改 admission、诊断契约或 frozen outcome 来接受性能退化。#41 的语义无变化候选不需要仅因 source SHA 改变就晋升结果基线。
+PR #48 后，focused／full 对比身份行之后的完整结果正文，不能手工修改 admission、诊断契约或 frozen outcome 来接受性能退化。语义无变化的候选不需要仅因 source SHA 改变就晋升结果基线。
 
-文档本身仍须核对数据来源、算术、链接和收据身份。当前引擎实施必须分别报告已执行的 Cargo／Test262／性能命令；#41 独立候选的通过记录不能代替组合版的 CI 或正式成绩。
+纯文档修改核对源码声明、算术、链接/anchor 和收据身份，运行 `git diff --check`
+及 `node scripts/test262/current-test262-metrics.mjs --check-docs`。无需为纯 prose
+重跑引擎 benchmark；不得更新冻结语义数据或将旧验证改称当前验证。
+引擎实施另行报告实际执行的 Cargo、Test262 和性能命令及完整源码身份。

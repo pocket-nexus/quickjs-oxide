@@ -1,9 +1,11 @@
 # 编译器前端（lexer/parser）基线与剖析
 
-本文件是前端基准与剖析的方案与结果记录。**本分支只关心 compiler 本身的性能**：
-范围限于 **A 跨引擎 compile 基线** 与 **B Oxide 前端剖析**。生成代码质量
-（静态体积、执行指令数）与运行期性能不在本分支，见 §7.5 的后续设计；按收益
-排序的优化候选记录在文末，不在本轮实施。
+本文件保留前端基准与剖析的历史方法、实验身份及结果。当时的实验范围限于
+**A 跨引擎 compile 基线** 与 **B Oxide 前端剖析**，未测生成代码质量与运行期
+性能。这个测量范围不限制后续编译器优化；文末候选与 §7.5 按当时状态阅读。
+当前实现见 [架构说明](architecture.md)，从 #52 出发的编译与执行计划见
+[性能路线](performance/roadmap.md)。新工作需分别测量编译、执行与空间成本，
+不能把本页旧测量当作 #52 的结果。
 
 现有工具链（[profiling](profiling.md)、[benchmark README](../scripts/benchmark/README.md)）
 面向运行期；`replay.py --mode compile` 只做 Oxide 新旧版本回归。本方案补齐
@@ -325,7 +327,7 @@ perf report --stdio --no-children -g none
 
 ## 9. P0 分配与计数基线（前端重构起点）
 
-本节是 lexer/parser 重构（[lexer-parser-refactor.md](lexer-parser-refactor.md)、
+本节是 lexer/parser 重构（[lexer-parser-refactor.md](https://github.com/pocket-nexus/quickjs-oxide/blob/996663f771afdabdc69d52c94bd4d2fb392e27b1/docs/lexer-parser-refactor.md)、
 issue #32）的起点基线：分配计数、perf 硬件计数与进程 RSS。度量边界与 §1 相同
 （源码读取、Runtime/Context 构造与销毁都在计时窗口外），区别只是探针故意插桩。
 
@@ -577,7 +579,7 @@ P1a 把 functions 的 parse 占比从 40% 压到 34%，但 **verify+publish 仍�
 所以总收益有限（相对 P0：时间 −21.1%、instr −9.6%、alloc −27.7%、
 cache-miss −71.2%）。名字驻留的真实收益在局部性（cache-miss）而非指令数；
 `JsString::content_hash`/`ensure_closure_variable`/`QuickJsSourceCursor::locate`
-是 P1b 后新可见的候选项（见 `docs/lexer-parser-refactor.md` §3 P4）。
+是 P1b 后新可见的候选项（见 [历史 lexer/parser 计划](https://github.com/pocket-nexus/quickjs-oxide/blob/996663f771afdabdc69d52c94bd4d2fb392e27b1/docs/lexer-parser-refactor.md) §3 P4）。
 
 #### 9.7.5 复现命令
 
@@ -605,7 +607,7 @@ perf report -i target/perf-p1b-functions.data --stdio --no-children
 
 P2a（`7f8fc101`：`LookaheadCache` 备忘 17 处 clone-lexer 探针）与 P2b
 （commit-path reuse：提交扫描直接消费探针已备忘的 token；原计划的 `TokenBuffer`
-全量改造按实测取消，见 `docs/lexer-parser-refactor.md` §3 P2b）相对 §9.6 P1b 的
+全量改造按实测取消，见 [历史 lexer/parser 计划](https://github.com/pocket-nexus/quickjs-oxide/blob/996663f771afdabdc69d52c94bd4d2fb392e27b1/docs/lexer-parser-refactor.md) §3 P2b）相对 §9.6 P1b 的
 checkpoint。度量口径与 §9.6 相同（P1b/P2a/P2b 三探针交错各 7 次取最小值，
 4MB 扣 64KB tiny 档；task-clock 粒度 10ms，约 ±0.7% 噪声）。探针目录：
 `target/p1b-*`、`target/p2a-*`、`target/p2b-final-*`。
@@ -792,7 +794,7 @@ perf 目录 `target/p3-perf/`，矩阵 `target/p3-matrix-bundles/`。
 
 ### 9.10 P4-6 预实验：closure 描述符索引（已回滚，2026-09-24）
 
-`docs/lexer-parser-refactor.md` §3 P4 第 6 条的触发证据与可行性预实验。按 §6
+[历史 lexer/parser 计划](https://github.com/pocket-nexus/quickjs-oxide/blob/996663f771afdabdc69d52c94bd4d2fb392e27b1/docs/lexer-parser-refactor.md) §3 P4 第 6 条的触发证据与可行性预实验。按 §6
 “P4 候选不进入本分支”，实验代码已回滚，本记录仅保留证据。
 
 触发证据（临时诊断计数，P3 树 + profiling 探针；`ensure_closure_variable` 每次
@@ -857,7 +859,7 @@ functions/syntax +67.6MB、expressions +33.8MB；另有 map 表 alloc_bytes
 
 ### 9.11 P4-2 预研：分配归因（P3 树 `23b918e7`，2026-09-24）
 
-`docs/lexer-parser-refactor.md` §3 P4 第 2 条（IR/常量/绑定/字节码侧分配削减）
+[历史 lexer/parser 计划](https://github.com/pocket-nexus/quickjs-oxide/blob/996663f771afdabdc69d52c94bd4d2fb392e27b1/docs/lexer-parser-refactor.md) §3 P4 第 2 条（IR/常量/绑定/字节码侧分配削减）
 的触发证据与归因方法。按 §6 不改产品代码：临时插桩与采样工具全部在
 `target/p4-attr/`，产品树已回滚。
 
@@ -987,6 +989,7 @@ python3 target/p4-attr/symbolize.py target/p4-attr/samples.bin \
 `FlattenFrame::new`、`Vec→Box` 与 verify 站点已在 2026-09-24 的
 verify/publication 简化中删除或改写，结果见 §9.12。
 
+<a id="verify-publication-results"></a>
 #### 9.12 verify/publication 简化实测（P4-2 收尾，2026-09-24）
 
 对照三个提交，语料均为 `functions-4194304.js`：

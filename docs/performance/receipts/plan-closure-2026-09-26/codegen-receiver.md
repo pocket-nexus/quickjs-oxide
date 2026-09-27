@@ -2,7 +2,7 @@
 
 # Method receiver transfer: release codegen inspection
 
-Compared the immutable plain AArch64 binaries for `c7fb5b69` and `5e3dedc9` using the same Rust 1.96.0 / LLVM 22.1.2, release `lto=fat`, `codegen-units=1` build profile recorded in `fixed-receiver/results.json`. Binary paths, SHA-256 and disassembly hashes are in [receipt.json](receipt.json). No engine or build was run for this inspection. The baseline predates the receiver transfer; intervening product changes are present, so an individual assembly difference is not automatically caused by that patch.
+Compared the immutable plain AArch64 binaries for `c7fb5b69` and `5e3dedc9` using the same Rust 1.96.0 / LLVM 22.1.2, release `lto=fat`, `codegen-units=1` build profile recorded in `fixed-receiver/results.json`. Binary paths, SHA-256 and disassembly hashes are in `receipt.json` in the local measurement directory (not checked into this repository). No engine or build was run for this inspection. The baseline predates the receiver transfer; intervening product changes are present, so an individual assembly difference is not automatically caused by that patch.
 
 ## Ordinary install
 

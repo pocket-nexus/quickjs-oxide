@@ -31,7 +31,7 @@
 | 本轮集成版 plain 构建 | `d6a168e2` |
 | 集成版加普通写入分类内联的受测候选 | `8c38bc32a316aa6eb4fdf6540b448d0163770671` |
 
-两份不在 PR 主历史中的受测提交另保留远端实验引用，避免只剩本机 worktree：[`codex/measured-entry-choice-20260926`](https://github.com/pocket-nexus/quickjs-oxide/tree/codex/measured-entry-choice-20260926) 精确指向 `315035b5`，[`codex/measured-inline-20260926`](https://github.com/pocket-nexus/quickjs-oxide/tree/codex/measured-inline-20260926) 精确指向 `8c38bc32`。它们保存受测源码；不是已接纳性能候选的声明。
+两份不在 PR 主历史中的受测提交另保留远端实验引用，避免只剩本机 worktree：[`codex/measured-entry-choice-20260926`](https://github.com/pocket-nexus/quickjs-oxide/tree/315035b5dba805b033dad5187d187b360e39ceff) 精确指向 `315035b5`，[`codex/measured-inline-20260926`](https://github.com/pocket-nexus/quickjs-oxide/tree/8c38bc32a316aa6eb4fdf6540b448d0163770671) 精确指向 `8c38bc32`。它们保存受测源码；不是已接纳性能候选的声明。
 
 普通计时构建为 release、fat LTO、CGU=1，无 PGO/profiling。诊断构建另存，逻辑事件不作为普通版耗时或 Score。macOS 原生 `/usr/bin/time -l` 在此主机提供整进程退休指令、cycles、最大 RSS 和 peak footprint；不是 Linux `perf ...:u` 的用户态专用口径。Instruments CPU Counters 的初步能力探针因时间限制终止、目标收到 SIGKILL，仅作为工具能力记录；它不能支持任何缓存、分支预测或瓶颈比例结论。
 
@@ -62,9 +62,9 @@ ARM64 普通版中，整个函数没有融合计划时已有一次跳转进入�
 | 成功提交 | 复用原 handler 的提交边界；只有成功后才推进 `pc.resume` | Number 运算不新增拥有式临时值；数组写仍在完成可失败检查后提交。字符串 Add 桥、getter／Proxy／转换与释放顺序沿用原路径。 |
 | 普通写入分类 | `direct_write_class` 判断当前旧绑定；内联实验只改注解 | 不延长 readiness 证明的作用域，不跨释放或 JS 执行复用结论。对象等 owner 仍走原来的 ready／boundary 路径。 |
 
-这里删的是互斥候选的重复准入选择，没有删完 handler 内部的静态重验，也没有实现“所有静态不适用指令零额外派发”。原有 13 类跨度的详细提交证明仍见 [历史候选契约](../../numeric-array-spans.md)；它不是未来必须保留 u8、签名或 helper 边界的理由。
+这里删的是互斥候选的重复准入选择，没有删完 handler 内部的静态重验，也没有实现“所有静态不适用指令零额外派发”。原有 13 类跨度的详细提交证明仍见 [历史候选契约](https://github.com/pocket-nexus/quickjs-oxide/blob/996663f771afdabdc69d52c94bd4d2fb392e27b1/docs/performance/numeric-array-spans.md)；它不是未来必须保留 u8、签名或 helper 边界的理由。
 
-五类选择各自的 guard、Result／RunExit、fault／resume PC，以及普通写入四种分类的 owner 和 readiness 作用域，详见[当前执行契约](execution-contract.md)。该文档也给出 Crypto 数组转换的源码链及未覆盖的逐对象因果边界。
+五类选择各自的 guard、Result／RunExit、fault／resume PC，以及普通写入四种分类的 owner 和 readiness 作用域，详见[当时执行契约](execution-contract.md)。该文档也给出 Crypto 数组转换的源码链及未覆盖的逐对象因果边界。
 
 ## 结果
 
