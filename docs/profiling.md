@@ -169,13 +169,13 @@ Without the `profiling` feature, compiler and interpreter hooks are compiled out
 | `cached_field_read_sites` / `dense_array_read_sites` | 发布成字段缓存或 dense 数组读 opcode 的静态数。 |
 | `generic_read_sites` | 普通 local／argument 读站点的静态数。 |
 | `dispatch[].visits` / `generic_visits` | 已接入 emitter 的普通/专用入口 visits，以及其中标为直接 generic 的次数；不是所有 opcode dispatch 总数，部分 stack 比较入口也记录 visits。 |
-| `sites[].attempts`, `hits`, `misses` | 接入的专用入口记录 outcome，主要 miss 为粗粒度 `guard`；`error` 表示异常结束，不表示可重放的 guard miss。不同 handler 的记录时机不同，不推断完整错误覆盖。 |
+| `sites[].attempts`, `hits`, `misses` | 接入的专用入口记录 outcome。M1/M2 数值区域报告其当前准入拒绝点，例如容量、输入 Number、receiver 类型、自有元素或写权限；其他 handler 的 miss 仍可能只有粗粒度 `guard`。`error` 表示异常结束，不表示可重放的 guard miss。不同 handler 的记录时机不同，不推断完整错误覆盖。 |
 | `callsites[]` | 普通调用入口观察到的 callee 身份分布；不覆盖所有 call／construct 路径。 |
 
 静态 inventory 上限为 4,096 函数，站点 map 各有 16,384 的上限；检查
 `omitted_*` 字段后再解释覆盖。callee distinct 身份只精确记录前四种，超过后
 `distinct_overflow` 表示下界；身份变化不是类型/shape 变化。#52 没有生产适应
-计数，也没有覆盖所有拒绝原因的分类，缺项不表示零成本。
+计数。M1/M2 的拒绝点分类也不是全部解释器入口的错误分类；缺项不表示零成本。
 
 这些数据可用来排序站点和检查未命中成本，不能从某个符号或站点的自时间推出机制收益上界。
 要裁决优化，还需固定源码、工具链和负载，做 A/A、交错 A/B，并分别记录固定工作量指令数、

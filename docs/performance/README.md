@@ -2,13 +2,14 @@
 
 以 PR #52 `996663f771afdabdc69d52c94bd4d2fb392e27b1` 为新起点：
 发布后使用单一 `ExecCode` 字流，`vm/execute.rs` 是唯一指令循环。
-M1 已实现一个数值区域；其他工作流仍是设计提案。当前实现由
+PR #53 已实现 M1 数值累加及 M2 的直接目的地、数组更新和比较分支；
+其他工作流仍是设计提案。当前实现由
 [架构文档](../architecture.md)描述。
 
 ## 当前阅读入口
 
 - [优化与 Profile 原则](principles.md)：事实的建立阶段、有效作用域、所有权和证据要求。
-- [后续路线与 M1](roadmap.md)：三十项模式的去向、已交付的 `sum += array[i] * scale` 区域和后续里程碑。
+- [后续路线与 M1/M2](roadmap.md)：三十项模式的去向、已交付的数值操作和后续里程碑。
 - [测量协议](measurement.md)：新系列对照 #52 与 Parent，分开编译、执行、适应、内存与延迟。
 - [诊断工具](../profiling.md)与[benchmark 工具](../../scripts/benchmark/README.md)：真实计数覆盖、运行入口与限制。
 - [固定工作量配方](probes/README.md)：工作量及输出契约；历史 case 名称不代表 #52 的 opcode 分类。
@@ -26,6 +27,7 @@ M1 已实现一个数值区域；其他工作流仍是设计提案。当前实�
 
 | 日期 | 收据 | 内容 |
 | --- | --- | --- |
+| 2026-09-28 | [M2 数值操作扩展](receipts/m2-numeric-operations-2026-09-28/README.md) | 直接目的地、数组更新、比较分支及当前 #53/#52 独立对照 |
 | 2026-09-28 | [M1 数值区域](receipts/m1-numeric-region-2026-09-28/README.md) | 数据流选择、单操作执行、语义验证及 Parent/#52 新构建对照 |
 | 2026-09-27 | [VM 重写](receipts/vm-rewrite-2026-09-27/README.md) | 单流替换、语义验证、固定工作量与原版 Score |
 | 2026-09-26 | [Shared paths](receipts/shared-paths-2026-09-26/README.md) | 自有属性、materialized 数组读、调用与帧清理 |

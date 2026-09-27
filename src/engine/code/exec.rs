@@ -1476,6 +1476,9 @@ fn validate_region_plans(
         let Some(span) = code.get(start..end) else {
             return Err(ExecCodeError::InvalidTarget);
         };
+        if start >= code.len() || end >= code.len() || start < occupied_until {
+            return Err(ExecCodeError::InvalidTarget);
+        }
         for pc in scanned..=start {
             if block_starts[pc] {
                 initialized.fill(false);
@@ -1498,9 +1501,7 @@ fn validate_region_plans(
             }
         }
         scanned = start + 1;
-        if start < occupied_until
-            || end >= code.len()
-            || (start + 1..end).any(|pc| entries.contains(&pc))
+        if (start + 1..end).any(|pc| entries.contains(&pc))
             || !valid_direct_source(region.array, locals, arguments, &initialized)
             || !valid_number_source(region.index, locals, arguments, &initialized)
         {
@@ -2934,6 +2935,16 @@ mod tests {
             malformed.peak -= 1;
             assert_eq!(
                 ExecCode::encode_with_locals(&code, &[local], &[local], &[malformed], &[])
+                    .unwrap_err(),
+                ExecCodeError::InvalidTarget
+            );
+            let terminal = NumericRegion {
+                start: code.len() as u32,
+                end: code.len() as u32,
+                ..region
+            };
+            assert_eq!(
+                ExecCode::encode_with_locals(&code, &[local], &[local], &[terminal], &[])
                     .unwrap_err(),
                 ExecCodeError::InvalidTarget
             );

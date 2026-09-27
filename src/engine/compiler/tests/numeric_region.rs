@@ -314,6 +314,29 @@ fn uncertain_binding_shapes_are_not_selected() {
 }
 
 #[test]
+fn initialized_lexical_sources_and_destinations_are_selected_only_after_initialization() {
+    let initialized = "(function(a){const i=0,scale=3;let out=0;out=a[i]*scale;return out;})";
+    assert!(opcodes(initialized).contains(&Opcode::NumericArrayStoreProduct));
+    assert_eq!(
+        assert_same(
+            "(function(){function f(a){const i=0,scale=3;let out=0;out=a[i]*scale;return out;}return f([4]);})()",
+            1,
+        ),
+        Value::Int(12)
+    );
+    let before_initialization = "(function(a){let out=0;out=a[i]*2;const i=0;return out;})";
+    assert!(!opcodes(before_initialization).contains(&Opcode::NumericArrayStoreProduct));
+    let source = "(function(){function f(a){let out=0;out=a[i]*2;const i=0;return out;}try{f([4]);return false;}catch(error){return error instanceof ReferenceError;}})()";
+    assert_eq!(assert_same(source, 0), Value::Bool(true));
+}
+
+#[test]
+fn array_update_reads_aliased_index_and_delta_before_writing() {
+    let source = "(function(){function f(a,i){a[i]+=i;return a[i];}return f([4,5],1);})()";
+    assert_eq!(assert_same(source, 1), Value::Int(6));
+}
+
+#[test]
 fn resumed_async_frame_enters_region_after_await() {
     use crate::engine::jobs::PendingJobOutcome;
     let source = "(function(){globalThis.m1Result=0;async function f(a,i,s){var sum=7;await 0;sum += a[i]*s;return sum;}f([2],0,3).then(value=>{m1Result=value;});})()";
