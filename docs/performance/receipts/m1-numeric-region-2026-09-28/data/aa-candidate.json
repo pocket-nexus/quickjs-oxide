@@ -1,0 +1,848 @@
+{
+  "metadata": {
+    "machine": {
+      "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+      "machine": "arm64",
+      "cpu": "Apple M1",
+      "logical_cpus": 8,
+      "python": "3.14.7",
+      "cpu_affinity": null,
+      "scaling_governors": {},
+      "load_average": [
+        5.35107421875,
+        7.91845703125,
+        6.548828125
+      ],
+      "macos": {
+        "physical_memory_bytes": 17179869184,
+        "power_settings": {
+          "command": [
+            "pmset",
+            "-g",
+            "custom"
+          ],
+          "exit_code": 0,
+          "stdout": "Battery Power:\n Sleep On Power Button 1\n lowpowermode         0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         20\n womp                 0\n networkoversleep     0\n sleep                1\n lessbright           1\n tcpkeepalive         1\n disksleep            10\nAC Power:\n Sleep On Power Button 1\n lowpowermode         0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         0\n womp                 1\n networkoversleep     0\n sleep                1\n tcpkeepalive         1\n disksleep            10",
+          "stderr": ""
+        },
+        "power_source": {
+          "command": [
+            "pmset",
+            "-g",
+            "batt"
+          ],
+          "exit_code": 0,
+          "stdout": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=22741091)\t100%; charged; 0:00 remaining present: true",
+          "stderr": ""
+        },
+        "vm_stat": {
+          "command": [
+            "vm_stat"
+          ],
+          "exit_code": 0,
+          "stdout": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                    19669.\nPages active:                                 238568.\nPages inactive:                               230958.\nPages speculative:                              6997.\nPages throttled:                                   0.\nPages wired down:                             157763.\nPages purgeable:                                7824.\n\"Translation faults\":                     3657000629.\nPages copy-on-write:                       230366307.\nPages zero filled:                        1324416605.\nPages reactivated:                         474355382.\nPages purged:                               31206472.\nFile-backed pages:                            158091.\nAnonymous pages:                              318432.\nPages stored in compressor:                   961294.\nPages occupied by compressor:                 345946.\nDecompressions:                            425236284.\nCompressions:                              480923903.\nPageins:                                    84723665.\nPageouts:                                     979702.\nSwapins:                                     3252320.\nSwapouts:                                    4235993.",
+          "stderr": ""
+        }
+      },
+      "runner_sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5",
+      "repository": {
+        "commit": {
+          "command": [
+            "git",
+            "rev-parse",
+            "HEAD"
+          ],
+          "exit_code": 0,
+          "stdout": "3d98c0a8ee065e5c71607b46bd0059282c6d7e87",
+          "stderr": ""
+        },
+        "tree": {
+          "command": [
+            "git",
+            "rev-parse",
+            "HEAD^{tree}"
+          ],
+          "exit_code": 0,
+          "stdout": "7d684a46710d1865bb27076d4a81984850fa46c8",
+          "stderr": ""
+        },
+        "top_level": {
+          "command": [
+            "git",
+            "rev-parse",
+            "--show-toplevel"
+          ],
+          "exit_code": 0,
+          "stdout": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide",
+          "stderr": ""
+        },
+        "status": {
+          "command": [
+            "git",
+            "status",
+            "--porcelain"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": ""
+        }
+      }
+    },
+    "runner_sha256": "8a852679221202ae6d3dac1e02b295368a79529a3e0c32e51fd6b914e5d4b425",
+    "manifest_sha256": "6ddef3bb6a43f60b91fcf789b6f9c1ba4051be2acd6601f125c53996f2b0729d",
+    "workloads": [
+      {
+        "case": "hit",
+        "path": "/private/tmp/oxide-m1.mtJwjB/hit.js",
+        "sha256": "377a595995fd6764db69e4157a74526e8ebb18fe27453bcdcfa2d5b9f4dd720f",
+        "expected": "10000000\n",
+        "size": 2000000
+      }
+    ],
+    "engines": {
+      "a": {
+        "path": "/private/tmp/oxide-m1.mtJwjB/candidate-target/release/qjs",
+        "sha256": "903c2ab07750474a06fec6a331f78ed39a143a44800b7dbd2d4796d8e780e084",
+        "version": {
+          "command": [
+            "/private/tmp/oxide-m1.mtJwjB/candidate-target/release/qjs",
+            "--version"
+          ],
+          "exit_code": 0,
+          "stdout": "quickjs-oxide 0.0.1 (QuickJS 2026-06-04 compatibility target)",
+          "stderr": ""
+        },
+        "build": {
+          "schema": "oxide-build-v2",
+          "mode": "plain",
+          "vm_configuration": "stack-vm",
+          "features": [],
+          "commit": "3d98c0a8ee065e5c71607b46bd0059282c6d7e87",
+          "source": {
+            "commit": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD"
+              ],
+              "exit_code": 0,
+              "stdout": "3d98c0a8ee065e5c71607b46bd0059282c6d7e87",
+              "stderr": ""
+            },
+            "tree": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD^{tree}"
+              ],
+              "exit_code": 0,
+              "stdout": "7d684a46710d1865bb27076d4a81984850fa46c8",
+              "stderr": ""
+            },
+            "top_level": {
+              "command": [
+                "git",
+                "rev-parse",
+                "--show-toplevel"
+              ],
+              "exit_code": 0,
+              "stdout": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide",
+              "stderr": ""
+            },
+            "status": {
+              "command": [
+                "git",
+                "status",
+                "--porcelain"
+              ],
+              "exit_code": 0,
+              "stdout": "",
+              "stderr": ""
+            }
+          },
+          "binary_sha256": "903c2ab07750474a06fec6a331f78ed39a143a44800b7dbd2d4796d8e780e084",
+          "tooling": {
+            "repository": {
+              "commit": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "HEAD"
+                ],
+                "exit_code": 0,
+                "stdout": "3d98c0a8ee065e5c71607b46bd0059282c6d7e87",
+                "stderr": ""
+              },
+              "tree": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "HEAD^{tree}"
+                ],
+                "exit_code": 0,
+                "stdout": "7d684a46710d1865bb27076d4a81984850fa46c8",
+                "stderr": ""
+              },
+              "top_level": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "--show-toplevel"
+                ],
+                "exit_code": 0,
+                "stdout": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide",
+                "stderr": ""
+              },
+              "status": {
+                "command": [
+                  "git",
+                  "status",
+                  "--porcelain"
+                ],
+                "exit_code": 0,
+                "stdout": "",
+                "stderr": ""
+              }
+            },
+            "snapshots": {
+              "build.py": {
+                "path": "/private/tmp/oxide-m1.mtJwjB/candidate-target/release/qjs.build.tooling-build.py",
+                "sha256": "fc8392a9d26290a6095742b2ab4cb45f5ab37b964c9daa51d22f7088259b1f50"
+              },
+              "run.py": {
+                "path": "/private/tmp/oxide-m1.mtJwjB/candidate-target/release/qjs.build.tooling-run.py",
+                "sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5"
+              }
+            }
+          },
+          "command": [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "--verbose",
+            "-p",
+            "quickjs-oxide-cli",
+            "--no-default-features",
+            "--target-dir",
+            "/private/tmp/oxide-m1.mtJwjB/candidate-target",
+            "--jobs",
+            "2"
+          ],
+          "cwd": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide",
+          "exit_code": 0,
+          "stdout": {
+            "path": "/private/tmp/oxide-m1.mtJwjB/candidate-target/release/qjs.build.stdout.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "stderr": {
+            "path": "/private/tmp/oxide-m1.mtJwjB/candidate-target/release/qjs.build.stderr.log",
+            "sha256": "473c227150e1f6fe531c7d5dd303df20699e1c194bf915a4348d371e318527a9"
+          },
+          "rustc": {
+            "command": [
+              "rustc",
+              "-vV"
+            ],
+            "exit_code": 0,
+            "stdout": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2",
+            "stderr": ""
+          },
+          "cargo": {
+            "command": [
+              "cargo",
+              "-V"
+            ],
+            "exit_code": 0,
+            "stdout": "cargo 1.96.0 (30a34c682 2026-05-25)",
+            "stderr": ""
+          },
+          "cargo_toml_sha256": "14f5e4d4f172150d6c212b61871da24a4e5b26e34e363f6de2a7f250bbe6e48d",
+          "cargo_lock_sha256": "c26c9f1999da579c0d1176c62981afa716ea998949a8dd15b1365f85b66944e3",
+          "release_profile": {
+            "manifest": {
+              "lto": "\"fat\"",
+              "codegen-units": "1"
+            },
+            "environment_overrides": {},
+            "cargo_config_sha256": {},
+            "qjs_rustc_invocation": {
+              "command": "rustc --crate-name qjs --edition=2024 apps/cli/src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C opt-level=3 -C lto=fat -C codegen-units=1 '--warn=clippy::all' --forbid=unsafe_code --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values(\"default\", \"profiling\", \"test262-host\"))' -C metadata=f318d7eac3aa0c1d -C extra-filename=-3cfe3c105f2435ac --out-dir /private/tmp/oxide-m1.mtJwjB/candidate-target/release/deps -C strip=debuginfo -L dependency=/private/tmp/oxide-m1.mtJwjB/candidate-target/release/deps --extern quickjs_oxide=/private/tmp/oxide-m1.mtJwjB/candidate-target/release/deps/libquickjs_oxide-e0446d572207f926.rlib --extern quickjs_oxide_host=/private/tmp/oxide-m1.mtJwjB/candidate-target/release/deps/libquickjs_oxide_host-78c1c28f3dc115b8.rlib",
+              "crate": "qjs",
+              "codegen": {
+                "opt-level": "3",
+                "lto": "fat",
+                "codegen-units": "1"
+              },
+              "target": null
+            },
+            "observed_rustc_compilations": 9,
+            "observed_codegen_groups": [
+              {
+                "target": null,
+                "codegen": {},
+                "crates": [
+                  "autocfg",
+                  "build_script_build"
+                ]
+              },
+              {
+                "target": null,
+                "codegen": {
+                  "opt-level": "3",
+                  "codegen-units": "1"
+                },
+                "crates": [
+                  "tz",
+                  "num_traits",
+                  "num_integer",
+                  "num_bigint",
+                  "quickjs_oxide",
+                  "quickjs_oxide_host"
+                ]
+              },
+              {
+                "target": null,
+                "codegen": {
+                  "opt-level": "3",
+                  "lto": "fat",
+                  "codegen-units": "1"
+                },
+                "crates": [
+                  "qjs"
+                ]
+              }
+            ]
+          },
+          "target": {
+            "requested_triple": null,
+            "rustc_host": "aarch64-apple-darwin",
+            "observed_triple": null,
+            "observed_target_cpu": null,
+            "observed_target_feature": null
+          },
+          "commit_environment": "3d98c0a8ee065e5c71607b46bd0059282c6d7e87"
+        }
+      },
+      "b": {
+        "path": "/private/tmp/oxide-m1.mtJwjB/candidate-target/release/qjs",
+        "sha256": "903c2ab07750474a06fec6a331f78ed39a143a44800b7dbd2d4796d8e780e084",
+        "version": {
+          "command": [
+            "/private/tmp/oxide-m1.mtJwjB/candidate-target/release/qjs",
+            "--version"
+          ],
+          "exit_code": 0,
+          "stdout": "quickjs-oxide 0.0.1 (QuickJS 2026-06-04 compatibility target)",
+          "stderr": ""
+        },
+        "build": {
+          "schema": "oxide-build-v2",
+          "mode": "plain",
+          "vm_configuration": "stack-vm",
+          "features": [],
+          "commit": "3d98c0a8ee065e5c71607b46bd0059282c6d7e87",
+          "source": {
+            "commit": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD"
+              ],
+              "exit_code": 0,
+              "stdout": "3d98c0a8ee065e5c71607b46bd0059282c6d7e87",
+              "stderr": ""
+            },
+            "tree": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD^{tree}"
+              ],
+              "exit_code": 0,
+              "stdout": "7d684a46710d1865bb27076d4a81984850fa46c8",
+              "stderr": ""
+            },
+            "top_level": {
+              "command": [
+                "git",
+                "rev-parse",
+                "--show-toplevel"
+              ],
+              "exit_code": 0,
+              "stdout": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide",
+              "stderr": ""
+            },
+            "status": {
+              "command": [
+                "git",
+                "status",
+                "--porcelain"
+              ],
+              "exit_code": 0,
+              "stdout": "",
+              "stderr": ""
+            }
+          },
+          "binary_sha256": "903c2ab07750474a06fec6a331f78ed39a143a44800b7dbd2d4796d8e780e084",
+          "tooling": {
+            "repository": {
+              "commit": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "HEAD"
+                ],
+                "exit_code": 0,
+                "stdout": "3d98c0a8ee065e5c71607b46bd0059282c6d7e87",
+                "stderr": ""
+              },
+              "tree": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "HEAD^{tree}"
+                ],
+                "exit_code": 0,
+                "stdout": "7d684a46710d1865bb27076d4a81984850fa46c8",
+                "stderr": ""
+              },
+              "top_level": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "--show-toplevel"
+                ],
+                "exit_code": 0,
+                "stdout": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide",
+                "stderr": ""
+              },
+              "status": {
+                "command": [
+                  "git",
+                  "status",
+                  "--porcelain"
+                ],
+                "exit_code": 0,
+                "stdout": "",
+                "stderr": ""
+              }
+            },
+            "snapshots": {
+              "build.py": {
+                "path": "/private/tmp/oxide-m1.mtJwjB/candidate-target/release/qjs.build.tooling-build.py",
+                "sha256": "fc8392a9d26290a6095742b2ab4cb45f5ab37b964c9daa51d22f7088259b1f50"
+              },
+              "run.py": {
+                "path": "/private/tmp/oxide-m1.mtJwjB/candidate-target/release/qjs.build.tooling-run.py",
+                "sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5"
+              }
+            }
+          },
+          "command": [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "--verbose",
+            "-p",
+            "quickjs-oxide-cli",
+            "--no-default-features",
+            "--target-dir",
+            "/private/tmp/oxide-m1.mtJwjB/candidate-target",
+            "--jobs",
+            "2"
+          ],
+          "cwd": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide",
+          "exit_code": 0,
+          "stdout": {
+            "path": "/private/tmp/oxide-m1.mtJwjB/candidate-target/release/qjs.build.stdout.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "stderr": {
+            "path": "/private/tmp/oxide-m1.mtJwjB/candidate-target/release/qjs.build.stderr.log",
+            "sha256": "473c227150e1f6fe531c7d5dd303df20699e1c194bf915a4348d371e318527a9"
+          },
+          "rustc": {
+            "command": [
+              "rustc",
+              "-vV"
+            ],
+            "exit_code": 0,
+            "stdout": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2",
+            "stderr": ""
+          },
+          "cargo": {
+            "command": [
+              "cargo",
+              "-V"
+            ],
+            "exit_code": 0,
+            "stdout": "cargo 1.96.0 (30a34c682 2026-05-25)",
+            "stderr": ""
+          },
+          "cargo_toml_sha256": "14f5e4d4f172150d6c212b61871da24a4e5b26e34e363f6de2a7f250bbe6e48d",
+          "cargo_lock_sha256": "c26c9f1999da579c0d1176c62981afa716ea998949a8dd15b1365f85b66944e3",
+          "release_profile": {
+            "manifest": {
+              "lto": "\"fat\"",
+              "codegen-units": "1"
+            },
+            "environment_overrides": {},
+            "cargo_config_sha256": {},
+            "qjs_rustc_invocation": {
+              "command": "rustc --crate-name qjs --edition=2024 apps/cli/src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C opt-level=3 -C lto=fat -C codegen-units=1 '--warn=clippy::all' --forbid=unsafe_code --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values(\"default\", \"profiling\", \"test262-host\"))' -C metadata=f318d7eac3aa0c1d -C extra-filename=-3cfe3c105f2435ac --out-dir /private/tmp/oxide-m1.mtJwjB/candidate-target/release/deps -C strip=debuginfo -L dependency=/private/tmp/oxide-m1.mtJwjB/candidate-target/release/deps --extern quickjs_oxide=/private/tmp/oxide-m1.mtJwjB/candidate-target/release/deps/libquickjs_oxide-e0446d572207f926.rlib --extern quickjs_oxide_host=/private/tmp/oxide-m1.mtJwjB/candidate-target/release/deps/libquickjs_oxide_host-78c1c28f3dc115b8.rlib",
+              "crate": "qjs",
+              "codegen": {
+                "opt-level": "3",
+                "lto": "fat",
+                "codegen-units": "1"
+              },
+              "target": null
+            },
+            "observed_rustc_compilations": 9,
+            "observed_codegen_groups": [
+              {
+                "target": null,
+                "codegen": {},
+                "crates": [
+                  "autocfg",
+                  "build_script_build"
+                ]
+              },
+              {
+                "target": null,
+                "codegen": {
+                  "opt-level": "3",
+                  "codegen-units": "1"
+                },
+                "crates": [
+                  "tz",
+                  "num_traits",
+                  "num_integer",
+                  "num_bigint",
+                  "quickjs_oxide",
+                  "quickjs_oxide_host"
+                ]
+              },
+              {
+                "target": null,
+                "codegen": {
+                  "opt-level": "3",
+                  "lto": "fat",
+                  "codegen-units": "1"
+                },
+                "crates": [
+                  "qjs"
+                ]
+              }
+            ]
+          },
+          "target": {
+            "requested_triple": null,
+            "rustc_host": "aarch64-apple-darwin",
+            "observed_triple": null,
+            "observed_target_cpu": null,
+            "observed_target_feature": null
+          },
+          "commit_environment": "3d98c0a8ee065e5c71607b46bd0059282c6d7e87"
+        }
+      }
+    },
+    "repeat": 4,
+    "order_strategy": "abba-baab",
+    "timeout_seconds": 180,
+    "cpu": null,
+    "darwin_counters": true,
+    "counter_scope": "whole process including startup and teardown",
+    "metric": "whole-process wall nanoseconds; not adaptive scores"
+  },
+  "summary": [
+    {
+      "case": "hit",
+      "size": 2000000,
+      "engine": "a",
+      "eligible": true,
+      "successful_wall_ns": [
+        160608459,
+        135012542,
+        142117833,
+        135448625
+      ],
+      "failures": [],
+      "median_wall_ns": 138783229.0
+    },
+    {
+      "case": "hit",
+      "size": 2000000,
+      "engine": "b",
+      "eligible": true,
+      "successful_wall_ns": [
+        141160750,
+        144061958,
+        134569750,
+        134739292
+      ],
+      "failures": [],
+      "median_wall_ns": 137950021.0
+    }
+  ],
+  "samples": [
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m1.mtJwjB/aa-candidate/raw/hit-a-0.time-l.txt",
+        "/private/tmp/oxide-m1.mtJwjB/candidate-target/release/qjs",
+        "/private/tmp/oxide-m1.mtJwjB/hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 160608459,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/aa-candidate/raw/hit-a-0.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/aa-candidate/raw/hit-a-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m1.mtJwjB/aa-candidate/raw/hit-a-0.time-l.txt",
+        "raw_sha256": "f3dd66ca389ddf39fe173661ee714fcbfe5bde7e04d52d3b3e493894f9eb3dd2",
+        "values": {
+          "maximum_resident_set_size": 6045696,
+          "instructions_retired": 2535588796,
+          "cycles_elapsed": 420287644,
+          "peak_memory_footprint": 2704192
+        }
+      },
+      "case": "hit",
+      "size": 2000000,
+      "engine": "a",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m1.mtJwjB/aa-candidate/raw/hit-b-0.time-l.txt",
+        "/private/tmp/oxide-m1.mtJwjB/candidate-target/release/qjs",
+        "/private/tmp/oxide-m1.mtJwjB/hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 141160750,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/aa-candidate/raw/hit-b-0.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/aa-candidate/raw/hit-b-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m1.mtJwjB/aa-candidate/raw/hit-b-0.time-l.txt",
+        "raw_sha256": "de5bbee26842e599beeffbbcf45404f1a8b64b4264c8d87f69c9dc1b68b56500",
+        "values": {
+          "maximum_resident_set_size": 5963776,
+          "instructions_retired": 2528810567,
+          "cycles_elapsed": 409674155,
+          "peak_memory_footprint": 2622272
+        }
+      },
+      "case": "hit",
+      "size": 2000000,
+      "engine": "b",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m1.mtJwjB/aa-candidate/raw/hit-b-1.time-l.txt",
+        "/private/tmp/oxide-m1.mtJwjB/candidate-target/release/qjs",
+        "/private/tmp/oxide-m1.mtJwjB/hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 144061958,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/aa-candidate/raw/hit-b-1.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/aa-candidate/raw/hit-b-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m1.mtJwjB/aa-candidate/raw/hit-b-1.time-l.txt",
+        "raw_sha256": "68938d7730e990eafbead85994df2131bc54c1f8ffa929f396173604c10c1436",
+        "values": {
+          "maximum_resident_set_size": 5963776,
+          "instructions_retired": 2528749318,
+          "cycles_elapsed": 409439674,
+          "peak_memory_footprint": 2622272
+        }
+      },
+      "case": "hit",
+      "size": 2000000,
+      "engine": "b",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m1.mtJwjB/aa-candidate/raw/hit-a-1.time-l.txt",
+        "/private/tmp/oxide-m1.mtJwjB/candidate-target/release/qjs",
+        "/private/tmp/oxide-m1.mtJwjB/hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 135012542,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/aa-candidate/raw/hit-a-1.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/aa-candidate/raw/hit-a-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m1.mtJwjB/aa-candidate/raw/hit-a-1.time-l.txt",
+        "raw_sha256": "573996a6bbc687e4255d1e67068f4e6d12ba83696ac9e033b07fec27d88ad7ca",
+        "values": {
+          "maximum_resident_set_size": 6094848,
+          "instructions_retired": 2528135545,
+          "cycles_elapsed": 406216621,
+          "peak_memory_footprint": 2753344
+        }
+      },
+      "case": "hit",
+      "size": 2000000,
+      "engine": "a",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m1.mtJwjB/aa-candidate/raw/hit-b-2.time-l.txt",
+        "/private/tmp/oxide-m1.mtJwjB/candidate-target/release/qjs",
+        "/private/tmp/oxide-m1.mtJwjB/hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 134569750,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/aa-candidate/raw/hit-b-2.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/aa-candidate/raw/hit-b-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m1.mtJwjB/aa-candidate/raw/hit-b-2.time-l.txt",
+        "raw_sha256": "04fc0bf39e6c4871735f5fc52cfc7760967a06fb92888065ab54797f6a909dce",
+        "values": {
+          "maximum_resident_set_size": 6029312,
+          "instructions_retired": 2528164834,
+          "cycles_elapsed": 405978503,
+          "peak_memory_footprint": 2687808
+        }
+      },
+      "case": "hit",
+      "size": 2000000,
+      "engine": "b",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m1.mtJwjB/aa-candidate/raw/hit-a-2.time-l.txt",
+        "/private/tmp/oxide-m1.mtJwjB/candidate-target/release/qjs",
+        "/private/tmp/oxide-m1.mtJwjB/hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 142117833,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/aa-candidate/raw/hit-a-2.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/aa-candidate/raw/hit-a-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m1.mtJwjB/aa-candidate/raw/hit-a-2.time-l.txt",
+        "raw_sha256": "a90de8986647008284fd457dfe516a0a509222f8c6a9427efc23dc8fdd026ee4",
+        "values": {
+          "maximum_resident_set_size": 5947392,
+          "instructions_retired": 2528684171,
+          "cycles_elapsed": 410269449,
+          "peak_memory_footprint": 2605888
+        }
+      },
+      "case": "hit",
+      "size": 2000000,
+      "engine": "a",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m1.mtJwjB/aa-candidate/raw/hit-a-3.time-l.txt",
+        "/private/tmp/oxide-m1.mtJwjB/candidate-target/release/qjs",
+        "/private/tmp/oxide-m1.mtJwjB/hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 135448625,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/aa-candidate/raw/hit-a-3.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/aa-candidate/raw/hit-a-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m1.mtJwjB/aa-candidate/raw/hit-a-3.time-l.txt",
+        "raw_sha256": "945dfddc24fa00b45ebde3e97c16257d66038edf430b1a84ef5623c596fcde57",
+        "values": {
+          "maximum_resident_set_size": 5996544,
+          "instructions_retired": 2528218331,
+          "cycles_elapsed": 408620829,
+          "peak_memory_footprint": 2655040
+        }
+      },
+      "case": "hit",
+      "size": 2000000,
+      "engine": "a",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m1.mtJwjB/aa-candidate/raw/hit-b-3.time-l.txt",
+        "/private/tmp/oxide-m1.mtJwjB/candidate-target/release/qjs",
+        "/private/tmp/oxide-m1.mtJwjB/hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 134739292,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/aa-candidate/raw/hit-b-3.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/aa-candidate/raw/hit-b-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m1.mtJwjB/aa-candidate/raw/hit-b-3.time-l.txt",
+        "raw_sha256": "1da7c78cb3129aa47da633f566e46995db06f599b08e7834a76c8b3c79b71dad",
+        "values": {
+          "maximum_resident_set_size": 5963776,
+          "instructions_retired": 2527975308,
+          "cycles_elapsed": 406389273,
+          "peak_memory_footprint": 2622272
+        }
+      },
+      "case": "hit",
+      "size": 2000000,
+      "engine": "b",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    }
+  ]
+}

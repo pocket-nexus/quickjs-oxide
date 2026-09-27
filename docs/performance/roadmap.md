@@ -1,11 +1,13 @@
 # #52 起点的执行优化路线
 
-状态：设计提案，尚未实现。源码基线为 PR #52
-`996663f771afdabdc69d52c94bd4d2fb392e27b1`。当前实现见
+状态：M1 已在 `3d98c0a8ee065e5c71607b46bd0059282c6d7e87`
+实现；其余工作流与 M2/M3 仍是提案。起点为 PR #52
+`996663f771afdabdc69d52c94bd4d2fb392e27b1`。M1 的验证和测量见
+[收据](receipts/m1-numeric-region-2026-09-28/README.md)。当前实现见
 [架构](../architecture.md)，设计约束见[原则](principles.md)，测量方法见
 [测量协议](measurement.md)。本页落实
 [Rust Design Patterns Examples 会话](https://chatgpt.com/c/6ab8fc22-1d2c-83ee-b108-5d89db1efba2)
-最后一轮以 #52 为新起点的建议；示例类型属于内部设计，不是已有公开 API。
+最后一轮以 #52 为新起点的建议；示例类型属于内部设计，不是公开 API。
 
 ## 1. 方向与工作流
 
@@ -15,8 +17,8 @@
 
 | 工作流 | 交付目标 | 顺序与依赖 |
 | --- | --- | --- |
-| 执行规划 | binding、effect、ownership 与局部 dataflow 决定显式操作数、目的地和执行形态 | M1 连通一个实际区域；随后扩展直接目的地和比较分支 |
-| 作用域执行 | 准入返回可消费的目的地访问；数组事实在相应借用内有效 | 与 M1 同时交付；随后扩展现有 own Number 元素更新 |
+| 执行规划 | binding、effect、ownership 与局部 dataflow 决定显式操作数、目的地和执行形态 | M1 已连通一个实际区域；随后扩展直接目的地和比较分支 |
+| 作用域执行 | 准入返回可消费的目的地访问；数组事实在相应借用内有效 | M1 的 local 提交已交付；随后扩展现有 own Number 元素更新 |
 | continuation 与调用 | 携带已知 fault/fallthrough 位置，按发布的布局安装帧，按被替换 owner 选择释放边界 | 可独立推进位置契约；调用布局基于精确 binding 事实继续扩展 |
 | 自适应操作 | 等布局 opcode family、直接 cache-site ID、有界重试、向回落传递已有 miss 事实 | 先确定操作的所有权与 continuation 契约，再接入生产适应机制 |
 | 存储 | 数值 backing 与 cell/shape 类型化 arena，保留完整身份及回收边 | 数组 backing 复用 M1 操作契约；小节点 arena 可独立推进 |
@@ -68,9 +70,10 @@
 NaN boxing 不得缩短 generation；固定 256 槽帧不是嵌入式默认布局。
 Frozen/adaptive 策略在函数或 activation 边界选择，不给每条指令增加模式判断。
 
-## 3. M1：一个完整的数值区域
+## 3. M1：一个完整的数值区域（已实现）
 
-交付以下真实 JavaScript 语句从编译到提交的完整路径：
+本里程碑交付以下真实 JavaScript 语句从编译到提交的完整路径；本节保留
+设计及验收契约，实际边界以[架构](../architecture.md)和[收据](receipts/m1-numeric-region-2026-09-28/README.md)为准：
 
 ```javascript
 sum += array[i] * scale;
@@ -91,7 +94,8 @@ M1 支持表达式结果被丢弃的语句；目的地为可写、未捕获的�
 array 来自直接 local/argument；index、scale 来自直接 local/argument 或
 数值常量。拒绝 capture、eval/dynamic environment、mapped arguments、const
 目的地及无法证明初始化/稳定存储的 binding。拒绝路径继续原有语义。
-精确 capture 与 TDZ 事实必须传到选择阶段，不能以整个函数的粗分类代替。
+capture 与 lexical/TDZ 事实传到选择阶段；存在 dynamic binding 时按
+函数级保守拒绝，不能以局部 guard 假定其存储稳定。
 
 发布契约包含显式操作数来源/目的地、generic 入口、成功 continuation、
 source/fault 映射与逻辑 stack peak/delta。编码沿用单一字流，generic 回落
@@ -158,6 +162,7 @@ frame/heap/峰值内存。profiling 解释机制，plain 产物证明性能；�
 runner 含编译与退出，不能声称是隔离后的执行耗时。
 
 运行受影响测试、当前 CI feature/MSRV 矩阵及集成源码的 focused/full Test262；
-保持冻结结果正文，不为性能改动放宽语义向量。实际命令、源码和结果写入新收据。
+保持冻结结果正文，不为性能改动放宽语义向量。实际命令、源码和结果见
+[M1 收据](receipts/m1-numeric-region-2026-09-28/README.md)。
 完成条件是语句贯穿这套设计、目标工作确实消失，并有可归属的测量；仅增加
 opcode、proof wrapper、宏或测试通过均不足以宣称完成。没有预先承诺的提速倍数。

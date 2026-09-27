@@ -1,9 +1,10 @@
 # Workspace architecture
 
 This document describes the current implementation and its responsibility
-boundaries at PR #52 (`996663f771afdabdc69d52c94bd4d2fb392e27b1`).
-[The optimization roadmap](performance/roadmap.md) describes proposed work;
-it does not describe additional implemented capabilities.
+boundaries, including M1 at `3d98c0a8ee065e5c71607b46bd0059282c6d7e87`.
+PR #52 (`996663f771afdabdc69d52c94bd4d2fb392e27b1`) is the earlier
+execution baseline. [The optimization roadmap](performance/roadmap.md)
+distinguishes the delivered M1 region from proposed generalizations.
 [Primitive VM results](primitive-vm.md) retain earlier measurement provenance.
 
 ## Packages and module owners
@@ -70,8 +71,9 @@ metadata validation. Grammar methods live in the corresponding parser modules;
 the existing class, destructuring and resolution algorithms remain in use.
 `compiler/relocation.rs` owns fragment insertion, prefix relocation and the
 lowered instruction offset map. `flow.rs` exposes structural block entries
-for local rewrites and delegates required normal/exception/resume stack facts
-to the existing code verifier. `optimize.rs` owns the bounded constant-branch
+for local rewrites and builds a temporary basic-block use/effect graph for the
+M1 numeric region. Required normal/exception/resume stack facts remain with
+the code verifier. `optimize.rs` owns the bounded constant-branch
 rewrite and its ordered QuickJS late-throw source-site projection. It runs the
 projection before rewriting and preserves physical instruction slots.
 Profiling builds expose scoped compile, execution, site and call counters
@@ -88,9 +90,10 @@ The encoder and verifier share the opcode/operand contract. `ExecCode` stores
 instruction boundaries so control-flow targets, resumed frames and
 diagnostics use execution-word offsets. The published function retains the
 word stream, constants and metadata; product builds have no second instruction
-array or fusion plan. Tests may retain compiler IR for assertions. The current
-selector recognizes bounded instruction patterns; the dataflow-based execution
-planner in the roadmap is not implemented.
+array or fusion plan. Tests may retain compiler IR for assertions. Most
+specializations still recognize bounded instruction patterns. M1 selects one
+operation from temporary use/effect facts after lowering; the broader binding,
+ownership and effect planner in the roadmap remains proposed.
 
 `vm/execute.rs` is the only instruction loop. `FrameCursor` borrows the frame
 window for one short operation at a time, moves or copies owned values, and
@@ -100,12 +103,27 @@ explicit frame stack and driver handle operations that can call JavaScript,
 throw or suspend. The object, conversion and iterator algorithms retain their semantic ownership
 in their respective modules; none dispatches compiler `Instruction` values.
 
-Publication selects ordinary, cache-aware and numeric span opcodes. Ordinary
+Publication selects ordinary, cache-aware, numeric span and M1 region opcodes. Ordinary
 local and argument reads enter directly, with no specialization probe. A
 numeric span hit skips its following generic words; a failed guard executes
 the same position's ordinary read and then those generic words. The verifier
 rejects any span with a control-flow entry into its middle. Field and array
 cache misses similarly enter the new execution flow's general handlers.
+For `sum += array[i] * scale` with a discarded result and a mutable,
+uncaptured ordinary local destination, M1 can publish one
+`NumericArrayAccumulate` word-stream operation and a validated region
+descriptor. It keeps the original words for generic fallback, excludes their
+interior from competing selection, and validates descriptor sources, entries,
+continuations and stack requirements. Direct local/argument or numeric
+constant inputs are supported where their storage is proven; uncertain,
+captured, lexical, dynamic and mapped binding cases use ordinary encoding.
+At execution, Number guards and a genuine Array's own dense or materialized
+Number element admit the operation. A short-lived `FrameSlots` destination
+holds the resolved Number slot through multiplication, addition and one
+write. Guard failure runs the original local read and generic continuation
+without changing state. The successful path creates no intermediate operand
+owners or additional driver exit; this is a narrow operation, not a general
+adaptive region engine.
 The field cache retained by published code is read-only; writes use the
 general property operation without an unused write-cache allocation.
 The `quicken_same_width` helper is test-only and checks allowed opcode pairs,
@@ -119,7 +137,7 @@ this is not a frozen, portable program image.
 | --- | --- | --- |
 | Lowering / `verify_parts` | Validate reachable stack states, control flow and constant references; compute maximum stack usage | Current JS value types, object state, or a complete local-initialization/storage proof for future direct operations |
 | Publication / heap allocation | Link atoms and constants, validate function metadata, retain child/constant roots, publish iteratively and clean up failures | Cross-runtime portability of linked identities |
-| `ExecCode` encoding / verification | Check headers, operand counts, widths, boundaries, targets and selected span contracts | Every proposed binding/ownership/effect guarantee in the roadmap |
+| `ExecCode` encoding / verification | Check headers, operand counts, widths, boundaries, targets, selected span contracts and M1 region descriptors/entries/continuations | Every proposed binding/ownership/effect guarantee beyond the selected M1 shape |
 | Frame installation / execution entry | Reserve frame storage, authenticate its window, check the resume word boundary | That arbitrary saved values stayed unchanged across re-entry |
 | Short execution borrow | Inspect actual binding/value/storage facts and consume scoped access | Validity across callbacks, layout mutation, suspension or observable release |
 
@@ -153,10 +171,11 @@ The roadmap makes release handling depend on the displaced owner and the
 operation's actual effects.
 
 Own numeric Array reads currently support dense and materialized data slots,
-including frozen data properties. Existing numeric writes have narrower dense
-storage guards. Read eligibility does not imply writability. Scoped one-borrow
-updates, homogeneous numeric backing and typed cell/shape arenas are proposals,
-not properties implied by the current helper names.
+including frozen data properties. M1 uses this read path with one heap access
+and commits to an admitted local destination. Existing numeric array writes
+have narrower dense storage guards. Read eligibility does not imply
+writability. Scoped one-borrow array updates, homogeneous numeric backing and
+typed cell/shape arenas remain proposals.
 
 ## State and semantic boundaries
 

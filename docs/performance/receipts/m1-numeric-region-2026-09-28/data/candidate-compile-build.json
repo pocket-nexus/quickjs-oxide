@@ -1,0 +1,26 @@
+{
+  "command": [
+    "cargo",
+    "build",
+    "--release",
+    "--manifest-path",
+    "/private/tmp/oxide-m1.mtJwjB/candidate-compile/Cargo.toml",
+    "--target-dir",
+    "/private/tmp/oxide-m1.mtJwjB/candidate-compile/target"
+  ],
+  "repository": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide",
+  "binary": "/private/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+  "binary_sha256": "928239a470cfc81038942564b02a1a77c9bcfc4f98777149bc47d8543280fa91",
+  "source_sha256": "9c3ff10353b51995a90f2c62868e0b6337d3163983f3876e1f5c4f271829cfae",
+  "cargo_lock_sha256": "d1b16903f0b6008576770f59344f872080c600d52197b27ad6c13a007d3ac5b5",
+  "dependency_commit": "3d98c0a8ee065e5c71607b46bd0059282c6d7e87",
+  "source_identity": {
+    "kind": "git-checkout",
+    "note": "patch covers tracked files; stage receipt must additionally hash untracked implementation files"
+  },
+  "source_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "features": [],
+  "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2\n",
+  "rustflags": null,
+  "encoded_rustflags": null
+}

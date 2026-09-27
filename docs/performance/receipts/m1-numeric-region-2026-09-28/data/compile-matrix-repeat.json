@@ -1,0 +1,2709 @@
+{
+  "schema": "oxide-compile-matrix-v1",
+  "created_utc": "2026-09-27T16:16:40Z",
+  "metric": "compile",
+  "goal": "script",
+  "repeat": 40,
+  "timeout_seconds": 120,
+  "order": "serial, alternating per repetition",
+  "instrumentation": "off (no profiling flags)",
+  "machine": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "cpu": "Apple M1",
+    "logical_cpus": 8,
+    "python": "3.14.7",
+    "cpu_affinity": null,
+    "scaling_governors": {},
+    "load_average": [
+      3.97705078125,
+      5.833984375,
+      5.98388671875
+    ],
+    "macos": {
+      "physical_memory_bytes": 17179869184,
+      "power_settings": {
+        "command": [
+          "pmset",
+          "-g",
+          "custom"
+        ],
+        "exit_code": 0,
+        "stdout": "Battery Power:\n Sleep On Power Button 1\n lowpowermode         0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         20\n womp                 0\n networkoversleep     0\n sleep                1\n lessbright           1\n tcpkeepalive         1\n disksleep            10\nAC Power:\n Sleep On Power Button 1\n lowpowermode         0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         0\n womp                 1\n networkoversleep     0\n sleep                1\n tcpkeepalive         1\n disksleep            10",
+        "stderr": ""
+      },
+      "power_source": {
+        "command": [
+          "pmset",
+          "-g",
+          "batt"
+        ],
+        "exit_code": 0,
+        "stdout": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=22741091)\t100%; charged; 0:00 remaining present: true",
+        "stderr": ""
+      },
+      "vm_stat": {
+        "command": [
+          "vm_stat"
+        ],
+        "exit_code": 0,
+        "stdout": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                    20704.\nPages active:                                 256834.\nPages inactive:                               249435.\nPages speculative:                              6865.\nPages throttled:                                   0.\nPages wired down:                             145719.\nPages purgeable:                               12852.\n\"Translation faults\":                     3660090129.\nPages copy-on-write:                       230617206.\nPages zero filled:                        1329917664.\nPages reactivated:                         474614933.\nPages purged:                               31224703.\nFile-backed pages:                            154266.\nAnonymous pages:                              358868.\nPages stored in compressor:                   924187.\nPages occupied by compressor:                 320297.\nDecompressions:                            425421731.\nCompressions:                              481146420.\nPageins:                                    84770235.\nPageouts:                                     980207.\nSwapins:                                     3252391.\nSwapouts:                                    4235993.",
+        "stderr": ""
+      }
+    },
+    "runner_sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5",
+    "repository": {
+      "commit": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD"
+        ],
+        "exit_code": 0,
+        "stdout": "3d98c0a8ee065e5c71607b46bd0059282c6d7e87",
+        "stderr": ""
+      },
+      "tree": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD^{tree}"
+        ],
+        "exit_code": 0,
+        "stdout": "7d684a46710d1865bb27076d4a81984850fa46c8",
+        "stderr": ""
+      },
+      "top_level": {
+        "command": [
+          "git",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "exit_code": 0,
+        "stdout": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide",
+        "stderr": ""
+      },
+      "status": {
+        "command": [
+          "git",
+          "status",
+          "--porcelain"
+        ],
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    }
+  },
+  "corpus": "/private/tmp/oxide-m1.mtJwjB",
+  "workloads": [
+    {
+      "case": "compile",
+      "path": "/private/tmp/oxide-m1.mtJwjB/compile.js",
+      "bytes": 41890,
+      "sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617"
+    }
+  ],
+  "engines": {
+    "parent": {
+      "type": "oxide",
+      "path": "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+      "sha256": "0fdb152f2784caf27f4eda3d27a442a2fa99f6056161280e6b31b93a314810ca",
+      "version": {
+        "command": [
+          "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+          "--version"
+        ],
+        "exit_code": 0,
+        "stdout": "oxide-compile-probe 1",
+        "stderr": ""
+      },
+      "build": {
+        "command": [
+          "cargo",
+          "build",
+          "--release",
+          "--manifest-path",
+          "/private/tmp/oxide-m1.mtJwjB/parent-compile/Cargo.toml",
+          "--target-dir",
+          "/private/tmp/oxide-m1.mtJwjB/parent-compile/target"
+        ],
+        "repository": "/private/tmp/oxide-m1.mtJwjB/parent",
+        "binary": "/private/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "binary_sha256": "0fdb152f2784caf27f4eda3d27a442a2fa99f6056161280e6b31b93a314810ca",
+        "source_sha256": "9c3ff10353b51995a90f2c62868e0b6337d3163983f3876e1f5c4f271829cfae",
+        "cargo_lock_sha256": "d1b16903f0b6008576770f59344f872080c600d52197b27ad6c13a007d3ac5b5",
+        "dependency_commit": "4287e8c6019933289f3a06e703aea15bf79c9f11",
+        "source_identity": {
+          "kind": "git-checkout",
+          "note": "patch covers tracked files; stage receipt must additionally hash untracked implementation files"
+        },
+        "source_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "features": [],
+        "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2\n",
+        "rustflags": null,
+        "encoded_rustflags": null
+      }
+    },
+    "candidate": {
+      "type": "oxide",
+      "path": "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+      "sha256": "928239a470cfc81038942564b02a1a77c9bcfc4f98777149bc47d8543280fa91",
+      "version": {
+        "command": [
+          "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+          "--version"
+        ],
+        "exit_code": 0,
+        "stdout": "oxide-compile-probe 1",
+        "stderr": ""
+      },
+      "build": {
+        "command": [
+          "cargo",
+          "build",
+          "--release",
+          "--manifest-path",
+          "/private/tmp/oxide-m1.mtJwjB/candidate-compile/Cargo.toml",
+          "--target-dir",
+          "/private/tmp/oxide-m1.mtJwjB/candidate-compile/target"
+        ],
+        "repository": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide",
+        "binary": "/private/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "binary_sha256": "928239a470cfc81038942564b02a1a77c9bcfc4f98777149bc47d8543280fa91",
+        "source_sha256": "9c3ff10353b51995a90f2c62868e0b6337d3163983f3876e1f5c4f271829cfae",
+        "cargo_lock_sha256": "d1b16903f0b6008576770f59344f872080c600d52197b27ad6c13a007d3ac5b5",
+        "dependency_commit": "3d98c0a8ee065e5c71607b46bd0059282c6d7e87",
+        "source_identity": {
+          "kind": "git-checkout",
+          "note": "patch covers tracked files; stage receipt must additionally hash untracked implementation files"
+        },
+        "source_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "features": [],
+        "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2\n",
+        "rustflags": null,
+        "encoded_rustflags": null
+      }
+    },
+    "pr52": {
+      "type": "oxide",
+      "path": "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+      "sha256": "13c5162965cd00aaf452bc7d9dd416ad4900a4e0377ec6ca8830b2eaf2b73e47",
+      "version": {
+        "command": [
+          "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+          "--version"
+        ],
+        "exit_code": 0,
+        "stdout": "oxide-compile-probe 1",
+        "stderr": ""
+      },
+      "build": {
+        "command": [
+          "cargo",
+          "build",
+          "--release",
+          "--manifest-path",
+          "/private/tmp/oxide-m1.mtJwjB/pr52-compile/Cargo.toml",
+          "--target-dir",
+          "/private/tmp/oxide-m1.mtJwjB/pr52-compile/target"
+        ],
+        "repository": "/private/tmp/oxide-m1.mtJwjB/pr52",
+        "binary": "/private/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "binary_sha256": "13c5162965cd00aaf452bc7d9dd416ad4900a4e0377ec6ca8830b2eaf2b73e47",
+        "source_sha256": "9c3ff10353b51995a90f2c62868e0b6337d3163983f3876e1f5c4f271829cfae",
+        "cargo_lock_sha256": "d1b16903f0b6008576770f59344f872080c600d52197b27ad6c13a007d3ac5b5",
+        "dependency_commit": "996663f771afdabdc69d52c94bd4d2fb392e27b1",
+        "source_identity": {
+          "kind": "git-checkout",
+          "note": "patch covers tracked files; stage receipt must additionally hash untracked implementation files"
+        },
+        "source_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "features": [],
+        "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2\n",
+        "rustflags": null,
+        "encoded_rustflags": null
+      }
+    }
+  },
+  "node_probe_sha256": "6c218529930ad316002eaa496ccaf40af6badffe77ec5e825ac1437a4752a938",
+  "runner_sha256": "37a3a6d66cd1e1582814257418f057a031846a0697c15dc0026bd72e6a00fd19",
+  "samples": [
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11553833,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-0.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-0.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 0,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6499750
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 13115292,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-0.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-0.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 0,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 7293584
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12266333,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-0.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-0.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 0,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6657833
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12007667,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-1.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-1.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 1,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6486042
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12274375,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-1.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-1.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 1,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 7048791
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11762417,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-1.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-1.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 1,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6474875
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11545417,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-2.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-2.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 2,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6461750
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12379792,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-2.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-2.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 2,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 7032125
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12175083,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-2.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-2.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 2,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6567209
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11826459,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-3.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-3.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 3,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6457417
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12260916,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-3.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-3.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 3,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6982500
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11774833,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-3.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-3.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 3,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6411500
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11868625,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-4.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-4.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 4,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6467000
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12683791,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-4.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-4.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 4,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6929417
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12035708,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-4.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-4.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 4,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6643000
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11814834,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-5.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-5.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 5,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6437875
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12158500,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-5.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-5.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 5,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6946959
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11754125,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-5.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-5.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 5,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6479083
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11672042,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-6.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-6.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 6,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6475459
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12263791,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-6.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-6.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 6,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6922584
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11718542,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-6.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-6.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 6,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6496125
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11625208,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-7.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-7.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 7,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6406791
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12224667,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-7.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-7.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 7,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6928667
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11745708,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-7.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-7.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 7,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6452834
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11891834,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-8.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-8.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 8,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6526250
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12658708,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-8.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-8.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 8,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 7020625
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12139667,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-8.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-8.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 8,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6580166
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11820833,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-9.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-9.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 9,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6433041
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12152417,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-9.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-9.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 9,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6922625
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11904541,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-9.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-9.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 9,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6525209
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11671500,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-10.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-10.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 10,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6444625
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12206125,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-10.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-10.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 10,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6888916
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11775667,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-10.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-10.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 10,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6450875
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11965125,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-11.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-11.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 11,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6506833
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12248583,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-11.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-11.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 11,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6992541
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11841917,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-11.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-11.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 11,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6452667
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11629583,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-12.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-12.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 12,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6432125
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12236208,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-12.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-12.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 12,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6923625
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11596458,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-12.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-12.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 12,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6522959
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11684167,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-13.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-13.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 13,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6466666
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 13443333,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-13.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-13.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 13,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 7181084
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11751667,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-13.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-13.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 13,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6488417
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11636584,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-14.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-14.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 14,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6419000
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12504458,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-14.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-14.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 14,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 7046916
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12499792,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-14.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-14.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 14,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6436666
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11701583,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-15.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-15.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 15,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6381500
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12316833,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-15.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-15.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 15,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6918792
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11825750,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-15.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-15.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 15,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6490166
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11698750,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-16.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-16.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 16,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6425500
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 13252250,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-16.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-16.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 16,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 7025834
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12817709,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-16.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-16.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 16,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 7107625
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12161917,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-17.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-17.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 17,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6480417
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12310667,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-17.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-17.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 17,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6943416
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11745125,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-17.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-17.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 17,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6445083
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11998083,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-18.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-18.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 18,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6593208
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 13552542,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-18.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-18.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 18,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8057708
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12296750,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-18.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-18.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 18,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6767666
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11641750,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-19.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-19.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 19,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6357625
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11945125,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-19.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-19.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 19,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6874042
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11589875,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-19.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-19.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 19,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6486416
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11944042,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-20.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-20.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 20,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6558750
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12625084,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-20.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-20.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 20,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 7182959
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12367084,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-20.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-20.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 20,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6650042
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 13044125,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-21.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-21.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 21,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6679167
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12901625,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-21.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-21.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 21,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6989584
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11863459,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-21.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-21.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 21,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6445958
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11889709,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-22.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-22.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 22,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6413000
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 13077041,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-22.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-22.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 22,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 7563292
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12643792,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-22.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-22.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 22,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6702167
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11899042,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-23.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-23.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 23,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6528792
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12389791,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-23.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-23.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 23,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6873250
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11737833,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-23.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-23.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 23,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6488541
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11630875,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-24.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-24.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 24,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6419250
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12430875,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-24.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-24.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 24,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 7001250
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11656792,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-24.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-24.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 24,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6401458
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11935625,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-25.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-25.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 25,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6507625
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12723458,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-25.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-25.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 25,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 7452250
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12281375,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-25.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-25.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 25,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6822000
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11831167,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-26.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-26.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 26,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6445250
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12343000,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-26.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-26.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 26,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6967166
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11968791,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-26.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-26.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 26,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6540291
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12671958,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-27.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-27.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 27,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 7217542
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12286000,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-27.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-27.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 27,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6988417
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11659000,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-27.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-27.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 27,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6469584
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11610709,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-28.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-28.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 28,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6415875
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12030583,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-28.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-28.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 28,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6900792
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11750000,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-28.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-28.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 28,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6436709
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11682042,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-29.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-29.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 29,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6503333
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12536958,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-29.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-29.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 29,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 7078458
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11792500,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-29.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-29.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 29,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6471083
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11627500,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-30.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-30.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 30,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6467667
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12278667,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-30.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-30.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 30,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6943917
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12628083,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-30.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-30.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 30,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6459708
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11794250,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-31.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-31.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 31,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6543167
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12170458,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-31.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-31.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 31,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6906500
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11724250,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-31.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-31.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 31,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6497542
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11867667,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-32.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-32.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 32,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6580125
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12731959,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-32.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-32.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 32,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 7414125
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11757792,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-32.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-32.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 32,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6460834
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11639625,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-33.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-33.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 33,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6441042
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12303625,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-33.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-33.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 33,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 7030584
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 16464833,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-33.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-33.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 33,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 11030333
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12067916,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-34.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-34.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 34,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6432333
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12422834,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-34.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-34.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 34,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6974250
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11762958,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-34.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-34.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 34,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6425666
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11856666,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-35.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-35.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 35,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6490459
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12190083,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-35.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-35.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 35,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6993000
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11719625,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-35.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-35.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 35,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6384375
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11550208,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-36.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-36.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 36,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6409667
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12472542,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-36.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-36.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 36,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 7048500
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12307250,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-36.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-36.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 36,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6888333
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11826417,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-37.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-37.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 37,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6475625
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12108666,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-37.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-37.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 37,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6949500
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12757125,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-37.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-37.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 37,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6475875
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11737750,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-38.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-38.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 38,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6425542
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12386417,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-38.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-38.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 38,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6918458
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11636083,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-38.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-38.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 38,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6374875
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/pr52-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11591833,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-39.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-pr52-39.stderr",
+      "case": "compile",
+      "engine": "pr52",
+      "repetition": 39,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6468042
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/candidate-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12358584,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-39.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-candidate-39.stderr",
+      "case": "compile",
+      "engine": "candidate",
+      "repetition": 39,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 7174834
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-m1.mtJwjB/parent-compile/target/release/oxide-compile-probe",
+        "/private/tmp/oxide-m1.mtJwjB/compile.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 15238000,
+      "stdout": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-39.stdout",
+      "stderr": "/private/tmp/oxide-m1.mtJwjB/compile-matrix-repeat/raw/compile-parent-39.stderr",
+      "case": "compile",
+      "engine": "parent",
+      "repetition": 39,
+      "workload_sha256": "eba8bd933075bea6b6e967f77396baef6a57b5eae0a0052aacf8b805d7137617",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 9795833
+      }
+    }
+  ],
+  "summary": [
+    {
+      "case": "compile",
+      "engine": "parent",
+      "samples": 40,
+      "successful": 40,
+      "failures": [],
+      "eligible": true,
+      "bytes": 41890,
+      "metrics": {
+        "ns": {
+          "raw": [
+            6499750,
+            6474875,
+            6461750,
+            6411500,
+            6467000,
+            6479083,
+            6475459,
+            6452834,
+            6526250,
+            6525209,
+            6444625,
+            6452667,
+            6432125,
+            6488417,
+            6419000,
+            6490166,
+            6425500,
+            6445083,
+            6593208,
+            6486416,
+            6558750,
+            6445958,
+            6413000,
+            6488541,
+            6419250,
+            6822000,
+            6445250,
+            6469584,
+            6415875,
+            6471083,
+            6467667,
+            6497542,
+            6580125,
+            11030333,
+            6432333,
+            6384375,
+            6409667,
+            6475875,
+            6425542,
+            9795833
+          ],
+          "minimum": 6384375,
+          "median": 6468625.5,
+          "maximum": 11030333,
+          "stdev": 883203.9839572156
+        },
+        "mb_per_second": 6.475873429370737
+      }
+    },
+    {
+      "case": "compile",
+      "engine": "candidate",
+      "samples": 40,
+      "successful": 40,
+      "failures": [],
+      "eligible": true,
+      "bytes": 41890,
+      "metrics": {
+        "ns": {
+          "raw": [
+            7293584,
+            7048791,
+            7032125,
+            6982500,
+            6929417,
+            6946959,
+            6922584,
+            6928667,
+            7020625,
+            6922625,
+            6888916,
+            6992541,
+            6923625,
+            7181084,
+            7046916,
+            6918792,
+            7025834,
+            6943416,
+            8057708,
+            6874042,
+            7182959,
+            6989584,
+            7563292,
+            6873250,
+            7001250,
+            7452250,
+            6967166,
+            6988417,
+            6900792,
+            7078458,
+            6943917,
+            6906500,
+            7414125,
+            7030584,
+            6974250,
+            6993000,
+            7048500,
+            6949500,
+            6918458,
+            7174834
+          ],
+          "minimum": 6873250,
+          "median": 6989000.5,
+          "maximum": 8057708,
+          "stdev": 226727.52154461414
+        },
+        "mb_per_second": 5.993703963821436
+      }
+    },
+    {
+      "case": "compile",
+      "engine": "pr52",
+      "samples": 40,
+      "successful": 40,
+      "failures": [],
+      "eligible": true,
+      "bytes": 41890,
+      "metrics": {
+        "ns": {
+          "raw": [
+            6657833,
+            6486042,
+            6567209,
+            6457417,
+            6643000,
+            6437875,
+            6496125,
+            6406791,
+            6580166,
+            6433041,
+            6450875,
+            6506833,
+            6522959,
+            6466666,
+            6436666,
+            6381500,
+            7107625,
+            6480417,
+            6767666,
+            6357625,
+            6650042,
+            6679167,
+            6702167,
+            6528792,
+            6401458,
+            6507625,
+            6540291,
+            7217542,
+            6436709,
+            6503333,
+            6459708,
+            6543167,
+            6460834,
+            6441042,
+            6425666,
+            6490459,
+            6888333,
+            6475625,
+            6374875,
+            6468042
+          ],
+          "minimum": 6357625,
+          "median": 6488250.5,
+          "maximum": 7217542,
+          "stdev": 181392.5367767868
+        },
+        "mb_per_second": 6.4562858662747376
+      }
+    }
+  ],
+  "ratios": [
+    {
+      "case": "compile",
+      "engine": "candidate",
+      "reference": "parent",
+      "ratio": 0.9255437168733927
+    },
+    {
+      "case": "compile",
+      "engine": "pr52",
+      "reference": "parent",
+      "ratio": 0.99697530173966
+    }
+  ]
+}
