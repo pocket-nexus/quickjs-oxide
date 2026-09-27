@@ -181,7 +181,7 @@ impl RawId {
     /// True for handles served by the dedicated leaf arena.
     ///
     /// Leaves own no outgoing edges and can never join a cycle, so they live
-    /// outside the object/shape arena and its weak-link machinery.
+    /// outside the non-leaf arenas and their cycle-collection machinery.
     pub(in crate::engine::heap) const fn is_leaf(self) -> bool {
         matches!(self, Self::String(_) | Self::BigInt(_))
     }
@@ -278,8 +278,8 @@ impl LeafValue {
 /// One string/BigInt arena slot.
 ///
 /// Leaves own no outgoing heap edges and never carry weak links, so the slot
-/// holds only its generation, strong count and payload. This keeps a live
-/// string slot at 32 bytes instead of the 440-byte object/shape slot.
+/// holds only its generation, strong count and payload. Measure its exact size
+/// for the build in question instead of relying on an older shared-slot size.
 struct LeafSlot {
     generation: u32,
     strong: Cell<u32>,
@@ -298,7 +298,7 @@ impl LeafSlot {
     }
 }
 
-/// Runtime-local object and shape arena.
+/// Runtime-local storage for shared nodes, captured cells, shapes and leaves.
 ///
 /// A `Heap` is deliberately not internally synchronized.  The enclosing
 /// runtime chooses its single-threaded ownership boundary, as QuickJS does.

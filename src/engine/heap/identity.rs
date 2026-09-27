@@ -38,8 +38,8 @@ impl fmt::Debug for ObjectId {
 
 /// Stable identity of a shape slot until that slot is reclaimed.
 ///
-/// Shapes and objects share one arena, but their typed handles prevent normal
-/// callers from mixing the two node kinds.
+/// Shapes have dedicated storage. Their kind and generation distinguish them
+/// from nodes whose numeric index happens to match.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ShapeId {
     pub(in crate::engine::heap) index: u32,

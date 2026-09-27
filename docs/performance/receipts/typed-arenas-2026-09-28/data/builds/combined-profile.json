@@ -1,0 +1,217 @@
+{
+  "schema": "oxide-build-v2",
+  "mode": "profiling",
+  "vm_configuration": "stack-vm",
+  "features": [
+    "profiling"
+  ],
+  "commit": "ca70c00e1046a8fe7636af2697ce390854528289",
+  "source": {
+    "commit": {
+      "command": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "exit_code": 0,
+      "stdout": "ca70c00e1046a8fe7636af2697ce390854528289",
+      "stderr": ""
+    },
+    "tree": {
+      "command": [
+        "git",
+        "rev-parse",
+        "HEAD^{tree}"
+      ],
+      "exit_code": 0,
+      "stdout": "818b8ed644ab526bce0c0bbab5a88068567688c6",
+      "stderr": ""
+    },
+    "top_level": {
+      "command": [
+        "git",
+        "rev-parse",
+        "--show-toplevel"
+      ],
+      "exit_code": 0,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/combined",
+      "stderr": ""
+    },
+    "status": {
+      "command": [
+        "git",
+        "status",
+        "--porcelain"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  },
+  "binary_sha256": "e5cd9a37425877c04db7229fb02bab8317a9b0bbc8778c9bee169640b370c98b",
+  "tooling": {
+    "repository": {
+      "commit": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD"
+        ],
+        "exit_code": 0,
+        "stdout": "ca70c00e1046a8fe7636af2697ce390854528289",
+        "stderr": ""
+      },
+      "tree": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD^{tree}"
+        ],
+        "exit_code": 0,
+        "stdout": "818b8ed644ab526bce0c0bbab5a88068567688c6",
+        "stderr": ""
+      },
+      "top_level": {
+        "command": [
+          "git",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "exit_code": 0,
+        "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/combined",
+        "stderr": ""
+      },
+      "status": {
+        "command": [
+          "git",
+          "status",
+          "--porcelain"
+        ],
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    "snapshots": {
+      "build.py": {
+        "path": "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-profile/release/qjs.build.tooling-build.py",
+        "sha256": "fc8392a9d26290a6095742b2ab4cb45f5ab37b964c9daa51d22f7088259b1f50"
+      },
+      "run.py": {
+        "path": "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-profile/release/qjs.build.tooling-run.py",
+        "sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5"
+      }
+    }
+  },
+  "command": [
+    "cargo",
+    "build",
+    "--locked",
+    "--release",
+    "--verbose",
+    "-p",
+    "quickjs-oxide-cli",
+    "--no-default-features",
+    "--target-dir",
+    "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-profile",
+    "--jobs",
+    "2",
+    "--features",
+    "profiling"
+  ],
+  "cwd": "/private/tmp/oxide-typed-arenas.ZngRCR/combined",
+  "exit_code": 0,
+  "stdout": {
+    "path": "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-profile/release/qjs.build.stdout.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "stderr": {
+    "path": "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-profile/release/qjs.build.stderr.log",
+    "sha256": "44abf0692b7dd2707c30f756c025b314883f681db58eaa0d2049cf9852ffabb0"
+  },
+  "rustc": {
+    "command": [
+      "rustc",
+      "-vV"
+    ],
+    "exit_code": 0,
+    "stdout": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2",
+    "stderr": ""
+  },
+  "cargo": {
+    "command": [
+      "cargo",
+      "-V"
+    ],
+    "exit_code": 0,
+    "stdout": "cargo 1.96.0 (30a34c682 2026-05-25)",
+    "stderr": ""
+  },
+  "cargo_toml_sha256": "14f5e4d4f172150d6c212b61871da24a4e5b26e34e363f6de2a7f250bbe6e48d",
+  "cargo_lock_sha256": "c26c9f1999da579c0d1176c62981afa716ea998949a8dd15b1365f85b66944e3",
+  "release_profile": {
+    "manifest": {
+      "lto": "\"fat\"",
+      "codegen-units": "1"
+    },
+    "environment_overrides": {
+      "RUSTUP_TOOLCHAIN": "stable"
+    },
+    "cargo_config_sha256": {},
+    "qjs_rustc_invocation": {
+      "command": "rustc --crate-name qjs --edition=2024 apps/cli/src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C opt-level=3 -C lto=fat -C codegen-units=1 '--warn=clippy::all' --forbid=unsafe_code --cfg 'feature=\"profiling\"' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values(\"default\", \"profiling\", \"test262-host\"))' -C metadata=ce65567d803c8ce4 -C extra-filename=-ea14bbc5368200d0 --out-dir /private/tmp/oxide-typed-arenas.ZngRCR/build-combined-profile/release/deps -C strip=debuginfo -L dependency=/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-profile/release/deps --extern quickjs_oxide=/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-profile/release/deps/libquickjs_oxide-f8231dd594213c1e.rlib --extern quickjs_oxide_host=/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-profile/release/deps/libquickjs_oxide_host-0b59a7e8712bd893.rlib",
+      "crate": "qjs",
+      "codegen": {
+        "opt-level": "3",
+        "lto": "fat",
+        "codegen-units": "1"
+      },
+      "target": null
+    },
+    "observed_rustc_compilations": 9,
+    "observed_codegen_groups": [
+      {
+        "target": null,
+        "codegen": {},
+        "crates": [
+          "autocfg",
+          "build_script_build"
+        ]
+      },
+      {
+        "target": null,
+        "codegen": {
+          "opt-level": "3",
+          "codegen-units": "1"
+        },
+        "crates": [
+          "tz",
+          "num_traits",
+          "num_integer",
+          "num_bigint",
+          "quickjs_oxide",
+          "quickjs_oxide_host"
+        ]
+      },
+      {
+        "target": null,
+        "codegen": {
+          "opt-level": "3",
+          "lto": "fat",
+          "codegen-units": "1"
+        },
+        "crates": [
+          "qjs"
+        ]
+      }
+    ]
+  },
+  "target": {
+    "requested_triple": null,
+    "rustc_host": "aarch64-apple-darwin",
+    "observed_triple": null,
+    "observed_target_cpu": null,
+    "observed_target_feature": null
+  },
+  "commit_environment": "ca70c00e1046a8fe7636af2697ce390854528289"
+}
