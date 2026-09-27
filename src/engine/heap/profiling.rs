@@ -84,7 +84,8 @@ impl Heap {
     pub(crate) fn with_allocation_trace(trace: Option<AllocationTrace>) -> Self {
         let mut heap = Self::new();
         heap.slots.trace = trace.clone();
-        heap.leaf_slots.trace = trace;
+        heap.leaf_slots.trace = trace.clone();
+        heap.var_refs.slots.trace = trace;
         heap
     }
 
@@ -106,6 +107,18 @@ impl Heap {
                 "arena_free_indices",
                 self.free.len(),
                 self.free.capacity(),
+                size_of::<u32>(),
+            ),
+            storage(
+                "var_ref_arena_slots",
+                self.var_refs.slots.len(),
+                self.var_refs.slots.capacity(),
+                size_of::<auxiliary_arena::AuxiliarySlot<VarRefData>>(),
+            ),
+            storage(
+                "var_ref_arena_free_indices",
+                self.var_refs.free.len(),
+                self.var_refs.free.capacity(),
                 size_of::<u32>(),
             ),
             storage(

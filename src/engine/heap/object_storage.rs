@@ -90,12 +90,9 @@ impl Heap {
     pub fn object(&self, id: ObjectId) -> Result<&ObjectData, HeapError> {
         match self.live_node(RawId::Object(id))?.data {
             NodeData::Object(ref object) => Ok(object),
-            NodeData::Shape(_)
-            | NodeData::VarRef(_)
-            | NodeData::Context(_)
-            | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
-                "typed object lookup reached another node payload",
-            )),
+            NodeData::Shape(_) | NodeData::Context(_) | NodeData::FunctionBytecode(_) => Err(
+                HeapError::Invariant("typed object lookup reached another node payload"),
+            ),
         }
     }
 
@@ -180,12 +177,9 @@ impl Heap {
     pub fn shape(&self, id: ShapeId) -> Result<&Shape, HeapError> {
         match self.live_node(RawId::Shape(id))?.data {
             NodeData::Shape(ref shape) => Ok(shape),
-            NodeData::Object(_)
-            | NodeData::VarRef(_)
-            | NodeData::Context(_)
-            | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
-                "typed shape lookup reached another node payload",
-            )),
+            NodeData::Object(_) | NodeData::Context(_) | NodeData::FunctionBytecode(_) => Err(
+                HeapError::Invariant("typed shape lookup reached another node payload"),
+            ),
         }
     }
 
@@ -207,12 +201,9 @@ impl Heap {
                 shape.invalidate_layout();
                 Ok(shape)
             }
-            NodeData::Object(_)
-            | NodeData::VarRef(_)
-            | NodeData::Context(_)
-            | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
-                "typed mutable shape lookup reached another node payload",
-            )),
+            NodeData::Object(_) | NodeData::Context(_) | NodeData::FunctionBytecode(_) => Err(
+                HeapError::Invariant("typed mutable shape lookup reached another node payload"),
+            ),
         }
     }
 
@@ -220,12 +211,9 @@ impl Heap {
     pub fn context(&self, id: ContextId) -> Result<&ContextData, HeapError> {
         match self.live_node(RawId::Context(id))?.data {
             NodeData::Context(ref context) => Ok(context),
-            NodeData::Object(_)
-            | NodeData::Shape(_)
-            | NodeData::VarRef(_)
-            | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
-                "typed context lookup reached another node payload",
-            )),
+            NodeData::Object(_) | NodeData::Shape(_) | NodeData::FunctionBytecode(_) => Err(
+                HeapError::Invariant("typed context lookup reached another node payload"),
+            ),
         }
     }
 

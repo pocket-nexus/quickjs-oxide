@@ -29,7 +29,9 @@ use crate::engine::code::function::metadata::{
 #[cfg(test)]
 use crate::engine::code::function::metadata::{EvalBinding, EvalScope, ParameterArgumentCell};
 
+mod auxiliary_arena;
 mod buffers;
+use auxiliary_arena::{AuxiliaryArena, AuxiliaryState};
 mod edges;
 mod gc;
 use edges::Edges;
@@ -189,7 +191,6 @@ impl RawId {
 enum NodeData {
     Object(ObjectData),
     Shape(Shape),
-    VarRef(VarRefData),
     Context(Box<ContextData>),
     FunctionBytecode(Box<FunctionBytecodeData>),
 }
@@ -199,7 +200,6 @@ impl NodeData {
         match self {
             Self::Object(_) => HeapNodeKind::Object,
             Self::Shape(_) => HeapNodeKind::Shape,
-            Self::VarRef(_) => HeapNodeKind::VarRef,
             Self::Context(_) => HeapNodeKind::Context,
             Self::FunctionBytecode(_) => HeapNodeKind::FunctionBytecode,
         }
@@ -209,7 +209,6 @@ impl NodeData {
         match self {
             Self::Object(object) => object_edges(object),
             Self::Shape(shape) => shape_edges(shape).into(),
-            Self::VarRef(var_ref) => var_ref_edges(var_ref),
             Self::Context(context) => context_edges(context).into(),
             Self::FunctionBytecode(bytecode) => function_bytecode_edges(bytecode).into(),
         }
@@ -311,6 +310,7 @@ pub struct Heap {
     #[cfg(feature = "profiling")]
     slots: profiling::ArenaStorage<ArenaSlot>,
     free: Vec<u32>,
+    var_refs: AuxiliaryArena<VarRefData>,
     #[cfg(not(feature = "profiling"))]
     leaf_slots: Vec<LeafSlot>,
     #[cfg(feature = "profiling")]
