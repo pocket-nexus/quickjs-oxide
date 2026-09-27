@@ -119,4 +119,11 @@ Rust 1.88.0 workspace/all-targets `cargo check`, default and profiling
 `cargo test` passed. Focused numeric tests passed with and without profiling;
 the focused Test262 vector passed **6,844/6,844** eligible variants. Source
 layout and frozen Test262 configuration authentication passed. Full Test262
-results will be recorded once the ongoing replay finishes.
+matched its frozen vector: 102,037 total, 80,010 pass, 3,552 fail,
+3,502 unsupported and 18,475 skipped; **80,010/80,060 runnable pass**.
+The full TSV SHA-256 is
+`f740749201dd96bd844b7b32e96661f78e216fb28c4e13aff11683d4be59df7f`.
+The Rust runner engine semantics fingerprint is
+`ffb5ca6e9ceb1a5078caad2e70ec0525b989d31691f3d54fe3280a32900f8ac3`.
+The frozen `fail` and `unsupported` classes are existing classifications,
+not C1 regressions.
