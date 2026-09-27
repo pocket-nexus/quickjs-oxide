@@ -184,7 +184,8 @@ with one heap access and commit to an admitted destination. Planned numeric
 array updates use one mutable heap borrow for an existing writable own Number
 element in either storage mode. Other array writes retain their existing
 guards and general path. Read eligibility does not imply writability.
-Homogeneous numeric backing and typed cell/shape arenas remain proposals.
+Typed cell/shape arenas now hold captured cells and shapes separately from the
+object-containing shared arena. Homogeneous numeric backing remains a proposal.
 
 ## State and semantic boundaries
 

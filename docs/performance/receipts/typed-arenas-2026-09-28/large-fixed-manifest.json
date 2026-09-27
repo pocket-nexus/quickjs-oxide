@@ -1,0 +1,36 @@
+{
+  "metadata": {
+    "workloads": {
+      "workloads": [
+        {
+          "case": "cell_live_large",
+          "size": 32768,
+          "path": "docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_live_large.js",
+          "sha256": "7eaea7b4fbf31f8250506b3d0b1e1b8e7c7eda54863be12fe37e22fa8e490618",
+          "expected": "32769\n"
+        },
+        {
+          "case": "shape_distinct_large",
+          "size": 32768,
+          "path": "docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_distinct_large.js",
+          "sha256": "3a7ad606e59705cb6bf42c555a96452869fcb049e4a01fe40d0ed309b66b3488",
+          "expected": "32767\n"
+        },
+        {
+          "case": "shape_shared_large",
+          "size": 32768,
+          "path": "docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_shared_large.js",
+          "sha256": "8c05ba5563fb10e4bdc2a4977db57952ad4317ec81b40a9b3f8b13208d11dedc",
+          "expected": "32768\n"
+        },
+        {
+          "case": "cell_object_update_large",
+          "size": 16384,
+          "path": "docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_object_update_large.js",
+          "sha256": "c2a37bc108044d8bbc43a6babe33676152712f22778dccf04b87f673d95e10f7",
+          "expected": "16385\n"
+        }
+      ]
+    }
+  }
+}

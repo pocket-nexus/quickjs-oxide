@@ -1,0 +1,7 @@
+   Compiling num-integer v0.1.46
+   Compiling num-bigint v0.5.1
+   Compiling quickjs-oxide v0.0.1 (/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7)
+   Compiling quickjs-oxide-host v0.0.1 (/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/adapters/native)
+   Compiling typed-arena-scratch-probe v0.0.0 (/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/scratch-probe)
+    Finished `release` profile [optimized] target(s) in 2m 43s
+     Running `/tmp/oxide-typed-arenas.ZngRCR/build-scratch-probe/release/typed-arena-scratch-probe cell`

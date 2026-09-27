@@ -1,0 +1,2781 @@
+{
+  "metadata": {
+    "machine": {
+      "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+      "machine": "arm64",
+      "cpu": "Apple M1",
+      "logical_cpus": 8,
+      "python": "3.14.7",
+      "cpu_affinity": null,
+      "scaling_governors": {},
+      "load_average": [
+        1.4619140625,
+        4.02001953125,
+        18.8466796875
+      ],
+      "macos": {
+        "physical_memory_bytes": 17179869184,
+        "power_settings": {
+          "command": [
+            "pmset",
+            "-g",
+            "custom"
+          ],
+          "exit_code": 0,
+          "stdout": "Battery Power:\n Sleep On Power Button 1\n lowpowermode         0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         20\n womp                 0\n networkoversleep     0\n sleep                1\n lessbright           1\n tcpkeepalive         1\n disksleep            10\nAC Power:\n Sleep On Power Button 1\n lowpowermode         0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         0\n womp                 1\n networkoversleep     0\n sleep                1\n tcpkeepalive         1\n disksleep            10",
+          "stderr": ""
+        },
+        "power_source": {
+          "command": [
+            "pmset",
+            "-g",
+            "batt"
+          ],
+          "exit_code": 0,
+          "stdout": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=22741091)\t100%; charged; 0:00 remaining present: true",
+          "stderr": ""
+        },
+        "vm_stat": {
+          "command": [
+            "vm_stat"
+          ],
+          "exit_code": 0,
+          "stdout": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                    52402.\nPages active:                                 273264.\nPages inactive:                               249066.\nPages speculative:                             23657.\nPages throttled:                                   0.\nPages wired down:                             150412.\nPages purgeable:                                2788.\n\"Translation faults\":                     4091655930.\nPages copy-on-write:                       254422155.\nPages zero filled:                        1515168836.\nPages reactivated:                         526556771.\nPages purged:                               33232882.\nFile-backed pages:                            202006.\nAnonymous pages:                              343981.\nPages stored in compressor:                  1124979.\nPages occupied by compressor:                 251182.\nDecompressions:                            468235218.\nCompressions:                              532430603.\nPageins:                                    91850325.\nPageouts:                                    1076186.\nSwapins:                                     3325206.\nSwapouts:                                    4502965.",
+          "stderr": ""
+        }
+      },
+      "runner_sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5",
+      "repository": {
+        "commit": {
+          "command": [
+            "git",
+            "rev-parse",
+            "HEAD"
+          ],
+          "exit_code": 0,
+          "stdout": "ca70c00e1046a8fe7636af2697ce390854528289",
+          "stderr": ""
+        },
+        "tree": {
+          "command": [
+            "git",
+            "rev-parse",
+            "HEAD^{tree}"
+          ],
+          "exit_code": 0,
+          "stdout": "818b8ed644ab526bce0c0bbab5a88068567688c6",
+          "stderr": ""
+        },
+        "top_level": {
+          "command": [
+            "git",
+            "rev-parse",
+            "--show-toplevel"
+          ],
+          "exit_code": 0,
+          "stdout": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7",
+          "stderr": ""
+        },
+        "status": {
+          "command": [
+            "git",
+            "status",
+            "--porcelain"
+          ],
+          "exit_code": 0,
+          "stdout": "M docs/architecture.md\n M docs/performance/roadmap.md\n M docs/profiling.md\n M src/engine/heap/README.md\n M src/engine/heap/identity.rs\n M src/engine/heap/mod.rs\n?? docs/performance/receipts/typed-arenas-2026-09-28/\n?? docs/performance/typed-arenas.md",
+          "stderr": ""
+        }
+      }
+    },
+    "runner_sha256": "8a852679221202ae6d3dac1e02b295368a79529a3e0c32e51fd6b914e5d4b425",
+    "manifest_sha256": "89b751950d5ac2b1776ad2d2e56714e26855f8f9f23477eee0721bbf23023e4a",
+    "workloads": [
+      {
+        "case": "cell_live_large",
+        "size": 32768,
+        "path": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_live_large.js",
+        "sha256": "7eaea7b4fbf31f8250506b3d0b1e1b8e7c7eda54863be12fe37e22fa8e490618",
+        "expected": "32769\n"
+      },
+      {
+        "case": "shape_distinct_large",
+        "size": 32768,
+        "path": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_distinct_large.js",
+        "sha256": "3a7ad606e59705cb6bf42c555a96452869fcb049e4a01fe40d0ed309b66b3488",
+        "expected": "32767\n"
+      },
+      {
+        "case": "shape_shared_large",
+        "size": 32768,
+        "path": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_shared_large.js",
+        "sha256": "8c05ba5563fb10e4bdc2a4977db57952ad4317ec81b40a9b3f8b13208d11dedc",
+        "expected": "32768\n"
+      },
+      {
+        "case": "cell_object_update_large",
+        "size": 16384,
+        "path": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_object_update_large.js",
+        "sha256": "c2a37bc108044d8bbc43a6babe33676152712f22778dccf04b87f673d95e10f7",
+        "expected": "16385\n"
+      }
+    ],
+    "engines": {
+      "base": {
+        "path": "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "sha256": "acf96c92b9af7f5c03508ef9e2d3b7e0a91777c742aaada74a7ed6109097e040",
+        "version": {
+          "command": [
+            "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+            "--version"
+          ],
+          "exit_code": 0,
+          "stdout": "quickjs-oxide 0.0.1 (QuickJS 2026-06-04 compatibility target)",
+          "stderr": ""
+        },
+        "build": {
+          "schema": "oxide-build-v2",
+          "mode": "plain",
+          "vm_configuration": "stack-vm",
+          "features": [],
+          "commit": "10262309c580c43ba984b4f371acdc081147b4f0",
+          "source": {
+            "commit": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD"
+              ],
+              "exit_code": 0,
+              "stdout": "10262309c580c43ba984b4f371acdc081147b4f0",
+              "stderr": ""
+            },
+            "tree": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD^{tree}"
+              ],
+              "exit_code": 0,
+              "stdout": "bed22ae87de16d787a070943b18e72c228c2c460",
+              "stderr": ""
+            },
+            "top_level": {
+              "command": [
+                "git",
+                "rev-parse",
+                "--show-toplevel"
+              ],
+              "exit_code": 0,
+              "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/base",
+              "stderr": ""
+            },
+            "status": {
+              "command": [
+                "git",
+                "status",
+                "--porcelain"
+              ],
+              "exit_code": 0,
+              "stdout": "",
+              "stderr": ""
+            }
+          },
+          "binary_sha256": "acf96c92b9af7f5c03508ef9e2d3b7e0a91777c742aaada74a7ed6109097e040",
+          "tooling": {
+            "repository": {
+              "commit": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "HEAD"
+                ],
+                "exit_code": 0,
+                "stdout": "ca70c00e1046a8fe7636af2697ce390854528289",
+                "stderr": ""
+              },
+              "tree": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "HEAD^{tree}"
+                ],
+                "exit_code": 0,
+                "stdout": "818b8ed644ab526bce0c0bbab5a88068567688c6",
+                "stderr": ""
+              },
+              "top_level": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "--show-toplevel"
+                ],
+                "exit_code": 0,
+                "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/combined",
+                "stderr": ""
+              },
+              "status": {
+                "command": [
+                  "git",
+                  "status",
+                  "--porcelain"
+                ],
+                "exit_code": 0,
+                "stdout": "",
+                "stderr": ""
+              }
+            },
+            "snapshots": {
+              "build.py": {
+                "path": "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs.build.tooling-build.py",
+                "sha256": "fc8392a9d26290a6095742b2ab4cb45f5ab37b964c9daa51d22f7088259b1f50"
+              },
+              "run.py": {
+                "path": "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs.build.tooling-run.py",
+                "sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5"
+              }
+            }
+          },
+          "command": [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "--verbose",
+            "-p",
+            "quickjs-oxide-cli",
+            "--no-default-features",
+            "--target-dir",
+            "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain",
+            "--jobs",
+            "2"
+          ],
+          "cwd": "/private/tmp/oxide-typed-arenas.ZngRCR/base",
+          "exit_code": 0,
+          "stdout": {
+            "path": "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs.build.stdout.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "stderr": {
+            "path": "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs.build.stderr.log",
+            "sha256": "e1cc85e45b4a758d3f6f6a9c76988f7639afb799e40a5b933f7b24058a76449d"
+          },
+          "rustc": {
+            "command": [
+              "rustc",
+              "-vV"
+            ],
+            "exit_code": 0,
+            "stdout": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2",
+            "stderr": ""
+          },
+          "cargo": {
+            "command": [
+              "cargo",
+              "-V"
+            ],
+            "exit_code": 0,
+            "stdout": "cargo 1.96.0 (30a34c682 2026-05-25)",
+            "stderr": ""
+          },
+          "cargo_toml_sha256": "14f5e4d4f172150d6c212b61871da24a4e5b26e34e363f6de2a7f250bbe6e48d",
+          "cargo_lock_sha256": "c26c9f1999da579c0d1176c62981afa716ea998949a8dd15b1365f85b66944e3",
+          "release_profile": {
+            "manifest": {
+              "lto": "\"fat\"",
+              "codegen-units": "1"
+            },
+            "environment_overrides": {
+              "RUSTUP_TOOLCHAIN": "stable"
+            },
+            "cargo_config_sha256": {},
+            "qjs_rustc_invocation": {
+              "command": "rustc --crate-name qjs --edition=2024 apps/cli/src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C opt-level=3 -C lto=fat -C codegen-units=1 '--warn=clippy::all' --forbid=unsafe_code --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values(\"default\", \"profiling\", \"test262-host\"))' -C metadata=f318d7eac3aa0c1d -C extra-filename=-3cfe3c105f2435ac --out-dir /private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/deps -C strip=debuginfo -L dependency=/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/deps --extern quickjs_oxide=/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/deps/libquickjs_oxide-e0446d572207f926.rlib --extern quickjs_oxide_host=/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/deps/libquickjs_oxide_host-78c1c28f3dc115b8.rlib",
+              "crate": "qjs",
+              "codegen": {
+                "opt-level": "3",
+                "lto": "fat",
+                "codegen-units": "1"
+              },
+              "target": null
+            },
+            "observed_rustc_compilations": 9,
+            "observed_codegen_groups": [
+              {
+                "target": null,
+                "codegen": {},
+                "crates": [
+                  "autocfg",
+                  "build_script_build"
+                ]
+              },
+              {
+                "target": null,
+                "codegen": {
+                  "opt-level": "3",
+                  "codegen-units": "1"
+                },
+                "crates": [
+                  "tz",
+                  "num_traits",
+                  "num_integer",
+                  "num_bigint",
+                  "quickjs_oxide",
+                  "quickjs_oxide_host"
+                ]
+              },
+              {
+                "target": null,
+                "codegen": {
+                  "opt-level": "3",
+                  "lto": "fat",
+                  "codegen-units": "1"
+                },
+                "crates": [
+                  "qjs"
+                ]
+              }
+            ]
+          },
+          "target": {
+            "requested_triple": null,
+            "rustc_host": "aarch64-apple-darwin",
+            "observed_triple": null,
+            "observed_target_cpu": null,
+            "observed_target_feature": null
+          },
+          "commit_environment": "10262309c580c43ba984b4f371acdc081147b4f0"
+        }
+      },
+      "combined": {
+        "path": "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "sha256": "52e6f666218921ac328d2bdf05545580ef49e2b1543d7b67544b53b150312f1c",
+        "version": {
+          "command": [
+            "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+            "--version"
+          ],
+          "exit_code": 0,
+          "stdout": "quickjs-oxide 0.0.1 (QuickJS 2026-06-04 compatibility target)",
+          "stderr": ""
+        },
+        "build": {
+          "schema": "oxide-build-v2",
+          "mode": "plain",
+          "vm_configuration": "stack-vm",
+          "features": [],
+          "commit": "ca70c00e1046a8fe7636af2697ce390854528289",
+          "source": {
+            "commit": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD"
+              ],
+              "exit_code": 0,
+              "stdout": "ca70c00e1046a8fe7636af2697ce390854528289",
+              "stderr": ""
+            },
+            "tree": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD^{tree}"
+              ],
+              "exit_code": 0,
+              "stdout": "818b8ed644ab526bce0c0bbab5a88068567688c6",
+              "stderr": ""
+            },
+            "top_level": {
+              "command": [
+                "git",
+                "rev-parse",
+                "--show-toplevel"
+              ],
+              "exit_code": 0,
+              "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/combined",
+              "stderr": ""
+            },
+            "status": {
+              "command": [
+                "git",
+                "status",
+                "--porcelain"
+              ],
+              "exit_code": 0,
+              "stdout": "",
+              "stderr": ""
+            }
+          },
+          "binary_sha256": "52e6f666218921ac328d2bdf05545580ef49e2b1543d7b67544b53b150312f1c",
+          "tooling": {
+            "repository": {
+              "commit": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "HEAD"
+                ],
+                "exit_code": 0,
+                "stdout": "ca70c00e1046a8fe7636af2697ce390854528289",
+                "stderr": ""
+              },
+              "tree": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "HEAD^{tree}"
+                ],
+                "exit_code": 0,
+                "stdout": "818b8ed644ab526bce0c0bbab5a88068567688c6",
+                "stderr": ""
+              },
+              "top_level": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "--show-toplevel"
+                ],
+                "exit_code": 0,
+                "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/combined",
+                "stderr": ""
+              },
+              "status": {
+                "command": [
+                  "git",
+                  "status",
+                  "--porcelain"
+                ],
+                "exit_code": 0,
+                "stdout": "",
+                "stderr": ""
+              }
+            },
+            "snapshots": {
+              "build.py": {
+                "path": "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs.build.tooling-build.py",
+                "sha256": "fc8392a9d26290a6095742b2ab4cb45f5ab37b964c9daa51d22f7088259b1f50"
+              },
+              "run.py": {
+                "path": "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs.build.tooling-run.py",
+                "sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5"
+              }
+            }
+          },
+          "command": [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "--verbose",
+            "-p",
+            "quickjs-oxide-cli",
+            "--no-default-features",
+            "--target-dir",
+            "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain",
+            "--jobs",
+            "2"
+          ],
+          "cwd": "/private/tmp/oxide-typed-arenas.ZngRCR/combined",
+          "exit_code": 0,
+          "stdout": {
+            "path": "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs.build.stdout.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "stderr": {
+            "path": "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs.build.stderr.log",
+            "sha256": "9f4a905052e790ee8266c003d4c30136df68c6a3a99b150be0918ae3e6444655"
+          },
+          "rustc": {
+            "command": [
+              "rustc",
+              "-vV"
+            ],
+            "exit_code": 0,
+            "stdout": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2",
+            "stderr": ""
+          },
+          "cargo": {
+            "command": [
+              "cargo",
+              "-V"
+            ],
+            "exit_code": 0,
+            "stdout": "cargo 1.96.0 (30a34c682 2026-05-25)",
+            "stderr": ""
+          },
+          "cargo_toml_sha256": "14f5e4d4f172150d6c212b61871da24a4e5b26e34e363f6de2a7f250bbe6e48d",
+          "cargo_lock_sha256": "c26c9f1999da579c0d1176c62981afa716ea998949a8dd15b1365f85b66944e3",
+          "release_profile": {
+            "manifest": {
+              "lto": "\"fat\"",
+              "codegen-units": "1"
+            },
+            "environment_overrides": {
+              "RUSTUP_TOOLCHAIN": "stable"
+            },
+            "cargo_config_sha256": {},
+            "qjs_rustc_invocation": {
+              "command": "rustc --crate-name qjs --edition=2024 apps/cli/src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C opt-level=3 -C lto=fat -C codegen-units=1 '--warn=clippy::all' --forbid=unsafe_code --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values(\"default\", \"profiling\", \"test262-host\"))' -C metadata=f318d7eac3aa0c1d -C extra-filename=-3cfe3c105f2435ac --out-dir /private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/deps -C strip=debuginfo -L dependency=/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/deps --extern quickjs_oxide=/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/deps/libquickjs_oxide-e0446d572207f926.rlib --extern quickjs_oxide_host=/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/deps/libquickjs_oxide_host-78c1c28f3dc115b8.rlib",
+              "crate": "qjs",
+              "codegen": {
+                "opt-level": "3",
+                "lto": "fat",
+                "codegen-units": "1"
+              },
+              "target": null
+            },
+            "observed_rustc_compilations": 9,
+            "observed_codegen_groups": [
+              {
+                "target": null,
+                "codegen": {
+                  "opt-level": "3",
+                  "codegen-units": "1"
+                },
+                "crates": [
+                  "tz",
+                  "num_traits",
+                  "num_integer",
+                  "num_bigint",
+                  "quickjs_oxide",
+                  "quickjs_oxide_host"
+                ]
+              },
+              {
+                "target": null,
+                "codegen": {},
+                "crates": [
+                  "autocfg",
+                  "build_script_build"
+                ]
+              },
+              {
+                "target": null,
+                "codegen": {
+                  "opt-level": "3",
+                  "lto": "fat",
+                  "codegen-units": "1"
+                },
+                "crates": [
+                  "qjs"
+                ]
+              }
+            ]
+          },
+          "target": {
+            "requested_triple": null,
+            "rustc_host": "aarch64-apple-darwin",
+            "observed_triple": null,
+            "observed_target_cpu": null,
+            "observed_target_feature": null
+          },
+          "commit_environment": "ca70c00e1046a8fe7636af2697ce390854528289"
+        }
+      }
+    },
+    "repeat": 8,
+    "order_strategy": "abba-baab",
+    "timeout_seconds": 180,
+    "cpu": null,
+    "darwin_counters": true,
+    "counter_scope": "whole process including startup and teardown",
+    "metric": "whole-process wall nanoseconds; not adaptive scores"
+  },
+  "summary": [
+    {
+      "case": "cell_live_large",
+      "size": 32768,
+      "engine": "base",
+      "eligible": true,
+      "successful_wall_ns": [
+        130926250,
+        133110959,
+        132782917,
+        133579375,
+        133501042,
+        134149333,
+        133191167,
+        134554625
+      ],
+      "failures": [],
+      "median_wall_ns": 133346104.5
+    },
+    {
+      "case": "cell_live_large",
+      "size": 32768,
+      "engine": "combined",
+      "eligible": true,
+      "successful_wall_ns": [
+        129995084,
+        130177000,
+        127408958,
+        127182709,
+        130842708,
+        128315166,
+        128489625,
+        126786416
+      ],
+      "failures": [],
+      "median_wall_ns": 128402395.5
+    },
+    {
+      "case": "shape_distinct_large",
+      "size": 32768,
+      "engine": "base",
+      "eligible": true,
+      "successful_wall_ns": [
+        86014167,
+        86663708,
+        86609000,
+        86554000,
+        86171584,
+        86791792,
+        88166875,
+        91630084
+      ],
+      "failures": [],
+      "median_wall_ns": 86636354.0
+    },
+    {
+      "case": "shape_distinct_large",
+      "size": 32768,
+      "engine": "combined",
+      "eligible": true,
+      "successful_wall_ns": [
+        82007708,
+        84587166,
+        82483250,
+        81551000,
+        81916167,
+        81726625,
+        81853834,
+        92948333
+      ],
+      "failures": [],
+      "median_wall_ns": 81961937.5
+    },
+    {
+      "case": "shape_shared_large",
+      "size": 32768,
+      "engine": "base",
+      "eligible": true,
+      "successful_wall_ns": [
+        88462833,
+        87883584,
+        88199084,
+        90995417,
+        89015084,
+        87812459,
+        88048167,
+        88663584
+      ],
+      "failures": [],
+      "median_wall_ns": 88330958.5
+    },
+    {
+      "case": "shape_shared_large",
+      "size": 32768,
+      "engine": "combined",
+      "eligible": true,
+      "successful_wall_ns": [
+        83818541,
+        84175584,
+        87747375,
+        85584333,
+        84201958,
+        84204541,
+        83970583,
+        83826291
+      ],
+      "failures": [],
+      "median_wall_ns": 84188771.0
+    },
+    {
+      "case": "cell_object_update_large",
+      "size": 16384,
+      "engine": "base",
+      "eligible": true,
+      "successful_wall_ns": [
+        193572917,
+        190061583,
+        192703167,
+        194645708,
+        191887125,
+        191039958,
+        190591334,
+        192509791
+      ],
+      "failures": [],
+      "median_wall_ns": 192198458.0
+    },
+    {
+      "case": "cell_object_update_large",
+      "size": 16384,
+      "engine": "combined",
+      "eligible": true,
+      "successful_wall_ns": [
+        185294583,
+        189957125,
+        183370084,
+        183891167,
+        183858541,
+        183457333,
+        184368625,
+        199483750
+      ],
+      "failures": [],
+      "median_wall_ns": 184129896.0
+    }
+  ],
+  "samples": [
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-base-0.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_live_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 130926250,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-base-0.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-base-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-base-0.time-l.txt",
+        "raw_sha256": "ae40336a82cf5315070fdd5bd513bf1ddf2b6c4dda7d3cbd13a71b9975d13cec",
+        "values": {
+          "maximum_resident_set_size": 37666816,
+          "instructions_retired": 1847840737,
+          "cycles_elapsed": 406447703,
+          "peak_memory_footprint": 34046912
+        }
+      },
+      "case": "cell_live_large",
+      "size": 32768,
+      "engine": "base",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-combined-0.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_live_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 129995084,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-combined-0.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-combined-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-combined-0.time-l.txt",
+        "raw_sha256": "977417dffe379715bcf5d018445ca2168440e8d4eb88dd42026757c91cb6c7a0",
+        "values": {
+          "maximum_resident_set_size": 30769152,
+          "instructions_retired": 1821834605,
+          "cycles_elapsed": 389921654,
+          "peak_memory_footprint": 27231232
+        }
+      },
+      "case": "cell_live_large",
+      "size": 32768,
+      "engine": "combined",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-combined-1.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_live_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 130177000,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-combined-1.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-combined-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-combined-1.time-l.txt",
+        "raw_sha256": "428a7f5703414b3c0987f81837dc4bc0c1f2ff1691b7f05b472ff9a6f52a14a5",
+        "values": {
+          "maximum_resident_set_size": 30818304,
+          "instructions_retired": 1821382756,
+          "cycles_elapsed": 392513771,
+          "peak_memory_footprint": 27263936
+        }
+      },
+      "case": "cell_live_large",
+      "size": 32768,
+      "engine": "combined",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-base-1.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_live_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 133110959,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-base-1.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-base-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-base-1.time-l.txt",
+        "raw_sha256": "381e225820477b15315533d7a5b16fd38329697e0be02413f4c3403da9426ff5",
+        "values": {
+          "maximum_resident_set_size": 37715968,
+          "instructions_retired": 1847602778,
+          "cycles_elapsed": 407135476,
+          "peak_memory_footprint": 34112512
+        }
+      },
+      "case": "cell_live_large",
+      "size": 32768,
+      "engine": "base",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-combined-2.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_live_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 127408958,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-combined-2.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-combined-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-combined-2.time-l.txt",
+        "raw_sha256": "89ea3c0279a79f584fcb07a691c6c52fd1c812ec470039de33832f005b838f43",
+        "values": {
+          "maximum_resident_set_size": 30998528,
+          "instructions_retired": 1823807824,
+          "cycles_elapsed": 389128291,
+          "peak_memory_footprint": 27460608
+        }
+      },
+      "case": "cell_live_large",
+      "size": 32768,
+      "engine": "combined",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-base-2.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_live_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 132782917,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-base-2.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-base-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-base-2.time-l.txt",
+        "raw_sha256": "1928b03b57903779f1bf35642a8b54761aea31a8ae971eb00e862624b5afe010",
+        "values": {
+          "maximum_resident_set_size": 37748736,
+          "instructions_retired": 1847763336,
+          "cycles_elapsed": 406621825,
+          "peak_memory_footprint": 34128832
+        }
+      },
+      "case": "cell_live_large",
+      "size": 32768,
+      "engine": "base",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-base-3.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_live_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 133579375,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-base-3.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-base-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-base-3.time-l.txt",
+        "raw_sha256": "71aa047f26cd320349c4d01382e2b7acc8a5422d25e3b09d9157310dc7e3f0c8",
+        "values": {
+          "maximum_resident_set_size": 37814272,
+          "instructions_retired": 1848027962,
+          "cycles_elapsed": 406303914,
+          "peak_memory_footprint": 34194368
+        }
+      },
+      "case": "cell_live_large",
+      "size": 32768,
+      "engine": "base",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-combined-3.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_live_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 127182709,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-combined-3.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-combined-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-combined-3.time-l.txt",
+        "raw_sha256": "ae5ef4edde0200e99a3179000282b458f261f90be0e52fba8217639ec8c6605a",
+        "values": {
+          "maximum_resident_set_size": 30932992,
+          "instructions_retired": 1826448078,
+          "cycles_elapsed": 387964433,
+          "peak_memory_footprint": 27378624
+        }
+      },
+      "case": "cell_live_large",
+      "size": 32768,
+      "engine": "combined",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-base-4.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_live_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 133501042,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-base-4.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-base-4.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-base-4.time-l.txt",
+        "raw_sha256": "e8cec86adf80804dc72995e77bf02c3c3ed076eb8b39d5b2b93aa160408061af",
+        "values": {
+          "maximum_resident_set_size": 37634048,
+          "instructions_retired": 1847386009,
+          "cycles_elapsed": 408376507,
+          "peak_memory_footprint": 34030592
+        }
+      },
+      "case": "cell_live_large",
+      "size": 32768,
+      "engine": "base",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-combined-4.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_live_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 130842708,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-combined-4.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-combined-4.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-combined-4.time-l.txt",
+        "raw_sha256": "a7ddb3059143ab33cf5fa3fb948de13d128da08b3f5f4e4a2697dbe1af66401a",
+        "values": {
+          "maximum_resident_set_size": 30900224,
+          "instructions_retired": 1828945893,
+          "cycles_elapsed": 392906300,
+          "peak_memory_footprint": 27345856
+        }
+      },
+      "case": "cell_live_large",
+      "size": 32768,
+      "engine": "combined",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-combined-5.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_live_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 128315166,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-combined-5.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-combined-5.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-combined-5.time-l.txt",
+        "raw_sha256": "fa3201bff65b9f46bbfa29574805f40f390f45a221412576629764f1183f73ea",
+        "values": {
+          "maximum_resident_set_size": 30982144,
+          "instructions_retired": 1824361731,
+          "cycles_elapsed": 390996712,
+          "peak_memory_footprint": 27444224
+        }
+      },
+      "case": "cell_live_large",
+      "size": 32768,
+      "engine": "combined",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-base-5.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_live_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 134149333,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-base-5.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-base-5.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-base-5.time-l.txt",
+        "raw_sha256": "53f3e454277269644f12a0296fb94f9d507bd2c4541d21ba828115d1d25cee5f",
+        "values": {
+          "maximum_resident_set_size": 37715968,
+          "instructions_retired": 1848128066,
+          "cycles_elapsed": 409640034,
+          "peak_memory_footprint": 34096064
+        }
+      },
+      "case": "cell_live_large",
+      "size": 32768,
+      "engine": "base",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-combined-6.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_live_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 128489625,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-combined-6.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-combined-6.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-combined-6.time-l.txt",
+        "raw_sha256": "59b022efe6e4e97e0f1a795b97c8bd9435eeaacc0211499dcdc23ee73c282b7b",
+        "values": {
+          "maximum_resident_set_size": 30982144,
+          "instructions_retired": 1821640350,
+          "cycles_elapsed": 391382249,
+          "peak_memory_footprint": 27427776
+        }
+      },
+      "case": "cell_live_large",
+      "size": 32768,
+      "engine": "combined",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-base-6.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_live_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 133191167,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-base-6.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-base-6.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-base-6.time-l.txt",
+        "raw_sha256": "facdc75d7627245742cc251e8a2b091d85fbc85bdc49d45b431cf35cacd86011",
+        "values": {
+          "maximum_resident_set_size": 37634048,
+          "instructions_retired": 1847529123,
+          "cycles_elapsed": 408097906,
+          "peak_memory_footprint": 34014144
+        }
+      },
+      "case": "cell_live_large",
+      "size": 32768,
+      "engine": "base",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-base-7.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_live_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 134554625,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-base-7.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-base-7.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-base-7.time-l.txt",
+        "raw_sha256": "078b904251826e6ecf68b35bb94260bdc9430a4a974c1e1f8acf2dd1742fe858",
+        "values": {
+          "maximum_resident_set_size": 37634048,
+          "instructions_retired": 1848011635,
+          "cycles_elapsed": 411445352,
+          "peak_memory_footprint": 34014144
+        }
+      },
+      "case": "cell_live_large",
+      "size": 32768,
+      "engine": "base",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-combined-7.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_live_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 126786416,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-combined-7.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-combined-7.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_live_large-combined-7.time-l.txt",
+        "raw_sha256": "93d4fcf9a3ee894fdbefe726d919440fc396e6206b1b13bd1742d4abf1cb68b1",
+        "values": {
+          "maximum_resident_set_size": 30851072,
+          "instructions_retired": 1820663942,
+          "cycles_elapsed": 386908402,
+          "peak_memory_footprint": 27296704
+        }
+      },
+      "case": "cell_live_large",
+      "size": 32768,
+      "engine": "combined",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-base-0.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_distinct_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 86014167,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-base-0.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-base-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-base-0.time-l.txt",
+        "raw_sha256": "1c9cc96a3e37aa6bcdb4b65016f869bb46ecde3b51e4f831f57061fa0e0a8386",
+        "values": {
+          "maximum_resident_set_size": 58507264,
+          "instructions_retired": 1120567460,
+          "cycles_elapsed": 258482384,
+          "peak_memory_footprint": 54953024
+        }
+      },
+      "case": "shape_distinct_large",
+      "size": 32768,
+      "engine": "base",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-combined-0.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_distinct_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 82007708,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-combined-0.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-combined-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-combined-0.time-l.txt",
+        "raw_sha256": "5f7beed91371826f5dd6ea73675f7ace2b04da525d3a913b6fb917217926d3d6",
+        "values": {
+          "maximum_resident_set_size": 43778048,
+          "instructions_retired": 1099408155,
+          "cycles_elapsed": 244368748,
+          "peak_memory_footprint": 40240128
+        }
+      },
+      "case": "shape_distinct_large",
+      "size": 32768,
+      "engine": "combined",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-combined-1.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_distinct_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 84587166,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-combined-1.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-combined-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-combined-1.time-l.txt",
+        "raw_sha256": "dd0fc31d048781996af16cfcf7edd2fe87620fb0b76e7fe2637eea61c5220cf2",
+        "values": {
+          "maximum_resident_set_size": 43925504,
+          "instructions_retired": 1104516827,
+          "cycles_elapsed": 250242665,
+          "peak_memory_footprint": 40371136
+        }
+      },
+      "case": "shape_distinct_large",
+      "size": 32768,
+      "engine": "combined",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-base-1.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_distinct_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 86663708,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-base-1.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-base-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-base-1.time-l.txt",
+        "raw_sha256": "7436b350f6189ee7a08fe0b7835a09e1371f8751f06a0e9fc20df5524914258e",
+        "values": {
+          "maximum_resident_set_size": 58523648,
+          "instructions_retired": 1121451776,
+          "cycles_elapsed": 259124919,
+          "peak_memory_footprint": 54952960
+        }
+      },
+      "case": "shape_distinct_large",
+      "size": 32768,
+      "engine": "base",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-combined-2.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_distinct_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 82483250,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-combined-2.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-combined-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-combined-2.time-l.txt",
+        "raw_sha256": "30653f4c69a051cf6a24d1a0086cb546b45d8d9a0132477e6926908e97848be0",
+        "values": {
+          "maximum_resident_set_size": 43941888,
+          "instructions_retired": 1102645846,
+          "cycles_elapsed": 246852724,
+          "peak_memory_footprint": 40403968
+        }
+      },
+      "case": "shape_distinct_large",
+      "size": 32768,
+      "engine": "combined",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-base-2.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_distinct_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 86609000,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-base-2.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-base-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-base-2.time-l.txt",
+        "raw_sha256": "9bf9ba81db1c59ce9db922bb17c738807b2f88d9da4cdac214a2f46b324de414",
+        "values": {
+          "maximum_resident_set_size": 58605568,
+          "instructions_retired": 1123801417,
+          "cycles_elapsed": 259243640,
+          "peak_memory_footprint": 55051328
+        }
+      },
+      "case": "shape_distinct_large",
+      "size": 32768,
+      "engine": "base",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-base-3.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_distinct_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 86554000,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-base-3.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-base-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-base-3.time-l.txt",
+        "raw_sha256": "2758464907d97995b75a243d59ae781a52090dcbd4e0ec9e1f0043778373843b",
+        "values": {
+          "maximum_resident_set_size": 58621952,
+          "instructions_retired": 1123331368,
+          "cycles_elapsed": 259442607,
+          "peak_memory_footprint": 55051264
+        }
+      },
+      "case": "shape_distinct_large",
+      "size": 32768,
+      "engine": "base",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-combined-3.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_distinct_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 81551000,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-combined-3.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-combined-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-combined-3.time-l.txt",
+        "raw_sha256": "6a010eef9380283370d35d0cf99d06797d3b14c8d9983572ad320f9a8e272c17",
+        "values": {
+          "maximum_resident_set_size": 43778048,
+          "instructions_retired": 1102222329,
+          "cycles_elapsed": 244425171,
+          "peak_memory_footprint": 40256576
+        }
+      },
+      "case": "shape_distinct_large",
+      "size": 32768,
+      "engine": "combined",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-base-4.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_distinct_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 86171584,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-base-4.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-base-4.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-base-4.time-l.txt",
+        "raw_sha256": "4ccfe6871bb9adb74adfdd5d74de2858572060df8b54b90ce4c714face36b0a4",
+        "values": {
+          "maximum_resident_set_size": 58638336,
+          "instructions_retired": 1123481392,
+          "cycles_elapsed": 258066573,
+          "peak_memory_footprint": 55067648
+        }
+      },
+      "case": "shape_distinct_large",
+      "size": 32768,
+      "engine": "base",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-combined-4.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_distinct_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 81916167,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-combined-4.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-combined-4.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-combined-4.time-l.txt",
+        "raw_sha256": "f5ae21b8a56594f2f58199208b03f13e6157b6c5b8b64e0fd65d4a7f83ac6b77",
+        "values": {
+          "maximum_resident_set_size": 43925504,
+          "instructions_retired": 1100358928,
+          "cycles_elapsed": 244881633,
+          "peak_memory_footprint": 40371136
+        }
+      },
+      "case": "shape_distinct_large",
+      "size": 32768,
+      "engine": "combined",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-combined-5.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_distinct_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 81726625,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-combined-5.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-combined-5.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-combined-5.time-l.txt",
+        "raw_sha256": "6fd762943a7210b47fe322ac66cb9fc239d8a58f44c4040709a5a91abdfdd57f",
+        "values": {
+          "maximum_resident_set_size": 43778048,
+          "instructions_retired": 1102238121,
+          "cycles_elapsed": 244014669,
+          "peak_memory_footprint": 40240128
+        }
+      },
+      "case": "shape_distinct_large",
+      "size": 32768,
+      "engine": "combined",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-base-5.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_distinct_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 86791792,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-base-5.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-base-5.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-base-5.time-l.txt",
+        "raw_sha256": "99dcb155723b99cf47505ea14b9b3ef0e6fc95e70b8e999d8a68c5683495eaa3",
+        "values": {
+          "maximum_resident_set_size": 58490880,
+          "instructions_retired": 1121525676,
+          "cycles_elapsed": 259588791,
+          "peak_memory_footprint": 54920192
+        }
+      },
+      "case": "shape_distinct_large",
+      "size": 32768,
+      "engine": "base",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-combined-6.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_distinct_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 81853834,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-combined-6.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-combined-6.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-combined-6.time-l.txt",
+        "raw_sha256": "1bb0a5a9debe7936875858bafedd8223f15c4b105839709a8a3e439094dbd4b9",
+        "values": {
+          "maximum_resident_set_size": 43778048,
+          "instructions_retired": 1101295131,
+          "cycles_elapsed": 244961896,
+          "peak_memory_footprint": 40223680
+        }
+      },
+      "case": "shape_distinct_large",
+      "size": 32768,
+      "engine": "combined",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-base-6.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_distinct_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 88166875,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-base-6.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-base-6.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-base-6.time-l.txt",
+        "raw_sha256": "6f97eaff55828d87426f2b20e8b7fc35c4420a41a5572439ac05c46a445efcc5",
+        "values": {
+          "maximum_resident_set_size": 58605568,
+          "instructions_retired": 1124776333,
+          "cycles_elapsed": 261684549,
+          "peak_memory_footprint": 55034880
+        }
+      },
+      "case": "shape_distinct_large",
+      "size": 32768,
+      "engine": "base",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-base-7.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_distinct_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 91630084,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-base-7.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-base-7.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-base-7.time-l.txt",
+        "raw_sha256": "ef3e3030f6aeee618bd5ab8bd8b4094a08ada5ae4567bb144ca8dd28358226d5",
+        "values": {
+          "maximum_resident_set_size": 58572800,
+          "instructions_retired": 1121796931,
+          "cycles_elapsed": 268184776,
+          "peak_memory_footprint": 55002112
+        }
+      },
+      "case": "shape_distinct_large",
+      "size": 32768,
+      "engine": "base",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-combined-7.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_distinct_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 92948333,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-combined-7.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-combined-7.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_distinct_large-combined-7.time-l.txt",
+        "raw_sha256": "1a94a17d97b176f1d4dda077bfc87c33bd0b5dc7d5b5de76220af5844b9f1eff",
+        "values": {
+          "maximum_resident_set_size": 43941888,
+          "instructions_retired": 1100816248,
+          "cycles_elapsed": 265691777,
+          "peak_memory_footprint": 40387520
+        }
+      },
+      "case": "shape_distinct_large",
+      "size": 32768,
+      "engine": "combined",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-base-0.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_shared_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 88462833,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-base-0.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-base-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-base-0.time-l.txt",
+        "raw_sha256": "83039c4f707eb11f7094f6583bd867850855c09a4ca44678c69bdd0f167d2d50",
+        "values": {
+          "maximum_resident_set_size": 18219008,
+          "instructions_retired": 1224995216,
+          "cycles_elapsed": 266520386,
+          "peak_memory_footprint": 14664640
+        }
+      },
+      "case": "shape_shared_large",
+      "size": 32768,
+      "engine": "base",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-combined-0.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_shared_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 83818541,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-combined-0.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-combined-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-combined-0.time-l.txt",
+        "raw_sha256": "9e890e8ff364dc7926e749dd52710d7b11f6cce668249e2eb046c816ce5f93f9",
+        "values": {
+          "maximum_resident_set_size": 18071552,
+          "instructions_retired": 1205034566,
+          "cycles_elapsed": 252243953,
+          "peak_memory_footprint": 14566336
+        }
+      },
+      "case": "shape_shared_large",
+      "size": 32768,
+      "engine": "combined",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-combined-1.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_shared_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 84175584,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-combined-1.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-combined-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-combined-1.time-l.txt",
+        "raw_sha256": "d920ca22bcce11a5e69f4f9964d01b596dce8ae077b3358018740aafa86f569f",
+        "values": {
+          "maximum_resident_set_size": 18202624,
+          "instructions_retired": 1205118616,
+          "cycles_elapsed": 253402941,
+          "peak_memory_footprint": 14697408
+        }
+      },
+      "case": "shape_shared_large",
+      "size": 32768,
+      "engine": "combined",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-base-1.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_shared_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 87883584,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-base-1.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-base-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-base-1.time-l.txt",
+        "raw_sha256": "5507aaa3898888520a1332be16dcfd6e83c38436ae9483d842c046314497cf05",
+        "values": {
+          "maximum_resident_set_size": 18219008,
+          "instructions_retired": 1222611178,
+          "cycles_elapsed": 264887114,
+          "peak_memory_footprint": 14664640
+        }
+      },
+      "case": "shape_shared_large",
+      "size": 32768,
+      "engine": "base",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-combined-2.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_shared_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 87747375,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-combined-2.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-combined-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-combined-2.time-l.txt",
+        "raw_sha256": "5ccf0d0400d5de9f2fb57ea1b3e7c31ca74a67293d91e71cd28997fbfe0cdba2",
+        "values": {
+          "maximum_resident_set_size": 18087936,
+          "instructions_retired": 1206362762,
+          "cycles_elapsed": 255962165,
+          "peak_memory_footprint": 14582720
+        }
+      },
+      "case": "shape_shared_large",
+      "size": 32768,
+      "engine": "combined",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-base-2.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_shared_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 88199084,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-base-2.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-base-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-base-2.time-l.txt",
+        "raw_sha256": "6a46ca5264f0d98df79e57018331a6927fd9132ad32b73b89c421c5805a3b2cb",
+        "values": {
+          "maximum_resident_set_size": 18251776,
+          "instructions_retired": 1222834272,
+          "cycles_elapsed": 265260340,
+          "peak_memory_footprint": 14697408
+        }
+      },
+      "case": "shape_shared_large",
+      "size": 32768,
+      "engine": "base",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-base-3.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_shared_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 90995417,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-base-3.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-base-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-base-3.time-l.txt",
+        "raw_sha256": "9c528148b1ee3ebc1a2ce06367040a32189f1cb6bcc6961a69086ef1e73359d9",
+        "values": {
+          "maximum_resident_set_size": 18219008,
+          "instructions_retired": 1226106731,
+          "cycles_elapsed": 270842776,
+          "peak_memory_footprint": 14664640
+        }
+      },
+      "case": "shape_shared_large",
+      "size": 32768,
+      "engine": "base",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-combined-3.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_shared_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 85584333,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-combined-3.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-combined-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-combined-3.time-l.txt",
+        "raw_sha256": "4db4d548114a81cef78df747d1d8fb86216f9fb13472e12382d86eca0f49fc7f",
+        "values": {
+          "maximum_resident_set_size": 18104320,
+          "instructions_retired": 1207772127,
+          "cycles_elapsed": 252595214,
+          "peak_memory_footprint": 14599104
+        }
+      },
+      "case": "shape_shared_large",
+      "size": 32768,
+      "engine": "combined",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-base-4.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_shared_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 89015084,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-base-4.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-base-4.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-base-4.time-l.txt",
+        "raw_sha256": "d4b31d5479e16c9becdf0d87a1a909c302d0fb01d108ac3303f3e5bb289f6f22",
+        "values": {
+          "maximum_resident_set_size": 18382848,
+          "instructions_retired": 1222801206,
+          "cycles_elapsed": 266798971,
+          "peak_memory_footprint": 14828480
+        }
+      },
+      "case": "shape_shared_large",
+      "size": 32768,
+      "engine": "base",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-combined-4.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_shared_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 84201958,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-combined-4.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-combined-4.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-combined-4.time-l.txt",
+        "raw_sha256": "0a9266b7608d6b687a235017d090268c65cc61c578ae436a5df17b77de633875",
+        "values": {
+          "maximum_resident_set_size": 18202624,
+          "instructions_retired": 1205304517,
+          "cycles_elapsed": 251497718,
+          "peak_memory_footprint": 14697408
+        }
+      },
+      "case": "shape_shared_large",
+      "size": 32768,
+      "engine": "combined",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-combined-5.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_shared_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 84204541,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-combined-5.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-combined-5.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-combined-5.time-l.txt",
+        "raw_sha256": "118ad46cf27d14c4b416bfe76071aa7319fc02a1547a149d0e17ab0e5904bd6c",
+        "values": {
+          "maximum_resident_set_size": 18186240,
+          "instructions_retired": 1205329916,
+          "cycles_elapsed": 251079997,
+          "peak_memory_footprint": 14681024
+        }
+      },
+      "case": "shape_shared_large",
+      "size": 32768,
+      "engine": "combined",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-base-5.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_shared_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 87812459,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-base-5.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-base-5.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-base-5.time-l.txt",
+        "raw_sha256": "7a41ebf8eb9b7bcf360122c9b81e5f29d8c53847b7a5a4698b270ddd3db0cd85",
+        "values": {
+          "maximum_resident_set_size": 18333696,
+          "instructions_retired": 1225168162,
+          "cycles_elapsed": 264344094,
+          "peak_memory_footprint": 14779328
+        }
+      },
+      "case": "shape_shared_large",
+      "size": 32768,
+      "engine": "base",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-combined-6.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_shared_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 83970583,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-combined-6.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-combined-6.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-combined-6.time-l.txt",
+        "raw_sha256": "6daa7875eb0ad169ea26ee0a804aedd9f935297c5e55b3d5afe9f789e9e43852",
+        "values": {
+          "maximum_resident_set_size": 18038784,
+          "instructions_retired": 1205124569,
+          "cycles_elapsed": 252141620,
+          "peak_memory_footprint": 14533568
+        }
+      },
+      "case": "shape_shared_large",
+      "size": 32768,
+      "engine": "combined",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-base-6.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_shared_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 88048167,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-base-6.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-base-6.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-base-6.time-l.txt",
+        "raw_sha256": "9141646a6c6cb70c8878f61cff6fbcc530f4c843efb7b11f1ecb93674b0b86d2",
+        "values": {
+          "maximum_resident_set_size": 18219008,
+          "instructions_retired": 1222953087,
+          "cycles_elapsed": 265139032,
+          "peak_memory_footprint": 14664640
+        }
+      },
+      "case": "shape_shared_large",
+      "size": 32768,
+      "engine": "base",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-base-7.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_shared_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 88663584,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-base-7.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-base-7.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-base-7.time-l.txt",
+        "raw_sha256": "ed02a76fa6a243553f454acccc48ddbec64ed7b801614ef84b64185be3d61f09",
+        "values": {
+          "maximum_resident_set_size": 18137088,
+          "instructions_retired": 1222788423,
+          "cycles_elapsed": 266220887,
+          "peak_memory_footprint": 14599168
+        }
+      },
+      "case": "shape_shared_large",
+      "size": 32768,
+      "engine": "base",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-combined-7.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/shape_shared_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 83826291,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-combined-7.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-combined-7.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/shape_shared_large-combined-7.time-l.txt",
+        "raw_sha256": "36fcf26cd70bd8e5b4da90b224b39c50c432c81db693775a166c81dbf9aefbea",
+        "values": {
+          "maximum_resident_set_size": 18055168,
+          "instructions_retired": 1205176840,
+          "cycles_elapsed": 251234916,
+          "peak_memory_footprint": 14549952
+        }
+      },
+      "case": "shape_shared_large",
+      "size": 32768,
+      "engine": "combined",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-base-0.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_object_update_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 193572917,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-base-0.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-base-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-base-0.time-l.txt",
+        "raw_sha256": "49a30953a65d036d18b80dcdabd0c6d7c8ba81fff1aad915d4a33fa64860a7c5",
+        "values": {
+          "maximum_resident_set_size": 35110912,
+          "instructions_retired": 2647136265,
+          "cycles_elapsed": 594055959,
+          "peak_memory_footprint": 31441856
+        }
+      },
+      "case": "cell_object_update_large",
+      "size": 16384,
+      "engine": "base",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-combined-0.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_object_update_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 185294583,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-combined-0.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-combined-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-combined-0.time-l.txt",
+        "raw_sha256": "9d78a92d4a0d3b740aede509d529e3ba6d7755444e97b321acfaef90b05c20e4",
+        "values": {
+          "maximum_resident_set_size": 31883264,
+          "instructions_retired": 2618142765,
+          "cycles_elapsed": 569160956,
+          "peak_memory_footprint": 28263360
+        }
+      },
+      "case": "cell_object_update_large",
+      "size": 16384,
+      "engine": "combined",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-combined-1.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_object_update_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 189957125,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-combined-1.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-combined-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-combined-1.time-l.txt",
+        "raw_sha256": "13d4902b3e55f5880e29fdaf591fe5fa17fcbaab51bac5804d54921d4dd7d119",
+        "values": {
+          "maximum_resident_set_size": 31997952,
+          "instructions_retired": 2617942275,
+          "cycles_elapsed": 580446806,
+          "peak_memory_footprint": 28378048
+        }
+      },
+      "case": "cell_object_update_large",
+      "size": 16384,
+      "engine": "combined",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-base-1.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_object_update_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 190061583,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-base-1.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-base-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-base-1.time-l.txt",
+        "raw_sha256": "95f64d9c6f5ecc7b6eccf9a7ea4b1c7fd3dafadc2371ebe9013605fde189f6bf",
+        "values": {
+          "maximum_resident_set_size": 34963456,
+          "instructions_retired": 2646434669,
+          "cycles_elapsed": 586707644,
+          "peak_memory_footprint": 31294400
+        }
+      },
+      "case": "cell_object_update_large",
+      "size": 16384,
+      "engine": "base",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-combined-2.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_object_update_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 183370084,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-combined-2.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-combined-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-combined-2.time-l.txt",
+        "raw_sha256": "474a3488846d0e6ac3f233e88a4ddefe68d56a29d1892b5bba5f589f63a2cfbb",
+        "values": {
+          "maximum_resident_set_size": 31866880,
+          "instructions_retired": 2617168218,
+          "cycles_elapsed": 564698359,
+          "peak_memory_footprint": 28246976
+        }
+      },
+      "case": "cell_object_update_large",
+      "size": 16384,
+      "engine": "combined",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-base-2.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_object_update_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 192703167,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-base-2.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-base-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-base-2.time-l.txt",
+        "raw_sha256": "eb4788a6f4656b03484155026c6894cb5718b79429874a926e9e27fe924f015f",
+        "values": {
+          "maximum_resident_set_size": 34996224,
+          "instructions_retired": 2650061379,
+          "cycles_elapsed": 593360125,
+          "peak_memory_footprint": 31343616
+        }
+      },
+      "case": "cell_object_update_large",
+      "size": 16384,
+      "engine": "base",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-base-3.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_object_update_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 194645708,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-base-3.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-base-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-base-3.time-l.txt",
+        "raw_sha256": "3a41ca3a2891d1e148f35e46955ec41d523af4b555400c8aa23779cbfd649019",
+        "values": {
+          "maximum_resident_set_size": 35094528,
+          "instructions_retired": 2647765309,
+          "cycles_elapsed": 598380926,
+          "peak_memory_footprint": 31425472
+        }
+      },
+      "case": "cell_object_update_large",
+      "size": 16384,
+      "engine": "base",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-combined-3.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_object_update_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 183891167,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-combined-3.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-combined-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-combined-3.time-l.txt",
+        "raw_sha256": "77582b61ed6ae4c2091ffdadee273d6df20b239486ca0b83d0b1091be404d307",
+        "values": {
+          "maximum_resident_set_size": 31965184,
+          "instructions_retired": 2616900927,
+          "cycles_elapsed": 565762096,
+          "peak_memory_footprint": 28345280
+        }
+      },
+      "case": "cell_object_update_large",
+      "size": 16384,
+      "engine": "combined",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-base-4.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_object_update_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 191887125,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-base-4.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-base-4.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-base-4.time-l.txt",
+        "raw_sha256": "270fc650429778264f5bdce295105a412edef7572ba78d4d974ac1ae219007be",
+        "values": {
+          "maximum_resident_set_size": 35012608,
+          "instructions_retired": 2646420050,
+          "cycles_elapsed": 588485900,
+          "peak_memory_footprint": 31343552
+        }
+      },
+      "case": "cell_object_update_large",
+      "size": 16384,
+      "engine": "base",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-combined-4.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_object_update_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 183858541,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-combined-4.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-combined-4.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-combined-4.time-l.txt",
+        "raw_sha256": "b1f54c3d449c5b20da797ba511c5ef0a5555b0b49752c59e06fb4ab7bb0f799d",
+        "values": {
+          "maximum_resident_set_size": 31948800,
+          "instructions_retired": 2616442880,
+          "cycles_elapsed": 565854044,
+          "peak_memory_footprint": 28328896
+        }
+      },
+      "case": "cell_object_update_large",
+      "size": 16384,
+      "engine": "combined",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-combined-5.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_object_update_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 183457333,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-combined-5.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-combined-5.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-combined-5.time-l.txt",
+        "raw_sha256": "9985577c53a696c889c0e1bba273f730e51c3538a76ecf0d4ad51caa933d91ee",
+        "values": {
+          "maximum_resident_set_size": 31965184,
+          "instructions_retired": 2616424430,
+          "cycles_elapsed": 564268091,
+          "peak_memory_footprint": 28345280
+        }
+      },
+      "case": "cell_object_update_large",
+      "size": 16384,
+      "engine": "combined",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-base-5.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_object_update_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 191039958,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-base-5.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-base-5.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-base-5.time-l.txt",
+        "raw_sha256": "69beb85c45e2eb073fb1b69e9767a3ed73b21c7f71d3fd90c4a754510cb1b12f",
+        "values": {
+          "maximum_resident_set_size": 35061760,
+          "instructions_retired": 2646381515,
+          "cycles_elapsed": 587832860,
+          "peak_memory_footprint": 31392704
+        }
+      },
+      "case": "cell_object_update_large",
+      "size": 16384,
+      "engine": "base",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-combined-6.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_object_update_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 184368625,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-combined-6.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-combined-6.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-combined-6.time-l.txt",
+        "raw_sha256": "6b14a2ca145da6dec46b8fd8379bd4298d2549ae4d5290d7576622235ea51f6d",
+        "values": {
+          "maximum_resident_set_size": 31899648,
+          "instructions_retired": 2616661054,
+          "cycles_elapsed": 567598357,
+          "peak_memory_footprint": 28296192
+        }
+      },
+      "case": "cell_object_update_large",
+      "size": 16384,
+      "engine": "combined",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-base-6.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_object_update_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 190591334,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-base-6.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-base-6.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-base-6.time-l.txt",
+        "raw_sha256": "e9b0ef896ec2668bc6df5a081c7acc987a82b642b737d4b468fb6d6afac396d5",
+        "values": {
+          "maximum_resident_set_size": 34947072,
+          "instructions_retired": 2646003695,
+          "cycles_elapsed": 586469542,
+          "peak_memory_footprint": 31278016
+        }
+      },
+      "case": "cell_object_update_large",
+      "size": 16384,
+      "engine": "base",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-base-7.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-base-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_object_update_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 192509791,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-base-7.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-base-7.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-base-7.time-l.txt",
+        "raw_sha256": "4dc64faf98fd472da1d70c5e6a8e606cab7b0b439736396e603002d2e2750cf6",
+        "values": {
+          "maximum_resident_set_size": 34963456,
+          "instructions_retired": 2647337060,
+          "cycles_elapsed": 589950666,
+          "peak_memory_footprint": 31294400
+        }
+      },
+      "case": "cell_object_update_large",
+      "size": 16384,
+      "engine": "base",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-combined-7.time-l.txt",
+        "/private/tmp/oxide-typed-arenas.ZngRCR/build-combined-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7/docs/performance/receipts/typed-arenas-2026-09-28/workloads/cell_object_update_large.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 199483750,
+      "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-combined-7.stdout",
+      "stderr": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-combined-7.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-typed-arenas.ZngRCR/timing-base-combined-large/raw/cell_object_update_large-combined-7.time-l.txt",
+        "raw_sha256": "b2a4cbff7d61ff32944313456e1593dcc4a5f9dde02f9336011541db3e5d954a",
+        "values": {
+          "maximum_resident_set_size": 31981568,
+          "instructions_retired": 2622534607,
+          "cycles_elapsed": 586926264,
+          "peak_memory_footprint": 28361664
+        }
+      },
+      "case": "cell_object_update_large",
+      "size": 16384,
+      "engine": "combined",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    }
+  ]
+}
