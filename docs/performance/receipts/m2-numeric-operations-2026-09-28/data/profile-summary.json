@@ -1,0 +1,232 @@
+{
+  "cases": {
+    "branch-hit": {
+      "pr53": {
+        "selected_sites": [],
+        "binary_number_in_place": 0,
+        "runtime_pc_publication": 9,
+        "exec_words_bytes": 164,
+        "exec_boundaries_bytes": 136,
+        "region_descriptor_bytes": 0
+      },
+      "candidate": {
+        "selected_sites": [
+          {
+            "kind": "numeric_array_compare_branch",
+            "attempts": 10000,
+            "hits": 10000,
+            "misses": {}
+          }
+        ],
+        "binary_number_in_place": 0,
+        "runtime_pc_publication": 9,
+        "exec_words_bytes": 160,
+        "exec_boundaries_bytes": 136,
+        "region_descriptor_bytes": 72
+      }
+    },
+    "branch-miss": {
+      "pr53": {
+        "selected_sites": [],
+        "binary_number_in_place": 0,
+        "runtime_pc_publication": 20010,
+        "exec_words_bytes": 164,
+        "exec_boundaries_bytes": 136,
+        "region_descriptor_bytes": 0
+      },
+      "candidate": {
+        "selected_sites": [
+          {
+            "kind": "numeric_array_compare_branch",
+            "attempts": 10000,
+            "hits": 0,
+            "misses": {
+              "missing_own_element": 10000
+            }
+          }
+        ],
+        "binary_number_in_place": 0,
+        "runtime_pc_publication": 20010,
+        "exec_words_bytes": 160,
+        "exec_boundaries_bytes": 136,
+        "region_descriptor_bytes": 72
+      }
+    },
+    "product-hit": {
+      "pr53": {
+        "selected_sites": [],
+        "binary_number_in_place": 0,
+        "runtime_pc_publication": 9,
+        "exec_words_bytes": 144,
+        "exec_boundaries_bytes": 124,
+        "region_descriptor_bytes": 0
+      },
+      "candidate": {
+        "selected_sites": [
+          {
+            "kind": "numeric_array_store_product",
+            "attempts": 10000,
+            "hits": 10000,
+            "misses": {}
+          }
+        ],
+        "binary_number_in_place": 0,
+        "runtime_pc_publication": 9,
+        "exec_words_bytes": 144,
+        "exec_boundaries_bytes": 124,
+        "region_descriptor_bytes": 72
+      }
+    },
+    "product-miss": {
+      "pr53": {
+        "selected_sites": [],
+        "binary_number_in_place": 0,
+        "runtime_pc_publication": 20012,
+        "exec_words_bytes": 144,
+        "exec_boundaries_bytes": 124,
+        "region_descriptor_bytes": 0
+      },
+      "candidate": {
+        "selected_sites": [
+          {
+            "kind": "numeric_array_store_product",
+            "attempts": 10000,
+            "hits": 0,
+            "misses": {
+              "missing_own_element": 10000
+            }
+          }
+        ],
+        "binary_number_in_place": 0,
+        "runtime_pc_publication": 20012,
+        "exec_words_bytes": 144,
+        "exec_boundaries_bytes": 124,
+        "region_descriptor_bytes": 72
+      }
+    },
+    "update-hit": {
+      "pr53": {
+        "selected_sites": [],
+        "binary_number_in_place": 10000,
+        "runtime_pc_publication": 8,
+        "exec_words_bytes": 148,
+        "exec_boundaries_bytes": 128,
+        "region_descriptor_bytes": 0
+      },
+      "candidate": {
+        "selected_sites": [
+          {
+            "kind": "numeric_array_update_element",
+            "attempts": 10000,
+            "hits": 10000,
+            "misses": {}
+          }
+        ],
+        "binary_number_in_place": 0,
+        "runtime_pc_publication": 8,
+        "exec_words_bytes": 156,
+        "exec_boundaries_bytes": 128,
+        "region_descriptor_bytes": 72
+      }
+    },
+    "update-miss": {
+      "pr53": {
+        "selected_sites": [],
+        "binary_number_in_place": 10000,
+        "runtime_pc_publication": 20021,
+        "exec_words_bytes": 148,
+        "exec_boundaries_bytes": 128,
+        "region_descriptor_bytes": 0
+      },
+      "candidate": {
+        "selected_sites": [
+          {
+            "kind": "numeric_array_update_element",
+            "attempts": 10000,
+            "hits": 0,
+            "misses": {
+              "own_element_not_writable": 10000
+            }
+          }
+        ],
+        "binary_number_in_place": 10000,
+        "runtime_pc_publication": 20021,
+        "exec_words_bytes": 156,
+        "exec_boundaries_bytes": 128,
+        "region_descriptor_bytes": 72
+      }
+    },
+    "nonapp": {
+      "pr53": {
+        "selected_sites": [],
+        "binary_number_in_place": 0,
+        "runtime_pc_publication": 8,
+        "exec_words_bytes": 124,
+        "exec_boundaries_bytes": 112,
+        "region_descriptor_bytes": 0
+      },
+      "candidate": {
+        "selected_sites": [],
+        "binary_number_in_place": 0,
+        "runtime_pc_publication": 8,
+        "exec_words_bytes": 124,
+        "exec_boundaries_bytes": 112,
+        "region_descriptor_bytes": 0
+      }
+    },
+    "m1-hit": {
+      "pr53": {
+        "selected_sites": [
+          {
+            "kind": "numeric_array_accumulate",
+            "attempts": 10000,
+            "hits": 10000,
+            "misses": {}
+          }
+        ],
+        "binary_number_in_place": 10000,
+        "runtime_pc_publication": 12,
+        "exec_words_bytes": 216,
+        "exec_boundaries_bytes": 192,
+        "region_descriptor_bytes": 64
+      },
+      "candidate": {
+        "selected_sites": [
+          {
+            "kind": "numeric_array_accumulate",
+            "attempts": 10000,
+            "hits": 10000,
+            "misses": {}
+          }
+        ],
+        "binary_number_in_place": 10000,
+        "runtime_pc_publication": 12,
+        "exec_words_bytes": 216,
+        "exec_boundaries_bytes": 192,
+        "region_descriptor_bytes": 72
+      }
+    }
+  },
+  "v8_v7": {
+    "crypto": [
+      {
+        "kind": "numeric_array_compare_branch",
+        "attempts": 28,
+        "hits": 28
+      },
+      {
+        "kind": "numeric_array_compare_branch",
+        "attempts": 15,
+        "hits": 15
+      }
+    ],
+    "deltablue": [],
+    "earley-boyer": [],
+    "navier-stokes": [],
+    "raytrace": [],
+    "regexp": [],
+    "richards": [],
+    "splay": []
+  },
+  "note": "Profiling-feature logical events only; not timing or total instruction counts."
+}

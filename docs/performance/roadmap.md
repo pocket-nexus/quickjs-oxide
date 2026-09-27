@@ -88,9 +88,11 @@ sum += array[i] * scale;
 发布。规划 IR 只在编译期间存在；不成为第二个运行时解释器。
 
 规划以临时值身份和 use 关系表示：读旧 sum、取 array[i]、乘 scale、相加、
-写回 sum。记录读取来源、可变目的地、临时值用途，以及可能调用 JS、分配、
-抛错、可观察释放或改变布局的效果。effects 用于选择和区域形成，不转化成
-主循环逐条执行的一组 Boolean 检查。只实现 M1 消费的分析与契约。
+写回 sum。当前 `PotentialEffects` 记录可能调用 JS、分配和抛错；M1 的
+可观察释放与布局安全来自受限指令形态和动态准入，而不是通用的 ownership
+或 layout refinement 证明。effects 用于选择和区域形成，不转化成主循环
+逐条执行的一组 Boolean 检查。扩大覆盖时应复用事实及验证契约，不能让
+每个新操作族重新构造同一份证明。
 
 M1 支持表达式结果被丢弃的语句；目的地为可写、未捕获的普通 local。
 array 来自直接 local/argument；index、scale 来自直接 local/argument 或

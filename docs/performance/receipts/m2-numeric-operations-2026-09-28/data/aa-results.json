@@ -1,0 +1,2598 @@
+{
+  "metadata": {
+    "machine": {
+      "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+      "machine": "arm64",
+      "cpu": "Apple M1",
+      "logical_cpus": 8,
+      "python": "3.14.7",
+      "cpu_affinity": null,
+      "scaling_governors": {},
+      "load_average": [
+        11.79248046875,
+        49.5498046875,
+        66.99658203125
+      ],
+      "macos": {
+        "physical_memory_bytes": 17179869184,
+        "power_settings": {
+          "command": [
+            "pmset",
+            "-g",
+            "custom"
+          ],
+          "exit_code": 0,
+          "stdout": "Battery Power:\n Sleep On Power Button 1\n lowpowermode         0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         20\n womp                 0\n networkoversleep     0\n sleep                1\n lessbright           1\n tcpkeepalive         1\n disksleep            10\nAC Power:\n Sleep On Power Button 1\n lowpowermode         0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         0\n womp                 1\n networkoversleep     0\n sleep                1\n tcpkeepalive         1\n disksleep            10",
+          "stderr": ""
+        },
+        "power_source": {
+          "command": [
+            "pmset",
+            "-g",
+            "batt"
+          ],
+          "exit_code": 0,
+          "stdout": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=22741091)\t100%; charged; 0:00 remaining present: true",
+          "stderr": ""
+        },
+        "vm_stat": {
+          "command": [
+            "vm_stat"
+          ],
+          "exit_code": 0,
+          "stdout": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                     7365.\nPages active:                                 261013.\nPages inactive:                               205709.\nPages speculative:                             54585.\nPages throttled:                                   0.\nPages wired down:                             153792.\nPages purgeable:                                1042.\n\"Translation faults\":                     4003661555.\nPages copy-on-write:                       248608723.\nPages zero filled:                        1477915995.\nPages reactivated:                         525292356.\nPages purged:                               33197152.\nFile-backed pages:                            186562.\nAnonymous pages:                              334745.\nPages stored in compressor:                  1249736.\nPages occupied by compressor:                 317492.\nDecompressions:                            467457711.\nCompressions:                              531292104.\nPageins:                                    91388577.\nPageouts:                                    1074615.\nSwapins:                                     3321470.\nSwapouts:                                    4496917.",
+          "stderr": ""
+        }
+      },
+      "runner_sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5",
+      "repository": {
+        "commit": {
+          "command": [
+            "git",
+            "rev-parse",
+            "HEAD"
+          ],
+          "exit_code": 0,
+          "stdout": "b4843af813e5dcece7f11012ea7666bdf5723ff1",
+          "stderr": ""
+        },
+        "tree": {
+          "command": [
+            "git",
+            "rev-parse",
+            "HEAD^{tree}"
+          ],
+          "exit_code": 0,
+          "stdout": "bd3e4e8c3f40b0ba0864e6de84532fda43e4872e",
+          "stderr": ""
+        },
+        "top_level": {
+          "command": [
+            "git",
+            "rev-parse",
+            "--show-toplevel"
+          ],
+          "exit_code": 0,
+          "stdout": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide",
+          "stderr": ""
+        },
+        "status": {
+          "command": [
+            "git",
+            "status",
+            "--porcelain"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": ""
+        }
+      }
+    },
+    "runner_sha256": "8a852679221202ae6d3dac1e02b295368a79529a3e0c32e51fd6b914e5d4b425",
+    "manifest_sha256": "2c091bbc59d53a0c6e9d1524f352642ebd2fc272085a94c3f4278f27fb873aea",
+    "workloads": [
+      {
+        "case": "branch-hit",
+        "path": "/private/tmp/oxide-m2-workloads/branch-hit.js",
+        "sha256": "d18667d76e95d8eab8514e422d3c5d5dc3450f760212172c49739e8ade2077b3",
+        "expected": "2000000\n",
+        "size": 2000000
+      },
+      {
+        "case": "branch-miss",
+        "path": "/private/tmp/oxide-m2-workloads/branch-miss.js",
+        "sha256": "3083237a3d009768564ff0b7d5d64970ba7a965fc59b9a4890625893fe4977f0",
+        "expected": "0\n",
+        "size": 2000000
+      },
+      {
+        "case": "nonapp",
+        "path": "/private/tmp/oxide-m2-workloads/nonapp.js",
+        "sha256": "805a98a15cbdba18b11c349d2ed75c3f667d43851932da860dc35b12b6470ba9",
+        "expected": "2000000\n",
+        "size": 2000000
+      },
+      {
+        "case": "product-hit",
+        "path": "/private/tmp/oxide-m2-workloads/product-hit.js",
+        "sha256": "81b30b7ad0464a443ed0aef9010a9ebf69fa3859cef09e3bb007cfaafc65ad16",
+        "expected": "10\n",
+        "size": 2000000
+      },
+      {
+        "case": "product-miss",
+        "path": "/private/tmp/oxide-m2-workloads/product-miss.js",
+        "sha256": "ce10de4efa75cd7477013aeb82bdb848b318471cef72b16bace90d2cdf3a5a77",
+        "expected": "true\n",
+        "size": 2000000
+      },
+      {
+        "case": "update-hit",
+        "path": "/private/tmp/oxide-m2-workloads/update-hit.js",
+        "sha256": "0149509bd5f460ad326ba70bb1f76908c94a063cea34bb25b350c9abf56ddb52",
+        "expected": "2000000\n",
+        "size": 2000000
+      },
+      {
+        "case": "update-miss",
+        "path": "/private/tmp/oxide-m2-workloads/update-miss.js",
+        "sha256": "9878abaf6a5846ec8abc1e5338339e5247d4ff3d6e4326fd2113cbeca8dbccf2",
+        "expected": "0\n",
+        "size": 2000000
+      }
+    ],
+    "engines": {
+      "a": {
+        "path": "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "sha256": "177d2be3997e9e3d98670035c26f942f4ef206421f1d6e240a7ea00407e5a4c5",
+        "version": {
+          "command": [
+            "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+            "--version"
+          ],
+          "exit_code": 0,
+          "stdout": "quickjs-oxide 0.0.1 (QuickJS 2026-06-04 compatibility target)",
+          "stderr": ""
+        },
+        "build": {
+          "schema": "oxide-build-v2",
+          "mode": "plain",
+          "vm_configuration": "stack-vm",
+          "features": [],
+          "commit": "b4843af813e5dcece7f11012ea7666bdf5723ff1",
+          "source": {
+            "commit": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD"
+              ],
+              "exit_code": 0,
+              "stdout": "b4843af813e5dcece7f11012ea7666bdf5723ff1",
+              "stderr": ""
+            },
+            "tree": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD^{tree}"
+              ],
+              "exit_code": 0,
+              "stdout": "bd3e4e8c3f40b0ba0864e6de84532fda43e4872e",
+              "stderr": ""
+            },
+            "top_level": {
+              "command": [
+                "git",
+                "rev-parse",
+                "--show-toplevel"
+              ],
+              "exit_code": 0,
+              "stdout": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide",
+              "stderr": ""
+            },
+            "status": {
+              "command": [
+                "git",
+                "status",
+                "--porcelain"
+              ],
+              "exit_code": 0,
+              "stdout": "",
+              "stderr": ""
+            }
+          },
+          "binary_sha256": "177d2be3997e9e3d98670035c26f942f4ef206421f1d6e240a7ea00407e5a4c5",
+          "tooling": {
+            "repository": {
+              "commit": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "HEAD"
+                ],
+                "exit_code": 0,
+                "stdout": "b4843af813e5dcece7f11012ea7666bdf5723ff1",
+                "stderr": ""
+              },
+              "tree": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "HEAD^{tree}"
+                ],
+                "exit_code": 0,
+                "stdout": "bd3e4e8c3f40b0ba0864e6de84532fda43e4872e",
+                "stderr": ""
+              },
+              "top_level": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "--show-toplevel"
+                ],
+                "exit_code": 0,
+                "stdout": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide",
+                "stderr": ""
+              },
+              "status": {
+                "command": [
+                  "git",
+                  "status",
+                  "--porcelain"
+                ],
+                "exit_code": 0,
+                "stdout": "",
+                "stderr": ""
+              }
+            },
+            "snapshots": {
+              "build.py": {
+                "path": "/private/tmp/oxide-m2-candidate-plain/release/qjs.build.tooling-build.py",
+                "sha256": "fc8392a9d26290a6095742b2ab4cb45f5ab37b964c9daa51d22f7088259b1f50"
+              },
+              "run.py": {
+                "path": "/private/tmp/oxide-m2-candidate-plain/release/qjs.build.tooling-run.py",
+                "sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5"
+              }
+            }
+          },
+          "command": [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "--verbose",
+            "-p",
+            "quickjs-oxide-cli",
+            "--no-default-features",
+            "--target-dir",
+            "/private/tmp/oxide-m2-candidate-plain",
+            "--jobs",
+            "2"
+          ],
+          "cwd": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide",
+          "exit_code": 0,
+          "stdout": {
+            "path": "/private/tmp/oxide-m2-candidate-plain/release/qjs.build.stdout.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "stderr": {
+            "path": "/private/tmp/oxide-m2-candidate-plain/release/qjs.build.stderr.log",
+            "sha256": "d8f19dd9c1c3759aa3a33b51e493e0c3a95f5986076aa6e3b8e9f4389895dbf0"
+          },
+          "rustc": {
+            "command": [
+              "rustc",
+              "-vV"
+            ],
+            "exit_code": 0,
+            "stdout": "rustc 1.88.0 (6b00bc388 2025-06-23)\nbinary: rustc\ncommit-hash: 6b00bc3880198600130e1cf62b8f8a93494488cc\ncommit-date: 2025-06-23\nhost: aarch64-apple-darwin\nrelease: 1.88.0\nLLVM version: 20.1.5",
+            "stderr": ""
+          },
+          "cargo": {
+            "command": [
+              "cargo",
+              "-V"
+            ],
+            "exit_code": 0,
+            "stdout": "cargo 1.88.0 (873a06493 2025-05-10)",
+            "stderr": ""
+          },
+          "cargo_toml_sha256": "14f5e4d4f172150d6c212b61871da24a4e5b26e34e363f6de2a7f250bbe6e48d",
+          "cargo_lock_sha256": "c26c9f1999da579c0d1176c62981afa716ea998949a8dd15b1365f85b66944e3",
+          "release_profile": {
+            "manifest": {
+              "lto": "\"fat\"",
+              "codegen-units": "1"
+            },
+            "environment_overrides": {
+              "RUSTUP_TOOLCHAIN": "1.88.0"
+            },
+            "cargo_config_sha256": {},
+            "qjs_rustc_invocation": {
+              "command": "rustc --crate-name qjs --edition=2024 apps/cli/src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C opt-level=3 -C lto=fat -C codegen-units=1 '--warn=clippy::all' --forbid=unsafe_code --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values(\"default\", \"profiling\", \"test262-host\"))' -C metadata=fe6bdd401eddfd50 -C extra-filename=-0ece4688285d6d4f --out-dir /private/tmp/oxide-m2-candidate-plain/release/deps -C strip=debuginfo -L dependency=/private/tmp/oxide-m2-candidate-plain/release/deps --extern quickjs_oxide=/private/tmp/oxide-m2-candidate-plain/release/deps/libquickjs_oxide-87e6abc49e10e601.rlib --extern quickjs_oxide_host=/private/tmp/oxide-m2-candidate-plain/release/deps/libquickjs_oxide_host-c5af6d789609ebdc.rlib",
+              "crate": "qjs",
+              "codegen": {
+                "opt-level": "3",
+                "lto": "fat",
+                "codegen-units": "1"
+              },
+              "target": null
+            },
+            "observed_rustc_compilations": 9,
+            "observed_codegen_groups": [
+              {
+                "target": null,
+                "codegen": {
+                  "opt-level": "3",
+                  "codegen-units": "1"
+                },
+                "crates": [
+                  "tz",
+                  "num_traits",
+                  "num_integer",
+                  "num_bigint",
+                  "quickjs_oxide",
+                  "quickjs_oxide_host"
+                ]
+              },
+              {
+                "target": null,
+                "codegen": {},
+                "crates": [
+                  "autocfg",
+                  "build_script_build"
+                ]
+              },
+              {
+                "target": null,
+                "codegen": {
+                  "opt-level": "3",
+                  "lto": "fat",
+                  "codegen-units": "1"
+                },
+                "crates": [
+                  "qjs"
+                ]
+              }
+            ]
+          },
+          "target": {
+            "requested_triple": null,
+            "rustc_host": "aarch64-apple-darwin",
+            "observed_triple": null,
+            "observed_target_cpu": null,
+            "observed_target_feature": null
+          },
+          "commit_environment": "b4843af813e5dcece7f11012ea7666bdf5723ff1"
+        }
+      },
+      "b": {
+        "path": "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "sha256": "177d2be3997e9e3d98670035c26f942f4ef206421f1d6e240a7ea00407e5a4c5",
+        "version": {
+          "command": [
+            "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+            "--version"
+          ],
+          "exit_code": 0,
+          "stdout": "quickjs-oxide 0.0.1 (QuickJS 2026-06-04 compatibility target)",
+          "stderr": ""
+        },
+        "build": {
+          "schema": "oxide-build-v2",
+          "mode": "plain",
+          "vm_configuration": "stack-vm",
+          "features": [],
+          "commit": "b4843af813e5dcece7f11012ea7666bdf5723ff1",
+          "source": {
+            "commit": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD"
+              ],
+              "exit_code": 0,
+              "stdout": "b4843af813e5dcece7f11012ea7666bdf5723ff1",
+              "stderr": ""
+            },
+            "tree": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD^{tree}"
+              ],
+              "exit_code": 0,
+              "stdout": "bd3e4e8c3f40b0ba0864e6de84532fda43e4872e",
+              "stderr": ""
+            },
+            "top_level": {
+              "command": [
+                "git",
+                "rev-parse",
+                "--show-toplevel"
+              ],
+              "exit_code": 0,
+              "stdout": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide",
+              "stderr": ""
+            },
+            "status": {
+              "command": [
+                "git",
+                "status",
+                "--porcelain"
+              ],
+              "exit_code": 0,
+              "stdout": "",
+              "stderr": ""
+            }
+          },
+          "binary_sha256": "177d2be3997e9e3d98670035c26f942f4ef206421f1d6e240a7ea00407e5a4c5",
+          "tooling": {
+            "repository": {
+              "commit": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "HEAD"
+                ],
+                "exit_code": 0,
+                "stdout": "b4843af813e5dcece7f11012ea7666bdf5723ff1",
+                "stderr": ""
+              },
+              "tree": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "HEAD^{tree}"
+                ],
+                "exit_code": 0,
+                "stdout": "bd3e4e8c3f40b0ba0864e6de84532fda43e4872e",
+                "stderr": ""
+              },
+              "top_level": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "--show-toplevel"
+                ],
+                "exit_code": 0,
+                "stdout": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide",
+                "stderr": ""
+              },
+              "status": {
+                "command": [
+                  "git",
+                  "status",
+                  "--porcelain"
+                ],
+                "exit_code": 0,
+                "stdout": "",
+                "stderr": ""
+              }
+            },
+            "snapshots": {
+              "build.py": {
+                "path": "/private/tmp/oxide-m2-candidate-plain/release/qjs.build.tooling-build.py",
+                "sha256": "fc8392a9d26290a6095742b2ab4cb45f5ab37b964c9daa51d22f7088259b1f50"
+              },
+              "run.py": {
+                "path": "/private/tmp/oxide-m2-candidate-plain/release/qjs.build.tooling-run.py",
+                "sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5"
+              }
+            }
+          },
+          "command": [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "--verbose",
+            "-p",
+            "quickjs-oxide-cli",
+            "--no-default-features",
+            "--target-dir",
+            "/private/tmp/oxide-m2-candidate-plain",
+            "--jobs",
+            "2"
+          ],
+          "cwd": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide",
+          "exit_code": 0,
+          "stdout": {
+            "path": "/private/tmp/oxide-m2-candidate-plain/release/qjs.build.stdout.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "stderr": {
+            "path": "/private/tmp/oxide-m2-candidate-plain/release/qjs.build.stderr.log",
+            "sha256": "d8f19dd9c1c3759aa3a33b51e493e0c3a95f5986076aa6e3b8e9f4389895dbf0"
+          },
+          "rustc": {
+            "command": [
+              "rustc",
+              "-vV"
+            ],
+            "exit_code": 0,
+            "stdout": "rustc 1.88.0 (6b00bc388 2025-06-23)\nbinary: rustc\ncommit-hash: 6b00bc3880198600130e1cf62b8f8a93494488cc\ncommit-date: 2025-06-23\nhost: aarch64-apple-darwin\nrelease: 1.88.0\nLLVM version: 20.1.5",
+            "stderr": ""
+          },
+          "cargo": {
+            "command": [
+              "cargo",
+              "-V"
+            ],
+            "exit_code": 0,
+            "stdout": "cargo 1.88.0 (873a06493 2025-05-10)",
+            "stderr": ""
+          },
+          "cargo_toml_sha256": "14f5e4d4f172150d6c212b61871da24a4e5b26e34e363f6de2a7f250bbe6e48d",
+          "cargo_lock_sha256": "c26c9f1999da579c0d1176c62981afa716ea998949a8dd15b1365f85b66944e3",
+          "release_profile": {
+            "manifest": {
+              "lto": "\"fat\"",
+              "codegen-units": "1"
+            },
+            "environment_overrides": {
+              "RUSTUP_TOOLCHAIN": "1.88.0"
+            },
+            "cargo_config_sha256": {},
+            "qjs_rustc_invocation": {
+              "command": "rustc --crate-name qjs --edition=2024 apps/cli/src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C opt-level=3 -C lto=fat -C codegen-units=1 '--warn=clippy::all' --forbid=unsafe_code --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values(\"default\", \"profiling\", \"test262-host\"))' -C metadata=fe6bdd401eddfd50 -C extra-filename=-0ece4688285d6d4f --out-dir /private/tmp/oxide-m2-candidate-plain/release/deps -C strip=debuginfo -L dependency=/private/tmp/oxide-m2-candidate-plain/release/deps --extern quickjs_oxide=/private/tmp/oxide-m2-candidate-plain/release/deps/libquickjs_oxide-87e6abc49e10e601.rlib --extern quickjs_oxide_host=/private/tmp/oxide-m2-candidate-plain/release/deps/libquickjs_oxide_host-c5af6d789609ebdc.rlib",
+              "crate": "qjs",
+              "codegen": {
+                "opt-level": "3",
+                "lto": "fat",
+                "codegen-units": "1"
+              },
+              "target": null
+            },
+            "observed_rustc_compilations": 9,
+            "observed_codegen_groups": [
+              {
+                "target": null,
+                "codegen": {
+                  "opt-level": "3",
+                  "codegen-units": "1"
+                },
+                "crates": [
+                  "tz",
+                  "num_traits",
+                  "num_integer",
+                  "num_bigint",
+                  "quickjs_oxide",
+                  "quickjs_oxide_host"
+                ]
+              },
+              {
+                "target": null,
+                "codegen": {},
+                "crates": [
+                  "autocfg",
+                  "build_script_build"
+                ]
+              },
+              {
+                "target": null,
+                "codegen": {
+                  "opt-level": "3",
+                  "lto": "fat",
+                  "codegen-units": "1"
+                },
+                "crates": [
+                  "qjs"
+                ]
+              }
+            ]
+          },
+          "target": {
+            "requested_triple": null,
+            "rustc_host": "aarch64-apple-darwin",
+            "observed_triple": null,
+            "observed_target_cpu": null,
+            "observed_target_feature": null
+          },
+          "commit_environment": "b4843af813e5dcece7f11012ea7666bdf5723ff1"
+        }
+      }
+    },
+    "repeat": 4,
+    "order_strategy": "abba-baab",
+    "timeout_seconds": 180,
+    "cpu": null,
+    "darwin_counters": true,
+    "counter_scope": "whole process including startup and teardown",
+    "metric": "whole-process wall nanoseconds; not adaptive scores"
+  },
+  "summary": [
+    {
+      "case": "branch-hit",
+      "size": 2000000,
+      "engine": "a",
+      "eligible": true,
+      "successful_wall_ns": [
+        245975417,
+        232727125,
+        241671834,
+        233206750
+      ],
+      "failures": [],
+      "median_wall_ns": 237439292.0
+    },
+    {
+      "case": "branch-hit",
+      "size": 2000000,
+      "engine": "b",
+      "eligible": true,
+      "successful_wall_ns": [
+        259725000,
+        231391500,
+        235873208,
+        232006542
+      ],
+      "failures": [],
+      "median_wall_ns": 233939875.0
+    },
+    {
+      "case": "branch-miss",
+      "size": 2000000,
+      "engine": "a",
+      "eligible": true,
+      "successful_wall_ns": [
+        1604755958,
+        1615335583,
+        1597931375,
+        1648105084
+      ],
+      "failures": [],
+      "median_wall_ns": 1610045770.5
+    },
+    {
+      "case": "branch-miss",
+      "size": 2000000,
+      "engine": "b",
+      "eligible": true,
+      "successful_wall_ns": [
+        1673026167,
+        1615842625,
+        1674723917,
+        1587096875
+      ],
+      "failures": [],
+      "median_wall_ns": 1644434396.0
+    },
+    {
+      "case": "nonapp",
+      "size": 2000000,
+      "engine": "a",
+      "eligible": true,
+      "successful_wall_ns": [
+        183664875,
+        197776125,
+        171829375,
+        179528583
+      ],
+      "failures": [],
+      "median_wall_ns": 181596729.0
+    },
+    {
+      "case": "nonapp",
+      "size": 2000000,
+      "engine": "b",
+      "eligible": true,
+      "successful_wall_ns": [
+        193128208,
+        191043459,
+        172754916,
+        173726250
+      ],
+      "failures": [],
+      "median_wall_ns": 182384854.5
+    },
+    {
+      "case": "product-hit",
+      "size": 2000000,
+      "engine": "a",
+      "eligible": true,
+      "successful_wall_ns": [
+        219841000,
+        222147042,
+        248065875,
+        303788042
+      ],
+      "failures": [],
+      "median_wall_ns": 235106458.5
+    },
+    {
+      "case": "product-hit",
+      "size": 2000000,
+      "engine": "b",
+      "eligible": true,
+      "successful_wall_ns": [
+        217772459,
+        214198458,
+        220279625,
+        229269750
+      ],
+      "failures": [],
+      "median_wall_ns": 219026042.0
+    },
+    {
+      "case": "product-miss",
+      "size": 2000000,
+      "engine": "a",
+      "eligible": true,
+      "successful_wall_ns": [
+        1404171666,
+        1376152708,
+        1374914708,
+        1482386041
+      ],
+      "failures": [],
+      "median_wall_ns": 1390162187.0
+    },
+    {
+      "case": "product-miss",
+      "size": 2000000,
+      "engine": "b",
+      "eligible": true,
+      "successful_wall_ns": [
+        1475160333,
+        1439416833,
+        1451274167,
+        1353276792
+      ],
+      "failures": [],
+      "median_wall_ns": 1445345500.0
+    },
+    {
+      "case": "update-hit",
+      "size": 2000000,
+      "engine": "a",
+      "eligible": true,
+      "successful_wall_ns": [
+        212768083,
+        212500042,
+        213596541,
+        202662666
+      ],
+      "failures": [],
+      "median_wall_ns": 212634062.5
+    },
+    {
+      "case": "update-hit",
+      "size": 2000000,
+      "engine": "b",
+      "eligible": true,
+      "successful_wall_ns": [
+        234956458,
+        214476333,
+        208984584,
+        205904083
+      ],
+      "failures": [],
+      "median_wall_ns": 211730458.5
+    },
+    {
+      "case": "update-miss",
+      "size": 2000000,
+      "engine": "a",
+      "eligible": true,
+      "successful_wall_ns": [
+        1695739000,
+        1705304917,
+        1766066458,
+        1718793833
+      ],
+      "failures": [],
+      "median_wall_ns": 1712049375.0
+    },
+    {
+      "case": "update-miss",
+      "size": 2000000,
+      "engine": "b",
+      "eligible": true,
+      "successful_wall_ns": [
+        1714708708,
+        1677324125,
+        1700868667,
+        1751743583
+      ],
+      "failures": [],
+      "median_wall_ns": 1707788687.5
+    }
+  ],
+  "samples": [
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/branch-hit-a-0.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/branch-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 245975417,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/branch-hit-a-0.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/branch-hit-a-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/branch-hit-a-0.time-l.txt",
+        "raw_sha256": "429ff487a6fe620516beef4dcd65c60022f8776a1a4120ec3f02b1459fcd6be9",
+        "values": {
+          "maximum_resident_set_size": 6045696,
+          "instructions_retired": 2336488923,
+          "cycles_elapsed": 503781185,
+          "peak_memory_footprint": 2704192
+        }
+      },
+      "case": "branch-hit",
+      "size": 2000000,
+      "engine": "a",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/branch-hit-b-0.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/branch-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 259725000,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/branch-hit-b-0.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/branch-hit-b-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/branch-hit-b-0.time-l.txt",
+        "raw_sha256": "eebc5af5c7604889843e3a880371c0f658b8d779cada520444052870ed1feb2b",
+        "values": {
+          "maximum_resident_set_size": 6045696,
+          "instructions_retired": 2330155111,
+          "cycles_elapsed": 517799918,
+          "peak_memory_footprint": 2704192
+        }
+      },
+      "case": "branch-hit",
+      "size": 2000000,
+      "engine": "b",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/branch-hit-b-1.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/branch-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 231391500,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/branch-hit-b-1.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/branch-hit-b-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/branch-hit-b-1.time-l.txt",
+        "raw_sha256": "1bdc36e87fab8a1fa8c3850c2341ac2e27d64ee247f7d95a3f5778217d127f24",
+        "values": {
+          "maximum_resident_set_size": 6012928,
+          "instructions_retired": 2329477704,
+          "cycles_elapsed": 495309684,
+          "peak_memory_footprint": 2671424
+        }
+      },
+      "case": "branch-hit",
+      "size": 2000000,
+      "engine": "b",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/branch-hit-a-1.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/branch-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 232727125,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/branch-hit-a-1.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/branch-hit-a-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/branch-hit-a-1.time-l.txt",
+        "raw_sha256": "a0cda20b19618fac986dec2f2068858ea04da9b5ce383719470d5574dcc0f698",
+        "values": {
+          "maximum_resident_set_size": 5996544,
+          "instructions_retired": 2329805996,
+          "cycles_elapsed": 491169783,
+          "peak_memory_footprint": 2655040
+        }
+      },
+      "case": "branch-hit",
+      "size": 2000000,
+      "engine": "a",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/branch-hit-b-2.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/branch-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 235873208,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/branch-hit-b-2.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/branch-hit-b-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/branch-hit-b-2.time-l.txt",
+        "raw_sha256": "78001c1e7c2a41f2b8016575bae3fcd030d0fd61f62d78083c6abaee67f66554",
+        "values": {
+          "maximum_resident_set_size": 6045696,
+          "instructions_retired": 2329894683,
+          "cycles_elapsed": 500146592,
+          "peak_memory_footprint": 2704192
+        }
+      },
+      "case": "branch-hit",
+      "size": 2000000,
+      "engine": "b",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/branch-hit-a-2.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/branch-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 241671834,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/branch-hit-a-2.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/branch-hit-a-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/branch-hit-a-2.time-l.txt",
+        "raw_sha256": "24789ced3a78343163d1fec040e16c0a3fffc63d63f8bdc722e259e0c97b6f3e",
+        "values": {
+          "maximum_resident_set_size": 6078464,
+          "instructions_retired": 2329632704,
+          "cycles_elapsed": 490959633,
+          "peak_memory_footprint": 2736960
+        }
+      },
+      "case": "branch-hit",
+      "size": 2000000,
+      "engine": "a",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/branch-hit-a-3.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/branch-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 233206750,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/branch-hit-a-3.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/branch-hit-a-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/branch-hit-a-3.time-l.txt",
+        "raw_sha256": "ae309fdb117eb4cd43cdd9c325c4b3df4356667fdba110338198a35fa7fa5be4",
+        "values": {
+          "maximum_resident_set_size": 6029312,
+          "instructions_retired": 2329462455,
+          "cycles_elapsed": 493164731,
+          "peak_memory_footprint": 2687808
+        }
+      },
+      "case": "branch-hit",
+      "size": 2000000,
+      "engine": "a",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/branch-hit-b-3.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/branch-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 232006542,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/branch-hit-b-3.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/branch-hit-b-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/branch-hit-b-3.time-l.txt",
+        "raw_sha256": "0dcc2e09d6643c90019d5d873264e9313d2e2a50e0e7c2e23d075f2daa4f4226",
+        "values": {
+          "maximum_resident_set_size": 5898240,
+          "instructions_retired": 2329672344,
+          "cycles_elapsed": 495066217,
+          "peak_memory_footprint": 2573184
+        }
+      },
+      "case": "branch-hit",
+      "size": 2000000,
+      "engine": "b",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/branch-miss-a-0.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/branch-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1604755958,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/branch-miss-a-0.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/branch-miss-a-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/branch-miss-a-0.time-l.txt",
+        "raw_sha256": "1f977dfb9dc8eaaa6ef0e47bfd2fad977d65c61f73e0eb7c48678b34f36c7881",
+        "values": {
+          "maximum_resident_set_size": 6111232,
+          "instructions_retired": 18009486195,
+          "cycles_elapsed": 3377844587,
+          "peak_memory_footprint": 2655040
+        }
+      },
+      "case": "branch-miss",
+      "size": 2000000,
+      "engine": "a",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/branch-miss-b-0.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/branch-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1673026167,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/branch-miss-b-0.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/branch-miss-b-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/branch-miss-b-0.time-l.txt",
+        "raw_sha256": "3a5adbb4aadc27d348d8a984ac4d08a8bdcdb543c8c31ebce062274661513192",
+        "values": {
+          "maximum_resident_set_size": 6078464,
+          "instructions_retired": 18009226878,
+          "cycles_elapsed": 3399427894,
+          "peak_memory_footprint": 2622272
+        }
+      },
+      "case": "branch-miss",
+      "size": 2000000,
+      "engine": "b",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/branch-miss-b-1.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/branch-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1615842625,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/branch-miss-b-1.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/branch-miss-b-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/branch-miss-b-1.time-l.txt",
+        "raw_sha256": "1fdf972243af9101246b0e2d69ef47fd733052035cf42fdf8270bd7f78f35488",
+        "values": {
+          "maximum_resident_set_size": 6144000,
+          "instructions_retired": 18008623743,
+          "cycles_elapsed": 3444330800,
+          "peak_memory_footprint": 2687808
+        }
+      },
+      "case": "branch-miss",
+      "size": 2000000,
+      "engine": "b",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/branch-miss-a-1.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/branch-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1615335583,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/branch-miss-a-1.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/branch-miss-a-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/branch-miss-a-1.time-l.txt",
+        "raw_sha256": "0eddeef5660842f0db668d20a4b1a503b0f5d8580b45bc90df6710eb51406302",
+        "values": {
+          "maximum_resident_set_size": 6144000,
+          "instructions_retired": 18008327412,
+          "cycles_elapsed": 3382388628,
+          "peak_memory_footprint": 2687808
+        }
+      },
+      "case": "branch-miss",
+      "size": 2000000,
+      "engine": "a",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/branch-miss-b-2.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/branch-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1674723917,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/branch-miss-b-2.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/branch-miss-b-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/branch-miss-b-2.time-l.txt",
+        "raw_sha256": "5f86fa69ec496ff4f2a810abdb2f324d0868a07b7f9d4b19f58a836467af085e",
+        "values": {
+          "maximum_resident_set_size": 6127616,
+          "instructions_retired": 18008668166,
+          "cycles_elapsed": 3427589966,
+          "peak_memory_footprint": 2671424
+        }
+      },
+      "case": "branch-miss",
+      "size": 2000000,
+      "engine": "b",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/branch-miss-a-2.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/branch-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1597931375,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/branch-miss-a-2.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/branch-miss-a-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/branch-miss-a-2.time-l.txt",
+        "raw_sha256": "3a922551aeafcc660033ea4933eea213fbe364dbc45b5b1a27e55b80464d84d1",
+        "values": {
+          "maximum_resident_set_size": 6127616,
+          "instructions_retired": 18009223602,
+          "cycles_elapsed": 3387323637,
+          "peak_memory_footprint": 2671424
+        }
+      },
+      "case": "branch-miss",
+      "size": 2000000,
+      "engine": "a",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/branch-miss-a-3.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/branch-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1648105084,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/branch-miss-a-3.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/branch-miss-a-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/branch-miss-a-3.time-l.txt",
+        "raw_sha256": "b90391aa1be88344f27f16ef062049276e0ff459a4411ea48917fd22193e481d",
+        "values": {
+          "maximum_resident_set_size": 6160384,
+          "instructions_retired": 18019128635,
+          "cycles_elapsed": 3433942206,
+          "peak_memory_footprint": 2720640
+        }
+      },
+      "case": "branch-miss",
+      "size": 2000000,
+      "engine": "a",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/branch-miss-b-3.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/branch-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1587096875,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/branch-miss-b-3.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/branch-miss-b-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/branch-miss-b-3.time-l.txt",
+        "raw_sha256": "12e86da9f2f189e8a3da897d8701d2e3d4e34e7d231fb1430669578f578e0896",
+        "values": {
+          "maximum_resident_set_size": 6144000,
+          "instructions_retired": 18010910417,
+          "cycles_elapsed": 3430970979,
+          "peak_memory_footprint": 2704256
+        }
+      },
+      "case": "branch-miss",
+      "size": 2000000,
+      "engine": "b",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/nonapp-a-0.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 183664875,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/nonapp-a-0.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/nonapp-a-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/nonapp-a-0.time-l.txt",
+        "raw_sha256": "7cb02dcfc03988209ea7e64195688b4f1c0342459bb291e7dfb9d0406d78dbd2",
+        "values": {
+          "maximum_resident_set_size": 6029312,
+          "instructions_retired": 1583906867,
+          "cycles_elapsed": 371292410,
+          "peak_memory_footprint": 2704192
+        }
+      },
+      "case": "nonapp",
+      "size": 2000000,
+      "engine": "a",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/nonapp-b-0.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 193128208,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/nonapp-b-0.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/nonapp-b-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/nonapp-b-0.time-l.txt",
+        "raw_sha256": "5d1317e725462376dc54a6f405e1395ab099f2b55337d4375ce46b31f544f539",
+        "values": {
+          "maximum_resident_set_size": 6045696,
+          "instructions_retired": 1583674717,
+          "cycles_elapsed": 380797358,
+          "peak_memory_footprint": 2720576
+        }
+      },
+      "case": "nonapp",
+      "size": 2000000,
+      "engine": "b",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/nonapp-b-1.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 191043459,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/nonapp-b-1.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/nonapp-b-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/nonapp-b-1.time-l.txt",
+        "raw_sha256": "0000bc51037b68b58d418fd1b3d577276e3e1c3eca82fb68e0d887a29bdd34a4",
+        "values": {
+          "maximum_resident_set_size": 6012928,
+          "instructions_retired": 1583613814,
+          "cycles_elapsed": 372780362,
+          "peak_memory_footprint": 2687808
+        }
+      },
+      "case": "nonapp",
+      "size": 2000000,
+      "engine": "b",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/nonapp-a-1.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 197776125,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/nonapp-a-1.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/nonapp-a-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/nonapp-a-1.time-l.txt",
+        "raw_sha256": "4931bc8104b5bd99e8869da7058326264f603fd04161768a7bc89791ea469001",
+        "values": {
+          "maximum_resident_set_size": 6012928,
+          "instructions_retired": 1583543502,
+          "cycles_elapsed": 386182187,
+          "peak_memory_footprint": 2687808
+        }
+      },
+      "case": "nonapp",
+      "size": 2000000,
+      "engine": "a",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/nonapp-b-2.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 172754916,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/nonapp-b-2.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/nonapp-b-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/nonapp-b-2.time-l.txt",
+        "raw_sha256": "9403bcaaf4f34377fbec88fa47a3b0f447dfe03fd04a2ab4a50c20935b6109e6",
+        "values": {
+          "maximum_resident_set_size": 5996544,
+          "instructions_retired": 1583128556,
+          "cycles_elapsed": 365831181,
+          "peak_memory_footprint": 2671424
+        }
+      },
+      "case": "nonapp",
+      "size": 2000000,
+      "engine": "b",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/nonapp-a-2.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 171829375,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/nonapp-a-2.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/nonapp-a-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/nonapp-a-2.time-l.txt",
+        "raw_sha256": "bf512a8d706eb93cf356fe5a6f79a11799431ed1bd737b03b74406f22f508adc",
+        "values": {
+          "maximum_resident_set_size": 6012928,
+          "instructions_retired": 1583211670,
+          "cycles_elapsed": 365293568,
+          "peak_memory_footprint": 2687808
+        }
+      },
+      "case": "nonapp",
+      "size": 2000000,
+      "engine": "a",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/nonapp-a-3.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 179528583,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/nonapp-a-3.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/nonapp-a-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/nonapp-a-3.time-l.txt",
+        "raw_sha256": "247b3036137c899fa471032f5796ae12ab364fd8ab59e7ea2bbaab38d8960e2d",
+        "values": {
+          "maximum_resident_set_size": 5931008,
+          "instructions_retired": 1583187700,
+          "cycles_elapsed": 371789893,
+          "peak_memory_footprint": 2622336
+        }
+      },
+      "case": "nonapp",
+      "size": 2000000,
+      "engine": "a",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/nonapp-b-3.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 173726250,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/nonapp-b-3.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/nonapp-b-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/nonapp-b-3.time-l.txt",
+        "raw_sha256": "01fe75b94b61db9ee62f7ced3e2a2c554c9813e9af99ec287060e2319f6bb4d9",
+        "values": {
+          "maximum_resident_set_size": 6012928,
+          "instructions_retired": 1583811083,
+          "cycles_elapsed": 368071160,
+          "peak_memory_footprint": 2687808
+        }
+      },
+      "case": "nonapp",
+      "size": 2000000,
+      "engine": "b",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/product-hit-a-0.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 219841000,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/product-hit-a-0.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/product-hit-a-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/product-hit-a-0.time-l.txt",
+        "raw_sha256": "b4492b7004e819e2a87d65a9ded67eb5fcb1eccbb4f6f187372beb0e562f43e9",
+        "values": {
+          "maximum_resident_set_size": 6062080,
+          "instructions_retired": 2121644161,
+          "cycles_elapsed": 468324216,
+          "peak_memory_footprint": 2720576
+        }
+      },
+      "case": "product-hit",
+      "size": 2000000,
+      "engine": "a",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/product-hit-b-0.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 217772459,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/product-hit-b-0.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/product-hit-b-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/product-hit-b-0.time-l.txt",
+        "raw_sha256": "2d69f947ff0a2878dc743b21b79c82dfd905d88e5c5d93f3cdb8c1b552d5a00d",
+        "values": {
+          "maximum_resident_set_size": 6045696,
+          "instructions_retired": 2121570916,
+          "cycles_elapsed": 468064146,
+          "peak_memory_footprint": 2704192
+        }
+      },
+      "case": "product-hit",
+      "size": 2000000,
+      "engine": "b",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/product-hit-b-1.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 214198458,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/product-hit-b-1.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/product-hit-b-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/product-hit-b-1.time-l.txt",
+        "raw_sha256": "26ae129757197cc8245dc582170324f8b24fc2c6b7cc0b4b68365e1cacda67d6",
+        "values": {
+          "maximum_resident_set_size": 6045696,
+          "instructions_retired": 2121433077,
+          "cycles_elapsed": 464528457,
+          "peak_memory_footprint": 2704192
+        }
+      },
+      "case": "product-hit",
+      "size": 2000000,
+      "engine": "b",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/product-hit-a-1.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 222147042,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/product-hit-a-1.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/product-hit-a-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/product-hit-a-1.time-l.txt",
+        "raw_sha256": "9335601183966d7a114479ed9dfea4a9684b027b83627c4724785b1d222312f5",
+        "values": {
+          "maximum_resident_set_size": 6029312,
+          "instructions_retired": 2122599862,
+          "cycles_elapsed": 470524382,
+          "peak_memory_footprint": 2687808
+        }
+      },
+      "case": "product-hit",
+      "size": 2000000,
+      "engine": "a",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/product-hit-b-2.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 220279625,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/product-hit-b-2.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/product-hit-b-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/product-hit-b-2.time-l.txt",
+        "raw_sha256": "09e9db804f3b9ef3ff77278e6c070cc1e2007758b9eda94d42272d784c8bf899",
+        "values": {
+          "maximum_resident_set_size": 6045696,
+          "instructions_retired": 2122121302,
+          "cycles_elapsed": 469122892,
+          "peak_memory_footprint": 2720640
+        }
+      },
+      "case": "product-hit",
+      "size": 2000000,
+      "engine": "b",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/product-hit-a-2.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 248065875,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/product-hit-a-2.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/product-hit-a-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/product-hit-a-2.time-l.txt",
+        "raw_sha256": "60f6f7f8427e187d6cfb97280bf9e85950b72dc41d310e9ffcbb3de0ff2496cd",
+        "values": {
+          "maximum_resident_set_size": 6012928,
+          "instructions_retired": 2122501195,
+          "cycles_elapsed": 475685744,
+          "peak_memory_footprint": 2671424
+        }
+      },
+      "case": "product-hit",
+      "size": 2000000,
+      "engine": "a",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/product-hit-a-3.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 303788042,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/product-hit-a-3.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/product-hit-a-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/product-hit-a-3.time-l.txt",
+        "raw_sha256": "f634272b81d17e9943bae104c4f0d32094d78f90644d36bbfcdaa329ad72c49f",
+        "values": {
+          "maximum_resident_set_size": 6029312,
+          "instructions_retired": 2123553132,
+          "cycles_elapsed": 502080632,
+          "peak_memory_footprint": 2687808
+        }
+      },
+      "case": "product-hit",
+      "size": 2000000,
+      "engine": "a",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/product-hit-b-3.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 229269750,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/product-hit-b-3.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/product-hit-b-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/product-hit-b-3.time-l.txt",
+        "raw_sha256": "e17569d3ad8a154a2323aef46252cac39204da41fc3f97104d0dba4a8511d44f",
+        "values": {
+          "maximum_resident_set_size": 6045696,
+          "instructions_retired": 2122149991,
+          "cycles_elapsed": 474599662,
+          "peak_memory_footprint": 2720640
+        }
+      },
+      "case": "product-hit",
+      "size": 2000000,
+      "engine": "b",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/product-miss-a-0.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/product-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1404171666,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/product-miss-a-0.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/product-miss-a-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/product-miss-a-0.time-l.txt",
+        "raw_sha256": "b1a05c65ec7b9a949dd7bdbcad10f2d892c61289514f62d883a6f5992f80661f",
+        "values": {
+          "maximum_resident_set_size": 6127616,
+          "instructions_retired": 15616044811,
+          "cycles_elapsed": 2973003822,
+          "peak_memory_footprint": 2687808
+        }
+      },
+      "case": "product-miss",
+      "size": 2000000,
+      "engine": "a",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/product-miss-b-0.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/product-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1475160333,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/product-miss-b-0.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/product-miss-b-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/product-miss-b-0.time-l.txt",
+        "raw_sha256": "aed27fb9172c283e0e9f3e7b7e6e89b42972e500f5f39f4073b8aef9d5644f50",
+        "values": {
+          "maximum_resident_set_size": 6127616,
+          "instructions_retired": 15616643401,
+          "cycles_elapsed": 3016457579,
+          "peak_memory_footprint": 2687808
+        }
+      },
+      "case": "product-miss",
+      "size": 2000000,
+      "engine": "b",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/product-miss-b-1.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/product-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1439416833,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/product-miss-b-1.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/product-miss-b-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/product-miss-b-1.time-l.txt",
+        "raw_sha256": "fa5ddbcb0f851b4d014a7ca711228321363c51726825927235dca168bd7be663",
+        "values": {
+          "maximum_resident_set_size": 6144000,
+          "instructions_retired": 15616854928,
+          "cycles_elapsed": 3009142011,
+          "peak_memory_footprint": 2704192
+        }
+      },
+      "case": "product-miss",
+      "size": 2000000,
+      "engine": "b",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/product-miss-a-1.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/product-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1376152708,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/product-miss-a-1.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/product-miss-a-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/product-miss-a-1.time-l.txt",
+        "raw_sha256": "af75b9a0dc255fbe91f1d69ae485168541e907aa344da2145d99d2ec763ac010",
+        "values": {
+          "maximum_resident_set_size": 6127616,
+          "instructions_retired": 15616046632,
+          "cycles_elapsed": 2947114537,
+          "peak_memory_footprint": 2687808
+        }
+      },
+      "case": "product-miss",
+      "size": 2000000,
+      "engine": "a",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/product-miss-b-2.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/product-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1451274167,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/product-miss-b-2.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/product-miss-b-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/product-miss-b-2.time-l.txt",
+        "raw_sha256": "c5d5243d10b6964e18f5f9173a02864864c88129ad9e7edbc3d42ae7205acda1",
+        "values": {
+          "maximum_resident_set_size": 6160384,
+          "instructions_retired": 15617796525,
+          "cycles_elapsed": 3012403431,
+          "peak_memory_footprint": 2720576
+        }
+      },
+      "case": "product-miss",
+      "size": 2000000,
+      "engine": "b",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/product-miss-a-2.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/product-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1374914708,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/product-miss-a-2.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/product-miss-a-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/product-miss-a-2.time-l.txt",
+        "raw_sha256": "db2d765d48aabcf878ae3d346771e6885f39c531cd14a4e51144f82149572f86",
+        "values": {
+          "maximum_resident_set_size": 6127616,
+          "instructions_retired": 15615549797,
+          "cycles_elapsed": 2932857061,
+          "peak_memory_footprint": 2687808
+        }
+      },
+      "case": "product-miss",
+      "size": 2000000,
+      "engine": "a",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/product-miss-a-3.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/product-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1482386041,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/product-miss-a-3.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/product-miss-a-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/product-miss-a-3.time-l.txt",
+        "raw_sha256": "51d174b150c9cad5c6f6d8543c8441a9fa4f9841d08975d2401ad037aa6dfcb8",
+        "values": {
+          "maximum_resident_set_size": 6127616,
+          "instructions_retired": 15616159186,
+          "cycles_elapsed": 3065085646,
+          "peak_memory_footprint": 2687808
+        }
+      },
+      "case": "product-miss",
+      "size": 2000000,
+      "engine": "a",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/product-miss-b-3.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/product-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1353276792,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/product-miss-b-3.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/product-miss-b-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/product-miss-b-3.time-l.txt",
+        "raw_sha256": "fecde6335742b079271464e250c31ae98c702d9114e85ca864b059287a4244e2",
+        "values": {
+          "maximum_resident_set_size": 6111232,
+          "instructions_retired": 15615185399,
+          "cycles_elapsed": 2940711050,
+          "peak_memory_footprint": 2671424
+        }
+      },
+      "case": "product-miss",
+      "size": 2000000,
+      "engine": "b",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/update-hit-a-0.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/update-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 212768083,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/update-hit-a-0.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/update-hit-a-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/update-hit-a-0.time-l.txt",
+        "raw_sha256": "9579c75fc378c684fb72f8f8dfd4b79f8b90c9239b3247a33f825a07e092ee0b",
+        "values": {
+          "maximum_resident_set_size": 6029312,
+          "instructions_retired": 2129767552,
+          "cycles_elapsed": 453599605,
+          "peak_memory_footprint": 2687808
+        }
+      },
+      "case": "update-hit",
+      "size": 2000000,
+      "engine": "a",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/update-hit-b-0.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/update-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 234956458,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/update-hit-b-0.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/update-hit-b-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/update-hit-b-0.time-l.txt",
+        "raw_sha256": "93702ff37470fd0874bdbf9b7b8cdbfed9ef801bdabdf9dfdd70ba883b1ff57e",
+        "values": {
+          "maximum_resident_set_size": 5865472,
+          "instructions_retired": 2130652081,
+          "cycles_elapsed": 476724031,
+          "peak_memory_footprint": 2523968
+        }
+      },
+      "case": "update-hit",
+      "size": 2000000,
+      "engine": "b",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/update-hit-b-1.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/update-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 214476333,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/update-hit-b-1.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/update-hit-b-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/update-hit-b-1.time-l.txt",
+        "raw_sha256": "bfc5aa16a18b94a0dbd077be43145388758dfe678b23f0894917886399d92868",
+        "values": {
+          "maximum_resident_set_size": 5996544,
+          "instructions_retired": 2129429759,
+          "cycles_elapsed": 454584680,
+          "peak_memory_footprint": 2655040
+        }
+      },
+      "case": "update-hit",
+      "size": 2000000,
+      "engine": "b",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/update-hit-a-1.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/update-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 212500042,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/update-hit-a-1.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/update-hit-a-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/update-hit-a-1.time-l.txt",
+        "raw_sha256": "2b4095d0f9cdc985559874923a1a3125fef980e5c60d96165f127c202dae8b3c",
+        "values": {
+          "maximum_resident_set_size": 6062080,
+          "instructions_retired": 2129724497,
+          "cycles_elapsed": 453561633,
+          "peak_memory_footprint": 2720576
+        }
+      },
+      "case": "update-hit",
+      "size": 2000000,
+      "engine": "a",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/update-hit-b-2.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/update-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 208984584,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/update-hit-b-2.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/update-hit-b-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/update-hit-b-2.time-l.txt",
+        "raw_sha256": "77855cd90ca0b9db3f7d58e917c3fb08e9ffc868030123b2f52af278d985d639",
+        "values": {
+          "maximum_resident_set_size": 6012928,
+          "instructions_retired": 2129506468,
+          "cycles_elapsed": 448548382,
+          "peak_memory_footprint": 2671424
+        }
+      },
+      "case": "update-hit",
+      "size": 2000000,
+      "engine": "b",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/update-hit-a-2.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/update-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 213596541,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/update-hit-a-2.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/update-hit-a-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/update-hit-a-2.time-l.txt",
+        "raw_sha256": "95c9507a69686aae677540713bf069ac537f79abd3fa365759fc4379a56d12b1",
+        "values": {
+          "maximum_resident_set_size": 6045696,
+          "instructions_retired": 2129835479,
+          "cycles_elapsed": 456760105,
+          "peak_memory_footprint": 2704192
+        }
+      },
+      "case": "update-hit",
+      "size": 2000000,
+      "engine": "a",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/update-hit-a-3.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/update-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 202662666,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/update-hit-a-3.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/update-hit-a-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/update-hit-a-3.time-l.txt",
+        "raw_sha256": "6484fdfb4f6907eb7da1c0d032525410db4d77fd5cc7110cc628159aabb882cb",
+        "values": {
+          "maximum_resident_set_size": 5865472,
+          "instructions_retired": 2129635395,
+          "cycles_elapsed": 453169242,
+          "peak_memory_footprint": 2523968
+        }
+      },
+      "case": "update-hit",
+      "size": 2000000,
+      "engine": "a",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/update-hit-b-3.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/update-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 205904083,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/update-hit-b-3.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/update-hit-b-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/update-hit-b-3.time-l.txt",
+        "raw_sha256": "87edae04390af0c616021f204501f307c66391029307f1b3f1c80b6088554268",
+        "values": {
+          "maximum_resident_set_size": 5898240,
+          "instructions_retired": 2130479380,
+          "cycles_elapsed": 453965563,
+          "peak_memory_footprint": 2573184
+        }
+      },
+      "case": "update-hit",
+      "size": 2000000,
+      "engine": "b",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/update-miss-a-0.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/update-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1695739000,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/update-miss-a-0.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/update-miss-a-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/update-miss-a-0.time-l.txt",
+        "raw_sha256": "f6b7a3455bae8dc853caf298ace77e13e0ffa06f8b64d5b910893b11d301a80e",
+        "values": {
+          "maximum_resident_set_size": 6455296,
+          "instructions_retired": 17375526341,
+          "cycles_elapsed": 3741047630,
+          "peak_memory_footprint": 2720576
+        }
+      },
+      "case": "update-miss",
+      "size": 2000000,
+      "engine": "a",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/update-miss-b-0.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/update-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1714708708,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/update-miss-b-0.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/update-miss-b-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/update-miss-b-0.time-l.txt",
+        "raw_sha256": "d5c2bb44ff142cb0d82b32435a7fe2220b6f6c2e2550f586d1b03afc429eb443",
+        "values": {
+          "maximum_resident_set_size": 6455296,
+          "instructions_retired": 17374653448,
+          "cycles_elapsed": 3700050992,
+          "peak_memory_footprint": 2720576
+        }
+      },
+      "case": "update-miss",
+      "size": 2000000,
+      "engine": "b",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/update-miss-b-1.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/update-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1677324125,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/update-miss-b-1.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/update-miss-b-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/update-miss-b-1.time-l.txt",
+        "raw_sha256": "4cb0e3ddeb5393f435e94aecefa9f08723453752ed85f71a2a5409b2595c004c",
+        "values": {
+          "maximum_resident_set_size": 6520832,
+          "instructions_retired": 17374160052,
+          "cycles_elapsed": 3691998127,
+          "peak_memory_footprint": 2786112
+        }
+      },
+      "case": "update-miss",
+      "size": 2000000,
+      "engine": "b",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/update-miss-a-1.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/update-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1705304917,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/update-miss-a-1.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/update-miss-a-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/update-miss-a-1.time-l.txt",
+        "raw_sha256": "e10221633f30b9e1367c061eb71e9e935fdb3a8afe5d9814e47ec70e6eb99bf0",
+        "values": {
+          "maximum_resident_set_size": 6520832,
+          "instructions_retired": 17375782787,
+          "cycles_elapsed": 3717523630,
+          "peak_memory_footprint": 2786112
+        }
+      },
+      "case": "update-miss",
+      "size": 2000000,
+      "engine": "a",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/update-miss-b-2.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/update-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1700868667,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/update-miss-b-2.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/update-miss-b-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/update-miss-b-2.time-l.txt",
+        "raw_sha256": "43c6c81199376b9832c5c5d96e45ca3aca9a31531851d7ba7a2aef4ddf01db24",
+        "values": {
+          "maximum_resident_set_size": 6324224,
+          "instructions_retired": 17375379226,
+          "cycles_elapsed": 3719462976,
+          "peak_memory_footprint": 2589504
+        }
+      },
+      "case": "update-miss",
+      "size": 2000000,
+      "engine": "b",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/update-miss-a-2.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/update-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1766066458,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/update-miss-a-2.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/update-miss-a-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/update-miss-a-2.time-l.txt",
+        "raw_sha256": "4a3181db88a8cdd9c88ce191b4bd157b19bf696cd84912b59e4ad926ce46a6ae",
+        "values": {
+          "maximum_resident_set_size": 6455296,
+          "instructions_retired": 17376655019,
+          "cycles_elapsed": 3765488764,
+          "peak_memory_footprint": 2720576
+        }
+      },
+      "case": "update-miss",
+      "size": 2000000,
+      "engine": "a",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/update-miss-a-3.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/update-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1718793833,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/update-miss-a-3.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/update-miss-a-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/update-miss-a-3.time-l.txt",
+        "raw_sha256": "ce16b5e779fe5a50bce735b8bd8c209b319ceb79a719389ebdd3813280cb61fb",
+        "values": {
+          "maximum_resident_set_size": 6455296,
+          "instructions_retired": 17375159163,
+          "cycles_elapsed": 3731014359,
+          "peak_memory_footprint": 2720576
+        }
+      },
+      "case": "update-miss",
+      "size": 2000000,
+      "engine": "a",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-aa/raw/update-miss-b-3.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/private/tmp/oxide-m2-workloads/update-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1751743583,
+      "stdout": "/private/tmp/oxide-m2-aa/raw/update-miss-b-3.stdout",
+      "stderr": "/private/tmp/oxide-m2-aa/raw/update-miss-b-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-aa/raw/update-miss-b-3.time-l.txt",
+        "raw_sha256": "3f3d03e0ff5c0a419b2332d9acbeb00b8e7b6dcdd7101a9b9aa0f3b68bc119d8",
+        "values": {
+          "maximum_resident_set_size": 6520832,
+          "instructions_retired": 17376254256,
+          "cycles_elapsed": 3755683323,
+          "peak_memory_footprint": 2786112
+        }
+      },
+      "case": "update-miss",
+      "size": 2000000,
+      "engine": "b",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    }
+  ]
+}

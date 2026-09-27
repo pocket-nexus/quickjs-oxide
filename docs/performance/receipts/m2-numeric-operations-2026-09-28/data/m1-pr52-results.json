@@ -1,0 +1,2226 @@
+{
+  "metadata": {
+    "machine": {
+      "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+      "machine": "arm64",
+      "cpu": "Apple M1",
+      "logical_cpus": 8,
+      "python": "3.14.7",
+      "cpu_affinity": null,
+      "scaling_governors": {},
+      "load_average": [
+        4.42626953125,
+        16.62060546875,
+        43.84375
+      ],
+      "macos": {
+        "physical_memory_bytes": 17179869184,
+        "power_settings": {
+          "command": [
+            "pmset",
+            "-g",
+            "custom"
+          ],
+          "exit_code": 0,
+          "stdout": "Battery Power:\n Sleep On Power Button 1\n lowpowermode         0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         20\n womp                 0\n networkoversleep     0\n sleep                1\n lessbright           1\n tcpkeepalive         1\n disksleep            10\nAC Power:\n Sleep On Power Button 1\n lowpowermode         0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         0\n womp                 1\n networkoversleep     0\n sleep                1\n tcpkeepalive         1\n disksleep            10",
+          "stderr": ""
+        },
+        "power_source": {
+          "command": [
+            "pmset",
+            "-g",
+            "batt"
+          ],
+          "exit_code": 0,
+          "stdout": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=22741091)\t100%; charged; 0:00 remaining present: true",
+          "stderr": ""
+        },
+        "vm_stat": {
+          "command": [
+            "vm_stat"
+          ],
+          "exit_code": 0,
+          "stdout": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                     4155.\nPages active:                                 288932.\nPages inactive:                               285248.\nPages speculative:                              2847.\nPages throttled:                                   0.\nPages wired down:                             145837.\nPages purgeable:                                1245.\n\"Translation faults\":                     4042895588.\nPages copy-on-write:                       250847564.\nPages zero filled:                        1497380591.\nPages reactivated:                         525367972.\nPages purged:                               33209734.\nFile-backed pages:                            138605.\nAnonymous pages:                              438422.\nPages stored in compressor:                  1154447.\nPages occupied by compressor:                 272848.\nDecompressions:                            467527148.\nCompressions:                              531299470.\nPageins:                                    91484267.\nPageouts:                                    1075114.\nSwapins:                                     3322124.\nSwapouts:                                    4496917.",
+          "stderr": ""
+        }
+      },
+      "runner_sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5",
+      "repository": {
+        "commit": {
+          "command": [
+            "git",
+            "rev-parse",
+            "HEAD"
+          ],
+          "exit_code": 0,
+          "stdout": "b4843af813e5dcece7f11012ea7666bdf5723ff1",
+          "stderr": ""
+        },
+        "tree": {
+          "command": [
+            "git",
+            "rev-parse",
+            "HEAD^{tree}"
+          ],
+          "exit_code": 0,
+          "stdout": "bd3e4e8c3f40b0ba0864e6de84532fda43e4872e",
+          "stderr": ""
+        },
+        "top_level": {
+          "command": [
+            "git",
+            "rev-parse",
+            "--show-toplevel"
+          ],
+          "exit_code": 0,
+          "stdout": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide",
+          "stderr": ""
+        },
+        "status": {
+          "command": [
+            "git",
+            "status",
+            "--porcelain"
+          ],
+          "exit_code": 0,
+          "stdout": "M docs/architecture.md\n M docs/performance/roadmap.md\n?? docs/performance/receipts/m2-numeric-operations-2026-09-28/",
+          "stderr": ""
+        }
+      }
+    },
+    "runner_sha256": "8a852679221202ae6d3dac1e02b295368a79529a3e0c32e51fd6b914e5d4b425",
+    "manifest_sha256": "67204bc1f1b2aaf0aff11dc27255fcdcb6fcbe8dcdbc3afad41d9600d6cf89a2",
+    "workloads": [
+      {
+        "case": "m1-hit",
+        "path": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/hit.js",
+        "sha256": "377a595995fd6764db69e4157a74526e8ebb18fe27453bcdcfa2d5b9f4dd720f",
+        "expected": "10000000\n",
+        "size": 2000000
+      },
+      {
+        "case": "m1-miss",
+        "path": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/miss.js",
+        "sha256": "cc7450fce7ab2d6bdc41ddc72e73e4fe21287f8e91f51efaf62919bb14d5566c",
+        "expected": "true\n",
+        "size": 2000000
+      },
+      {
+        "case": "m1-nonapp",
+        "path": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/nonapp.js",
+        "sha256": "aea2f5ce87d42dfb991bee998c2f1223ce3f6a8cb530921821f65d0724c9fd2d",
+        "expected": "10000000\n",
+        "size": 2000000
+      }
+    ],
+    "engines": {
+      "pr52": {
+        "path": "/private/tmp/oxide-m2-pr52-plain/release/qjs",
+        "sha256": "8acb204e0ec9e027f7ea37cfc238cb887348d9d28b6cc346cae436f4a17f5f5f",
+        "version": {
+          "command": [
+            "/private/tmp/oxide-m2-pr52-plain/release/qjs",
+            "--version"
+          ],
+          "exit_code": 0,
+          "stdout": "quickjs-oxide 0.0.1 (QuickJS 2026-06-04 compatibility target)",
+          "stderr": ""
+        },
+        "build": {
+          "schema": "oxide-build-v2",
+          "mode": "plain",
+          "vm_configuration": "stack-vm",
+          "features": [],
+          "commit": "4287e8c6019933289f3a06e703aea15bf79c9f11",
+          "source": {
+            "commit": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD"
+              ],
+              "exit_code": 0,
+              "stdout": "4287e8c6019933289f3a06e703aea15bf79c9f11",
+              "stderr": ""
+            },
+            "tree": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD^{tree}"
+              ],
+              "exit_code": 0,
+              "stdout": "e2ca1d9f1552309f0c2522a5ac9cbb514ea1ba5e",
+              "stderr": ""
+            },
+            "top_level": {
+              "command": [
+                "git",
+                "rev-parse",
+                "--show-toplevel"
+              ],
+              "exit_code": 0,
+              "stdout": "/private/tmp/oxide-m1.mtJwjB/parent",
+              "stderr": ""
+            },
+            "status": {
+              "command": [
+                "git",
+                "status",
+                "--porcelain"
+              ],
+              "exit_code": 0,
+              "stdout": "",
+              "stderr": ""
+            }
+          },
+          "binary_sha256": "8acb204e0ec9e027f7ea37cfc238cb887348d9d28b6cc346cae436f4a17f5f5f",
+          "tooling": {
+            "repository": {
+              "commit": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "HEAD"
+                ],
+                "exit_code": 0,
+                "stdout": "b4843af813e5dcece7f11012ea7666bdf5723ff1",
+                "stderr": ""
+              },
+              "tree": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "HEAD^{tree}"
+                ],
+                "exit_code": 0,
+                "stdout": "bd3e4e8c3f40b0ba0864e6de84532fda43e4872e",
+                "stderr": ""
+              },
+              "top_level": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "--show-toplevel"
+                ],
+                "exit_code": 0,
+                "stdout": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide",
+                "stderr": ""
+              },
+              "status": {
+                "command": [
+                  "git",
+                  "status",
+                  "--porcelain"
+                ],
+                "exit_code": 0,
+                "stdout": "",
+                "stderr": ""
+              }
+            },
+            "snapshots": {
+              "build.py": {
+                "path": "/private/tmp/oxide-m2-pr52-plain/release/qjs.build.tooling-build.py",
+                "sha256": "fc8392a9d26290a6095742b2ab4cb45f5ab37b964c9daa51d22f7088259b1f50"
+              },
+              "run.py": {
+                "path": "/private/tmp/oxide-m2-pr52-plain/release/qjs.build.tooling-run.py",
+                "sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5"
+              }
+            }
+          },
+          "command": [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "--verbose",
+            "-p",
+            "quickjs-oxide-cli",
+            "--no-default-features",
+            "--target-dir",
+            "/private/tmp/oxide-m2-pr52-plain",
+            "--jobs",
+            "2"
+          ],
+          "cwd": "/private/tmp/oxide-m1.mtJwjB/parent",
+          "exit_code": 0,
+          "stdout": {
+            "path": "/private/tmp/oxide-m2-pr52-plain/release/qjs.build.stdout.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "stderr": {
+            "path": "/private/tmp/oxide-m2-pr52-plain/release/qjs.build.stderr.log",
+            "sha256": "d690230c4e4c9e5c190a9ca4682a049c2a14c4aef3e513ee3b1146ec84b20826"
+          },
+          "rustc": {
+            "command": [
+              "rustc",
+              "-vV"
+            ],
+            "exit_code": 0,
+            "stdout": "rustc 1.88.0 (6b00bc388 2025-06-23)\nbinary: rustc\ncommit-hash: 6b00bc3880198600130e1cf62b8f8a93494488cc\ncommit-date: 2025-06-23\nhost: aarch64-apple-darwin\nrelease: 1.88.0\nLLVM version: 20.1.5",
+            "stderr": ""
+          },
+          "cargo": {
+            "command": [
+              "cargo",
+              "-V"
+            ],
+            "exit_code": 0,
+            "stdout": "cargo 1.88.0 (873a06493 2025-05-10)",
+            "stderr": ""
+          },
+          "cargo_toml_sha256": "14f5e4d4f172150d6c212b61871da24a4e5b26e34e363f6de2a7f250bbe6e48d",
+          "cargo_lock_sha256": "c26c9f1999da579c0d1176c62981afa716ea998949a8dd15b1365f85b66944e3",
+          "release_profile": {
+            "manifest": {
+              "lto": "\"fat\"",
+              "codegen-units": "1"
+            },
+            "environment_overrides": {
+              "RUSTUP_TOOLCHAIN": "1.88.0"
+            },
+            "cargo_config_sha256": {},
+            "qjs_rustc_invocation": {
+              "command": "rustc --crate-name qjs --edition=2024 apps/cli/src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C opt-level=3 -C lto=fat -C codegen-units=1 '--warn=clippy::all' --forbid=unsafe_code --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values(\"default\", \"profiling\", \"test262-host\"))' -C metadata=fe6bdd401eddfd50 -C extra-filename=-0ece4688285d6d4f --out-dir /private/tmp/oxide-m2-pr52-plain/release/deps -C strip=debuginfo -L dependency=/private/tmp/oxide-m2-pr52-plain/release/deps --extern quickjs_oxide=/private/tmp/oxide-m2-pr52-plain/release/deps/libquickjs_oxide-87e6abc49e10e601.rlib --extern quickjs_oxide_host=/private/tmp/oxide-m2-pr52-plain/release/deps/libquickjs_oxide_host-c5af6d789609ebdc.rlib",
+              "crate": "qjs",
+              "codegen": {
+                "opt-level": "3",
+                "lto": "fat",
+                "codegen-units": "1"
+              },
+              "target": null
+            },
+            "observed_rustc_compilations": 9,
+            "observed_codegen_groups": [
+              {
+                "target": null,
+                "codegen": {},
+                "crates": [
+                  "autocfg",
+                  "build_script_build"
+                ]
+              },
+              {
+                "target": null,
+                "codegen": {
+                  "opt-level": "3",
+                  "codegen-units": "1"
+                },
+                "crates": [
+                  "tz",
+                  "num_traits",
+                  "num_integer",
+                  "num_bigint",
+                  "quickjs_oxide",
+                  "quickjs_oxide_host"
+                ]
+              },
+              {
+                "target": null,
+                "codegen": {
+                  "opt-level": "3",
+                  "lto": "fat",
+                  "codegen-units": "1"
+                },
+                "crates": [
+                  "qjs"
+                ]
+              }
+            ]
+          },
+          "target": {
+            "requested_triple": null,
+            "rustc_host": "aarch64-apple-darwin",
+            "observed_triple": null,
+            "observed_target_cpu": null,
+            "observed_target_feature": null
+          },
+          "commit_environment": "4287e8c6019933289f3a06e703aea15bf79c9f11"
+        }
+      },
+      "candidate": {
+        "path": "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "sha256": "177d2be3997e9e3d98670035c26f942f4ef206421f1d6e240a7ea00407e5a4c5",
+        "version": {
+          "command": [
+            "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+            "--version"
+          ],
+          "exit_code": 0,
+          "stdout": "quickjs-oxide 0.0.1 (QuickJS 2026-06-04 compatibility target)",
+          "stderr": ""
+        },
+        "build": {
+          "schema": "oxide-build-v2",
+          "mode": "plain",
+          "vm_configuration": "stack-vm",
+          "features": [],
+          "commit": "b4843af813e5dcece7f11012ea7666bdf5723ff1",
+          "source": {
+            "commit": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD"
+              ],
+              "exit_code": 0,
+              "stdout": "b4843af813e5dcece7f11012ea7666bdf5723ff1",
+              "stderr": ""
+            },
+            "tree": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD^{tree}"
+              ],
+              "exit_code": 0,
+              "stdout": "bd3e4e8c3f40b0ba0864e6de84532fda43e4872e",
+              "stderr": ""
+            },
+            "top_level": {
+              "command": [
+                "git",
+                "rev-parse",
+                "--show-toplevel"
+              ],
+              "exit_code": 0,
+              "stdout": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide",
+              "stderr": ""
+            },
+            "status": {
+              "command": [
+                "git",
+                "status",
+                "--porcelain"
+              ],
+              "exit_code": 0,
+              "stdout": "",
+              "stderr": ""
+            }
+          },
+          "binary_sha256": "177d2be3997e9e3d98670035c26f942f4ef206421f1d6e240a7ea00407e5a4c5",
+          "tooling": {
+            "repository": {
+              "commit": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "HEAD"
+                ],
+                "exit_code": 0,
+                "stdout": "b4843af813e5dcece7f11012ea7666bdf5723ff1",
+                "stderr": ""
+              },
+              "tree": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "HEAD^{tree}"
+                ],
+                "exit_code": 0,
+                "stdout": "bd3e4e8c3f40b0ba0864e6de84532fda43e4872e",
+                "stderr": ""
+              },
+              "top_level": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "--show-toplevel"
+                ],
+                "exit_code": 0,
+                "stdout": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide",
+                "stderr": ""
+              },
+              "status": {
+                "command": [
+                  "git",
+                  "status",
+                  "--porcelain"
+                ],
+                "exit_code": 0,
+                "stdout": "",
+                "stderr": ""
+              }
+            },
+            "snapshots": {
+              "build.py": {
+                "path": "/private/tmp/oxide-m2-candidate-plain/release/qjs.build.tooling-build.py",
+                "sha256": "fc8392a9d26290a6095742b2ab4cb45f5ab37b964c9daa51d22f7088259b1f50"
+              },
+              "run.py": {
+                "path": "/private/tmp/oxide-m2-candidate-plain/release/qjs.build.tooling-run.py",
+                "sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5"
+              }
+            }
+          },
+          "command": [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "--verbose",
+            "-p",
+            "quickjs-oxide-cli",
+            "--no-default-features",
+            "--target-dir",
+            "/private/tmp/oxide-m2-candidate-plain",
+            "--jobs",
+            "2"
+          ],
+          "cwd": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide",
+          "exit_code": 0,
+          "stdout": {
+            "path": "/private/tmp/oxide-m2-candidate-plain/release/qjs.build.stdout.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "stderr": {
+            "path": "/private/tmp/oxide-m2-candidate-plain/release/qjs.build.stderr.log",
+            "sha256": "d8f19dd9c1c3759aa3a33b51e493e0c3a95f5986076aa6e3b8e9f4389895dbf0"
+          },
+          "rustc": {
+            "command": [
+              "rustc",
+              "-vV"
+            ],
+            "exit_code": 0,
+            "stdout": "rustc 1.88.0 (6b00bc388 2025-06-23)\nbinary: rustc\ncommit-hash: 6b00bc3880198600130e1cf62b8f8a93494488cc\ncommit-date: 2025-06-23\nhost: aarch64-apple-darwin\nrelease: 1.88.0\nLLVM version: 20.1.5",
+            "stderr": ""
+          },
+          "cargo": {
+            "command": [
+              "cargo",
+              "-V"
+            ],
+            "exit_code": 0,
+            "stdout": "cargo 1.88.0 (873a06493 2025-05-10)",
+            "stderr": ""
+          },
+          "cargo_toml_sha256": "14f5e4d4f172150d6c212b61871da24a4e5b26e34e363f6de2a7f250bbe6e48d",
+          "cargo_lock_sha256": "c26c9f1999da579c0d1176c62981afa716ea998949a8dd15b1365f85b66944e3",
+          "release_profile": {
+            "manifest": {
+              "lto": "\"fat\"",
+              "codegen-units": "1"
+            },
+            "environment_overrides": {
+              "RUSTUP_TOOLCHAIN": "1.88.0"
+            },
+            "cargo_config_sha256": {},
+            "qjs_rustc_invocation": {
+              "command": "rustc --crate-name qjs --edition=2024 apps/cli/src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C opt-level=3 -C lto=fat -C codegen-units=1 '--warn=clippy::all' --forbid=unsafe_code --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values(\"default\", \"profiling\", \"test262-host\"))' -C metadata=fe6bdd401eddfd50 -C extra-filename=-0ece4688285d6d4f --out-dir /private/tmp/oxide-m2-candidate-plain/release/deps -C strip=debuginfo -L dependency=/private/tmp/oxide-m2-candidate-plain/release/deps --extern quickjs_oxide=/private/tmp/oxide-m2-candidate-plain/release/deps/libquickjs_oxide-87e6abc49e10e601.rlib --extern quickjs_oxide_host=/private/tmp/oxide-m2-candidate-plain/release/deps/libquickjs_oxide_host-c5af6d789609ebdc.rlib",
+              "crate": "qjs",
+              "codegen": {
+                "opt-level": "3",
+                "lto": "fat",
+                "codegen-units": "1"
+              },
+              "target": null
+            },
+            "observed_rustc_compilations": 9,
+            "observed_codegen_groups": [
+              {
+                "target": null,
+                "codegen": {
+                  "opt-level": "3",
+                  "codegen-units": "1"
+                },
+                "crates": [
+                  "tz",
+                  "num_traits",
+                  "num_integer",
+                  "num_bigint",
+                  "quickjs_oxide",
+                  "quickjs_oxide_host"
+                ]
+              },
+              {
+                "target": null,
+                "codegen": {},
+                "crates": [
+                  "autocfg",
+                  "build_script_build"
+                ]
+              },
+              {
+                "target": null,
+                "codegen": {
+                  "opt-level": "3",
+                  "lto": "fat",
+                  "codegen-units": "1"
+                },
+                "crates": [
+                  "qjs"
+                ]
+              }
+            ]
+          },
+          "target": {
+            "requested_triple": null,
+            "rustc_host": "aarch64-apple-darwin",
+            "observed_triple": null,
+            "observed_target_cpu": null,
+            "observed_target_feature": null
+          },
+          "commit_environment": "b4843af813e5dcece7f11012ea7666bdf5723ff1"
+        }
+      }
+    },
+    "repeat": 8,
+    "order_strategy": "abba-baab",
+    "timeout_seconds": 180,
+    "cpu": null,
+    "darwin_counters": true,
+    "counter_scope": "whole process including startup and teardown",
+    "metric": "whole-process wall nanoseconds; not adaptive scores"
+  },
+  "summary": [
+    {
+      "case": "m1-hit",
+      "size": 2000000,
+      "engine": "pr52",
+      "eligible": true,
+      "successful_wall_ns": [
+        352330083,
+        397991959,
+        353377042,
+        349277083,
+        348948750,
+        349516167,
+        353462625,
+        353858083
+      ],
+      "failures": [],
+      "median_wall_ns": 352853562.5
+    },
+    {
+      "case": "m1-hit",
+      "size": 2000000,
+      "engine": "candidate",
+      "eligible": true,
+      "successful_wall_ns": [
+        264695875,
+        268028208,
+        270901500,
+        264220250,
+        269553875,
+        270043667,
+        264120708,
+        265026000
+      ],
+      "failures": [],
+      "median_wall_ns": 266527104.0
+    },
+    {
+      "case": "m1-miss",
+      "size": 2000000,
+      "engine": "pr52",
+      "eligible": true,
+      "successful_wall_ns": [
+        1236599458,
+        1241526791,
+        1253680041,
+        1319678334,
+        1287505500,
+        1394731791,
+        1396877333,
+        1341271167
+      ],
+      "failures": [],
+      "median_wall_ns": 1303591917.0
+    },
+    {
+      "case": "m1-miss",
+      "size": 2000000,
+      "engine": "candidate",
+      "eligible": true,
+      "successful_wall_ns": [
+        1295538292,
+        1277670667,
+        1289643791,
+        1287254458,
+        1328575417,
+        1435153958,
+        1512016541,
+        1391278000
+      ],
+      "failures": [],
+      "median_wall_ns": 1312056854.5
+    },
+    {
+      "case": "m1-nonapp",
+      "size": 2000000,
+      "engine": "pr52",
+      "eligible": true,
+      "successful_wall_ns": [
+        382353000,
+        373701958,
+        368523208,
+        374607917,
+        376407500,
+        373160583,
+        389889125,
+        379049250
+      ],
+      "failures": [],
+      "median_wall_ns": 375507708.5
+    },
+    {
+      "case": "m1-nonapp",
+      "size": 2000000,
+      "engine": "candidate",
+      "eligible": true,
+      "successful_wall_ns": [
+        399845708,
+        401126000,
+        392992625,
+        405181417,
+        476854750,
+        398406666,
+        398125541,
+        407152958
+      ],
+      "failures": [],
+      "median_wall_ns": 400485854.0
+    }
+  ],
+  "samples": [
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-pr52-0.time-l.txt",
+        "/private/tmp/oxide-m2-pr52-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 352330083,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-pr52-0.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-pr52-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-pr52-0.time-l.txt",
+        "raw_sha256": "926ba5665278c1767aeb376de942df0fdfcddacc2951b53ad302c8d1ad5887ac",
+        "values": {
+          "maximum_resident_set_size": 5881856,
+          "instructions_retired": 3836174656,
+          "cycles_elapsed": 824277792,
+          "peak_memory_footprint": 2573120
+        }
+      },
+      "case": "m1-hit",
+      "size": 2000000,
+      "engine": "pr52",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-candidate-0.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 264695875,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-candidate-0.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-candidate-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-candidate-0.time-l.txt",
+        "raw_sha256": "077552219edd6a57a5f66a96991f2559e48ba5b2e257613385abba12d80f890c",
+        "values": {
+          "maximum_resident_set_size": 6012928,
+          "instructions_retired": 2932257141,
+          "cycles_elapsed": 625871735,
+          "peak_memory_footprint": 2704256
+        }
+      },
+      "case": "m1-hit",
+      "size": 2000000,
+      "engine": "candidate",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-candidate-1.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 268028208,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-candidate-1.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-candidate-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-candidate-1.time-l.txt",
+        "raw_sha256": "9de6c6c5bcecb33020900bfe9097f89d836de59804a9c05ca7cc645962dc483d",
+        "values": {
+          "maximum_resident_set_size": 6012928,
+          "instructions_retired": 2926182959,
+          "cycles_elapsed": 627824107,
+          "peak_memory_footprint": 2687808
+        }
+      },
+      "case": "m1-hit",
+      "size": 2000000,
+      "engine": "candidate",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-pr52-1.time-l.txt",
+        "/private/tmp/oxide-m2-pr52-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 397991959,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-pr52-1.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-pr52-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-pr52-1.time-l.txt",
+        "raw_sha256": "8fdaf7e1ab009d24d228e4af8a7413cddec4c2492b70495f8310d0949db1cf76",
+        "values": {
+          "maximum_resident_set_size": 5947392,
+          "instructions_retired": 3830422125,
+          "cycles_elapsed": 838562990,
+          "peak_memory_footprint": 2638656
+        }
+      },
+      "case": "m1-hit",
+      "size": 2000000,
+      "engine": "pr52",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-candidate-2.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 270901500,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-candidate-2.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-candidate-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-candidate-2.time-l.txt",
+        "raw_sha256": "6d661dee19c14938bdcc15c0c37a642808c3f0b69576f0205f94faa4d38e94b6",
+        "values": {
+          "maximum_resident_set_size": 6045696,
+          "instructions_retired": 2925644273,
+          "cycles_elapsed": 623735078,
+          "peak_memory_footprint": 2720576
+        }
+      },
+      "case": "m1-hit",
+      "size": 2000000,
+      "engine": "candidate",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-pr52-2.time-l.txt",
+        "/private/tmp/oxide-m2-pr52-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 353377042,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-pr52-2.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-pr52-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-pr52-2.time-l.txt",
+        "raw_sha256": "28ef33cefc002741094b5a0f1f88a5c6adaa5e7a1dd704eb091310144b020698",
+        "values": {
+          "maximum_resident_set_size": 6012928,
+          "instructions_retired": 3830290894,
+          "cycles_elapsed": 825450489,
+          "peak_memory_footprint": 2720640
+        }
+      },
+      "case": "m1-hit",
+      "size": 2000000,
+      "engine": "pr52",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-pr52-3.time-l.txt",
+        "/private/tmp/oxide-m2-pr52-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 349277083,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-pr52-3.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-pr52-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-pr52-3.time-l.txt",
+        "raw_sha256": "f7addbe955422f60663ddd245e7dd84a843abfba9b4e63b4842a102139d3cabc",
+        "values": {
+          "maximum_resident_set_size": 5980160,
+          "instructions_retired": 3829796593,
+          "cycles_elapsed": 823574442,
+          "peak_memory_footprint": 2671424
+        }
+      },
+      "case": "m1-hit",
+      "size": 2000000,
+      "engine": "pr52",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-candidate-3.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 264220250,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-candidate-3.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-candidate-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-candidate-3.time-l.txt",
+        "raw_sha256": "24e6b181471ba086d6ac8a6e0bab2c25599a6582feffc8ecf29e4de17015b2f2",
+        "values": {
+          "maximum_resident_set_size": 6062080,
+          "instructions_retired": 2925765116,
+          "cycles_elapsed": 625107593,
+          "peak_memory_footprint": 2736960
+        }
+      },
+      "case": "m1-hit",
+      "size": 2000000,
+      "engine": "candidate",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-pr52-4.time-l.txt",
+        "/private/tmp/oxide-m2-pr52-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 348948750,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-pr52-4.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-pr52-4.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-pr52-4.time-l.txt",
+        "raw_sha256": "d215fd5adc5e26bbf02c3de39474c9675137dc3c946f06147463a29eaea847ee",
+        "values": {
+          "maximum_resident_set_size": 6062080,
+          "instructions_retired": 3830194025,
+          "cycles_elapsed": 829288149,
+          "peak_memory_footprint": 2753344
+        }
+      },
+      "case": "m1-hit",
+      "size": 2000000,
+      "engine": "pr52",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-candidate-4.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 269553875,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-candidate-4.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-candidate-4.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-candidate-4.time-l.txt",
+        "raw_sha256": "e92d50160f5f835b8dabcd4914ef86ea37c54fa3b44a54fe2fe0e97bba17ade1",
+        "values": {
+          "maximum_resident_set_size": 6012928,
+          "instructions_retired": 2927377519,
+          "cycles_elapsed": 634235679,
+          "peak_memory_footprint": 2687808
+        }
+      },
+      "case": "m1-hit",
+      "size": 2000000,
+      "engine": "candidate",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-candidate-5.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 270043667,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-candidate-5.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-candidate-5.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-candidate-5.time-l.txt",
+        "raw_sha256": "75d87dc491618ada5bde7e5c756064c2ce10c265917457b1af438ecfbf783de9",
+        "values": {
+          "maximum_resident_set_size": 6045696,
+          "instructions_retired": 2927312679,
+          "cycles_elapsed": 633006536,
+          "peak_memory_footprint": 2720576
+        }
+      },
+      "case": "m1-hit",
+      "size": 2000000,
+      "engine": "candidate",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-pr52-5.time-l.txt",
+        "/private/tmp/oxide-m2-pr52-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 349516167,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-pr52-5.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-pr52-5.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-pr52-5.time-l.txt",
+        "raw_sha256": "728b8c53340e42193344990d28180ad7109b3ed6c80125ed0de16e0c307b55d2",
+        "values": {
+          "maximum_resident_set_size": 5947392,
+          "instructions_retired": 3829776417,
+          "cycles_elapsed": 831665998,
+          "peak_memory_footprint": 2638656
+        }
+      },
+      "case": "m1-hit",
+      "size": 2000000,
+      "engine": "pr52",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-candidate-6.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 264120708,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-candidate-6.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-candidate-6.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-candidate-6.time-l.txt",
+        "raw_sha256": "a37ed8ededc606cab86b4a9bb266b6d90c5ff57be758724005df0d567491abbc",
+        "values": {
+          "maximum_resident_set_size": 5865472,
+          "instructions_retired": 2925721703,
+          "cycles_elapsed": 624722842,
+          "peak_memory_footprint": 2540352
+        }
+      },
+      "case": "m1-hit",
+      "size": 2000000,
+      "engine": "candidate",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-pr52-6.time-l.txt",
+        "/private/tmp/oxide-m2-pr52-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 353462625,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-pr52-6.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-pr52-6.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-pr52-6.time-l.txt",
+        "raw_sha256": "5f465aafee6f9769a156442ab424f82f93bc6b9d05e1e98a762c4af438c649d8",
+        "values": {
+          "maximum_resident_set_size": 5881856,
+          "instructions_retired": 3829867226,
+          "cycles_elapsed": 824814069,
+          "peak_memory_footprint": 2573120
+        }
+      },
+      "case": "m1-hit",
+      "size": 2000000,
+      "engine": "pr52",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-pr52-7.time-l.txt",
+        "/private/tmp/oxide-m2-pr52-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 353858083,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-pr52-7.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-pr52-7.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-pr52-7.time-l.txt",
+        "raw_sha256": "7b0919754cddd3164defeb5e9db727cc5487ea8c348cd109269bc77dff4060a9",
+        "values": {
+          "maximum_resident_set_size": 6062080,
+          "instructions_retired": 3830021324,
+          "cycles_elapsed": 827956400,
+          "peak_memory_footprint": 2769792
+        }
+      },
+      "case": "m1-hit",
+      "size": 2000000,
+      "engine": "pr52",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-candidate-7.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 265026000,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-candidate-7.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-candidate-7.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-hit-candidate-7.time-l.txt",
+        "raw_sha256": "1c0b653dfcf4d765bb13ef13f7a995613a0aa68a52dcf48a2f964afa95305d7b",
+        "values": {
+          "maximum_resident_set_size": 6029312,
+          "instructions_retired": 2925958366,
+          "cycles_elapsed": 623730849,
+          "peak_memory_footprint": 2704192
+        }
+      },
+      "case": "m1-hit",
+      "size": 2000000,
+      "engine": "candidate",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-pr52-0.time-l.txt",
+        "/private/tmp/oxide-m2-pr52-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1236599458,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-pr52-0.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-pr52-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-pr52-0.time-l.txt",
+        "raw_sha256": "41d84fef92af7b1ca38c6cb7ad6a8fbe09ed411e25d103180d596dc34c11b96e",
+        "values": {
+          "maximum_resident_set_size": 6127616,
+          "instructions_retired": 15672875995,
+          "cycles_elapsed": 2887278676,
+          "peak_memory_footprint": 2720576
+        }
+      },
+      "case": "m1-miss",
+      "size": 2000000,
+      "engine": "pr52",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-candidate-0.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1295538292,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-candidate-0.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-candidate-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-candidate-0.time-l.txt",
+        "raw_sha256": "30a9d87c7af9b580cfeb7f1a22cb213d9f1103911922ac020c4053b905399cf8",
+        "values": {
+          "maximum_resident_set_size": 6209536,
+          "instructions_retired": 15697772729,
+          "cycles_elapsed": 2981836105,
+          "peak_memory_footprint": 2769728
+        }
+      },
+      "case": "m1-miss",
+      "size": 2000000,
+      "engine": "candidate",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-candidate-1.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1277670667,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-candidate-1.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-candidate-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-candidate-1.time-l.txt",
+        "raw_sha256": "4f11ecc1221aceb5d5fe56e4c680da21059805ba85fe4b4c07508fdb042dddc0",
+        "values": {
+          "maximum_resident_set_size": 6127616,
+          "instructions_retired": 15693655451,
+          "cycles_elapsed": 2983852589,
+          "peak_memory_footprint": 2687808
+        }
+      },
+      "case": "m1-miss",
+      "size": 2000000,
+      "engine": "candidate",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-pr52-1.time-l.txt",
+        "/private/tmp/oxide-m2-pr52-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1241526791,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-pr52-1.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-pr52-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-pr52-1.time-l.txt",
+        "raw_sha256": "4e00dfdcca29f2831fb4b82244797031e47e419c6e0e558c7a40d58084504854",
+        "values": {
+          "maximum_resident_set_size": 6078464,
+          "instructions_retired": 15672278317,
+          "cycles_elapsed": 2895641747,
+          "peak_memory_footprint": 2671424
+        }
+      },
+      "case": "m1-miss",
+      "size": 2000000,
+      "engine": "pr52",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-candidate-2.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1289643791,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-candidate-2.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-candidate-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-candidate-2.time-l.txt",
+        "raw_sha256": "a566feb60f728f3ce3f97e1a0189e85a59b97f40efd6daf30850571ea4b906a2",
+        "values": {
+          "maximum_resident_set_size": 6111232,
+          "instructions_retired": 15695611662,
+          "cycles_elapsed": 2974613378,
+          "peak_memory_footprint": 2671424
+        }
+      },
+      "case": "m1-miss",
+      "size": 2000000,
+      "engine": "candidate",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-pr52-2.time-l.txt",
+        "/private/tmp/oxide-m2-pr52-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1253680041,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-pr52-2.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-pr52-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-pr52-2.time-l.txt",
+        "raw_sha256": "ffde217d754a0367d1f6bfe5699118a90b9049faf965c0346b38e1bf7b5b654b",
+        "values": {
+          "maximum_resident_set_size": 6029312,
+          "instructions_retired": 15674590836,
+          "cycles_elapsed": 2913936661,
+          "peak_memory_footprint": 2622272
+        }
+      },
+      "case": "m1-miss",
+      "size": 2000000,
+      "engine": "pr52",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-pr52-3.time-l.txt",
+        "/private/tmp/oxide-m2-pr52-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1319678334,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-pr52-3.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-pr52-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-pr52-3.time-l.txt",
+        "raw_sha256": "9c27249ac8af26a1354c2b3ce41f1ed7e3f0548f4713932f3c3dece89f729f5f",
+        "values": {
+          "maximum_resident_set_size": 6111232,
+          "instructions_retired": 15672547962,
+          "cycles_elapsed": 2963033969,
+          "peak_memory_footprint": 2704192
+        }
+      },
+      "case": "m1-miss",
+      "size": 2000000,
+      "engine": "pr52",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-candidate-3.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1287254458,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-candidate-3.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-candidate-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-candidate-3.time-l.txt",
+        "raw_sha256": "3985eaa0d774396eeb511fd8c10d30eed526eea2ed720ad0b1674fc4b6d0d726",
+        "values": {
+          "maximum_resident_set_size": 6078464,
+          "instructions_retired": 15693538014,
+          "cycles_elapsed": 2992492913,
+          "peak_memory_footprint": 2638656
+        }
+      },
+      "case": "m1-miss",
+      "size": 2000000,
+      "engine": "candidate",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-pr52-4.time-l.txt",
+        "/private/tmp/oxide-m2-pr52-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1287505500,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-pr52-4.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-pr52-4.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-pr52-4.time-l.txt",
+        "raw_sha256": "9a4eaeb4036f2f75761565b0f27b9def7c73da74bc88da3d1b335d768f02e607",
+        "values": {
+          "maximum_resident_set_size": 6144000,
+          "instructions_retired": 15674160680,
+          "cycles_elapsed": 2953672956,
+          "peak_memory_footprint": 2736960
+        }
+      },
+      "case": "m1-miss",
+      "size": 2000000,
+      "engine": "pr52",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-candidate-4.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1328575417,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-candidate-4.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-candidate-4.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-candidate-4.time-l.txt",
+        "raw_sha256": "300d51158a1906f3fa7666e03f2795840ab6df06eb913e5ffa2d183ac5ddda76",
+        "values": {
+          "maximum_resident_set_size": 6078464,
+          "instructions_retired": 15705458973,
+          "cycles_elapsed": 3012771229,
+          "peak_memory_footprint": 2638656
+        }
+      },
+      "case": "m1-miss",
+      "size": 2000000,
+      "engine": "candidate",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-candidate-5.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1435153958,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-candidate-5.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-candidate-5.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-candidate-5.time-l.txt",
+        "raw_sha256": "ca20295440cd3646872ef82e2c8b8670f02f6cafb1623550b430b72d137e160d",
+        "values": {
+          "maximum_resident_set_size": 6144000,
+          "instructions_retired": 15708407946,
+          "cycles_elapsed": 3160816890,
+          "peak_memory_footprint": 2704192
+        }
+      },
+      "case": "m1-miss",
+      "size": 2000000,
+      "engine": "candidate",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-pr52-5.time-l.txt",
+        "/private/tmp/oxide-m2-pr52-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1394731791,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-pr52-5.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-pr52-5.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-pr52-5.time-l.txt",
+        "raw_sha256": "d8d083a041ae7cfc89b6cd5b4b0e0932cc3400bb61ce1c0872f9bc20befa63df",
+        "values": {
+          "maximum_resident_set_size": 6029312,
+          "instructions_retired": 15675899785,
+          "cycles_elapsed": 3043573031,
+          "peak_memory_footprint": 2622272
+        }
+      },
+      "case": "m1-miss",
+      "size": 2000000,
+      "engine": "pr52",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-candidate-6.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1512016541,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-candidate-6.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-candidate-6.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-candidate-6.time-l.txt",
+        "raw_sha256": "3305aeed0f441d079925390161c4b573c226aeead4723b201c37c5c34d255e56",
+        "values": {
+          "maximum_resident_set_size": 6111232,
+          "instructions_retired": 15703673740,
+          "cycles_elapsed": 3291687300,
+          "peak_memory_footprint": 2671424
+        }
+      },
+      "case": "m1-miss",
+      "size": 2000000,
+      "engine": "candidate",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-pr52-6.time-l.txt",
+        "/private/tmp/oxide-m2-pr52-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1396877333,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-pr52-6.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-pr52-6.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-pr52-6.time-l.txt",
+        "raw_sha256": "e3ee6081f29b573b876c8e10871cafac2a7bea26884f4eb7f849f1dd61e2e851",
+        "values": {
+          "maximum_resident_set_size": 6144000,
+          "instructions_retired": 15682783476,
+          "cycles_elapsed": 3041067390,
+          "peak_memory_footprint": 2736960
+        }
+      },
+      "case": "m1-miss",
+      "size": 2000000,
+      "engine": "pr52",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-pr52-7.time-l.txt",
+        "/private/tmp/oxide-m2-pr52-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1341271167,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-pr52-7.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-pr52-7.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-pr52-7.time-l.txt",
+        "raw_sha256": "20338e3c3340c4e313c321a3314ec98e6e4e0452e6568ac8219ea7bdf26c2baa",
+        "values": {
+          "maximum_resident_set_size": 6094848,
+          "instructions_retired": 15675018792,
+          "cycles_elapsed": 2988387389,
+          "peak_memory_footprint": 2687808
+        }
+      },
+      "case": "m1-miss",
+      "size": 2000000,
+      "engine": "pr52",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-candidate-7.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1391278000,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-candidate-7.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-candidate-7.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-miss-candidate-7.time-l.txt",
+        "raw_sha256": "93ec9bda67b70052f201a36845a815c763de7b2531bbeabe63fc50de1e74ccae",
+        "values": {
+          "maximum_resident_set_size": 6160384,
+          "instructions_retired": 15696846136,
+          "cycles_elapsed": 3057942149,
+          "peak_memory_footprint": 2720576
+        }
+      },
+      "case": "m1-miss",
+      "size": 2000000,
+      "engine": "candidate",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-pr52-0.time-l.txt",
+        "/private/tmp/oxide-m2-pr52-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 382353000,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-pr52-0.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-pr52-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-pr52-0.time-l.txt",
+        "raw_sha256": "f8b69083ae51d5c84b6788937a3a54b7e381135a1e4a91b977d7345b3244d57a",
+        "values": {
+          "maximum_resident_set_size": 6029312,
+          "instructions_retired": 3835529899,
+          "cycles_elapsed": 831623354,
+          "peak_memory_footprint": 2737024
+        }
+      },
+      "case": "m1-nonapp",
+      "size": 2000000,
+      "engine": "pr52",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-candidate-0.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 399845708,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-candidate-0.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-candidate-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-candidate-0.time-l.txt",
+        "raw_sha256": "9ec2235b3ec51b55d624ebea50ae42fd5d624ed512ad2546eceda81cb20becc9",
+        "values": {
+          "maximum_resident_set_size": 6029312,
+          "instructions_retired": 3926341690,
+          "cycles_elapsed": 869985301,
+          "peak_memory_footprint": 2704192
+        }
+      },
+      "case": "m1-nonapp",
+      "size": 2000000,
+      "engine": "candidate",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-candidate-1.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 401126000,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-candidate-1.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-candidate-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-candidate-1.time-l.txt",
+        "raw_sha256": "e263032b9574ce65a6d1ed3b679c7af109c71dc26a4762a81c67c2983c9b0a79",
+        "values": {
+          "maximum_resident_set_size": 5881856,
+          "instructions_retired": 3925970032,
+          "cycles_elapsed": 870180616,
+          "peak_memory_footprint": 2556736
+        }
+      },
+      "case": "m1-nonapp",
+      "size": 2000000,
+      "engine": "candidate",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-pr52-1.time-l.txt",
+        "/private/tmp/oxide-m2-pr52-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 373701958,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-pr52-1.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-pr52-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-pr52-1.time-l.txt",
+        "raw_sha256": "52f4d609c35cd5f49f1f838ec0a36d215da8c74e970d34f16d72d104d543c4f9",
+        "values": {
+          "maximum_resident_set_size": 6045696,
+          "instructions_retired": 3834231882,
+          "cycles_elapsed": 829694382,
+          "peak_memory_footprint": 2736960
+        }
+      },
+      "case": "m1-nonapp",
+      "size": 2000000,
+      "engine": "pr52",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-candidate-2.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 392992625,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-candidate-2.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-candidate-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-candidate-2.time-l.txt",
+        "raw_sha256": "476a7ed1c5283ef4d9875dab9ae32fd3895f823657d4e7861ede227f0b3e7cbb",
+        "values": {
+          "maximum_resident_set_size": 6045696,
+          "instructions_retired": 3926543149,
+          "cycles_elapsed": 870857708,
+          "peak_memory_footprint": 2737024
+        }
+      },
+      "case": "m1-nonapp",
+      "size": 2000000,
+      "engine": "candidate",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-pr52-2.time-l.txt",
+        "/private/tmp/oxide-m2-pr52-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 368523208,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-pr52-2.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-pr52-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-pr52-2.time-l.txt",
+        "raw_sha256": "ba01fdeb370b9bb986152d8fef82977a7bcca470ef65f624ba34f51ab3196ab1",
+        "values": {
+          "maximum_resident_set_size": 5963776,
+          "instructions_retired": 3833630115,
+          "cycles_elapsed": 806011186,
+          "peak_memory_footprint": 2655040
+        }
+      },
+      "case": "m1-nonapp",
+      "size": 2000000,
+      "engine": "pr52",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-pr52-3.time-l.txt",
+        "/private/tmp/oxide-m2-pr52-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 374607917,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-pr52-3.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-pr52-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-pr52-3.time-l.txt",
+        "raw_sha256": "c9ed5630a0a1c5004a7c1ed3c90b5520e6984f94a385abacc011b9efd8d48d8b",
+        "values": {
+          "maximum_resident_set_size": 5898240,
+          "instructions_retired": 3833864871,
+          "cycles_elapsed": 822933949,
+          "peak_memory_footprint": 2589504
+        }
+      },
+      "case": "m1-nonapp",
+      "size": 2000000,
+      "engine": "pr52",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-candidate-3.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 405181417,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-candidate-3.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-candidate-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-candidate-3.time-l.txt",
+        "raw_sha256": "fa62f771e363f55cdcc91e64627e46ba906a24b93d812f7b5e5e09bf00e71dc4",
+        "values": {
+          "maximum_resident_set_size": 6045696,
+          "instructions_retired": 3927320722,
+          "cycles_elapsed": 897869212,
+          "peak_memory_footprint": 2720576
+        }
+      },
+      "case": "m1-nonapp",
+      "size": 2000000,
+      "engine": "candidate",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-pr52-4.time-l.txt",
+        "/private/tmp/oxide-m2-pr52-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 376407500,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-pr52-4.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-pr52-4.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-pr52-4.time-l.txt",
+        "raw_sha256": "787e518adbee6a2a6792ff213c3b2b95bf42abc0de0bbd6b68601099ad0a17f4",
+        "values": {
+          "maximum_resident_set_size": 5898240,
+          "instructions_retired": 3833843580,
+          "cycles_elapsed": 813535023,
+          "peak_memory_footprint": 2589504
+        }
+      },
+      "case": "m1-nonapp",
+      "size": 2000000,
+      "engine": "pr52",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-candidate-4.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 476854750,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-candidate-4.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-candidate-4.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-candidate-4.time-l.txt",
+        "raw_sha256": "13c1549262fd317978f18bb5597c48749a4ec0ef19349ca98c1a2152d1db400b",
+        "values": {
+          "maximum_resident_set_size": 5980160,
+          "instructions_retired": 3926160454,
+          "cycles_elapsed": 1064674750,
+          "peak_memory_footprint": 2655040
+        }
+      },
+      "case": "m1-nonapp",
+      "size": 2000000,
+      "engine": "candidate",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-candidate-5.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 398406666,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-candidate-5.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-candidate-5.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-candidate-5.time-l.txt",
+        "raw_sha256": "d73b2f447343575b2b8ab18f3910d8853f2a7e6745ac742f5b3936b7a7bacaea",
+        "values": {
+          "maximum_resident_set_size": 6045696,
+          "instructions_retired": 3925972250,
+          "cycles_elapsed": 870926235,
+          "peak_memory_footprint": 2720576
+        }
+      },
+      "case": "m1-nonapp",
+      "size": 2000000,
+      "engine": "candidate",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-pr52-5.time-l.txt",
+        "/private/tmp/oxide-m2-pr52-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 373160583,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-pr52-5.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-pr52-5.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-pr52-5.time-l.txt",
+        "raw_sha256": "74388617a1ef57ca1a0442e405f6c45437ea861b204fe33b5a64f1a163425dfe",
+        "values": {
+          "maximum_resident_set_size": 5914624,
+          "instructions_retired": 3833836043,
+          "cycles_elapsed": 813058069,
+          "peak_memory_footprint": 2605888
+        }
+      },
+      "case": "m1-nonapp",
+      "size": 2000000,
+      "engine": "pr52",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-candidate-6.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 398125541,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-candidate-6.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-candidate-6.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-candidate-6.time-l.txt",
+        "raw_sha256": "6e81f9d1ae6c87b0c9dcb9963199075dc7f89ae6578d20302f0d9eaedab6e9ae",
+        "values": {
+          "maximum_resident_set_size": 6062080,
+          "instructions_retired": 3926174171,
+          "cycles_elapsed": 869914869,
+          "peak_memory_footprint": 2753408
+        }
+      },
+      "case": "m1-nonapp",
+      "size": 2000000,
+      "engine": "candidate",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-pr52-6.time-l.txt",
+        "/private/tmp/oxide-m2-pr52-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 389889125,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-pr52-6.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-pr52-6.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-pr52-6.time-l.txt",
+        "raw_sha256": "fd5b5d1ef2d7153d3d0666f7a7cca3f6557a55a467b4ac6e7f24cbb37e0a4023",
+        "values": {
+          "maximum_resident_set_size": 6078464,
+          "instructions_retired": 3834277519,
+          "cycles_elapsed": 839431011,
+          "peak_memory_footprint": 2769728
+        }
+      },
+      "case": "m1-nonapp",
+      "size": 2000000,
+      "engine": "pr52",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-pr52-7.time-l.txt",
+        "/private/tmp/oxide-m2-pr52-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 379049250,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-pr52-7.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-pr52-7.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-pr52-7.time-l.txt",
+        "raw_sha256": "22403b7c4f2d42a4c2f9564c348a6ffe9e91d1587ddb10253e09f1dc0df7f17b",
+        "values": {
+          "maximum_resident_set_size": 5914624,
+          "instructions_retired": 3833935184,
+          "cycles_elapsed": 817765684,
+          "peak_memory_footprint": 2605888
+        }
+      },
+      "case": "m1-nonapp",
+      "size": 2000000,
+      "engine": "pr52",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-candidate-7.time-l.txt",
+        "/private/tmp/oxide-m2-candidate-plain/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m1-numeric-region-2026-09-28/workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 407152958,
+      "stdout": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-candidate-7.stdout",
+      "stderr": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-candidate-7.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-m2-m1-pr52/raw/m1-nonapp-candidate-7.time-l.txt",
+        "raw_sha256": "1543a10f018e0604b6fccaf1e24e602962f2cc1c521a39bcb18c235b9aec7c53",
+        "values": {
+          "maximum_resident_set_size": 6062080,
+          "instructions_retired": 3925969764,
+          "cycles_elapsed": 876050881,
+          "peak_memory_footprint": 2736960
+        }
+      },
+      "case": "m1-nonapp",
+      "size": 2000000,
+      "engine": "candidate",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    }
+  ]
+}

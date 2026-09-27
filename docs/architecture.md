@@ -73,7 +73,9 @@ the existing class, destructuring and resolution algorithms remain in use.
 lowered instruction offset map. `flow.rs` exposes structural block entries
 for local rewrites and builds a temporary basic-block use/effect graph for the
 numeric operations. Its flat input arena and stack of producer IDs are discarded
-after selection. Required normal/exception/resume stack facts remain with
+after selection. The graph's potential effects describe possible calls,
+allocation and throws; it does not provide general ownership-release or
+layout-invalidation proofs. Required normal/exception/resume stack facts remain with
 the code verifier. `optimize.rs` owns the bounded constant-branch
 rewrite and its ordered QuickJS late-throw source-site projection. It runs the
 projection before rewriting and preserves physical instruction slots.

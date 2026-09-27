@@ -1,0 +1,57 @@
+{
+  "metadata": {
+    "workloads": {
+      "workloads": [
+        {
+          "case": "branch-hit",
+          "path": "docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/branch-hit.js",
+          "sha256": "d18667d76e95d8eab8514e422d3c5d5dc3450f760212172c49739e8ade2077b3",
+          "expected": "2000000\n",
+          "size": 2000000
+        },
+        {
+          "case": "branch-miss",
+          "path": "docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/branch-miss.js",
+          "sha256": "3083237a3d009768564ff0b7d5d64970ba7a965fc59b9a4890625893fe4977f0",
+          "expected": "0\n",
+          "size": 2000000
+        },
+        {
+          "case": "nonapp",
+          "path": "docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/nonapp.js",
+          "sha256": "805a98a15cbdba18b11c349d2ed75c3f667d43851932da860dc35b12b6470ba9",
+          "expected": "2000000\n",
+          "size": 2000000
+        },
+        {
+          "case": "product-hit",
+          "path": "docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/product-hit.js",
+          "sha256": "81b30b7ad0464a443ed0aef9010a9ebf69fa3859cef09e3bb007cfaafc65ad16",
+          "expected": "10\n",
+          "size": 2000000
+        },
+        {
+          "case": "product-miss",
+          "path": "docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/product-miss.js",
+          "sha256": "ce10de4efa75cd7477013aeb82bdb848b318471cef72b16bace90d2cdf3a5a77",
+          "expected": "true\n",
+          "size": 2000000
+        },
+        {
+          "case": "update-hit",
+          "path": "docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-hit.js",
+          "sha256": "0149509bd5f460ad326ba70bb1f76908c94a063cea34bb25b350c9abf56ddb52",
+          "expected": "2000000\n",
+          "size": 2000000
+        },
+        {
+          "case": "update-miss",
+          "path": "docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-miss.js",
+          "sha256": "9878abaf6a5846ec8abc1e5338339e5247d4ff3d6e4326fd2113cbeca8dbccf2",
+          "expected": "0\n",
+          "size": 2000000
+        }
+      ]
+    }
+  }
+}

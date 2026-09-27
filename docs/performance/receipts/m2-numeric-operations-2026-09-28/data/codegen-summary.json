@@ -1,0 +1,18 @@
+{
+  "basis": "Rust 1.88.0 plain release fat-LTO qjs; one execute_frame symbol, not total engine code",
+  "rows": {
+    "pr53": {
+      "disassembled_symbol": "quickjs_oxide::engine::vm::execute::execute_frame",
+      "instruction_lines": 6756,
+      "symbol_bytes": 27024,
+      "assembly_sha256": "edde5dee0261bcc0b7f63a740d6b7a6b18a5d23212c5ab03ee861ad04ba29be7"
+    },
+    "candidate": {
+      "disassembled_symbol": "quickjs_oxide::engine::vm::execute::execute_frame",
+      "instruction_lines": 7344,
+      "symbol_bytes": 29376,
+      "assembly_sha256": "00fd689bcec23056ba2e3a0ce57db0b0d357cdece57fd0b7cf2fb37143a6c973"
+    }
+  },
+  "interpretation": "Symbol growth is code-size evidence only; it does not isolate hot-path cycles."
+}

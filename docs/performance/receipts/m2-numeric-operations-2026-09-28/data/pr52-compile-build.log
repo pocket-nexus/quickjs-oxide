@@ -1,0 +1,9 @@
+   Compiling autocfg v1.5.1
+   Compiling tz-rs v0.7.3
+   Compiling num-traits v0.2.19
+   Compiling num-integer v0.1.46
+   Compiling num-bigint v0.5.1
+   Compiling quickjs-oxide v0.0.1 (/private/tmp/oxide-m1.mtJwjB/parent)
+   Compiling quickjs-oxide-host v0.0.1 (/private/tmp/oxide-m1.mtJwjB/parent/adapters/native)
+   Compiling oxide-compile-probe v0.0.0 (/private/tmp/oxide-m2-compile-pr52)
+    Finished `release` profile [optimized] target(s) in 1m 43s
