@@ -1,6 +1,7 @@
 use super::*;
 use crate::engine::code::exec::without_numeric_regions;
 use crate::engine::code::exec_opcode::Opcode;
+use crate::engine::vm::test_numeric_region_counts;
 use crate::engine::vm::test_numeric_region_hits;
 
 fn run(source: &str, generic: bool) -> (Value, usize) {
@@ -25,6 +26,166 @@ fn opcodes(source: &str) -> Vec<Opcode> {
     let root = context.compile(source).unwrap();
     let child = runtime.test_child_function_bytecode(&root, 0).unwrap();
     runtime.test_function_exec_opcodes(&child).unwrap()
+}
+
+#[test]
+fn m2_regions_select_and_match_generic_execution() {
+    let selections = [
+        (
+            "(function(a,i,s){var out=0;out=a[i]*s;return out;})",
+            Opcode::NumericArrayStoreProduct,
+        ),
+        (
+            "(function(a,i,d){a[i]+=d;return a[i];})",
+            Opcode::NumericArrayUpdateElement,
+        ),
+        (
+            "(function(a,i,l){if(a[i]<l)return 1;return 0;})",
+            Opcode::NumericArrayCompareBranch,
+        ),
+        (
+            "(function(a,i,s){let sum=0;sum+=a[i]*s;return sum;})",
+            Opcode::NumericArrayAccumulate,
+        ),
+    ];
+    for (source, opcode) in selections {
+        assert!(opcodes(source).contains(&opcode), "{source}");
+    }
+    for (source, expected) in [
+        (
+            "(function(){function f(a,i,s){var out=0;out=a[i]*s;return out;}return f([4],0,3);})()",
+            Value::Int(12),
+        ),
+        (
+            "(function(){function f(a,i,d){a[i]+=d;return a[i];}return f([4],0,3);})()",
+            Value::Int(7),
+        ),
+        (
+            "(function(){function f(a,i,l){if(a[i]<l)return 1;return 0;}return f([4],0,5);})()",
+            Value::Int(1),
+        ),
+        (
+            "(function(){function f(a,i,s){let sum=0;sum+=a[i]*s;return sum;}return f([4],0,3);})()",
+            Value::Int(12),
+        ),
+    ] {
+        assert_eq!(assert_same(source, 1), expected);
+    }
+}
+
+#[test]
+fn dynamic_misses_attempt_the_selected_region() {
+    let source =
+        "(function(){function f(a,i,s){var sum=7;sum+=a[i]*s;return sum;}return f([,],0,3);})()";
+    assert!(
+        opcodes("(function(a,i,s){var sum=7;sum+=a[i]*s;return sum;})")
+            .contains(&Opcode::NumericArrayAccumulate)
+    );
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    let (result, counts) = test_numeric_region_counts(|| context.eval(source));
+    assert!(result.is_ok());
+    assert_eq!(counts, (1, 0, 1));
+}
+
+#[test]
+fn m2_array_write_modes_and_fallback_match_generic() {
+    for (case, hits) in [
+        ("return f([4],0,3);", 1),
+        (
+            "var a=[4];Object.defineProperty(a,'0',{value:4,writable:true,enumerable:false});return f(a,0,3);",
+            1,
+        ),
+        ("return f(Object.freeze([4]),0,3);", 0),
+        ("return f([,],0,3);", 0),
+        (
+            "var log='';var a=[4];Object.defineProperty(a,'0',{get(){log+='g';return 4},set(v){log+='s'}});return String(f(a,0,3))+log;",
+            0,
+        ),
+        (
+            "var log='';var a=new Proxy([4],{get(t,k,r){log+='g';return Reflect.get(t,k,r)},set(t,k,v,r){log+='s';return Reflect.set(t,k,v,r)}});return String(f(a,0,3))+log;",
+            0,
+        ),
+    ] {
+        let source = format!("(function(){{function f(a,i,d){{a[i]+=d;return a[i];}}{case}}})()");
+        let _ = assert_same(&source, hits);
+    }
+}
+
+#[test]
+fn m2_branch_edges_and_fallback_match_generic() {
+    for case in [
+        "return f([4],0,5);",
+        "return f([NaN],0,5);",
+        "return f([4],0,NaN);",
+        "return f([,],0,5);",
+        "var a=new Proxy([4],{get(t,k,r){return Reflect.get(t,k,r)}});return f(a,0,5);",
+    ] {
+        let source =
+            format!("(function(){{function f(a,i,l){{if(a[i]<l)return 1;return 0;}}{case}}})()");
+        let _ = assert_same(
+            &source,
+            if case.starts_with("return f([4]") || case.contains("[NaN]") {
+                1
+            } else {
+                0
+            },
+        );
+    }
+}
+
+#[test]
+fn region_selection_preserves_neighbors_and_scales_with_many_sites() {
+    let adjacent =
+        opcodes("(function(a,i,s){var counter=0,sum=0;counter++;sum+=a[i]*s;return counter+sum;})");
+    assert!(adjacent.contains(&Opcode::NumericArrayAccumulate));
+    assert!(adjacent.contains(&Opcode::UpdateLocalDiscard));
+    let mut source = String::from("(function(a,i,s){var sum=0;");
+    for _ in 0..200 {
+        source.push_str("sum+=a[i]*s;");
+    }
+    source.push_str("return sum;})");
+    assert_eq!(
+        opcodes(&source)
+            .iter()
+            .filter(|&&opcode| opcode == Opcode::NumericArrayAccumulate)
+            .count(),
+        200
+    );
+}
+
+#[test]
+fn array_update_site_handles_own_hole_accessor_and_own_transitions() {
+    let source = r#"(function(){
+        function f(a){a[0]+=1;return a[0];}
+        var a=[2], log='';
+        var first=f(a);
+        delete a[0];
+        var hole=f(a);
+        Object.defineProperty(a,'0',{configurable:true,get(){log+='g';return 5},set(v){log+='s'}});
+        var accessor=f(a);
+        Object.defineProperty(a,'0',{configurable:true,writable:true,value:10});
+        var last=f(a);
+        return [first,String(hole),accessor,last,log].join(':');
+    })()"#;
+    let (generic, _) = run(source, true);
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    let (optimized, counts) = test_numeric_region_counts(|| context.eval(source));
+    assert_eq!(format!("{:?}", optimized.unwrap()), format!("{generic:?}"));
+    assert_eq!(counts, (4, 2, 2));
+}
+
+#[test]
+fn rejected_region_preserves_thrown_object_identity() {
+    let source = r#"(function(){
+        var sentinel={};
+        function f(a){var sum=1;sum+=a[0]*2;return sum;}
+        var a=[];
+        Object.defineProperty(a,'0',{get(){throw sentinel}});
+        try { f(a); return false; } catch (error) { return error===sentinel; }
+    })()"#;
+    assert_eq!(assert_same(source, 0), Value::Bool(true));
 }
 
 fn assert_same(source: &str, expected_hits: usize) -> Value {
@@ -141,7 +302,7 @@ fn fallback_preserves_fault_source_position() {
 #[test]
 fn uncertain_binding_shapes_are_not_selected() {
     let lexical = opcodes("(function(a,i,s){let sum=0;sum += a[i]*s;return sum;})");
-    assert!(!lexical.contains(&Opcode::NumericArrayAccumulate));
+    assert!(lexical.contains(&Opcode::NumericArrayAccumulate));
     let captured = opcodes(
         "(function(a,i,s){var sum=0;function read(){return sum;}sum += a[i]*s;return read();})",
     );

@@ -1217,25 +1217,60 @@ impl Runtime {
     /// accessors fall back to canonical [[Get]].
     /// The heap borrow ends before the Copy result leaves.
     pub(crate) fn peek_dense_number(&self, base: &JsValue, index: u32) -> Option<Number> {
+        self.peek_dense_number_result(base, index).ok()
+    }
+
+    /// A miss classification is produced during the same borrow that probes
+    /// the element; diagnostic callers do not repeat a property lookup.
+    pub(crate) fn peek_dense_number_result(
+        &self,
+        base: &JsValue,
+        index: u32,
+    ) -> Result<Number, &'static str> {
         let JsValue::Object(id) = base else {
-            return None;
+            return Err("receiver_not_object");
         };
-        let state = self.0.state.try_borrow().ok()?;
-        let data = state.heap.object(*id).ok()?;
+        let state = self
+            .0
+            .state
+            .try_borrow()
+            .map_err(|_| "heap_borrow_unavailable")?;
+        let data = state.heap.object(*id).map_err(|_| "receiver_unavailable")?;
         if !matches!(data.kind, ObjectKind::Array) {
-            return None;
+            return Err("receiver_not_array");
         }
         match &data.payload {
-            ObjectPayload::Array { dense: Some(dense) } => match dense.get(index as usize)? {
-                RawValue::Int(value) => Some(Number::Int(*value)),
-                RawValue::Float(value) => Some(Number::Float(*value)),
-                _ => None,
+            ObjectPayload::Array { dense: Some(dense) } => match dense.get(index as usize) {
+                Some(RawValue::Int(value)) => Ok(Number::Int(*value)),
+                Some(RawValue::Float(value)) => Ok(Number::Float(*value)),
+                Some(_) => Err("own_element_not_number"),
+                None => Err("missing_own_element"),
             },
             ObjectPayload::Array { dense: None } => {
                 materialized_array_own_number(&state, data, index)
+                    .ok_or("unsupported_materialized_own_element")
             }
-            _ => None,
+            _ => Err("array_storage_unavailable"),
         }
+    }
+
+    /// Update one existing writable own Array Number under a single mutable
+    /// state borrow. Old and new values own no edges, so this cannot release
+    /// an owner, change a descriptor or length, or run guest code.
+    pub(crate) fn try_add_array_own_number(
+        &self,
+        base: &JsValue,
+        index: u32,
+        delta: Number,
+    ) -> Result<(), &'static str> {
+        let JsValue::Object(id) = base else {
+            return Err("receiver_not_object");
+        };
+        let Ok(mut state) = self.0.state.try_borrow_mut() else {
+            return Err("heap_borrow_unavailable");
+        };
+        let atom = Atom::from_immediate_integer(index).map(|atom| AtomIdx::from_raw(atom.raw()));
+        state.heap.try_add_array_own_number(*id, index, atom, delta)
     }
 
     /// Diagnose a *previously failed* numeric dense read. This performs an

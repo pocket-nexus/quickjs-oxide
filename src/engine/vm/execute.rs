@@ -9,7 +9,7 @@ use crate::engine::code::bytecode::{
 };
 use crate::engine::code::exec::PublishedDecoded;
 use crate::engine::code::exec_opcode::Opcode;
-use crate::engine::code::region::{DirectSource, NumberSource};
+use crate::engine::code::region::{DirectSource, NumberSource, NumericOperation, NumericRegion};
 use crate::engine::heap::{BytecodeConstant, RawValue};
 use crate::engine::value::JsValue;
 use crate::engine::value::number::operations::Number;
@@ -23,6 +23,33 @@ use crate::engine::vm::stack::{DirectSlot, FrameSlots, FrameTransaction, copy_va
 #[cfg(test)]
 thread_local! {
     static NUMERIC_REGION_HITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static NUMERIC_REGION_ATTEMPTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static NUMERIC_REGION_MISSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn test_numeric_region_counts<T>(run: impl FnOnce() -> T) -> (T, (usize, usize, usize)) {
+    let previous = (
+        NUMERIC_REGION_ATTEMPTS.replace(0),
+        NUMERIC_REGION_HITS.replace(0),
+        NUMERIC_REGION_MISSES.replace(0),
+    );
+    struct Restore((usize, usize, usize));
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            NUMERIC_REGION_ATTEMPTS.set(self.0.0);
+            NUMERIC_REGION_HITS.set(self.0.1);
+            NUMERIC_REGION_MISSES.set(self.0.2);
+        }
+    }
+    let _restore = Restore(previous);
+    let result = run();
+    let counts = (
+        NUMERIC_REGION_ATTEMPTS.get(),
+        NUMERIC_REGION_HITS.get(),
+        NUMERIC_REGION_MISSES.get(),
+    );
+    (result, counts)
 }
 
 #[cfg(test)]
@@ -397,60 +424,174 @@ pub(super) fn execute_frame(
                     return Ok(action);
                 }
             }
-            Opcode::NumericArrayAccumulate => {
+            Opcode::NumericArrayAccumulate
+            | Opcode::NumericArrayStoreProduct
+            | Opcode::NumericArrayUpdateElement
+            | Opcode::NumericArrayCompareBranch => {
                 let region = executable
                     .exec
                     .numeric_region(operand)
                     .ok_or_else(|| Error::internal("published numeric region is missing"))?;
+                #[cfg(test)]
+                NUMERIC_REGION_ATTEMPTS.set(NUMERIC_REGION_ATTEMPTS.get() + 1);
                 #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_execution_dispatch(
                     runtime, executable, pc, true,
                 );
-                let hit = cursor.with_slots(|slots| {
-                    if !slots.has_operand_capacity(region.peak as usize) {
-                        return Ok(false);
+                let mut miss_reason = None;
+                let hit = match region.operation {
+                    NumericOperation::Accumulate {
+                        destination, scale, ..
                     }
-                    // Snapshot all inputs before taking the exclusive destination
-                    // access. This also handles aliases between any sources.
-                    if slots.immediate_local(region.destination).is_none() {
-                        return Ok(false);
+                    | NumericOperation::StoreProduct {
+                        destination, scale, ..
+                    } => match cursor.with_slots(|slots| {
+                        Ok(numeric_local_array_region(
+                            slots,
+                            runtime,
+                            region,
+                            destination,
+                            scale,
+                            matches!(region.operation, NumericOperation::Accumulate { .. }),
+                        ))
+                    })? {
+                        Ok(()) => true,
+                        Err(reason) => {
+                            miss_reason = Some(reason);
+                            false
+                        }
+                    },
+                    NumericOperation::UpdateElement { delta } => {
+                        let generation = frame.property_generation.checked_add(1);
+                        let result = cursor.with_slots(|slots| {
+                            if generation.is_none() {
+                                return Ok(Err("property_generation_overflow"));
+                            }
+                            if !slots.has_operand_capacity(region.peak as usize) {
+                                return Ok(Err("operand_capacity"));
+                            }
+                            let Some(index) =
+                                region_number(slots, region.index).and_then(array_index)
+                            else {
+                                return Ok(Err("index_not_numeric_integer"));
+                            };
+                            let Some(delta) = region_number(slots, delta) else {
+                                return Ok(Err("delta_not_number"));
+                            };
+                            let Some(base) = slots.direct_value(region_direct_slot(region.array))
+                            else {
+                                return Ok(Err("receiver_binding_unavailable"));
+                            };
+                            Ok(runtime.try_add_array_own_number(base, index, delta))
+                        })?;
+                        match result {
+                            Ok(()) => {
+                                frame.property_generation = generation.unwrap();
+                                true
+                            }
+                            Err(reason) => {
+                                miss_reason = Some(reason);
+                                false
+                            }
+                        }
                     }
-                    let Some(base) = slots.direct_value(region_direct_slot(region.array)) else {
-                        return Ok(false);
-                    };
-                    let Some(index) = region_number(slots, region.index).and_then(array_index)
-                    else {
-                        return Ok(false);
-                    };
-                    let Some(element) = runtime.peek_dense_number(base, index) else {
-                        return Ok(false);
-                    };
-                    let Some(scale) = region_number(slots, region.scale) else {
-                        return Ok(false);
-                    };
-                    let Some(destination) = slots.admit_numeric_local(region.destination) else {
-                        return Ok(false);
-                    };
-                    let old = destination.old;
-                    destination.commit(old.add(element.mul(scale)));
-                    Ok(true)
-                })?;
+                    NumericOperation::CompareBranch {
+                        rhs,
+                        comparison,
+                        when_true,
+                        ..
+                    } => {
+                        let result = cursor.with_slots(|slots| {
+                            if !slots.has_operand_capacity(region.peak as usize) {
+                                return Ok(Err("operand_capacity"));
+                            }
+                            let Some(index) =
+                                region_number(slots, region.index).and_then(array_index)
+                            else {
+                                return Ok(Err("index_not_numeric_integer"));
+                            };
+                            let Some(rhs) = region_number(slots, rhs) else {
+                                return Ok(Err("rhs_not_number"));
+                            };
+                            let Some(base) = slots.direct_value(region_direct_slot(region.array))
+                            else {
+                                return Ok(Err("receiver_binding_unavailable"));
+                            };
+                            Ok(runtime
+                                .peek_dense_number_result(base, index)
+                                .map(|left| compare_direct_numbers(comparison as u16, left, rhs)))
+                        })?;
+                        if let Ok(decision) = result {
+                            #[cfg(feature = "profiling")]
+                            crate::engine::api::profiling::record_execution_outcome(
+                                runtime,
+                                executable,
+                                pc,
+                                "numeric_array_compare_branch",
+                                None,
+                            );
+                            #[cfg(test)]
+                            NUMERIC_REGION_HITS.set(NUMERIC_REGION_HITS.get() + 1);
+                            let target = if decision == when_true {
+                                decoded.operand(1) as usize
+                            } else {
+                                executable.exec.exec_pc(region.end).ok_or_else(|| {
+                                    Error::internal("missing numeric branch continuation")
+                                })? as usize
+                            };
+                            cursor.advance(target);
+                            continue;
+                        }
+                        miss_reason = result.err();
+                        false
+                    }
+                };
                 #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_execution_outcome(
                     runtime,
                     executable,
                     pc,
-                    "numeric_array_accumulate",
-                    if hit { None } else { Some("guard") },
+                    match region.operation {
+                        NumericOperation::Accumulate { .. } => "numeric_array_accumulate",
+                        NumericOperation::StoreProduct { .. } => "numeric_array_store_product",
+                        NumericOperation::UpdateElement { .. } => "numeric_array_update_element",
+                        NumericOperation::CompareBranch { .. } => "numeric_array_compare_branch",
+                    },
+                    if hit { None } else { miss_reason },
                 );
+                #[cfg(not(feature = "profiling"))]
+                let _ = miss_reason;
                 if hit {
                     #[cfg(test)]
                     NUMERIC_REGION_HITS.set(NUMERIC_REGION_HITS.get() + 1);
                     cursor.advance(decoded.operand(1) as usize);
                     continue;
                 }
-                if let Some(action) = read_local::<false>(&mut cursor, runtime, region.destination)?
-                {
+                #[cfg(test)]
+                NUMERIC_REGION_MISSES.set(NUMERIC_REGION_MISSES.get() + 1);
+                let first = match region.operation {
+                    NumericOperation::Accumulate {
+                        destination,
+                        checked,
+                        ..
+                    } => {
+                        if checked {
+                            read_local::<true>(&mut cursor, runtime, destination)?
+                        } else {
+                            read_local::<false>(&mut cursor, runtime, destination)?
+                        }
+                    }
+                    _ => match region.array {
+                        DirectSource::Local(index) => {
+                            read_local::<false>(&mut cursor, runtime, index)?
+                        }
+                        DirectSource::CheckedLocal(index) => {
+                            read_local::<true>(&mut cursor, runtime, index)?
+                        }
+                        DirectSource::Argument(index) => read_arg(&mut cursor, runtime, index)?,
+                    },
+                };
+                if let Some(action) = first {
                     return Ok(action);
                 }
                 cursor.advance(decoded.operand(2) as usize);
@@ -1585,7 +1726,7 @@ pub(super) fn execute_frame(
 #[inline(always)]
 fn region_direct_slot(source: DirectSource) -> DirectSlot {
     match source {
-        DirectSource::Local(index) => DirectSlot::Local(index),
+        DirectSource::Local(index) | DirectSource::CheckedLocal(index) => DirectSlot::Local(index),
         DirectSource::Argument(index) => DirectSlot::Argument(index),
     }
 }
@@ -1594,10 +1735,48 @@ fn region_direct_slot(source: DirectSource) -> DirectSlot {
 fn region_number(slots: &FrameSlots<'_>, source: NumberSource) -> Option<Number> {
     match source {
         NumberSource::Direct(DirectSource::Local(index)) => slots.immediate_local(index),
+        NumberSource::Direct(DirectSource::CheckedLocal(index)) => slots.immediate_local(index),
         NumberSource::Direct(DirectSource::Argument(index)) => slots.immediate_parameter(index),
         NumberSource::Immediate(value) => Some(Number::Int(value)),
         NumberSource::Constant { value, .. } => Some(value),
     }
+}
+
+#[inline(always)]
+pub(in crate::engine::vm) fn numeric_local_array_region(
+    slots: &mut FrameSlots<'_>,
+    runtime: &crate::engine::api::runtime::Runtime,
+    region: &NumericRegion,
+    destination: u16,
+    scale_source: NumberSource,
+    accumulate: bool,
+) -> Result<(), &'static str> {
+    if !slots.has_operand_capacity(region.peak as usize) {
+        return Err("operand_capacity");
+    }
+    let Some(index_number) = region_number(slots, region.index) else {
+        return Err("index_not_number");
+    };
+    let Some(index) = array_index(index_number) else {
+        return Err("index_not_numeric_integer");
+    };
+    let Some(scale) = region_number(slots, scale_source) else {
+        return Err("scale_not_number");
+    };
+    let Some((destination, base)) =
+        slots.admit_numeric_local_with_source(destination, region_direct_slot(region.array))
+    else {
+        return Err("destination_or_receiver_unavailable");
+    };
+    let element = runtime.peek_dense_number_result(base, index)?;
+    let product = element.mul(scale);
+    let result = if accumulate {
+        destination.old.add(product)
+    } else {
+        product
+    };
+    destination.commit(result);
+    Ok(())
 }
 
 #[inline(always)]

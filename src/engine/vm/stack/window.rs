@@ -248,19 +248,50 @@ impl AdmittedNumericLocal<'_> {
 }
 
 impl FrameSlots<'_> {
-    pub(in crate::engine::vm) fn admit_numeric_local(
+    /// Admit a numeric local and borrow a distinct direct Array source in one
+    /// frame access. The receiver remains rooted by its frame binding for the
+    /// lifetime of both borrows; no owning handle is created.
+    pub(in crate::engine::vm) fn admit_numeric_local_with_source(
         &mut self,
-        index: u16,
-    ) -> Option<AdmittedNumericLocal<'_>> {
-        let FrameBinding::Direct(slot) = self.store.slots[self.window.locals()]
-            .get_mut(index as usize)?
-            .as_mut()?
-        else {
+        destination: u16,
+        source: DirectSlot,
+    ) -> Option<(AdmittedNumericLocal<'_>, &JsValue)> {
+        let locals = self.window.locals();
+        let destination = locals.start.checked_add(usize::from(destination))?;
+        if destination >= locals.end {
+            return None;
+        }
+        let (source_range, source_index) = match source {
+            DirectSlot::Local(index) => (locals, usize::from(index)),
+            DirectSlot::Argument(index) => (self.window.parameters(), usize::from(index)),
+        };
+        let source = source_range.start.checked_add(source_index)?;
+        if source >= source_range.end || source == destination {
+            return None;
+        }
+        let (destination_binding, source_binding) = if destination < source {
+            let (before, after) = self.store.slots.split_at_mut(source);
+            (before.get_mut(destination)?, after.first()?.as_ref()?)
+        } else {
+            let (before, after) = self.store.slots.split_at_mut(destination);
+            (after.first_mut()?, before.get(source)?.as_ref()?)
+        };
+        let FrameBinding::Direct(destination) = destination_binding.as_mut()? else {
             return None;
         };
-        let old = slot.as_number_repr()?;
-        Some(AdmittedNumericLocal { slot, old })
+        let old = destination.as_number_repr()?;
+        let FrameBinding::Direct(base) = source_binding else {
+            return None;
+        };
+        Some((
+            AdmittedNumericLocal {
+                slot: destination,
+                old,
+            },
+            base,
+        ))
     }
+
     pub(in crate::engine::vm) fn direct_value(&self, source: DirectSlot) -> Option<&JsValue> {
         let region = match source {
             DirectSlot::Local(_) => self.window.locals(),
@@ -643,6 +674,10 @@ impl FrameSlots<'_> {
 #[cfg(test)]
 mod primitive_transaction_tests {
     use super::*;
+    use crate::engine::code::function::metadata::{ClosureVariableKind, VariableDefinition};
+    use crate::engine::code::region::{
+        DirectSource, NumberSource, NumericOperation, NumericRegion,
+    };
     use crate::engine::code::runtime::PublishedFunctionSnapshot;
     use crate::engine::value::Value;
     use crate::engine::vm::stack::FrameStorage;
@@ -940,29 +975,73 @@ mod primitive_transaction_tests {
         let context = runtime.new_context();
         let mut layout = PublishedFunctionSnapshot::empty_for_test(context.realm);
         layout.metadata.max_stack = 2;
-        let mut store = SlotStore::new(2);
+        layout.metadata.argument_count = 1;
+        layout.metadata.local_count = 1;
+        let definition = VariableDefinition {
+            name: None,
+            is_lexical: false,
+            is_const: false,
+            is_parameter_initializer: false,
+            kind: ClosureVariableKind::Normal,
+        };
+        layout.argument_definitions = std::rc::Rc::from([definition]);
+        layout.local_definitions = std::rc::Rc::from([definition]);
+        let receiver = runtime.new_object(None).unwrap();
+        let receiver_id = receiver.object_id();
+        let mut store = SlotStore::new(4);
         let mut window = store
             .push_frame(
                 &runtime,
                 &layout.frame_layout(),
                 FrameStorage {
                     original_arguments: vec![],
-                    parameters: vec![],
-                    locals: vec![],
+                    parameters: vec![FrameBinding::Direct(JsValue::Object(
+                        receiver.into_handle(),
+                    ))],
+                    locals: vec![FrameBinding::Direct(JsValue::Int(7))],
                     operands: vec![],
                 },
             )
             .unwrap();
         {
-            let slots = store.borrow_frame_slots(&mut window).unwrap();
+            let mut slots = store.borrow_frame_slots(&mut window).unwrap();
             assert!(!slots.has_operand_capacity(3));
             assert!(slots.has_operand_capacity(2));
+            let region = NumericRegion {
+                start: 0,
+                end: 9,
+                array: DirectSource::Argument(0),
+                index: NumberSource::Immediate(0),
+                operation: NumericOperation::Accumulate {
+                    destination: 0,
+                    scale: NumberSource::Immediate(2),
+                    checked: false,
+                },
+                peak: 3,
+            };
+            assert_eq!(
+                crate::engine::vm::execute::numeric_local_array_region(
+                    &mut slots,
+                    &runtime,
+                    &region,
+                    0,
+                    NumberSource::Immediate(2),
+                    true,
+                ),
+                Err("operand_capacity"),
+            );
         }
         assert_eq!(store.depth(&window), 0);
+        assert!(matches!(
+            store.local_current(&window, 0).unwrap(),
+            FrameBinding::Direct(JsValue::Int(7))
+        ));
+        assert!(runtime.0.state.borrow().heap.object(receiver_id).is_ok());
         store.push(&mut window, JsValue::Int(7)).unwrap();
         store.push(&mut window, JsValue::Int(8)).unwrap();
         assert!(store.push(&mut window, JsValue::Int(9)).is_err());
         assert_eq!(store.pop(&mut window).unwrap(), JsValue::Int(8));
         assert_eq!(store.pop(&mut window).unwrap(), JsValue::Int(7));
+        store.clear_frame(&runtime, window).unwrap();
     }
 }

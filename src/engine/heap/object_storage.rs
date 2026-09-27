@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::value::number::operations::Number;
 
 /// The runtime may undo retained Atoms only before slot publication.
 pub(crate) struct SlotReplacementError {
@@ -7,6 +8,73 @@ pub(crate) struct SlotReplacementError {
 }
 
 impl Heap {
+    /// The receiver has a frame owner. An existing Number-to-Number update
+    /// changes neither graph edges nor the Array layout.
+    pub(crate) fn try_add_array_own_number(
+        &mut self,
+        id: ObjectId,
+        index: u32,
+        atom: Option<AtomIdx>,
+        delta: Number,
+    ) -> Result<(), &'static str> {
+        let Ok(data) = self.object(id) else {
+            return Err("receiver_unavailable");
+        };
+        if !matches!(data.kind, ObjectKind::Array) {
+            return Err("receiver_not_array");
+        }
+        let materialized_slot = if matches!(&data.payload, ObjectPayload::Array { dense: None }) {
+            let Some(atom) = atom else {
+                return Err("index_not_immediate");
+            };
+            let Ok(shape) = self.shape(data.shape) else {
+                return Err("array_shape_unavailable");
+            };
+            let Some(slot) = shape.find(atom).map(|slot| slot as usize) else {
+                return Err("missing_own_element");
+            };
+            if !shape
+                .entries()
+                .get(slot)
+                .is_some_and(|entry| entry.flags.writable)
+            {
+                return Err("own_element_not_writable");
+            }
+            Some(slot)
+        } else {
+            None
+        };
+        let Ok(data) = self.object_mut(id) else {
+            return Err("receiver_unavailable");
+        };
+        let number: &mut RawValue = if let Some(slot) = materialized_slot {
+            match data.slots.get_mut(slot) {
+                Some(PropertySlot::Data(raw)) => raw,
+                _ => return Err("unsupported_own_element"),
+            }
+        } else {
+            match &mut data.payload {
+                ObjectPayload::Array { dense: Some(dense) } => {
+                    match dense.get_mut(index as usize) {
+                        Some(raw) => raw,
+                        _ => return Err("missing_own_element"),
+                    }
+                }
+                _ => return Err("array_storage_unavailable"),
+            }
+        };
+        let old = match number {
+            RawValue::Int(value) => Number::Int(*value),
+            RawValue::Float(value) => Number::Float(*value),
+            _ => return Err("own_element_not_number"),
+        };
+        *number = match old.add(delta) {
+            Number::Int(value) => RawValue::Int(value),
+            Number::Float(value) => RawValue::Float(value),
+        };
+        Ok(())
+    }
+
     pub(crate) const fn property_layout_epoch(&self) -> u64 {
         self.property_layout_epoch
     }

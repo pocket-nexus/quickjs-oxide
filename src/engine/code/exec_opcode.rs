@@ -240,6 +240,9 @@ pub(crate) enum Opcode {
     FieldAccSetDrop,
     CompareBranchLocalLt,
     CompareBranchArgLt,
+    NumericArrayStoreProduct,
+    NumericArrayUpdateElement,
+    NumericArrayCompareBranch,
 }
 
 const OPCODES: &[Opcode] = &[
@@ -471,6 +474,9 @@ const OPCODES: &[Opcode] = &[
     Opcode::FieldAccSetDrop,
     Opcode::CompareBranchLocalLt,
     Opcode::CompareBranchArgLt,
+    Opcode::NumericArrayStoreProduct,
+    Opcode::NumericArrayUpdateElement,
+    Opcode::NumericArrayCompareBranch,
 ];
 
 impl Opcode {
@@ -911,7 +917,10 @@ impl Opcode {
             Self::DensePostUpdateLocal
             | Self::DensePostUpdateLocalCheck
             | Self::DensePostUpdateArg => 3,
-            Self::NumericArrayAccumulate => 3,
+            Self::NumericArrayAccumulate
+            | Self::NumericArrayStoreProduct
+            | Self::NumericArrayUpdateElement
+            | Self::NumericArrayCompareBranch => 3,
         }
     }
 

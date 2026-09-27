@@ -48,6 +48,8 @@ mod frame;
 
 mod execute;
 #[cfg(test)]
+pub(crate) use execute::test_numeric_region_counts;
+#[cfg(test)]
 pub(crate) use execute::test_numeric_region_hits;
 
 mod stack;
