@@ -47,6 +47,148 @@ fn leaf_arena_keeps_leaf_slots_compact_and_out_of_the_shared_arena() {
     assert_eq!(heap.leaf_free.len(), 2);
 }
 
+#[test]
+fn captured_cells_use_compact_storage_and_distinct_arena_identity() {
+    let mut heap = Heap::new();
+    let shape = empty_shape(&mut heap);
+    let object = leaf(&mut heap, shape);
+    let first = heap
+        .allocate_var_ref(VarRefData::local(RawValue::Int(1)))
+        .unwrap();
+    let second = heap
+        .allocate_var_ref(VarRefData::local(RawValue::Int(2)))
+        .unwrap();
+
+    assert!(size_of::<auxiliary_arena::AuxiliarySlot<VarRefData>>() < size_of::<ArenaSlot>());
+    assert_eq!(object.debug_index(), second.index);
+    assert_eq!(object.debug_generation(), second.generation);
+    assert_eq!(
+        heap.slots.len(),
+        2,
+        "shared storage contains only shape and object"
+    );
+    assert_eq!(heap.var_refs.slots.len(), 2);
+    assert!(heap.live_node(RawId::VarRef(second)).is_err());
+    assert!(matches!(
+        heap.var_ref(second).unwrap().value,
+        RawValue::Int(2)
+    ));
+
+    let cleanup = heap.release_var_ref(first).unwrap();
+    assert_eq!(cleanup.finalized_var_refs, 1);
+    let reused = heap
+        .allocate_var_ref(VarRefData::local(RawValue::Int(3)))
+        .unwrap();
+    assert_eq!(reused.index, first.index);
+    assert_ne!(reused.generation, first.generation);
+    assert!(matches!(heap.var_ref(first), Err(HeapError::Stale { .. })));
+    assert_eq!(heap.object(object).unwrap().shape, shape);
+    assert!(matches!(
+        heap.var_ref(second).unwrap().value,
+        RawValue::Int(2)
+    ));
+
+    heap.release_var_ref(second).unwrap();
+    heap.release_var_ref(reused).unwrap();
+    heap.release_object(object).unwrap();
+    heap.release_shape(shape).unwrap();
+    assert_eq!(heap.counts().live, 0);
+}
+
+#[test]
+fn captured_cell_zero_queue_and_saturated_generation_reclaim() {
+    let mut heap = Heap::new();
+    let first = heap
+        .allocate_var_ref(VarRefData::local(RawValue::Int(1)))
+        .unwrap();
+    let second = heap
+        .allocate_var_ref(VarRefData::local(RawValue::Int(2)))
+        .unwrap();
+    heap.release_raw_no_drain(RawId::VarRef(first)).unwrap();
+    assert!(matches!(
+        heap.var_refs.slots[0].state,
+        AuxiliaryState::ZeroQueued(_)
+    ));
+    let cleanup = heap.release_var_ref(second).unwrap();
+    assert_eq!(cleanup.finalized_var_refs, 2);
+    assert!(heap.zero_queue.is_empty());
+
+    let third = heap
+        .allocate_var_ref(VarRefData::local(RawValue::Int(3)))
+        .unwrap();
+    heap.var_refs.slots[third.index as usize].generation = u32::MAX;
+    let saturated = VarRefId {
+        index: third.index,
+        generation: u32::MAX,
+    };
+    heap.set_strong_count_for_test(RawId::VarRef(saturated), u32::MAX);
+    heap.retain_raw_fast(RawId::VarRef(saturated));
+    heap.release_raw_no_drain(RawId::VarRef(saturated)).unwrap();
+    assert_eq!(heap.var_ref_strong_count(saturated), Ok(u32::MAX));
+    heap.set_strong_count_for_test(RawId::VarRef(saturated), 1);
+    heap.release_var_ref(saturated).unwrap();
+    assert!(matches!(
+        heap.var_refs.slots[third.index as usize].state,
+        AuxiliaryState::Retired
+    ));
+    assert!(matches!(
+        heap.var_ref(saturated),
+        Err(HeapError::Stale { .. })
+    ));
+}
+
+#[test]
+fn captured_cell_reservation_aborts_after_edge_retain_failure() {
+    let mut heap = Heap::new();
+    let missing = ObjectId {
+        index: 77,
+        generation: 1,
+    };
+    assert!(heap
+        .allocate_var_ref(VarRefData::local(RawValue::Object(missing)))
+        .is_err());
+    assert_eq!(heap.counts().var_ref_nodes, 0);
+    assert!(matches!(heap.var_refs.slots[0].state, AuxiliaryState::Vacant));
+    assert_eq!(heap.var_refs.free, vec![0]);
+    let cell = heap
+        .allocate_var_ref(VarRefData::local(RawValue::Int(4)))
+        .unwrap();
+    assert_eq!(cell.index, 0);
+    heap.release_var_ref(cell).unwrap();
+}
+
+#[test]
+fn captured_cell_replacement_preserves_owned_transfer_and_retained_update() {
+    let mut heap = Heap::new();
+    let shape = empty_shape(&mut heap);
+    let old = leaf(&mut heap, shape);
+    let transferred = leaf(&mut heap, shape);
+    let retained = leaf(&mut heap, shape);
+    let cell = heap
+        .allocate_var_ref_owned(VarRefData::local(RawValue::Object(old)))
+        .unwrap();
+    assert_eq!(heap.object_strong_count(old), Ok(1));
+
+    let previous = heap
+        .replace_var_ref_value_owned(cell, RawValue::Object(transferred))
+        .unwrap();
+    assert!(matches!(previous, RawValue::Object(id) if id == old));
+    assert_eq!(heap.object_strong_count(transferred), Ok(1));
+    assert_eq!(heap.release_object(old).unwrap().finalized_objects, 1);
+
+    let cleanup = heap
+        .replace_var_ref_value(cell, RawValue::Object(retained))
+        .unwrap();
+    assert_eq!(cleanup.finalized_objects, 1);
+    assert_eq!(heap.object_strong_count(retained), Ok(2));
+    heap.release_object(retained).unwrap();
+    let cleanup = heap.release_var_ref(cell).unwrap();
+    assert_eq!(cleanup.finalized_var_refs, 1);
+    assert_eq!(cleanup.finalized_objects, 1);
+    heap.release_shape(shape).unwrap();
+    assert_eq!(heap.counts().live, 0);
+}
+
 fn empty_shape(heap: &mut Heap) -> ShapeId {
     heap.allocate_shape(Shape::new(None, []).unwrap()).unwrap()
 }

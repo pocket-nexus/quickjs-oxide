@@ -1367,27 +1367,28 @@ impl Heap {
         if let Err(error) = validate_var_ref_payload(&var_ref) {
             return Err((error, var_ref));
         }
-        let (index, generation) = match self.reserve(HeapNodeKind::VarRef) {
+        let (index, generation) = match self.var_refs.reserve(HeapNodeKind::VarRef) {
             Ok(slot) => slot,
             Err(error) => return Err((error, var_ref)),
         };
-        self.publish(index, NodeData::VarRef(var_ref))
+        self.var_refs
+            .publish(index, var_ref)
             .expect("fresh VarRef reservation must publish exactly once");
         Ok(VarRefId { index, generation })
     }
 
     pub fn allocate_var_ref(&mut self, var_ref: VarRefData) -> Result<VarRefId, HeapError> {
         validate_var_ref_payload(&var_ref)?;
-        let (index, generation) = self.reserve(HeapNodeKind::VarRef)?;
+        let (index, generation) = self.var_refs.reserve(HeapNodeKind::VarRef)?;
         let id = VarRefId { index, generation };
         let edges = var_ref_edges(&var_ref);
 
         if let Err(error) = self.retain_edges_transactionally(&edges) {
-            self.abort_initializing(index)?;
+            self.var_refs.abort_initializing(index)?;
             return Err(error);
         }
 
-        self.publish(index, NodeData::VarRef(var_ref))?;
+        self.var_refs.publish(index, var_ref)?;
         Ok(id)
     }
 }
