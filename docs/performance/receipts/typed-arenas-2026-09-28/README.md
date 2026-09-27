@@ -1,12 +1,18 @@
 # Captured-cell and shape arena receipt
 
 This is one workstream stacked on [PR #53](https://github.com/pocket-nexus/quickjs-oxide/pull/53), with a complete captured-cell path
-followed by a complete shape path. The measured implementation is
+followed by a complete shape path. The frozen-checkpoint implementation is
 `ca70c00e1046a8fe7636af2697ce390854528289`; its two storage commits are
 `161ae860` (cells) and `b1c23e18` (shapes), followed only by a mixed-cycle
-test. The plan and architecture are in [typed-arenas.md](../../typed-arenas.md).
-The receipt and documentation were added after the measured code commit; they
-do not change the release engine.
+test. After #53 advanced, the work was rebased onto its new head
+`38e9eb86e2c2db8fb2e607c9f3ff611407941b4b`; the corresponding storage
+commits are `4eedc2aa` and `4d79a7e3`. The rebased integrated build was
+measured at `0a529c3b0eb933483f6a8cd90354c64aea2b996a`. The plan and
+architecture are in [typed-arenas.md](../../typed-arenas.md). The compressed
+[frozen implementation patch](data/frozen-implementation.patch.gz) preserves
+the earlier `src/` delta against `10262309` (SHA-256
+`67907842bd3a3219cc52e4ad17e6d336890d91f5ff48127729de258c5646fd41`).
+Subsequent receipt-only changes do not change the release engine.
 
 ## Identities and method
 
@@ -153,3 +159,48 @@ Test262 input check and the scratch-probe format check.
 No embedded-target build was available for this receipt. The measured
 capacity change is an AArch64 result; allocator overhead and whole-process
 memory need their own target-specific measurement.
+
+## Integration with the current #53 head
+
+PR #53 advanced to `38e9eb86e2c2db8fb2e607c9f3ff611407941b4b` while
+this work was in progress. Clean worktrees of that head and the rebased arena
+candidate `0a529c3b0eb933483f6a8cd90354c64aea2b996a` were rebuilt with
+the same Rust 1.96.0 release settings. Their plain `qjs` SHA-256 values are
+`7ef1a8d72e15c2f1557ceffd1a861fb2e0113cc9c40278a240f73096aab2169a`
+and `65d8769d701c74e8926cbe1e163696c6f5744e9db993a8ae76658157bcf8b605`.
+The [base](data/builds/m2base-plain.json) and
+[candidate](data/builds/m2combined-plain.json) build receipts include the
+plain and profiling builds; the corresponding [base](data/profiles/m2base/cell_live.jsonl)
+and [candidate](data/profiles/m2combined/cell_live.jsonl) JSONL records cover
+all nine storage checkpoints. Every workload again produced the checked
+stdout and no stderr. All allocation traces finished without dropped events.
+
+The current-head slot sizes and all nine summed-capacity values are **exactly
+the same** as the frozen #53 versus combined columns above: 48-byte cells,
+120-byte shapes, 280-byte remaining shared slots, 39.4% less reserved slot/
+free-list/queue capacity for 4,096 live cells, and 28.5% less for 4,096
+distinct shapes. The object-valued update and shared-shape capacity increases
+also persist. This is a second build and profile, not an extrapolation from
+the old binary.
+
+The large-workload [A/A](data/timing/timing-m2-aa-large.json) used four samples
+per label; [base/candidate](data/timing/timing-m2-base-combined-large.json)
+used eight per engine with the same checked manifest and ABBA/BAAB order.
+All 96 samples passed. Whole-process medians on the current #53 head are:
+
+| Workload | Current #53 wall ms | Arena candidate wall ms | Wall ratio | Retired-instruction ratio | Maximum RSS MiB, #53 → candidate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 32,768 live cells | 134.11 | 127.31 | 0.949 | 0.989 | 35.84 → 29.47 |
+| 32,768 distinct shapes | 86.65 | 81.85 | 0.945 | 0.982 | 55.70 → 41.81 |
+| 32,768 objects sharing shapes | 88.04 | 83.76 | 0.951 | 0.984 | 17.26 → 17.24 |
+| 16,384 object-valued cell updates | 192.73 | 185.00 | 0.960 | 0.987 | 33.34 → 30.35 |
+
+The A/A label wall medians differed by 0.2–4.5%, largest for the shared-shape
+case, so its wall ratio is not resolved beyond host noise. All counters include
+startup, compilation and teardown; they do not isolate VM execution. The
+integrated Rust 1.88.0 workspace/all-target suite passes, including 1,974
+main-library tests and 908 oracle passes with one ignored case. Profiling,
+doc, `test262-host`, compiled-oracle inventory, all five production CI Clippy
+commands, source layout, formatting and documentation gates also pass on the
+rebased branch. Its full Test262 replay matches the frozen vector exactly:
+80,010 passes of 80,060 runnable cases (102,037 total variants).
