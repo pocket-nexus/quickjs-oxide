@@ -28,6 +28,24 @@ thread_local! {
     static NUMERIC_REGION_MISSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static FIELD_TRUTHY_HITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static FIELD_TRUTHY_MISSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static FIELD_ASSIGN_HITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static FIELD_ASSIGN_MISSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn test_field_assign_counts<T>(run: impl FnOnce() -> T) -> (T, (usize, usize)) {
+    let previous = (FIELD_ASSIGN_HITS.replace(0), FIELD_ASSIGN_MISSES.replace(0));
+    struct Restore((usize, usize));
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            FIELD_ASSIGN_HITS.set(self.0.0);
+            FIELD_ASSIGN_MISSES.set(self.0.1);
+        }
+    }
+    let _restore = Restore(previous);
+    let result = run();
+    let counts = (FIELD_ASSIGN_HITS.get(), FIELD_ASSIGN_MISSES.get());
+    (result, counts)
 }
 
 #[cfg(test)]
@@ -1444,6 +1462,74 @@ pub(super) fn execute_frame(
                     Some(false) => plan.on_false as usize,
                     None => plan.fallback as usize,
                 });
+                continue;
+            }
+            Opcode::FieldLocalAssign => {
+                let plan = executable
+                    .exec
+                    .field_local_assign(operand)
+                    .ok_or_else(|| Error::internal("published field assignment is missing"))?;
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_execution_dispatch(
+                    runtime, executable, pc, true,
+                );
+                let old = if frame.active_frame.is_materialized() {
+                    cursor.with_slots(|slots| {
+                        if !slots.has_operand_capacity(1)
+                            || !slots.admits_direct_local(plan.destination)
+                        {
+                            return Ok(None);
+                        }
+                        let Some(JsValue::Object(receiver)) =
+                            slots.direct_value(region_direct_slot(plan.receiver))
+                        else {
+                            return Ok(None);
+                        };
+                        let Some(value) = runtime.property_ic_peek_own_owned(
+                            *receiver,
+                            executable,
+                            plan.field_site as usize,
+                            plan.field_index,
+                        ) else {
+                            return Ok(None);
+                        };
+                        Ok(Some(
+                            slots.replace_admitted_direct_local(plan.destination, value),
+                        ))
+                    })?
+                } else {
+                    None
+                };
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_execution_outcome(
+                    runtime,
+                    executable,
+                    pc,
+                    "field_local_assign",
+                    if old.is_some() { None } else { Some("guard") },
+                );
+                if let Some(old) = old {
+                    #[cfg(test)]
+                    FIELD_ASSIGN_HITS.set(FIELD_ASSIGN_HITS.get() + 1);
+                    // The promoted property owner now belongs to the local.
+                    // Release is a completion step, never an admission miss;
+                    // a fault resumes after the write instead of replaying it.
+                    cursor.fault = plan.write_pc as usize;
+                    cursor.advance(plan.complete as usize);
+                    let publication = cursor.publish_fault(runtime, frame.active_frame);
+                    let release = if matches!(&old, FrameBinding::Direct(value) if is_immediate(value))
+                    {
+                        Ok(())
+                    } else {
+                        super::bindings::release_frame_binding(runtime, old)
+                    };
+                    publication?;
+                    release?;
+                    continue;
+                }
+                #[cfg(test)]
+                FIELD_ASSIGN_MISSES.set(FIELD_ASSIGN_MISSES.get() + 1);
+                cursor.advance(plan.fallback as usize);
                 continue;
             }
             Opcode::BorrowedFieldLocal | Opcode::BorrowedFieldArg => {

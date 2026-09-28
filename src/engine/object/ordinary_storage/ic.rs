@@ -336,6 +336,37 @@ impl Runtime {
             RawValue::Private(_) | RawValue::Uninitialized | RawValue::Exception => None,
         }
     }
+
+    /// Promote one current own-data slot for an ownership-bearing local
+    /// assignment. The shared location cache is observed without adaptation;
+    /// ordinary fallback owns cold and unsuccessful lookup. A hit returns an
+    /// additional owner before the caller displaces its destination owner.
+    #[inline]
+    pub(crate) fn property_ic_peek_own_owned(
+        &self,
+        receiver: ObjectId,
+        executable: &PublishedFunctionSnapshot,
+        field_pc: usize,
+        key_index: u32,
+    ) -> Option<JsValue> {
+        let cache = executable.property_read_ic.site(field_pc)?;
+        if !cache.may_peek_own() {
+            return None;
+        }
+        linked_field_atom(self, executable, key_index)?;
+        if self.0.deferred_references.has_pending() {
+            return None;
+        }
+        let state = self.0.state.try_borrow().ok()?;
+        if state.heap.has_pending_zero_cleanup()
+            || state.heap.slot_object_release_readiness_fast(receiver)
+                != SlotReleaseReadiness::Ready
+        {
+            return None;
+        }
+        let raw = cache.peek_own(&state.heap, self.domain_id(), executable.realm, receiver)?;
+        self.promote_field_in_state(&state, raw, false, &mut None)
+    }
 }
 
 impl Runtime {

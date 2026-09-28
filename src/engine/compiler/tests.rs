@@ -141,6 +141,7 @@ mod eval;
 mod function_declarations;
 
 mod assignment;
+mod field_local_assign;
 mod field_truthy_branch;
 mod numeric_region;
 

@@ -32,6 +32,7 @@ const RESERVED_MASK: u16 = 0x8000;
 thread_local! {
     static SUPPRESS_NUMERIC_REGIONS: Cell<bool> = const { Cell::new(false) };
     static SUPPRESS_FIELD_TRUTHY: Cell<bool> = const { Cell::new(false) };
+    static SUPPRESS_FIELD_LOCAL_ASSIGN: Cell<bool> = const { Cell::new(false) };
 }
 
 #[cfg(test)]
@@ -56,6 +57,19 @@ pub(crate) fn without_field_truthy_branches<T>(run: impl FnOnce() -> T) -> T {
         }
     }
     let previous = SUPPRESS_FIELD_TRUTHY.replace(true);
+    let _restore = Restore(previous);
+    run()
+}
+
+#[cfg(test)]
+pub(crate) fn without_field_local_assign<T>(run: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SUPPRESS_FIELD_LOCAL_ASSIGN.set(self.0);
+        }
+    }
+    let previous = SUPPRESS_FIELD_LOCAL_ASSIGN.replace(true);
     let _restore = Restore(previous);
     run()
 }
@@ -136,6 +150,7 @@ pub(crate) struct ExecCode {
     guarded_fallbacks: Option<Rc<[GuardedFallback]>>,
     regions: Option<Rc<[PublishedNumericRegion]>>,
     field_truthy: Option<Rc<[FieldTruthyBranchPlan]>>,
+    field_local_assign: Option<Rc<[FieldLocalAssignPlan]>>,
     product_sources: Option<Rc<[ArrayProductSource]>>,
     copy_sources: Option<Rc<[ArrayReadSource]>>,
     second_preincs: Option<Rc<[SecondPreIncSource]>>,
@@ -179,6 +194,14 @@ struct FieldTruthyCandidate {
     when_true: bool,
 }
 
+#[derive(Clone, Copy)]
+struct FieldLocalAssignCandidate {
+    source: usize,
+    receiver: DirectSource,
+    field_index: u32,
+    destination: u16,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct FieldTruthyBranchPlan {
     pub receiver: DirectSource,
@@ -186,6 +209,17 @@ pub(crate) struct FieldTruthyBranchPlan {
     pub field_index: u32,
     pub on_true: u32,
     pub on_false: u32,
+    pub fallback: u32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FieldLocalAssignPlan {
+    pub receiver: DirectSource,
+    pub field_site: u32,
+    pub field_index: u32,
+    pub destination: u16,
+    pub write_pc: u32,
+    pub complete: u32,
     pub fallback: u32,
 }
 
@@ -198,6 +232,7 @@ impl ExecCode {
             guarded_fallbacks: None,
             regions: None,
             field_truthy: None,
+            field_local_assign: None,
             product_sources: None,
             copy_sources: None,
             second_preincs: None,
@@ -264,13 +299,14 @@ impl ExecCode {
             region_ids[region.start as usize] = Some(id);
         }
         #[cfg(test)]
-        let field_candidates = if SUPPRESS_FIELD_TRUTHY.get() {
-            Vec::new()
-        } else {
-            select_field_truthy_candidates(code, &opcodes, regions)
-        };
+        let (allow_truthy, allow_assign) = (
+            !SUPPRESS_FIELD_TRUTHY.get(),
+            !SUPPRESS_FIELD_LOCAL_ASSIGN.get(),
+        );
         #[cfg(not(test))]
-        let field_candidates = select_field_truthy_candidates(code, &opcodes, regions);
+        let (allow_truthy, allow_assign) = (true, true);
+        let (field_candidates, assign_candidates) =
+            select_field_consumers(code, &opcodes, regions, locals, allow_truthy, allow_assign);
         let mut field_ids = if field_candidates.is_empty() {
             Vec::new()
         } else {
@@ -280,7 +316,18 @@ impl ExecCode {
             field_ids[candidate.source] =
                 Some(u32::try_from(id).map_err(|_| ExecCodeError::TooLong)?);
         }
-        let mut schedule = Vec::with_capacity(code.len() + regions.len() + field_candidates.len());
+        let mut assign_ids = if assign_candidates.is_empty() {
+            Vec::new()
+        } else {
+            vec![None; code.len()]
+        };
+        for (id, candidate) in assign_candidates.iter().enumerate() {
+            assign_ids[candidate.source] =
+                Some(u32::try_from(id).map_err(|_| ExecCodeError::TooLong)?);
+        }
+        let mut schedule = Vec::with_capacity(
+            code.len() + regions.len() + field_candidates.len() + assign_candidates.len(),
+        );
         for (source, &opcode) in opcodes.iter().enumerate() {
             if let Some(id) = region_ids[source] {
                 if has_guarded_entry(regions[id].operation) {
@@ -296,6 +343,14 @@ impl ExecCode {
                 schedule.push(ScheduledEntry {
                     source,
                     opcode: Opcode::FieldTruthyBranch,
+                    guard: true,
+                    field_plan: Some(id),
+                });
+            }
+            if let Some(id) = assign_ids.get(source).copied().flatten() {
+                schedule.push(ScheduledEntry {
+                    source,
+                    opcode: Opcode::FieldLocalAssign,
                     guard: true,
                     field_plan: Some(id),
                 });
@@ -318,6 +373,7 @@ impl ExecCode {
             }
             if !entry.guard
                 && (field_ids.get(source).is_some_and(Option::is_some)
+                    || assign_ids.get(source).is_some_and(Option::is_some)
                     || region_ids[source]
                         .is_some_and(|id| has_guarded_entry(regions[id].operation)))
             {
@@ -468,6 +524,31 @@ impl ExecCode {
                     .map(Rc::from)
             })
             .transpose()?;
+        let field_local_assign = (!assign_candidates.is_empty())
+            .then(|| {
+                assign_candidates
+                    .iter()
+                    .map(|candidate| {
+                        let source = candidate.source;
+                        let fallback = guarded_fallbacks
+                            .iter()
+                            .find(|fallback| fallback.source == source as u32)
+                            .ok_or(ExecCodeError::InvalidTarget)?
+                            .pc;
+                        Ok(FieldLocalAssignPlan {
+                            receiver: candidate.receiver,
+                            field_site: boundaries[source + 1],
+                            field_index: candidate.field_index,
+                            destination: candidate.destination,
+                            write_pc: boundaries[source + 2],
+                            complete: boundaries[source + 4],
+                            fallback,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(Rc::from)
+            })
+            .transpose()?;
         #[cfg(feature = "profiling")]
         let (rejected_numeric_sites, omitted_numeric_sites) =
             collect_rejected_numeric_sites(code, locals, arguments, regions, &opcodes, &boundaries);
@@ -482,6 +563,7 @@ impl ExecCode {
             guarded_fallbacks: (!guarded_fallbacks.is_empty()).then(|| Rc::from(guarded_fallbacks)),
             regions: published_regions,
             field_truthy,
+            field_local_assign,
             product_sources: (!product_sources.is_empty()).then(|| product_sources.into()),
             copy_sources: (!copy_sources.is_empty()).then(|| copy_sources.into()),
             second_preincs: (!second_preincs.is_empty()).then(|| second_preincs.into()),
@@ -585,6 +667,12 @@ impl ExecCode {
             vec![false; self.regions.as_ref().map_or(0, |regions| regions.len())];
         let mut seen_field_truthy =
             vec![false; self.field_truthy.as_ref().map_or(0, |plans| plans.len())];
+        let mut seen_field_assign = vec![
+            false;
+            self.field_local_assign
+                .as_ref()
+                .map_or(0, |plans| plans.len())
+        ];
         for source in 0..self.instruction_len() {
             let expected = self.boundaries[source];
             if pc != expected {
@@ -647,6 +735,25 @@ impl ExecCode {
                     entries.insert(target);
                 }
             }
+            if decoded.opcode == Opcode::FieldLocalAssign {
+                let id = decoded.operand(0) as usize;
+                let seen = seen_field_assign
+                    .get_mut(id)
+                    .ok_or(ExecCodeError::InvalidTarget)?;
+                if *seen {
+                    return Err(ExecCodeError::InvalidTarget);
+                }
+                *seen = true;
+                let plan = self
+                    .field_local_assign(id as u32)
+                    .ok_or(ExecCodeError::InvalidTarget)?;
+                if plan.complete == self.words.len() as u32
+                    || self.boundaries.binary_search(&plan.complete).is_err()
+                {
+                    return Err(ExecCodeError::InvalidTarget);
+                }
+                entries.insert(plan.complete);
+            }
             if decoded.opcode == Opcode::Gosub {
                 entries.insert(decoded.next_pc);
             }
@@ -665,7 +772,10 @@ impl ExecCode {
         if pc != self.words.len() as u32 {
             return Err(ExecCodeError::InvalidBoundary);
         }
-        if seen_regions.iter().any(|seen| !seen) || seen_field_truthy.iter().any(|seen| !seen) {
+        if seen_regions.iter().any(|seen| !seen)
+            || seen_field_truthy.iter().any(|seen| !seen)
+            || seen_field_assign.iter().any(|seen| !seen)
+        {
             return Err(ExecCodeError::InvalidTarget);
         }
         for source in 0..self.instruction_len() {
@@ -674,6 +784,9 @@ impl ExecCode {
             }
             if self.opcode_at_source(source) == Some(Opcode::FieldTruthyBranch) {
                 self.verify_field_truthy_branch(source, &entries)?;
+            }
+            if self.opcode_at_source(source) == Some(Opcode::FieldLocalAssign) {
+                self.verify_field_local_assign(source, &entries)?;
             }
             if self.opcode_at_source(source) == Some(Opcode::FieldAccSetDrop) {
                 let first = self.decode(self.boundaries[source])?;
@@ -1191,6 +1304,74 @@ impl ExecCode {
 
     pub(crate) fn field_truthy_branch(&self, index: u32) -> Option<&FieldTruthyBranchPlan> {
         self.field_truthy.as_deref()?.get(index as usize)
+    }
+
+    fn verify_field_local_assign(
+        &self,
+        source: usize,
+        entries: &HashSet<u32>,
+    ) -> Result<(), ExecCodeError> {
+        let guard = self.decode(self.boundaries[source])?;
+        let plan = self
+            .field_local_assign(guard.operand(0))
+            .ok_or(ExecCodeError::InvalidTarget)?;
+        let fallback = self
+            .guarded_fallbacks()
+            .iter()
+            .find(|fallback| fallback.source == source as u32)
+            .ok_or(ExecCodeError::InvalidTarget)?;
+        let ordinary = self.decode(fallback.pc)?;
+        let field_pc = *self
+            .boundaries
+            .get(source + 1)
+            .ok_or(ExecCodeError::InvalidTarget)?;
+        let write_pc = *self
+            .boundaries
+            .get(source + 2)
+            .ok_or(ExecCodeError::InvalidTarget)?;
+        let drop_pc = *self
+            .boundaries
+            .get(source + 3)
+            .ok_or(ExecCodeError::InvalidTarget)?;
+        let complete = *self
+            .boundaries
+            .get(source + 4)
+            .ok_or(ExecCodeError::InvalidTarget)?;
+        let field = self.decode(field_pc)?;
+        let write = self.decode(write_pc)?;
+        let drop = self.decode(drop_pc)?;
+        let expected_ordinary = match plan.receiver {
+            DirectSource::Local(_) => Opcode::BorrowedFieldLocal,
+            DirectSource::Argument(_) => Opcode::BorrowedFieldArg,
+            DirectSource::CheckedLocal(_) => return Err(ExecCodeError::InvalidTarget),
+        };
+        if guard.opcode != Opcode::FieldLocalAssign
+            || guard.next_pc != fallback.pc
+            || plan.fallback != fallback.pc
+            || plan.field_site != field_pc
+            || plan.write_pc != write_pc
+            || plan.complete != complete
+            || entries.contains(&field_pc)
+            || entries.contains(&write_pc)
+            || entries.contains(&drop_pc)
+            || ordinary.opcode != expected_ordinary
+            || ordinary.operand(0) != direct_index(plan.receiver)
+            || ordinary.operand(1) != plan.field_index
+            || ordinary.operand(2) != write_pc
+            || ordinary.next_pc != field_pc
+            || field.opcode != Opcode::GetFieldCached
+            || field.operand(0) != plan.field_index
+            || write.opcode != Opcode::SetLocal
+            || write.operand(0) != u32::from(plan.destination)
+            || drop.opcode != Opcode::Drop
+        {
+            return Err(ExecCodeError::InvalidTarget);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn field_local_assign(&self, index: u32) -> Option<&FieldLocalAssignPlan> {
+        self.field_local_assign.as_deref()?.get(index as usize)
     }
 
     pub(crate) fn product_source(&self, index: u32) -> Option<ArrayProductSource> {
@@ -2994,18 +3175,21 @@ fn verify_preinc_half(
         && code.decode(code.boundaries[start + 3])?.operand(0) == u32::from(slot))
 }
 
-fn select_field_truthy_candidates(
+fn select_field_consumers(
     code: &[Instruction],
     opcodes: &[Opcode],
     regions: &[NumericRegion],
-) -> Vec<FieldTruthyCandidate> {
+    locals: Option<&[VariableDefinition]>,
+    allow_truthy: bool,
+    allow_assign: bool,
+) -> (Vec<FieldTruthyCandidate>, Vec<FieldLocalAssignCandidate>) {
     if !opcodes.iter().any(|opcode| {
         matches!(
             opcode,
             Opcode::BorrowedFieldLocal | Opcode::BorrowedFieldArg
         )
     }) {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     }
     let mut entries = HashSet::new();
     for (source, instruction) in code.iter().enumerate() {
@@ -3018,7 +3202,8 @@ fn select_field_truthy_candidates(
             entries.insert(source + 1);
         }
     }
-    let mut selected = Vec::new();
+    let mut truthy = Vec::new();
+    let mut assigns = Vec::new();
     let mut occupied_until = 0;
     for source in 0..code.len().saturating_sub(3) {
         if source < occupied_until || opcodes[source + 1] != Opcode::GetFieldCached {
@@ -3032,6 +3217,34 @@ fn select_field_truthy_candidates(
         let Instruction::GetField(field_index) = code[source + 1] else {
             continue;
         };
+        if allow_assign
+            && let (Instruction::SetLocal(destination), Instruction::Drop) =
+                (&code[source + 2], &code[source + 3])
+            && locals.is_some_and(|definitions| {
+                definitions
+                    .get(usize::from(*destination))
+                    .is_some_and(|definition| {
+                        definition.kind == ClosureVariableKind::Normal && !definition.is_const
+                    })
+            })
+            && (1..=3).all(|offset| !entries.contains(&(source + offset)))
+            && !regions
+                .iter()
+                .any(|region| region.start as usize <= source + 3 && source < region.end as usize)
+            && source + 4 < code.len()
+        {
+            assigns.push(FieldLocalAssignCandidate {
+                source,
+                receiver,
+                field_index,
+                destination: *destination,
+            });
+            occupied_until = source + 4;
+            continue;
+        }
+        if !allow_truthy {
+            continue;
+        }
         let inverted = matches!(code[source + 2], Instruction::Not);
         let branch_offset = if inverted { 3 } else { 2 };
         if source + branch_offset + 1 >= code.len()
@@ -3051,7 +3264,7 @@ fn select_field_truthy_candidates(
         if target as usize >= code.len() {
             continue;
         }
-        selected.push(FieldTruthyCandidate {
+        truthy.push(FieldTruthyCandidate {
             source,
             receiver,
             field_index,
@@ -3061,7 +3274,7 @@ fn select_field_truthy_candidates(
         });
         occupied_until = source + branch_offset + 1;
     }
-    selected
+    (truthy, assigns)
 }
 
 fn select_opcodes(
@@ -4339,6 +4552,37 @@ mod tests {
             ExecCode::encode_with_locals(&entered, &[local], &[local], &[region], &[]).unwrap_err(),
             ExecCodeError::InvalidTarget
         );
+    }
+
+    #[test]
+    fn field_local_assignment_keeps_wide_field_and_write_positions() {
+        let local = VariableDefinition {
+            name: None,
+            is_lexical: false,
+            is_const: false,
+            is_parameter_initializer: false,
+            kind: ClosureVariableKind::Normal,
+        };
+        let code = [
+            Instruction::GetArg(0),
+            Instruction::GetField(70_000),
+            Instruction::SetLocal(0),
+            Instruction::Drop,
+            Instruction::ReturnUndefined,
+        ];
+        let published = ExecCode::encode_with_locals(&code, &[local], &[local], &[], &[])
+            .expect("field assignment should publish");
+        let guard = published.decode(published.boundaries[0]).unwrap();
+        assert_eq!(guard.opcode, Opcode::FieldLocalAssign);
+        let plan = published.field_local_assign(guard.operand(0)).unwrap();
+        assert_eq!(plan.fallback, guard.next_pc);
+        assert_eq!(plan.field_site, published.boundaries[1]);
+        assert_eq!(plan.write_pc, published.boundaries[2]);
+        assert_eq!(plan.complete, published.boundaries[4]);
+        assert_eq!(plan.field_index, 70_000);
+        published.verify().unwrap();
+        published.words[published.boundaries[1] as usize + 1].set(70_001);
+        assert_eq!(published.verify(), Err(ExecCodeError::InvalidTarget));
     }
 
     #[test]

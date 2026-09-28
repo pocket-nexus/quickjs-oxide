@@ -545,6 +545,26 @@ impl FrameSlots<'_> {
         value.as_number_repr()
     }
 
+    /// Admission for a direct local that can receive a promoted property
+    /// result. No frame window change is permitted between this check and
+    /// `replace_admitted_direct_local` in the same transaction borrow.
+    pub(in crate::engine::vm) fn admits_direct_local(&self, index: u16) -> bool {
+        matches!(self.local(index), Ok(FrameBinding::Direct(_)))
+    }
+
+    /// Move a newly acquired owner into a previously admitted local. The old
+    /// owner is returned for the existing post-commit release protocol.
+    pub(in crate::engine::vm) fn replace_admitted_direct_local(
+        &mut self,
+        index: u16,
+        value: JsValue,
+    ) -> FrameBinding {
+        let slot = self.window.locals().start + usize::from(index);
+        self.store.slots[slot]
+            .replace(FrameBinding::Direct(value))
+            .expect("admitted direct local disappeared")
+    }
+
     /// Non-owning numeric read of a direct parameter binding; shaped exactly
     /// like `immediate_local` over the parameter region.
     #[inline]

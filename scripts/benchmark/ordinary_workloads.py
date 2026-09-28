@@ -78,6 +78,14 @@ def programs():
                pair + "let reads=0,a=[0,4],s=0;"
                "Object.defineProperty(a,'2',{get(){reads++;return 7}});",
                "s+=pair(a)", "s+':'+reads", count=200000)
+    assignment = "function advance(input){let node=input;node=node.next;return node.id}"
+    yield loop("field-local-own-chain",
+               assignment + "let tail={id:3},head={next:tail},s=0;",
+               "s+=advance(head)", "s", count=200000)
+    yield loop("field-local-accessor",
+               assignment + "let tail={id:3},head={},reads=0,s=0;"
+               "Object.defineProperty(head,'next',{get(){reads++;return tail}});",
+               "s+=advance(head)", "s+':'+reads", count=200000)
     for kind, _, value in values:
         yield "write-same-value-" + kind, 100000, (
             f"let v={value};let o={{x:v}};for(let i=0;i<100000;i++){{o.x=v}} console.log(o.x===v);\n"
