@@ -160,7 +160,7 @@ No embedded-target build was available for this receipt. The measured
 capacity change is an AArch64 result; allocator overhead and whole-process
 memory need their own target-specific measurement.
 
-## Integration with the current #53 head
+## Integration with PR #53 at `38e9eb86`
 
 PR #53 advanced to `38e9eb86e2c2db8fb2e607c9f3ff611407941b4b` while
 this work was in progress. Clean worktrees of that head and the rebased arena
@@ -175,7 +175,7 @@ and [candidate](data/profiles/m2combined/cell_live.jsonl) JSONL records cover
 all nine storage checkpoints. Every workload again produced the checked
 stdout and no stderr. All allocation traces finished without dropped events.
 
-The current-head slot sizes and all nine summed-capacity values are **exactly
+At that checkpoint, slot sizes and all nine summed-capacity values are **exactly
 the same** as the frozen #53 versus combined columns above: 48-byte cells,
 120-byte shapes, 280-byte remaining shared slots, 39.4% less reserved slot/
 free-list/queue capacity for 4,096 live cells, and 28.5% less for 4,096
@@ -186,9 +186,9 @@ the old binary.
 The large-workload [A/A](data/timing/timing-m2-aa-large.json) used four samples
 per label; [base/candidate](data/timing/timing-m2-base-combined-large.json)
 used eight per engine with the same checked manifest and ABBA/BAAB order.
-All 96 samples passed. Whole-process medians on the current #53 head are:
+All 96 samples passed. Whole-process medians against that #53 checkpoint are:
 
-| Workload | Current #53 wall ms | Arena candidate wall ms | Wall ratio | Retired-instruction ratio | Maximum RSS MiB, #53 → candidate |
+| Workload | #53 at `38e9eb86` wall ms | Arena candidate wall ms | Wall ratio | Retired-instruction ratio | Maximum RSS MiB, #53 → candidate |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | 32,768 live cells | 134.11 | 127.31 | 0.949 | 0.989 | 35.84 → 29.47 |
 | 32,768 distinct shapes | 86.65 | 81.85 | 0.945 | 0.982 | 55.70 → 41.81 |
@@ -213,7 +213,8 @@ This is a **fixed-work diagnostic, not the original adaptive V8 Score**. The
 external `ahaoboy/js-engine-benchmark` checkout was clean at
 `2034d98fc8c5f8044e186267593f5d5ea5232caf`. Three clean-source, plain
 release CLIs were rebuilt serially with Rust 1.96.0, fat LTO and one codegen
-unit: #52 `996663f7`, current #53 `38e9eb86`, and this branch `223c067a`.
+unit: #52 `996663f7`, then-current #53 `38e9eb86`, and the measured branch
+`223c067a`.
 The final candidate commit only changed documentation and receipts after the
 engine source at `0a529c3b`. The runner verified the binary
 hashes, build receipts, matching toolchains, release flags and clean source

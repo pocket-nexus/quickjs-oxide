@@ -1,18 +1,22 @@
 # Captured-cell and shape storage
 
 This workstream began at frozen PR #53 source
-`10262309c580c43ba984b4f371acdc081147b4f0` and was then rebased onto
-the current #53 head `38e9eb86e2c2db8fb2e607c9f3ff611407941b4b`.
+`10262309c580c43ba984b4f371acdc081147b4f0`. Its integrated storage
+measurement compared against PR #53 at
+`38e9eb86e2c2db8fb2e607c9f3ff611407941b4b`; that commit is a historical
+measurement checkpoint, not the current stacked-PR base.
 It delivers two complete implementations in one stacked PR: captured cells
-first (`4eedc2aa`), then shapes (`4d79a7e3`). The original frozen-checkpoint
-measurements use cell-only `161ae860` and combined `ca70c00e`; the current
-head is measured separately. Identities, results and validation are in the
+first, then shapes. The original frozen-checkpoint measurements use cell-only
+`161ae860` and combined `ca70c00e`; the later #53 checkpoint was measured
+separately. Identities, results and validation are in the
 [receipt](receipts/typed-arenas-2026-09-28/README.md).
 The owned-cell single-access follow-up and its release-build evidence are in a
 [separate receipt](receipts/owned-cell-access-2026-09-28/README.md).
 The paired host collection-memory envelope is in the
-[GC receipt](receipts/arena-gc-envelope-2026-09-28/README.md); embedded-target
-high-water measurements are still outstanding.
+[GC receipt](receipts/arena-gc-envelope-2026-09-28/README.md). The subsequent
+[zero-queue receipt](receipts/zero-queue-retention-2026-09-28/README.md)
+measures the explicit-GC empty-buffer cap and its repeated-burst growth cost.
+Embedded-target high-water measurements are still outstanding.
 
 ## Contract
 
@@ -48,6 +52,12 @@ reachability arrays with a `RawId` worklist. Only Object, Context and
 FunctionBytecode remain active finalization anchors; cell and shape edges are
 still traced. Equal numeric indices in different arenas never imply equal
 identity.
+
+After a successful explicit `Runtime::run_gc` and deferred-root drain, an
+empty zero queue retains at most 4,096 ID slots. Ordinary reference releases
+keep their queue backing for reuse, and pending destruction is never discarded.
+This is a capacity policy for empty work storage; it does not change arena
+generations, tracing, or collection scratch.
 
 The follow-up arena interface associates `VarRefData` with `VarRefId` and
 `Shape` with `ShapeId`. Reservation returns the associated ID, and publication,

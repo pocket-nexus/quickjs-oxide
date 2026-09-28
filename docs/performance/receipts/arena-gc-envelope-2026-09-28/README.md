@@ -1,6 +1,6 @@
 # Collection-time memory envelope after the cell/shape migration
 
-This receipt compares the current #53 parent (`38e9eb86e2c2db8fb2e607c9f3ff611407941b4b`) with the cell/shape arena candidate plus the typed-ID and single-cell-access follow-ups (`c31a22a87e78d31c6ba9fcb13fd1dc83370414b4`). It is a **host measurement**, not an embedded-target result. The checked-in changes are a probe, runner, temporary instrumentation patches, and observations; the production collector remains unchanged.
+This receipt compares PR #53 at the historical checkpoint `38e9eb86e2c2db8fb2e607c9f3ff611407941b4b` with the cell/shape arena candidate plus the typed-ID and single-cell-access follow-ups (`c31a22a87e78d31c6ba9fcb13fd1dc83370414b4`). It is a **host measurement**, not an embedded-target result. This measurement-only change did not modify the production collector. A later [separate experiment](../zero-queue-retention-2026-09-28/README.md) changed empty zero-queue retention after explicit GC.
 
 The probe creates 32,768 captured cells or distinct shapes, collects while all remain rooted, drops all but 32 roots, runs three explicit collections against the retained slot range, grows a different 4,096-node population, and finally removes all roots. The same JavaScript phases run on both revisions. [Probe source](probe/src/main.rs) and [runner](run.py) specify the sequence and sample validation.
 
