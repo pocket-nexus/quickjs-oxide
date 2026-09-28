@@ -101,5 +101,29 @@ The A/A retired-instruction ratios were 0.9999 for the missing static field,
 Their corresponding wall-time ratios ranged from 0.86 to 1.21 despite
 comparing the same binary. The covered instruction reductions support less
 machine work, but generated-code changes elsewhere and the large host timing
-noise prevent an isolated cost or runtime speedup claim. Compile-once
-execution samples are being collected separately.
+noise prevent an isolated cost or runtime speedup claim.
+
+The [compile-once A/A control](data/execute-aa.json) and
+[C1/C2 paired run](data/execute-ab.json) use a byte-identical
+`apps/cli/examples/execute_probe.rs` in both source trees (SHA-256
+`3effd109dc4983d3d69cc9c91d4ae744ffca26a932e78f97b08f0f1d2d8db6d7`).
+Each case ran two ABBA-ordered process pairs, with three warmups and nine
+timed `Context::execute` calls per process. These samples exclude CLI startup
+and compilation.
+
+| Case | C1 / C2 execute-only median ms | C2 / C1 |
+| --- | ---: | ---: |
+| Missing static field | 2456 / 2071 | 0.843 |
+| String length, inline | 915 / 1157 | 1.264 |
+| Computed object, call loop | 2282 / 2352 | 1.030 |
+| Computed object, one frame | 787 / 946 | 1.202 |
+| Warm own field, inline | 996 / 1064 | 1.068 |
+| Getter, deferred | 19.7 / 15.8 | 0.803 |
+
+Same-binary A/A execute-only ratios were 0.864 for missing static field,
+0.836 for computed one-frame read, and 1.061 for warm own field. The
+direction and magnitude of the A/B wall differences are therefore not
+reliable estimates of C2's runtime effect. The host was contended by other
+builds and two full conformance runs; a quiet-host repeat remains useful.
+The instruction counts, path diagnostics and semantic tests establish the
+bounded mechanism independently of that timing question.
