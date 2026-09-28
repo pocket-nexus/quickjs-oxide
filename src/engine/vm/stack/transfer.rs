@@ -99,6 +99,37 @@ impl FrameSlots<'_> {
             .ok_or_else(|| Error::internal("owned destination is vacant"))?;
         // Match the canonical operand validation before any ownership work.
         let source = self.peek(0)?;
+        // Both owners are inline. The binding state and operand have already
+        // been checked under this window borrow, so no heap admission, retain,
+        // or release is necessary. This applies to every owner-free scalar,
+        // including initialized undefined and legal TDZ initialization.
+        let scalar_destination = match old {
+            FrameBinding::Uninitialized => Some(Displaced::Uninitialized),
+            FrameBinding::Direct(value) if is_scalar(value) => Some(Displaced::Scalar),
+            _ => None,
+        };
+        if let Some(class) = scalar_destination.filter(|_| is_scalar(source)) {
+            let value = if matches!(operation, Transfer::Set) {
+                FrameBinding::Direct(copy_value(runtime, source)?)
+            } else {
+                let operand_index = self.window.operands().start + self.window.depth - 1;
+                let value = self.store.slots[operand_index]
+                    .take()
+                    .expect("peek authenticated the operand");
+                self.window.depth -= 1;
+                #[cfg(feature = "profiling")]
+                {
+                    self.store.live_slots -= 1;
+                    record_owned_storage(Cost::Clear(1));
+                }
+                value
+            };
+            self.store.slots[destination_index] = Some(value);
+            #[cfg(feature = "profiling")]
+            record_owned_storage(Cost::Move(2));
+            record_completion(class);
+            return Ok(StoreProgress::Committed);
+        }
         if !is_scalar(source)
             && (runtime.0.deferred_references.has_pending()
                 || runtime
