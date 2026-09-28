@@ -1,0 +1,211 @@
+{
+  "schema": "oxide-build-v2",
+  "mode": "plain",
+  "vm_configuration": "stack-vm",
+  "features": [],
+  "commit": "deccdde5ef8dda83eadcf1876d5bee706e5661b3",
+  "source": {
+    "commit": {
+      "command": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "exit_code": 0,
+      "stdout": "deccdde5ef8dda83eadcf1876d5bee706e5661b3",
+      "stderr": ""
+    },
+    "tree": {
+      "command": [
+        "git",
+        "rev-parse",
+        "HEAD^{tree}"
+      ],
+      "exit_code": 0,
+      "stdout": "00d026fd3670aede5b2ff4f430c39efb82182add",
+      "stderr": ""
+    },
+    "top_level": {
+      "command": [
+        "git",
+        "rev-parse",
+        "--show-toplevel"
+      ],
+      "exit_code": 0,
+      "stdout": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/378473c5-1638-4d3b-a285-a477e60c62bd",
+      "stderr": ""
+    },
+    "status": {
+      "command": [
+        "git",
+        "status",
+        "--porcelain"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  },
+  "binary_sha256": "add375efec8bd33a4051ea16cb045504910fced2024a02f39a808f46f9669e6c",
+  "tooling": {
+    "repository": {
+      "commit": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD"
+        ],
+        "exit_code": 0,
+        "stdout": "deccdde5ef8dda83eadcf1876d5bee706e5661b3",
+        "stderr": ""
+      },
+      "tree": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD^{tree}"
+        ],
+        "exit_code": 0,
+        "stdout": "00d026fd3670aede5b2ff4f430c39efb82182add",
+        "stderr": ""
+      },
+      "top_level": {
+        "command": [
+          "git",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "exit_code": 0,
+        "stdout": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/378473c5-1638-4d3b-a285-a477e60c62bd",
+        "stderr": ""
+      },
+      "status": {
+        "command": [
+          "git",
+          "status",
+          "--porcelain"
+        ],
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    "snapshots": {
+      "build.py": {
+        "path": "/tmp/oxide-phase2-a2-build/release/qjs.build.tooling-build.py",
+        "sha256": "fc8392a9d26290a6095742b2ab4cb45f5ab37b964c9daa51d22f7088259b1f50"
+      },
+      "run.py": {
+        "path": "/tmp/oxide-phase2-a2-build/release/qjs.build.tooling-run.py",
+        "sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5"
+      }
+    }
+  },
+  "command": [
+    "cargo",
+    "build",
+    "--locked",
+    "--release",
+    "--verbose",
+    "-p",
+    "quickjs-oxide-cli",
+    "--no-default-features",
+    "--target-dir",
+    "/tmp/oxide-phase2-a2-build",
+    "--jobs",
+    "2"
+  ],
+  "cwd": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/378473c5-1638-4d3b-a285-a477e60c62bd",
+  "exit_code": 0,
+  "stdout": {
+    "path": "/tmp/oxide-phase2-a2-build/release/qjs.build.stdout.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "stderr": {
+    "path": "/tmp/oxide-phase2-a2-build/release/qjs.build.stderr.log",
+    "sha256": "c7c0efb109b62fcc0bd39de6efba5ba3e83da9c83fd365feae33df618c84c6e4"
+  },
+  "rustc": {
+    "command": [
+      "rustc",
+      "-vV"
+    ],
+    "exit_code": 0,
+    "stdout": "rustc 1.94.1 (e408947bf 2026-03-25)\nbinary: rustc\ncommit-hash: e408947bfd200af42db322daf0fadfe7e26d3bd1\ncommit-date: 2026-03-25\nhost: x86_64-unknown-linux-gnu\nrelease: 1.94.1\nLLVM version: 21.1.8",
+    "stderr": ""
+  },
+  "cargo": {
+    "command": [
+      "cargo",
+      "-V"
+    ],
+    "exit_code": 0,
+    "stdout": "cargo 1.94.1 (29ea6fb6a 2026-03-24)",
+    "stderr": ""
+  },
+  "cargo_toml_sha256": "14f5e4d4f172150d6c212b61871da24a4e5b26e34e363f6de2a7f250bbe6e48d",
+  "cargo_lock_sha256": "c26c9f1999da579c0d1176c62981afa716ea998949a8dd15b1365f85b66944e3",
+  "release_profile": {
+    "manifest": {
+      "lto": "\"fat\"",
+      "codegen-units": "1"
+    },
+    "environment_overrides": {},
+    "cargo_config_sha256": {},
+    "qjs_rustc_invocation": {
+      "command": "/home/eric/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name qjs --edition=2024 apps/cli/src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C opt-level=3 -C lto=fat -C codegen-units=1 '--warn=clippy::all' --forbid=unsafe_code --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values(\"default\", \"profiling\", \"test262-host\"))' -C metadata=2c3c1c97d85c5248 -C extra-filename=-a6159d3b4651fa75 --out-dir /tmp/oxide-phase2-a2-build/release/deps -C strip=debuginfo -L dependency=/tmp/oxide-phase2-a2-build/release/deps --extern quickjs_oxide=/tmp/oxide-phase2-a2-build/release/deps/libquickjs_oxide-12e89011af3dce7e.rlib --extern quickjs_oxide_host=/tmp/oxide-phase2-a2-build/release/deps/libquickjs_oxide_host-9e73cad3f8d8b0c7.rlib",
+      "crate": "qjs",
+      "codegen": {
+        "opt-level": "3",
+        "lto": "fat",
+        "codegen-units": "1"
+      },
+      "target": null
+    },
+    "observed_rustc_compilations": 9,
+    "observed_codegen_groups": [
+      {
+        "target": null,
+        "codegen": {},
+        "crates": [
+          "autocfg",
+          "build_script_build"
+        ]
+      },
+      {
+        "target": null,
+        "codegen": {
+          "opt-level": "3",
+          "codegen-units": "1"
+        },
+        "crates": [
+          "tz",
+          "num_traits",
+          "num_integer",
+          "num_bigint",
+          "quickjs_oxide",
+          "quickjs_oxide_host"
+        ]
+      },
+      {
+        "target": null,
+        "codegen": {
+          "opt-level": "3",
+          "lto": "fat",
+          "codegen-units": "1"
+        },
+        "crates": [
+          "qjs"
+        ]
+      }
+    ]
+  },
+  "target": {
+    "requested_triple": null,
+    "rustc_host": "x86_64-unknown-linux-gnu",
+    "observed_triple": null,
+    "observed_target_cpu": null,
+    "observed_target_feature": null
+  },
+  "commit_environment": "deccdde5ef8dda83eadcf1876d5bee706e5661b3"
+}

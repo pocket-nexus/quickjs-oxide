@@ -1,0 +1,2219 @@
+{
+  "schema": "oxide-compile-matrix-v1",
+  "created_utc": "2026-09-28T18:24:55Z",
+  "metric": "compile",
+  "goal": "script",
+  "repeat": 24,
+  "timeout_seconds": 120,
+  "order": "serial, alternating per repetition",
+  "instrumentation": "off (no profiling flags)",
+  "machine": {
+    "platform": "Linux-7.2.7-arch1-1-x86_64-with-glibc2.44",
+    "machine": "x86_64",
+    "cpu": "AMD Ryzen 7 7840HS with Radeon 780M Graphics",
+    "logical_cpus": 16,
+    "python": "3.14.7",
+    "cpu_affinity": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15
+    ],
+    "scaling_governors": {
+      "0": "powersave",
+      "1": "powersave",
+      "2": "powersave",
+      "3": "powersave",
+      "4": "powersave",
+      "5": "powersave",
+      "6": "powersave",
+      "7": "powersave",
+      "8": "powersave",
+      "9": "powersave",
+      "10": "powersave",
+      "11": "powersave",
+      "12": "powersave",
+      "13": "powersave",
+      "14": "powersave",
+      "15": "powersave"
+    },
+    "load_average": [
+      1.1611328125,
+      1.134765625,
+      1.09814453125
+    ],
+    "macos": null,
+    "runner_sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5",
+    "repository": {
+      "commit": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD"
+        ],
+        "exit_code": 0,
+        "stdout": "deccdde5ef8dda83eadcf1876d5bee706e5661b3",
+        "stderr": ""
+      },
+      "tree": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD^{tree}"
+        ],
+        "exit_code": 0,
+        "stdout": "00d026fd3670aede5b2ff4f430c39efb82182add",
+        "stderr": ""
+      },
+      "top_level": {
+        "command": [
+          "git",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "exit_code": 0,
+        "stdout": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/378473c5-1638-4d3b-a285-a477e60c62bd",
+        "stderr": ""
+      },
+      "status": {
+        "command": [
+          "git",
+          "status",
+          "--porcelain"
+        ],
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    }
+  },
+  "corpus": "/tmp/oxide-phase2-a1-compile-corpus",
+  "workloads": [
+    {
+      "case": "lexical-loop-500",
+      "path": "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js",
+      "bytes": 44890,
+      "sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c"
+    },
+    {
+      "case": "preinc-pair-500",
+      "path": "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js",
+      "bytes": 34890,
+      "sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3"
+    }
+  ],
+  "engines": {
+    "left": {
+      "type": "oxide",
+      "path": "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+      "sha256": "01e2b80a31fe4b32dfeb8404084dcb62620bc8983b265793160f5460744563cb",
+      "version": {
+        "command": [
+          "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+          "--version"
+        ],
+        "exit_code": 0,
+        "stdout": "oxide-compile-probe 1",
+        "stderr": ""
+      },
+      "build": {
+        "command": [
+          "cargo",
+          "build",
+          "--release",
+          "--manifest-path",
+          "/tmp/oxide-phase2-a2-compile-probe/Cargo.toml",
+          "--target-dir",
+          "/tmp/oxide-phase2-a2-compile-probe/target"
+        ],
+        "repository": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/378473c5-1638-4d3b-a285-a477e60c62bd",
+        "binary": "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "binary_sha256": "01e2b80a31fe4b32dfeb8404084dcb62620bc8983b265793160f5460744563cb",
+        "source_sha256": "9c3ff10353b51995a90f2c62868e0b6337d3163983f3876e1f5c4f271829cfae",
+        "cargo_lock_sha256": "d1b16903f0b6008576770f59344f872080c600d52197b27ad6c13a007d3ac5b5",
+        "dependency_commit": "deccdde5ef8dda83eadcf1876d5bee706e5661b3",
+        "source_identity": {
+          "kind": "git-checkout",
+          "note": "patch covers tracked files; stage receipt must additionally hash untracked implementation files"
+        },
+        "source_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "features": [],
+        "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)\nbinary: rustc\ncommit-hash: e408947bfd200af42db322daf0fadfe7e26d3bd1\ncommit-date: 2026-03-25\nhost: x86_64-unknown-linux-gnu\nrelease: 1.94.1\nLLVM version: 21.1.8\n",
+        "rustflags": null,
+        "encoded_rustflags": null
+      }
+    },
+    "right": {
+      "type": "oxide",
+      "path": "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+      "sha256": "01e2b80a31fe4b32dfeb8404084dcb62620bc8983b265793160f5460744563cb",
+      "version": {
+        "command": [
+          "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+          "--version"
+        ],
+        "exit_code": 0,
+        "stdout": "oxide-compile-probe 1",
+        "stderr": ""
+      },
+      "build": {
+        "command": [
+          "cargo",
+          "build",
+          "--release",
+          "--manifest-path",
+          "/tmp/oxide-phase2-a2-compile-probe/Cargo.toml",
+          "--target-dir",
+          "/tmp/oxide-phase2-a2-compile-probe/target"
+        ],
+        "repository": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/378473c5-1638-4d3b-a285-a477e60c62bd",
+        "binary": "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "binary_sha256": "01e2b80a31fe4b32dfeb8404084dcb62620bc8983b265793160f5460744563cb",
+        "source_sha256": "9c3ff10353b51995a90f2c62868e0b6337d3163983f3876e1f5c4f271829cfae",
+        "cargo_lock_sha256": "d1b16903f0b6008576770f59344f872080c600d52197b27ad6c13a007d3ac5b5",
+        "dependency_commit": "deccdde5ef8dda83eadcf1876d5bee706e5661b3",
+        "source_identity": {
+          "kind": "git-checkout",
+          "note": "patch covers tracked files; stage receipt must additionally hash untracked implementation files"
+        },
+        "source_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "features": [],
+        "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)\nbinary: rustc\ncommit-hash: e408947bfd200af42db322daf0fadfe7e26d3bd1\ncommit-date: 2026-03-25\nhost: x86_64-unknown-linux-gnu\nrelease: 1.94.1\nLLVM version: 21.1.8\n",
+        "rustflags": null,
+        "encoded_rustflags": null
+      }
+    }
+  },
+  "node_probe_sha256": "6c218529930ad316002eaa496ccaf40af6badffe77ec5e825ac1437a4752a938",
+  "runner_sha256": "37a3a6d66cd1e1582814257418f057a031846a0697c15dc0026bd72e6a00fd19",
+  "samples": [
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 19388715,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-0.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-0.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 0,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15718181
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18036267,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-0.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-0.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 0,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14057642
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 19668022,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-1.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-1.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 1,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15755951
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18842415,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-1.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-1.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 1,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14936187
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18209794,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-2.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-2.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 2,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14463807
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18406665,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-2.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-2.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 2,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14549138
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18889765,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-3.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-3.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 3,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14861797
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 17983478,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-3.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-3.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 3,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14105232
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 21529698,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-4.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-4.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 4,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 17537277
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 19104700,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-4.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-4.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 4,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15336361
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 19121241,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-5.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-5.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 5,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14944162
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18334038,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-5.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-5.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 5,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14254793
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18792812,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-6.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-6.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 6,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 13968013
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18118943,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-6.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-6.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 6,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14257067
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18165311,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-7.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-7.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 7,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14318524
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18997097,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-7.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-7.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 7,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14771157
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18374955,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-8.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-8.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 8,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14301762
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 17769094,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-8.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-8.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 8,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 13900146
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18645154,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-9.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-9.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 9,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14031322
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 16985679,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-9.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-9.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 9,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 13836946
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18804664,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-10.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-10.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 10,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15007471
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 17892366,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-10.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-10.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 10,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14123396
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18921305,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-11.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-11.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 11,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15025836
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18663258,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-11.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-11.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 11,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14679423
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18725705,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-12.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-12.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 12,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14781135
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 19648915,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-12.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-12.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 12,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15654199
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 19363948,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-13.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-13.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 13,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14781485
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18593146,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-13.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-13.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 13,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14539089
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 19346435,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-14.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-14.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 14,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15083876
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18127930,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-14.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-14.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 14,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14399225
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18828249,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-15.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-15.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 15,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15009566
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 19584394,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-15.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-15.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 15,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14631844
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 17508293,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-16.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-16.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 16,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 13942346
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 17295732,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-16.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-16.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 16,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 13862735
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 20299872,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-17.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-17.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 17,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 16373194
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 22103209,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-17.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-17.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 17,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 17620504
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18468241,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-18.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-18.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 18,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14773751
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 17726664,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-18.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-18.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 18,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14133736
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 19238211,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-19.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-19.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 19,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15515077
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18928087,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-19.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-19.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 19,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14427409
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 21105369,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-20.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-20.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 20,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 16200969
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18994602,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-20.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-20.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 20,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14544209
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 17514935,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-21.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-21.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 21,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 13973954
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 17674075,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-21.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-21.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 21,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14221240
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 19103627,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-22.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-22.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 22,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15122698
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 19238342,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-22.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-22.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 22,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15234138
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18443524,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-23.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-right-23.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 23,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14272697
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18469414,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-23.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/lexical-loop-500-left-23.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 23,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14736782
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11252307,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-0.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-0.stderr",
+      "case": "preinc-pair-500",
+      "engine": "left",
+      "repetition": 0,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 7774315
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11969920,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-0.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-0.stderr",
+      "case": "preinc-pair-500",
+      "engine": "right",
+      "repetition": 0,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8332457
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12381354,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-1.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-1.stderr",
+      "case": "preinc-pair-500",
+      "engine": "right",
+      "repetition": 1,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8816499
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12535825,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-1.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-1.stderr",
+      "case": "preinc-pair-500",
+      "engine": "left",
+      "repetition": 1,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8860631
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 13237697,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-2.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-2.stderr",
+      "case": "preinc-pair-500",
+      "engine": "left",
+      "repetition": 2,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8806771
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 13022713,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-2.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-2.stderr",
+      "case": "preinc-pair-500",
+      "engine": "right",
+      "repetition": 2,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8916898
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11402680,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-3.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-3.stderr",
+      "case": "preinc-pair-500",
+      "engine": "right",
+      "repetition": 3,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 7986645
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12906374,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-3.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-3.stderr",
+      "case": "preinc-pair-500",
+      "engine": "left",
+      "repetition": 3,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 9173362
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12588385,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-4.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-4.stderr",
+      "case": "preinc-pair-500",
+      "engine": "left",
+      "repetition": 4,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8878435
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12257711,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-4.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-4.stderr",
+      "case": "preinc-pair-500",
+      "engine": "right",
+      "repetition": 4,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8630769
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12162813,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-5.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-5.stderr",
+      "case": "preinc-pair-500",
+      "engine": "right",
+      "repetition": 5,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8795519
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12489598,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-5.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-5.stderr",
+      "case": "preinc-pair-500",
+      "engine": "left",
+      "repetition": 5,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8711110
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11301409,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-6.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-6.stderr",
+      "case": "preinc-pair-500",
+      "engine": "left",
+      "repetition": 6,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 7986595
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12016037,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-6.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-6.stderr",
+      "case": "preinc-pair-500",
+      "engine": "right",
+      "repetition": 6,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8057448
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12589507,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-7.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-7.stderr",
+      "case": "preinc-pair-500",
+      "engine": "right",
+      "repetition": 7,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8640768
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12180846,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-7.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-7.stderr",
+      "case": "preinc-pair-500",
+      "engine": "left",
+      "repetition": 7,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8671666
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11564034,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-8.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-8.stderr",
+      "case": "preinc-pair-500",
+      "engine": "left",
+      "repetition": 8,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8249340
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 13415042,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-8.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-8.stderr",
+      "case": "preinc-pair-500",
+      "engine": "right",
+      "repetition": 8,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 9594584
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12925089,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-9.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-9.stderr",
+      "case": "preinc-pair-500",
+      "engine": "right",
+      "repetition": 9,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 9595626
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 14213546,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-9.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-9.stderr",
+      "case": "preinc-pair-500",
+      "engine": "left",
+      "repetition": 9,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8072878
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11781103,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-10.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-10.stderr",
+      "case": "preinc-pair-500",
+      "engine": "left",
+      "repetition": 10,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 7835481
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12264193,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-10.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-10.stderr",
+      "case": "preinc-pair-500",
+      "engine": "right",
+      "repetition": 10,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8922177
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 13280328,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-11.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-11.stderr",
+      "case": "preinc-pair-500",
+      "engine": "right",
+      "repetition": 11,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 9696046
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 13054372,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-11.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-11.stderr",
+      "case": "preinc-pair-500",
+      "engine": "left",
+      "repetition": 11,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8918602
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 13052769,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-12.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-12.stderr",
+      "case": "preinc-pair-500",
+      "engine": "left",
+      "repetition": 12,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8903834
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12446957,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-12.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-12.stderr",
+      "case": "preinc-pair-500",
+      "engine": "right",
+      "repetition": 12,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8504751
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12474591,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-13.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-13.stderr",
+      "case": "preinc-pair-500",
+      "engine": "right",
+      "repetition": 13,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8524839
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12520757,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-13.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-13.stderr",
+      "case": "preinc-pair-500",
+      "engine": "left",
+      "repetition": 13,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8751707
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12163554,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-14.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-14.stderr",
+      "case": "preinc-pair-500",
+      "engine": "left",
+      "repetition": 14,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8446982
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12015465,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-14.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-14.stderr",
+      "case": "preinc-pair-500",
+      "engine": "right",
+      "repetition": 14,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8302330
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12169655,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-15.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-15.stderr",
+      "case": "preinc-pair-500",
+      "engine": "right",
+      "repetition": 15,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8646328
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11953599,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-15.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-15.stderr",
+      "case": "preinc-pair-500",
+      "engine": "left",
+      "repetition": 15,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8670614
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 13693486,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-16.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-16.stderr",
+      "case": "preinc-pair-500",
+      "engine": "left",
+      "repetition": 16,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 9822213
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11616403,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-16.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-16.stderr",
+      "case": "preinc-pair-500",
+      "engine": "right",
+      "repetition": 16,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 7882228
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12694404,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-17.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-17.stderr",
+      "case": "preinc-pair-500",
+      "engine": "right",
+      "repetition": 17,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8833300
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12041454,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-17.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-17.stderr",
+      "case": "preinc-pair-500",
+      "engine": "left",
+      "repetition": 17,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8652860
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11472272,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-18.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-18.stderr",
+      "case": "preinc-pair-500",
+      "engine": "left",
+      "repetition": 18,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8306077
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12363159,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-18.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-18.stderr",
+      "case": "preinc-pair-500",
+      "engine": "right",
+      "repetition": 18,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8748200
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12240729,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-19.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-19.stderr",
+      "case": "preinc-pair-500",
+      "engine": "right",
+      "repetition": 19,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8323220
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11321578,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-19.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-19.stderr",
+      "case": "preinc-pair-500",
+      "engine": "left",
+      "repetition": 19,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 7857712
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 10994521,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-20.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-20.stderr",
+      "case": "preinc-pair-500",
+      "engine": "left",
+      "repetition": 20,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 7897308
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11805350,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-20.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-20.stderr",
+      "case": "preinc-pair-500",
+      "engine": "right",
+      "repetition": 20,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8363415
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12086739,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-21.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-21.stderr",
+      "case": "preinc-pair-500",
+      "engine": "right",
+      "repetition": 21,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8241746
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12604925,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-21.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-21.stderr",
+      "case": "preinc-pair-500",
+      "engine": "left",
+      "repetition": 21,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8662318
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11822642,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-22.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-22.stderr",
+      "case": "preinc-pair-500",
+      "engine": "left",
+      "repetition": 22,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8012505
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12084625,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-22.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-22.stderr",
+      "case": "preinc-pair-500",
+      "engine": "right",
+      "repetition": 22,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8353687
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 11376201,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-23.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-right-23.stderr",
+      "case": "preinc-pair-500",
+      "engine": "right",
+      "repetition": 23,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 7783042
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-a2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/preinc-pair-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12317625,
+      "stdout": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-23.stdout",
+      "stderr": "/tmp/oxide-phase2-a2-compile-aa/raw/preinc-pair-500-left-23.stderr",
+      "case": "preinc-pair-500",
+      "engine": "left",
+      "repetition": 23,
+      "workload_sha256": "fea918c485b6e1ae7ea124f5f45e2c856701b3dde14bb74be46dd546b22922a3",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 8519580
+      }
+    }
+  ],
+  "summary": [
+    {
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "samples": 24,
+      "successful": 24,
+      "failures": [],
+      "eligible": true,
+      "bytes": 44890,
+      "metrics": {
+        "ns": {
+          "raw": [
+            15718181,
+            14936187,
+            14463807,
+            14105232,
+            17537277,
+            14254793,
+            13968013,
+            14771157,
+            14301762,
+            13836946,
+            15007471,
+            14679423,
+            14781135,
+            14539089,
+            15083876,
+            14631844,
+            13942346,
+            17620504,
+            14773751,
+            14427409,
+            16200969,
+            14221240,
+            15122698,
+            14736782
+          ],
+          "minimum": 13836946,
+          "median": 14708102.5,
+          "maximum": 17620504,
+          "stdev": 985426.1389950373
+        },
+        "mb_per_second": 3.0520592306179535
+      }
+    },
+    {
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "samples": 24,
+      "successful": 24,
+      "failures": [],
+      "eligible": true,
+      "bytes": 44890,
+      "metrics": {
+        "ns": {
+          "raw": [
+            14057642,
+            15755951,
+            14549138,
+            14861797,
+            15336361,
+            14944162,
+            14257067,
+            14318524,
+            13900146,
+            14031322,
+            14123396,
+            15025836,
+            15654199,
+            14781485,
+            14399225,
+            15009566,
+            13862735,
+            16373194,
+            14133736,
+            15515077,
+            14544209,
+            13973954,
+            15234138,
+            14272697
+          ],
+          "minimum": 13862735,
+          "median": 14546673.5,
+          "maximum": 16373194,
+          "stdev": 676184.7216293021
+        },
+        "mb_per_second": 3.085928889515531
+      }
+    },
+    {
+      "case": "preinc-pair-500",
+      "engine": "left",
+      "samples": 24,
+      "successful": 24,
+      "failures": [],
+      "eligible": true,
+      "bytes": 34890,
+      "metrics": {
+        "ns": {
+          "raw": [
+            7774315,
+            8860631,
+            8806771,
+            9173362,
+            8878435,
+            8711110,
+            7986595,
+            8671666,
+            8249340,
+            8072878,
+            7835481,
+            8918602,
+            8903834,
+            8751707,
+            8446982,
+            8670614,
+            9822213,
+            8652860,
+            8306077,
+            7857712,
+            7897308,
+            8662318,
+            8012505,
+            8519580
+          ],
+          "minimum": 7774315,
+          "median": 8657589.0,
+          "maximum": 9822213,
+          "stdev": 495486.9156005952
+        },
+        "mb_per_second": 4.029990335646564
+      }
+    },
+    {
+      "case": "preinc-pair-500",
+      "engine": "right",
+      "samples": 24,
+      "successful": 24,
+      "failures": [],
+      "eligible": true,
+      "bytes": 34890,
+      "metrics": {
+        "ns": {
+          "raw": [
+            8332457,
+            8816499,
+            8916898,
+            7986645,
+            8630769,
+            8795519,
+            8057448,
+            8640768,
+            9594584,
+            9595626,
+            8922177,
+            9696046,
+            8504751,
+            8524839,
+            8302330,
+            8646328,
+            7882228,
+            8833300,
+            8748200,
+            8323220,
+            8363415,
+            8241746,
+            8353687,
+            7783042
+          ],
+          "minimum": 7783042,
+          "median": 8577804.0,
+          "maximum": 9696046,
+          "stdev": 506547.8038795649
+        },
+        "mb_per_second": 4.067474612383309
+      }
+    }
+  ],
+  "ratios": [
+    {
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "reference": "left",
+      "ratio": 1.0110973137604278
+    },
+    {
+      "case": "preinc-pair-500",
+      "engine": "right",
+      "reference": "left",
+      "ratio": 1.0093013316695043
+    }
+  ]
+}

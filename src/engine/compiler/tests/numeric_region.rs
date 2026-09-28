@@ -239,6 +239,10 @@ fn adjacent_preincrement_adds_compose() {
             0,
         ),
         (
+            "(function(){function f(a){var i=0,acc=1;return String(acc+a[++i]+a[++i])+':'+i;}return f([0,4,,8]);})()",
+            0,
+        ),
+        (
             "(function(){function f(a){var i=0,acc=1;return acc+a[++i]+a[++i];}return f([0,2147483647,1]);})()",
             1,
         ),
