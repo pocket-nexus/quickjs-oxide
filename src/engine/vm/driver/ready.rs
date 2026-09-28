@@ -25,7 +25,16 @@ pub(super) fn run(
     mut id: FrameId,
     next_operation: &mut u64,
 ) -> Result<Boundary, Error> {
+    #[cfg(feature = "profiling")]
+    let mut entered = false;
     loop {
+        #[cfg(feature = "profiling")]
+        {
+            if entered {
+                record_event("frame_authentication_reentry");
+            }
+            entered = true;
+        }
         let result = super::execute_frame(execution, id);
         #[cfg(feature = "profiling")]
         record_exit(&result);
@@ -139,6 +148,8 @@ pub(super) fn run(
             } => {
                 #[cfg(feature = "profiling")]
                 record_event("property_read_action_exit");
+                #[cfg(feature = "profiling")]
+                record_event("driver_handoff.named_read");
                 let progress = crate::engine::vm::property_driver::read_progress(
                     runtime,
                     execution,

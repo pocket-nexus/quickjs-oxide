@@ -565,11 +565,19 @@ impl Runtime {
             ));
         };
         if *stored == Some(pc) {
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "runtime_pc_publication_repeated",
+            );
             return Ok(());
         }
         *stored = Some(pc);
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("runtime_pc_publication");
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "runtime_pc_publication_materialized",
+        );
         Ok(())
     }
 
@@ -596,11 +604,19 @@ impl Runtime {
             ));
         };
         if *frame_pc == Some(pc) {
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "runtime_pc_publication_repeated",
+            );
             return Ok(());
         }
         *frame_pc = Some(pc);
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("runtime_pc_publication");
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "runtime_pc_publication_active",
+        );
         Ok(())
     }
 
@@ -990,6 +1006,8 @@ impl Runtime {
         });
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("lazy_frame_materialized");
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("frame_materialization_new");
         Ok(ActiveFrameGuard {
             runtime: self.clone(),
             token,

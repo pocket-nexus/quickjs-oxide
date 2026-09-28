@@ -135,6 +135,10 @@ impl SlotStore {
         window: &'a mut FrameWindow,
     ) -> Result<FrameTransaction<'a>, Error> {
         self.check_current(window)?;
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "frame_authentication.transaction",
+        );
         Ok(FrameTransaction {
             store: self,
             window,
@@ -436,23 +440,21 @@ impl FrameSlots<'_> {
         Ok(())
     }
 
-    pub(in crate::engine::vm) fn property_ic_read(
+    pub(in crate::engine::vm) fn property_ic_read<Pending>(
         &mut self,
         runtime: &Runtime,
         executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
-        pc: usize,
-        key_index: u32,
-        keep_receiver: bool,
+        operation: super::NamedReadOperation,
         native: &mut Option<crate::engine::object::LinkedNativeSelection>,
-    ) -> Result<super::PropertyReadProgress, Error> {
+        pending: Pending,
+    ) -> Result<super::LocalStep<Pending>, Error> {
         self.store.property_ic_read_current(
             self.window,
             runtime,
             executable,
-            pc,
-            key_index,
-            keep_receiver,
+            operation,
             native,
+            pending,
         )
     }
 

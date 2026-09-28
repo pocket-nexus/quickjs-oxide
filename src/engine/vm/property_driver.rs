@@ -130,7 +130,13 @@ pub(super) fn read_progress(
                 }
                 return Ok(PropertyProgress::Completed);
             }
-            Ok(LinkedReadCompletion::Pending(read)) => selected_read = Some(read),
+            Ok(LinkedReadCompletion::Pending(read)) => {
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "property_lookup_handoff_selected",
+                );
+                selected_read = Some(read);
+            }
             Ok(LinkedReadCompletion::Declined) => {}
             Ok(LinkedReadCompletion::LookupError(error)) => {
                 return throw_error(runtime, realm, error).map(PropertyProgress::Deferred);
