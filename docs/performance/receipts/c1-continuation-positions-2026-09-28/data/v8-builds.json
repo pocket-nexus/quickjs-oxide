@@ -1,0 +1,89 @@
+{
+  "schema": "oxide-continuation-v8-builds-v1",
+  "builds": [
+    {
+      "side": "baseline",
+      "mode": "plain",
+      "source_commit": "734bc1285610652baccfd9373033ff652d2fc1e0",
+      "source_tree": "bbb6c9d5dacd7cec3de8fedbc27b8bea7a8460f7",
+      "binary_sha256": "d41d89fa065549c45a622cf3b802b206e510ca27b1589bae86b7ddd32b19dab9",
+      "rustc": "rustc 1.88.0 (6b00bc388 2025-06-23)",
+      "cargo": "cargo 1.88.0 (873a06493 2025-05-10)",
+      "cargo_toml_sha256": "14f5e4d4f172150d6c212b61871da24a4e5b26e34e363f6de2a7f250bbe6e48d",
+      "cargo_lock_sha256": "c26c9f1999da579c0d1176c62981afa716ea998949a8dd15b1365f85b66944e3",
+      "release_profile": {
+        "lto": "\"fat\"",
+        "codegen-units": "1"
+      },
+      "qjs_codegen": {
+        "opt-level": "3",
+        "lto": "fat",
+        "codegen-units": "1"
+      },
+      "source_clean": true
+    },
+    {
+      "side": "baseline",
+      "mode": "profile",
+      "source_commit": "734bc1285610652baccfd9373033ff652d2fc1e0",
+      "source_tree": "bbb6c9d5dacd7cec3de8fedbc27b8bea7a8460f7",
+      "binary_sha256": "abbb3a513bb2da664cfc72a621c4b086e03afb80537bec580f91b2e4ddfac264",
+      "rustc": "rustc 1.88.0 (6b00bc388 2025-06-23)",
+      "cargo": "cargo 1.88.0 (873a06493 2025-05-10)",
+      "cargo_toml_sha256": "14f5e4d4f172150d6c212b61871da24a4e5b26e34e363f6de2a7f250bbe6e48d",
+      "cargo_lock_sha256": "c26c9f1999da579c0d1176c62981afa716ea998949a8dd15b1365f85b66944e3",
+      "release_profile": {
+        "lto": "\"fat\"",
+        "codegen-units": "1"
+      },
+      "qjs_codegen": {
+        "opt-level": "3",
+        "lto": "fat",
+        "codegen-units": "1"
+      },
+      "source_clean": true
+    },
+    {
+      "side": "c1",
+      "mode": "plain",
+      "source_commit": "9a9290dff8e2e7a18f3d2b54284ec518565a1a5d",
+      "source_tree": "78de3cf1fcdf727b3b3190ef2feb48f66dcfd36b",
+      "binary_sha256": "ebaab1134294561314fa30304c41d26f94d033d236c49b14d849c5a08f84d78c",
+      "rustc": "rustc 1.88.0 (6b00bc388 2025-06-23)",
+      "cargo": "cargo 1.88.0 (873a06493 2025-05-10)",
+      "cargo_toml_sha256": "14f5e4d4f172150d6c212b61871da24a4e5b26e34e363f6de2a7f250bbe6e48d",
+      "cargo_lock_sha256": "c26c9f1999da579c0d1176c62981afa716ea998949a8dd15b1365f85b66944e3",
+      "release_profile": {
+        "lto": "\"fat\"",
+        "codegen-units": "1"
+      },
+      "qjs_codegen": {
+        "opt-level": "3",
+        "lto": "fat",
+        "codegen-units": "1"
+      },
+      "source_clean": true
+    },
+    {
+      "side": "c1",
+      "mode": "profile",
+      "source_commit": "9a9290dff8e2e7a18f3d2b54284ec518565a1a5d",
+      "source_tree": "78de3cf1fcdf727b3b3190ef2feb48f66dcfd36b",
+      "binary_sha256": "cc5ee29e49489f3f73b9b493de80ec25fd2dac9091d5157bffab886065d23428",
+      "rustc": "rustc 1.88.0 (6b00bc388 2025-06-23)",
+      "cargo": "cargo 1.88.0 (873a06493 2025-05-10)",
+      "cargo_toml_sha256": "14f5e4d4f172150d6c212b61871da24a4e5b26e34e363f6de2a7f250bbe6e48d",
+      "cargo_lock_sha256": "c26c9f1999da579c0d1176c62981afa716ea998949a8dd15b1365f85b66944e3",
+      "release_profile": {
+        "lto": "\"fat\"",
+        "codegen-units": "1"
+      },
+      "qjs_codegen": {
+        "opt-level": "3",
+        "lto": "fat",
+        "codegen-units": "1"
+      },
+      "source_clean": true
+    }
+  ]
+}

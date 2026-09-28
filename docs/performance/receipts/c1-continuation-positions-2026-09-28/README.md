@@ -1,5 +1,6 @@
 # C1: decoded fallthrough for primitive numeric completion
 
+The [V8-base follow-up](v8-followup.md) records the fresh #53 V8 comparison.
 The [M2-base follow-up](m2-followup.md) records the later rebase onto #53
 `38e9eb86`, stronger boundary tests, fresh builds, and repeat measurements.
 The measurements below remain tied to their original #53 `10262309` base.
