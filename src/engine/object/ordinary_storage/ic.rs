@@ -4,9 +4,20 @@ use crate::engine::api::{runtime::Runtime, runtime_error::RuntimeError};
 use crate::engine::code::runtime::PublishedFunctionSnapshot;
 use crate::engine::heap::runtime::RuntimeState;
 use crate::engine::heap::{ObjectId, ObjectPayload, RawValue, SlotReleaseReadiness};
-use crate::engine::object::property_ic::CacheSelection;
+use crate::engine::object::property_ic::{CacheSelection, PropertyReadCache};
 use crate::engine::value::JsValue;
 use crate::engine::value::number::operations::Number;
+
+#[inline(always)]
+fn record_selection(_result: &NamedDataSelection) {
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_execution_event(match _result {
+        NamedDataSelection::Data(_) => "property_selection.data",
+        NamedDataSelection::CompleteAbsent => "property_selection.absent",
+        NamedDataSelection::ContinueLookup => "property_selection.general",
+        NamedDataSelection::NeedsObservation => "property_selection.observe",
+    });
+}
 
 impl Runtime {
     /// A miss only records a location and leaves the canonical read untouched.
@@ -177,47 +188,67 @@ impl Runtime {
                 .uncached_field_in_state(&state, base, atom, keep_receiver, native)
                 .map_or(NamedDataSelection::ContinueLookup, NamedDataSelection::Data);
         };
-        let raw = match cache.read(&state.heap, self.domain_id(), executable.realm, receiver) {
-            Some(raw) => {
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_execution_event(
-                    "property_selection.cache",
-                );
-                CacheSelection::Data(raw)
-            }
-            None => {
-                let selected = cache.miss_selected(
-                    &state.heap,
-                    &state.atoms,
-                    self.domain_id(),
-                    executable.realm,
-                    Some(receiver),
-                    atom,
-                );
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_execution_event(
-                    "property_selection.cache_miss",
-                );
-                selected
-            }
-        };
-        let result = match raw {
-            CacheSelection::Data(raw) => self
+        if let Some(raw) = cache.read(&state.heap, self.domain_id(), executable.realm, receiver) {
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event("property_selection.cache");
+            let result = self
                 .promote_field_in_state(&state, raw, keep_receiver, native)
+                .map_or(NamedDataSelection::ContinueLookup, NamedDataSelection::Data);
+            record_selection(&result);
+            return result;
+        }
+        let result = self.select_linked_miss(
+            &state,
+            base,
+            cache,
+            atom,
+            executable.realm,
+            receiver,
+            keep_receiver,
+            native,
+        );
+        record_selection(&result);
+        result
+    }
+
+    /// Cache adaptation and general own-data probing do not enter the warm
+    /// location-hit path. The selected borrowed value is promoted under this
+    /// same state borrow before it can escape.
+    #[cold]
+    #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
+    fn select_linked_miss(
+        &self,
+        state: &RuntimeState,
+        base: &JsValue,
+        cache: &PropertyReadCache,
+        atom: crate::engine::atom::Atom,
+        realm: crate::engine::heap::ContextId,
+        receiver: crate::engine::heap::ObjectId,
+        keep_receiver: bool,
+        native: &mut Option<LinkedNativeSelection>,
+    ) -> NamedDataSelection {
+        let selected = cache.miss_selected(
+            &state.heap,
+            &state.atoms,
+            self.domain_id(),
+            realm,
+            Some(receiver),
+            atom,
+        );
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "property_selection.cache_miss",
+        );
+        match selected {
+            CacheSelection::Data(raw) => self
+                .promote_field_in_state(state, raw, keep_receiver, native)
                 .map_or(NamedDataSelection::ContinueLookup, NamedDataSelection::Data),
             CacheSelection::CompleteAbsent => NamedDataSelection::CompleteAbsent,
             CacheSelection::Unresolved => self
-                .uncached_field_in_state(&state, base, atom, keep_receiver, native)
+                .uncached_field_in_state(state, base, atom, keep_receiver, native)
                 .map_or(NamedDataSelection::ContinueLookup, NamedDataSelection::Data),
-        };
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(match result {
-            NamedDataSelection::Data(_) => "property_selection.data",
-            NamedDataSelection::CompleteAbsent => "property_selection.absent",
-            NamedDataSelection::ContinueLookup => "property_selection.general",
-            NamedDataSelection::NeedsObservation => "property_selection.observe",
-        });
-        result
+        }
     }
 
     #[cfg(test)]
