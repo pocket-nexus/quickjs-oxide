@@ -99,28 +99,6 @@ impl FrameSlots<'_> {
             .ok_or_else(|| Error::internal("owned destination is vacant"))?;
         // Match the canonical operand validation before any ownership work.
         let source = self.peek(0)?;
-        // A numeric source and destination are the shortest form of the same
-        // owner-free transfer. Keep the inline representation unchanged; this
-        // is a machine-cost specialization, not an admission requirement.
-        if matches!(old, FrameBinding::Direct(value) if value.as_number_repr().is_some())
-            && let Some(number) = source.as_number_repr()
-        {
-            self.store.slots[destination_index] = Some(FrameBinding::Direct(number.into()));
-            if !matches!(operation, Transfer::Set) {
-                let operand_index = self.window.operands().start + self.window.depth - 1;
-                self.store.slots[operand_index] = None;
-                self.window.depth -= 1;
-                #[cfg(feature = "profiling")]
-                {
-                    self.store.live_slots -= 1;
-                    record_owned_storage(Cost::Clear(1));
-                }
-            }
-            #[cfg(feature = "profiling")]
-            record_owned_storage(Cost::Move(2));
-            record_completion(Displaced::Scalar);
-            return Ok(StoreProgress::Committed);
-        }
         // Both owners are inline. The binding state and operand have already
         // been checked under this window borrow, so no heap admission, retain,
         // or release is necessary. This applies to every owner-free scalar,

@@ -528,6 +528,16 @@ impl FrameSlots<'_> {
         value.as_number_repr()
     }
 
+    #[inline]
+    pub(in crate::engine::vm) fn store_proven_number_operand(
+        &mut self,
+        destination: DirectSlot,
+        keep: bool,
+    ) -> bool {
+        self.store
+            .store_proven_number_operand_current(self.window, destination, keep)
+    }
+
     #[inline(always)]
     pub(in crate::engine::vm) fn replace_local(
         &mut self,

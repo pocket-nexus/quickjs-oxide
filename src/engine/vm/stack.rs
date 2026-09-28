@@ -222,6 +222,7 @@ impl Drop for FrameStorageGuard {
     }
 }
 
+mod number;
 mod transfer;
 mod window;
 pub(in crate::engine::vm) use transfer::StoreProgress;

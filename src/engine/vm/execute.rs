@@ -1523,6 +1523,14 @@ pub(super) fn execute_frame(
                 if checked && binding == BindingClass::Uninitialized {
                     return Ok(VmAction::LexicalUninitialized(index));
                 }
+                if binding == BindingClass::DirectNumber
+                    && cursor.with_slots(|slots| {
+                        Ok(slots.store_proven_number_operand(DirectSlot::Local(index), keep))
+                    })?
+                {
+                    cursor.advance(next);
+                    continue;
+                }
                 let progress = cursor.with_slots(|slots| {
                     if keep {
                         slots.set_direct(runtime, DirectSlot::Local(index))
@@ -1561,6 +1569,14 @@ pub(super) fn execute_frame(
                         checked: false,
                         keep,
                     });
+                }
+                if binding == BindingClass::DirectNumber
+                    && cursor.with_slots(|slots| {
+                        Ok(slots.store_proven_number_operand(DirectSlot::Argument(index), keep))
+                    })?
+                {
+                    cursor.advance(next);
+                    continue;
                 }
                 let progress = cursor.with_slots(|slots| {
                     if keep {
