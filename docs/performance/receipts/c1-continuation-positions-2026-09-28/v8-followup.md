@@ -38,8 +38,15 @@ A separate [compile-once A/A control](data/v8-execute-aa.json) used byte-identic
 probe source (SHA-256 `3effd109dc4983d3d69cc9c91d4ae744ffca26a932e78f97b08f0f1d2d8db6d7`)
 and excluded startup and compilation. Its same-binary one-frame median differed
 by 24.0%, with individual primitive samples spanning 0.58–2.35 seconds.
-An unrelated worktree oracle test was active. We did not run a compile-once
-A/B comparison under that load or claim an elapsed-time improvement.
+An unrelated worktree oracle test was active, so that attempt did not
+support an A/B comparison. A later, lower-load [A/A control](data/v8-execute-aa-quiet.json)
+and [paired run](data/v8-execute-ab-quiet.json) used the same binaries, source
+and sample protocol. The long-lived-frame A/A ratio was 0.9875 and C1/#53
+A/B ratio was 0.8774; the per-call A/B ratio was 0.9802. The Number-only
+control moved to 1.194 in A/B while its A/A ratio was 0.8745. This is
+evidence of a targeted one-frame gain under this run, but the mixed controls
+do not establish a general runtime speedup or explain the collateral timing.
+No production design change is inferred from those samples.
 
 On this V8 base, 18 focused numeric tests pass both normally and with
 profiling, including actual wide comparison fallback, PostInc partial output,
