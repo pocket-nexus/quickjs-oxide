@@ -230,7 +230,8 @@ pub(in crate::engine::vm) use transfer::StoreProgress;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::engine::vm) enum LocalStep<Pending> {
     Completed,
-    ObserveBeforeRetry,
+    NeedsObservation,
+    Driver(Pending),
     Continue(Pending),
 }
 
@@ -262,7 +263,7 @@ impl SlotStore {
             // Canonical get can have effects before an output-capacity error;
             // declining here preserves that order without promoting a root.
             let Ok(index) = self.operand_push_index(window) else {
-                return Ok(LocalStep::Continue(pending));
+                return Ok(LocalStep::Driver(pending));
             };
             Some(index)
         } else {
@@ -287,7 +288,7 @@ impl SlotStore {
                 return Ok(LocalStep::Continue(pending));
             }
             crate::engine::object::NamedDataSelection::NeedsObservation => {
-                return Ok(LocalStep::ObserveBeforeRetry);
+                return Ok(LocalStep::NeedsObservation);
             }
         };
         if let Some(index) = output_index {
@@ -1824,7 +1825,7 @@ mod tests {
                     (),
                 )
                 .unwrap(),
-            super::LocalStep::Continue(())
+            super::LocalStep::Driver(())
         );
         assert_eq!(
             runtime
@@ -1916,7 +1917,7 @@ mod tests {
                     (),
                 )
                 .unwrap(),
-            super::LocalStep::ObserveBeforeRetry
+            super::LocalStep::NeedsObservation
         );
         assert_eq!(window.depth, 1);
         assert!(matches!(slots.peek(&window, 0), Ok(JsValue::Object(id)) if *id == lone_id));

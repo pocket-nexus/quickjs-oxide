@@ -20,8 +20,8 @@ use crate::engine::vm::execution::RunningExecution;
 use crate::engine::vm::frame::FrameId;
 use crate::engine::vm::frames::ActiveFrameToken;
 use crate::engine::vm::stack::{
-    DirectSlot, FrameSlots, FrameTransaction, LocalStep, NamedReadOperation, StoreProgress,
-    copy_value,
+    DirectSlot, FrameSlots, FrameTransaction, LinkedReadCompletion, LocalStep, NamedReadOperation,
+    StoreProgress, copy_value,
 };
 
 #[cfg(test)]
@@ -108,6 +108,49 @@ impl<'a> FrameCursor<'a> {
     ) -> Result<T, Error> {
         let mut slots = self.transaction.slots();
         operation(&mut slots)
+    }
+
+    fn complete_linked_named_read(
+        &mut self,
+        runtime: &crate::engine::api::runtime::Runtime,
+        executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
+        index: u32,
+        keep_receiver: bool,
+        next: usize,
+        native: &mut Option<crate::engine::object::LinkedNativeSelection>,
+    ) -> Result<LinkedReadCompletion, Error> {
+        let _depth = self.transaction.depth();
+        let mut receiver = None;
+        let resume = &mut self.resume;
+        let result = self.transaction.with_linked_own_read_selected(
+            runtime,
+            executable,
+            index,
+            Some(native),
+            |slots, value| {
+                receiver = Some(slots.pop()?);
+                if keep_receiver {
+                    slots.push_pending(&mut receiver)?;
+                }
+                *resume = next;
+                slots.push_pending(value)
+            },
+        );
+        if let Some(value) = receiver {
+            runtime
+                .release_jsvalue(value)
+                .map_err(runtime_error_to_vm_error)?;
+        }
+        if matches!(result, Ok(LinkedReadCompletion::Completed)) {
+            #[cfg(feature = "profiling")]
+            {
+                crate::engine::api::profiling::record_owned_instruction(_depth);
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "property_read_completed_directly",
+                );
+            }
+        }
+        result
     }
 
     fn move_owned(&mut self) -> Result<JsValue, Error> {
@@ -1406,7 +1449,7 @@ pub(super) fn execute_frame(
                         LocalStep::Completed
                     }
                     crate::engine::object::NamedDataSelection::NeedsObservation => {
-                        LocalStep::ObserveBeforeRetry
+                        LocalStep::NeedsObservation
                     }
                     crate::engine::object::NamedDataSelection::ContinueLookup => {
                         LocalStep::Continue(base)
@@ -1421,10 +1464,7 @@ pub(super) fn execute_frame(
                         cursor.advance(decoded.operand(2) as usize);
                         continue;
                     }
-                    LocalStep::ObserveBeforeRetry if !frame.active_frame.is_materialized() => {
-                        return Ok(VmAction::Materialize);
-                    }
-                    LocalStep::ObserveBeforeRetry | LocalStep::Continue(_) => {
+                    LocalStep::NeedsObservation | LocalStep::Driver(_) | LocalStep::Continue(_) => {
                         if decoded.opcode == Opcode::BorrowedFieldLocal {
                             if let Some(action) =
                                 read_local::<false>(&mut cursor, runtime, base_index)?
@@ -1998,11 +2038,37 @@ pub(super) fn execute_frame(
                             "local_completion.named_read",
                         );
                     }
-                    LocalStep::ObserveBeforeRetry if !frame.active_frame.is_materialized() => {
-                        return Ok(VmAction::Materialize);
+                    LocalStep::NeedsObservation => return Ok(pending.action()),
+                    LocalStep::Driver(pending) => return Ok(pending.action()),
+                    LocalStep::Continue(pending) => {
+                        match cursor.complete_linked_named_read(
+                            runtime,
+                            executable,
+                            operand,
+                            keep_receiver,
+                            pending.fallthrough.index(),
+                            &mut native,
+                        )? {
+                            LinkedReadCompletion::Completed => {
+                                #[cfg(feature = "profiling")]
+                                crate::engine::api::profiling::record_owned_execution_event(
+                                    "local_completion.linked_named_read",
+                                );
+                            }
+                            LinkedReadCompletion::Pending(read) => {
+                                execution.selected_named_read =
+                                    Some(super::property_driver::SelectedNamedRead::Read(read));
+                                return Ok(pending.action());
+                            }
+                            LinkedReadCompletion::LookupError(error) => {
+                                execution.selected_named_read = Some(
+                                    super::property_driver::SelectedNamedRead::LookupError(error),
+                                );
+                                return Ok(pending.action());
+                            }
+                            LinkedReadCompletion::Declined => return Ok(pending.action()),
+                        }
                     }
-                    LocalStep::ObserveBeforeRetry => return Ok(pending.action()),
-                    LocalStep::Continue(pending) => return Ok(pending.action()),
                 }
             }
             Opcode::GetArrayElDense | Opcode::GetArrayEl2Dense | Opcode::GetArrayEl3Dense => {

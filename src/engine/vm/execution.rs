@@ -227,6 +227,8 @@ pub(super) struct RunningExecution {
     pub pending: Option<JsValue>,
     /// Retained GetField2 result's classification, consumed by the immediate Call.
     pub selected_native: Option<crate::engine::object::LinkedNativeSelection>,
+    /// A selected static read crossing into the existing getter/query driver.
+    pub selected_named_read: Option<super::property_driver::SelectedNamedRead>,
     /// A typed root terminal result; never represented by a manufactured JS Value.
     pub root_descriptor: Option<super::entry::DescriptorReply>,
     pub root_query: Option<Box<super::proxy_get_driver::PendingProxyGet>>,
@@ -242,6 +244,7 @@ impl Drop for RunningExecution {
             // The runtime (and its whole heap) died first; no edge release can
             // observe anything. Discard the storage without accounting.
             self.pending = None;
+            self.selected_named_read = None;
             self.slots = SlotStore::new(0);
             return;
         };
@@ -249,6 +252,9 @@ impl Drop for RunningExecution {
             // Teardown cannot report errors; invariant violations surface at
             // the deferred-drain boundary like every trusted release.
             let _ = runtime.release_jsvalue(pending);
+        }
+        if let Some(selected) = self.selected_named_read.take() {
+            selected.release(&runtime);
         }
         while let Some(mut frame) = self.frames.pop_current() {
             // Clear this child's captures and operands while its activation
@@ -279,6 +285,7 @@ impl RunningExecution {
             call_storage: super::frame::CallStorage::default(),
             pending: None,
             selected_native: None,
+            selected_named_read: None,
             root_query: None,
             root_descriptor: None,
             runtime: std::rc::Rc::downgrade(&runtime.0),

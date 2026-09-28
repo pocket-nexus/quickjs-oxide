@@ -31,6 +31,47 @@ pub(super) enum PropertyProgress {
     Deferred(CallStep),
 }
 
+/// A static read selected while the frame transaction was still active.
+/// The read owns its getter/receiver or result until the driver consumes it.
+pub(super) enum SelectedNamedRead {
+    Read(OrdinaryRead),
+    LookupError(Error),
+}
+
+impl SelectedNamedRead {
+    pub(super) fn release(self, runtime: &Runtime) {
+        if let Self::Read(read) = self {
+            read.release(runtime);
+        }
+    }
+}
+
+struct SelectedReadGuard<'a> {
+    runtime: &'a Runtime,
+    read: Option<OrdinaryRead>,
+}
+
+struct NamedHandoffGuard<'a> {
+    runtime: &'a Runtime,
+    selected: Option<SelectedNamedRead>,
+}
+
+impl Drop for NamedHandoffGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(selected) = self.selected.take() {
+            selected.release(self.runtime);
+        }
+    }
+}
+
+impl Drop for SelectedReadGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(read) = self.read.take() {
+            read.release(self.runtime);
+        }
+    }
+}
+
 impl PropertyProgress {
     pub(super) fn into_call_step(self) -> CallStep {
         match self {
@@ -86,12 +127,45 @@ pub(super) fn read_progress(
     keep_receiver: bool,
     fallthrough: FallthroughPc,
 ) -> Result<PropertyProgress, Error> {
+    read_progress_selected(
+        runtime,
+        execution,
+        id,
+        key_kind,
+        keep_receiver,
+        fallthrough,
+        None,
+    )
+}
+
+pub(super) fn read_progress_selected(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    id: FrameId,
+    key_kind: ReadKey,
+    keep_receiver: bool,
+    fallthrough: FallthroughPc,
+    selected: Option<SelectedNamedRead>,
+) -> Result<PropertyProgress, Error> {
+    let mut selected = NamedHandoffGuard { runtime, selected };
     let frame = execution.frames.current_mut(id)?;
     let computed = matches!(key_kind, ReadKey::Computed { .. });
     let realm = frame.executable.realm;
     let next_pc = fallthrough.index();
-    let mut selected_read = None;
-    if let ReadKey::Static(index) = key_kind {
+    let selected_read = match selected.selected.take() {
+        Some(SelectedNamedRead::Read(read)) => Some(read),
+        Some(SelectedNamedRead::LookupError(error)) => {
+            return throw_error(runtime, realm, error).map(PropertyProgress::Deferred);
+        }
+        None => None,
+    };
+    let mut selected_read = SelectedReadGuard {
+        runtime,
+        read: selected_read,
+    };
+    if let ReadKey::Static(index) = key_kind
+        && selected_read.read.is_none()
+    {
         use super::stack::LinkedReadCompletion;
         let body = &mut *frame.cold;
         let executable = &*body.executable;
@@ -135,7 +209,7 @@ pub(super) fn read_progress(
                 crate::engine::api::profiling::record_owned_execution_event(
                     "property_lookup_handoff_selected",
                 );
-                selected_read = Some(read);
+                selected_read.read = Some(read);
             }
             Ok(LinkedReadCompletion::Declined) => {}
             Ok(LinkedReadCompletion::LookupError(error)) => {
@@ -244,7 +318,7 @@ pub(super) fn read_progress(
     };
     // Lookup borrows the original rooted operand. Only a pending callback
     // needs a second receiver owner; completed reads move this slot directly.
-    let read = match selected_read.map(Ok).unwrap_or_else(|| {
+    let read = match selected_read.read.take().map(Ok).unwrap_or_else(|| {
         runtime.prepare_value_property_read_selected_jsvalue(
             realm,
             base,
@@ -901,6 +975,67 @@ mod read_completion_tests {
             .unwrap_or_else(|| panic!("fixture missing {opcode:?}: {published:?}"))
             as usize;
         (execution, id)
+    }
+
+    #[test]
+    fn getterless_named_read_finishes_in_the_active_frame_scope() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let Value::Object(object) = context
+            .eval("globalThis.localRead = {}; Object.defineProperty(localRead, 'x', {get: undefined}); localRead")
+            .unwrap()
+        else {
+            panic!("object");
+        };
+        let _other_owner = object.clone();
+        let (mut execution, id) = read_fixture(
+            &runtime,
+            &mut context,
+            "(function(o){return o.x})",
+            Opcode::GetFieldCached,
+        );
+        let frame = execution.frames.current_mut(id).unwrap();
+        execution
+            .slots
+            .push(&mut frame.window, JsValue::Object(object.into_handle()))
+            .unwrap();
+        assert!(matches!(
+            execute_frame(&mut execution, id).unwrap(),
+            VmAction::Complete
+        ));
+        assert!(execution.selected_named_read.is_none());
+    }
+
+    #[test]
+    fn selected_named_getter_survives_the_frame_scope_handoff() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let Value::Object(object) = context
+            .eval("globalThis.pendingRead = {get x(){ return 7 }}; pendingRead")
+            .unwrap()
+        else {
+            panic!("object");
+        };
+        let _other_owner = object.clone();
+        let (mut execution, id) = read_fixture(
+            &runtime,
+            &mut context,
+            "(function(o){return o.x})",
+            Opcode::GetFieldCached,
+        );
+        let frame = execution.frames.current_mut(id).unwrap();
+        execution
+            .slots
+            .push(&mut frame.window, JsValue::Object(object.into_handle()))
+            .unwrap();
+        assert!(matches!(
+            execute_frame(&mut execution, id).unwrap(),
+            VmAction::GetField { .. }
+        ));
+        assert!(matches!(
+            execution.selected_named_read,
+            Some(SelectedNamedRead::Read(OrdinaryRead::Call { .. }))
+        ));
     }
 
     #[test]

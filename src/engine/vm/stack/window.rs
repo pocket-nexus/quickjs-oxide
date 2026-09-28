@@ -51,6 +51,29 @@ impl CheckedOrdinaryCallOperands {
 }
 
 impl FrameTransaction<'_> {
+    #[inline]
+    pub(in crate::engine::vm) fn depth(&self) -> usize {
+        self.window.depth
+    }
+
+    pub(in crate::engine::vm) fn with_linked_own_read_selected(
+        &mut self,
+        runtime: &Runtime,
+        executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
+        index: u32,
+        native: Option<&mut Option<crate::engine::object::LinkedNativeSelection>>,
+        complete: impl FnOnce(&mut FrameSlots<'_>, &mut Option<JsValue>) -> Result<(), Error>,
+    ) -> Result<LinkedReadCompletion, Error> {
+        self.store.with_linked_own_read_selected(
+            self.window,
+            runtime,
+            executable,
+            index,
+            native,
+            complete,
+        )
+    }
+
     pub(in crate::engine::vm) fn peek(&self, offset: usize) -> Result<&JsValue, Error> {
         self.store.peek_current(self.window, offset)
     }
@@ -196,7 +219,7 @@ impl SlotStore {
             Some(OrdinaryRead::Complete(value)) => {
                 // This owner stays outside the output window even on failure.
                 let mut value = Some(value.unwrap_or(JsValue::Undefined));
-                {
+                let result = {
                     let mut slots = FrameSlots {
                         store: self,
                         window,
@@ -205,8 +228,14 @@ impl SlotStore {
                     crate::engine::api::profiling::record_owned_execution_event(
                         "linked_read_output_attempt",
                     );
-                    complete(&mut slots, &mut value)?;
+                    complete(&mut slots, &mut value)
+                };
+                if let Some(value) = value {
+                    runtime
+                        .release_jsvalue(value)
+                        .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
                 }
+                result?;
                 #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_owned_execution_event(
                     "linked_read_output_completed",

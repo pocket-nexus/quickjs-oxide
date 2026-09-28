@@ -150,13 +150,15 @@ pub(super) fn run(
                 record_event("property_read_action_exit");
                 #[cfg(feature = "profiling")]
                 record_event("driver_handoff.named_read");
-                let progress = crate::engine::vm::property_driver::read_progress(
+                let selected = execution.selected_named_read.take();
+                let progress = crate::engine::vm::property_driver::read_progress_selected(
                     runtime,
                     execution,
                     id,
                     crate::engine::vm::property_driver::ReadKey::Static(index),
                     keep_receiver,
                     fallthrough,
+                    selected,
                 )?;
                 #[cfg(feature = "profiling")]
                 if matches!(
