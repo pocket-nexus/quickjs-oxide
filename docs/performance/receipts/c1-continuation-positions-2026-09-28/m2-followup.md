@@ -61,3 +61,18 @@ sides; its individual samples ranged from 1,089 to 4,014 ms on one label and
 running concurrently. The A/B medians above are retained as raw evidence,
 not a speedup claim. A quiet-host repeat with A/A controls remains necessary
 before judging runtime magnitude.
+
+## Rebasing validation
+
+The rebased C1 focused tests, workspace tests on the cumulative C1+C2 code,
+and GitHub fast/focused checks passed. A local full Test262 run on C1 at
+`ade7f11e` reported **80,008/80,060** runnable passes because the sloppy and
+strict variants of `RegExp-leading-escape-BMP.js` each exceeded the runner's
+fixed 30-second limit while the host was heavily contended. The
+[timeout audit](data/m2-test262-timeout-audit.json) compares its body to a
+report matching the frozen `current.conf` body hash: those two timeout rows
+and the resulting summary are the only differences. Both variants passed in
+an isolated replay with one worker and a 180-second timeout. This supports
+an environmental timeout diagnosis; it **does not count as a passing full
+gate at the required 30-second limit**. A quiet-host full replay remains
+pending.
