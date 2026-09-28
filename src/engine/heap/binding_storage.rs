@@ -4,21 +4,21 @@ impl Heap {
     /// Read one captured-variable cell. All functions holding the same
     /// `VarRefId` observe this shared value.
     pub fn var_ref(&self, id: VarRefId) -> Result<&VarRefData, HeapError> {
-        Ok(&self.var_refs.live(RawId::VarRef(id))?.data)
+        Ok(&self.var_refs.live(id)?.data)
     }
 
     /// Trusted shared read for a live `VarRefId` held by an owning root.
     #[inline]
     #[cfg(test)]
     pub(in crate::engine::heap) fn var_ref_fast(&self, id: VarRefId) -> &VarRefData {
-        &self.var_refs.live_fast(RawId::VarRef(id)).data
+        &self.var_refs.live_fast(id).data
     }
 
     /// Trusted mutable read for a live `VarRefId` held by an owning root.
     #[inline]
     #[cfg(test)]
     pub(in crate::engine::heap) fn var_ref_fast_mut(&mut self, id: VarRefId) -> &mut VarRefData {
-        &mut self.var_refs.live_fast_mut(RawId::VarRef(id)).data
+        &mut self.var_refs.live_fast_mut(id).data
     }
 
     /// Read immutable executable data without promoting any raw cpool edges.

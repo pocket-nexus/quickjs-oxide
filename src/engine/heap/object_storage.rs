@@ -180,20 +180,20 @@ impl Heap {
 
     /// Read one live shape record.
     pub fn shape(&self, id: ShapeId) -> Result<&Shape, HeapError> {
-        Ok(&self.shapes.live(RawId::Shape(id))?.data)
+        Ok(&self.shapes.live(id)?.data)
     }
 
     /// Trusted shared read for a live `ShapeId` reachable from a live object.
     #[inline]
     pub(crate) fn shape_fast(&self, id: ShapeId) -> &Shape {
-        &self.shapes.live_fast(RawId::Shape(id)).data
+        &self.shapes.live_fast(id).data
     }
 
     pub(in crate::engine::heap) fn shape_mut(
         &mut self,
         id: ShapeId,
     ) -> Result<&mut Shape, HeapError> {
-        let shape = &mut self.shapes.live_mut(RawId::Shape(id))?.data;
+        let shape = &mut self.shapes.live_mut(id)?.data;
         shape.invalidate_layout();
         Ok(shape)
     }
