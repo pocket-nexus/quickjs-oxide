@@ -1,9 +1,10 @@
 //! Promote a location-cache hit without draining runtime cleanup or invoking JS.
-use super::{LinkedNativeSelection, linked_field_atom};
+use super::{LinkedNativeSelection, NamedDataSelection, linked_field_atom};
 use crate::engine::api::{runtime::Runtime, runtime_error::RuntimeError};
 use crate::engine::code::runtime::PublishedFunctionSnapshot;
 use crate::engine::heap::runtime::RuntimeState;
 use crate::engine::heap::{ObjectId, ObjectPayload, RawValue, SlotReleaseReadiness};
+use crate::engine::object::property_ic::CacheSelection;
 use crate::engine::value::JsValue;
 use crate::engine::value::number::operations::Number;
 
@@ -116,7 +117,7 @@ impl Runtime {
     /// own data slot under the same borrow, so owner-bearing values do not
     /// repeat lookup in the driver. A declined read claims no owner.
     #[inline]
-    pub(crate) fn property_ic_read_fast(
+    pub(crate) fn select_linked_data(
         &self,
         base: &JsValue,
         executable: &PublishedFunctionSnapshot,
@@ -124,21 +125,28 @@ impl Runtime {
         key_index: u32,
         keep_receiver: bool,
         native: &mut Option<LinkedNativeSelection>,
-    ) -> Option<JsValue> {
-        let atom = linked_field_atom(self, executable, key_index)?;
+    ) -> NamedDataSelection {
+        let Some(atom) = linked_field_atom(self, executable, key_index) else {
+            return NamedDataSelection::ContinueLookup;
+        };
         let cache = executable.property_read_ic.site(pc);
         if !keep_receiver && self.0.deferred_references.has_pending() {
-            return None;
+            return NamedDataSelection::NeedsObservation;
         }
         if !keep_receiver
             && matches!(base, JsValue::String(_))
-            && self.slot_value_release_readiness_jsvalue(base).ok()? != SlotReleaseReadiness::Ready
+            && !matches!(
+                self.slot_value_release_readiness_jsvalue(base),
+                Ok(SlotReleaseReadiness::Ready)
+            )
         {
-            return None;
+            return NamedDataSelection::NeedsObservation;
         }
-        let state = self.0.state.try_borrow().ok()?;
+        let Ok(state) = self.0.state.try_borrow() else {
+            return NamedDataSelection::NeedsObservation;
+        };
         if !keep_receiver && state.heap.has_pending_zero_cleanup() {
-            return None;
+            return NamedDataSelection::NeedsObservation;
         }
         let receiver = match base {
             JsValue::Object(object) => *object,
@@ -153,22 +161,32 @@ impl Runtime {
                         atom,
                     );
                 }
-                return self.uncached_field_in_state(&state, base, atom, keep_receiver, native);
+                return self
+                    .uncached_field_in_state(&state, base, atom, keep_receiver, native)
+                    .map_or(NamedDataSelection::ContinueLookup, NamedDataSelection::Data);
             }
         };
         if !keep_receiver
             && state.heap.slot_object_release_readiness_fast(receiver)
                 != SlotReleaseReadiness::Ready
         {
-            return None;
+            return NamedDataSelection::NeedsObservation;
         }
         let Some(cache) = cache else {
-            return self.uncached_field_in_state(&state, base, atom, keep_receiver, native);
+            return self
+                .uncached_field_in_state(&state, base, atom, keep_receiver, native)
+                .map_or(NamedDataSelection::ContinueLookup, NamedDataSelection::Data);
         };
         let raw = match cache.read(&state.heap, self.domain_id(), executable.realm, receiver) {
-            Some(raw) => raw,
+            Some(raw) => {
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "property_selection.cache",
+                );
+                CacheSelection::Data(raw)
+            }
             None => {
-                cache.miss(
+                let selected = cache.miss_selected(
                     &state.heap,
                     &state.atoms,
                     self.domain_id(),
@@ -176,23 +194,47 @@ impl Runtime {
                     Some(receiver),
                     atom,
                 );
-                // A first-site miss may just have installed a valid own-data
-                // location. Reuse it now instead of entering another leaf and
-                // eventually repeating the same property lookup.
-                let Some(raw) =
-                    cache.read(&state.heap, self.domain_id(), executable.realm, receiver)
-                else {
-                    return self.uncached_field_in_state(&state, base, atom, keep_receiver, native);
-                };
-                raw
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "property_selection.cache_miss",
+                );
+                selected
             }
         };
-        let result = self.promote_field_in_state(&state, raw, keep_receiver, native);
+        let result = match raw {
+            CacheSelection::Data(raw) => self
+                .promote_field_in_state(&state, raw, keep_receiver, native)
+                .map_or(NamedDataSelection::ContinueLookup, NamedDataSelection::Data),
+            CacheSelection::CompleteAbsent => NamedDataSelection::CompleteAbsent,
+            CacheSelection::Unresolved => self
+                .uncached_field_in_state(&state, base, atom, keep_receiver, native)
+                .map_or(NamedDataSelection::ContinueLookup, NamedDataSelection::Data),
+        };
         #[cfg(feature = "profiling")]
-        if result.is_some() {
-            crate::engine::api::profiling::record_owned_execution_event("property_ic.hit");
-        }
+        crate::engine::api::profiling::record_owned_execution_event(match result {
+            NamedDataSelection::Data(_) => "property_selection.data",
+            NamedDataSelection::CompleteAbsent => "property_selection.absent",
+            NamedDataSelection::ContinueLookup => "property_selection.general",
+            NamedDataSelection::NeedsObservation => "property_selection.observe",
+        });
         result
+    }
+
+    #[cfg(test)]
+    pub(crate) fn property_ic_read_fast(
+        &self,
+        base: &JsValue,
+        executable: &PublishedFunctionSnapshot,
+        pc: usize,
+        key_index: u32,
+        keep_receiver: bool,
+        native: &mut Option<LinkedNativeSelection>,
+    ) -> Option<JsValue> {
+        match self.select_linked_data(base, executable, pc, key_index, keep_receiver, native) {
+            NamedDataSelection::Data(value) => Some(value),
+            NamedDataSelection::CompleteAbsent => Some(JsValue::Undefined),
+            NamedDataSelection::ContinueLookup | NamedDataSelection::NeedsObservation => None,
+        }
     }
 
     fn uncached_field_in_state(
@@ -226,6 +268,10 @@ impl Runtime {
         keep_receiver: bool,
         native: &mut Option<LinkedNativeSelection>,
     ) -> Option<JsValue> {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "property_selection.promotion_attempt",
+        );
         match raw {
             RawValue::Object(function) => {
                 let selected = if keep_receiver {
@@ -379,6 +425,45 @@ mod tests {
             .unwrap();
         let pc = executable.exec.exec_pc(pc as u32).unwrap() as usize;
         (executable, pc, key)
+    }
+
+    #[test]
+    fn shared_selection_uses_cold_inherited_data_and_current_warm_value() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let (code, pc, key) = site(&runtime);
+        let base = runtime
+            .into_jsvalue(
+                context
+                    .eval("globalThis.readBase=Object.create({x:7});readBase")
+                    .unwrap(),
+            )
+            .unwrap();
+        let selected = |runtime: &Runtime| match runtime
+            .select_linked_data(&base, &code, pc, key, true, &mut None)
+        {
+            NamedDataSelection::Data(JsValue::Int(value)) => value,
+            _ => panic!("expected selected data"),
+        };
+        assert_eq!(selected(&runtime), 7);
+        let _ = context.eval("Object.getPrototypeOf(readBase).x=9").unwrap();
+        assert_eq!(selected(&runtime), 9);
+        let _ = context
+            .eval("delete Object.getPrototypeOf(readBase).x")
+            .unwrap();
+        assert!(matches!(
+            runtime.select_linked_data(&base, &code, pc, key, true, &mut None),
+            NamedDataSelection::CompleteAbsent
+        ));
+        let _ = context.eval("globalThis.readCalls=0;Object.defineProperty(Object.getPrototypeOf(readBase),'x',{get(){readCalls++;return 11}})").unwrap();
+        assert!(matches!(
+            runtime.select_linked_data(&base, &code, pc, key, true, &mut None),
+            NamedDataSelection::ContinueLookup
+        ));
+        assert_eq!(context.eval("readCalls").unwrap(), Value::Int(0));
+        assert_eq!(context.eval("readBase.x").unwrap(), Value::Int(11));
+        assert_eq!(context.eval("readCalls").unwrap(), Value::Int(1));
+        runtime.release_jsvalue(base).unwrap();
     }
 
     #[test]

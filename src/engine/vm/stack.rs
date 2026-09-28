@@ -226,6 +226,13 @@ mod number;
 mod transfer;
 mod window;
 pub(in crate::engine::vm) use transfer::StoreProgress;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::engine::vm) enum PropertyReadProgress {
+    Completed,
+    ContinueLookup,
+    NeedsObservation,
+}
 pub(in crate::engine::vm) use window::{
     CheckedOrdinaryCallOperands, DirectSlot, FrameSlots, FrameTransaction, LinkedReadCompletion,
 };
@@ -244,22 +251,34 @@ impl SlotStore {
         key_index: u32,
         keep_receiver: bool,
         native: &mut Option<crate::engine::object::LinkedNativeSelection>,
-    ) -> Result<bool, Error> {
+    ) -> Result<PropertyReadProgress, Error> {
         let output_index = if keep_receiver {
             // Canonical get can have effects before an output-capacity error;
             // declining here preserves that order without promoting a root.
             let Ok(index) = self.operand_push_index(window) else {
-                return Ok(false);
+                return Ok(PropertyReadProgress::ContinueLookup);
             };
             Some(index)
         } else {
             None
         };
         let base = self.peek_current(window, 0)?;
-        let Some(value) =
-            runtime.property_ic_read_fast(base, executable, pc, key_index, keep_receiver, native)
-        else {
-            return Ok(false);
+        let value = match runtime.select_linked_data(
+            base,
+            executable,
+            pc,
+            key_index,
+            keep_receiver,
+            native,
+        ) {
+            crate::engine::object::NamedDataSelection::Data(value) => value,
+            crate::engine::object::NamedDataSelection::CompleteAbsent => JsValue::Undefined,
+            crate::engine::object::NamedDataSelection::ContinueLookup => {
+                return Ok(PropertyReadProgress::ContinueLookup);
+            }
+            crate::engine::object::NamedDataSelection::NeedsObservation => {
+                return Ok(PropertyReadProgress::NeedsObservation);
+            }
         };
         if let Some(index) = output_index {
             self.install_operand(window, index, value);
@@ -276,7 +295,7 @@ impl SlotStore {
             #[cfg(feature = "profiling")]
             record_owned_storage(Cost::Move(2));
         }
-        Ok(true)
+        Ok(PropertyReadProgress::Completed)
     }
 
     pub(in crate::engine::vm) fn new(limit: usize) -> Self {
@@ -1779,12 +1798,13 @@ mod tests {
             .heap
             .object_strong_count(value_object.object_id())
             .unwrap();
-        assert!(
-            !slots
+        assert_eq!(
+            slots
                 .borrow_frame_slots(&mut window)
                 .unwrap()
                 .property_ic_read(&runtime, &code, pc, key, true, &mut native)
-                .unwrap()
+                .unwrap(),
+            super::PropertyReadProgress::ContinueLookup
         );
         assert_eq!(
             runtime
@@ -1798,12 +1818,13 @@ mod tests {
         );
         assert_eq!(window.depth, 1);
         assert_eq!(to_public(&runtime, slots.peek(&window, 0).unwrap()), base);
-        assert!(
+        assert_eq!(
             slots
                 .borrow_frame_slots(&mut window)
                 .unwrap()
                 .property_ic_read(&runtime, &code, pc, key, false, &mut native)
-                .unwrap()
+                .unwrap(),
+            super::PropertyReadProgress::Completed
         );
         assert_eq!(window.depth, 1);
         assert_eq!(to_public(&runtime, slots.peek(&window, 0).unwrap()), value);
@@ -1815,12 +1836,13 @@ mod tests {
         slots
             .push(&mut window, into_internal(&runtime, base.clone()))
             .unwrap();
-        assert!(
+        assert_eq!(
             slots
                 .borrow_frame_slots(&mut window)
                 .unwrap()
                 .property_ic_read(&runtime, &code, pc, key, true, &mut native)
-                .unwrap()
+                .unwrap(),
+            super::PropertyReadProgress::Completed
         );
         assert_eq!(window.depth, 2);
         assert_eq!(to_public(&runtime, slots.peek(&window, 0).unwrap()), value);

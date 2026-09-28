@@ -15,6 +15,15 @@ use crate::engine::value::JsValue;
 use crate::engine::value::Value;
 use crate::engine::value::number::operations::Number;
 
+/// One non-observable named-property selection. Data owns its promoted edge;
+/// other cases have not changed guest-visible state or consumed an input.
+pub(crate) enum NamedDataSelection {
+    Data(JsValue),
+    CompleteAbsent,
+    ContinueLookup,
+    NeedsObservation,
+}
+
 /// Affine native payload fact selected together with an own property value.
 /// Its callee remains retained by the result/operand owner; consumption checks
 /// runtime and generational identity, never re-reads a property or payload.
