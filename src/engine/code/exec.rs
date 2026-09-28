@@ -118,8 +118,8 @@ pub(crate) struct ExecCode {
     words: Rc<[Cell<u32>]>,
     boundaries: Rc<[u32]>,
     regions: Option<Rc<[PublishedNumericRegion]>>,
-    product_sources: Rc<[ArrayProductSource]>,
-    copy_sources: Rc<[ArrayReadSource]>,
+    product_sources: Option<Rc<[ArrayProductSource]>>,
+    copy_sources: Option<Rc<[ArrayReadSource]>>,
     #[cfg(feature = "profiling")]
     rejected_numeric_sites: Rc<[RejectedNumericSite]>,
     /// Compiler assertions inspect the exact prepublication IR. This field is
@@ -142,8 +142,8 @@ impl ExecCode {
             words: Rc::from([]),
             boundaries: Rc::from([0]),
             regions: None,
-            product_sources: Rc::from([]),
-            copy_sources: Rc::from([]),
+            product_sources: None,
+            copy_sources: None,
             #[cfg(feature = "profiling")]
             rejected_numeric_sites: Rc::from([]),
             #[cfg(test)]
@@ -283,8 +283,8 @@ impl ExecCode {
             words: words.into_iter().map(Cell::new).collect::<Vec<_>>().into(),
             boundaries: boundaries.into(),
             regions: published_regions,
-            product_sources: product_sources.into(),
-            copy_sources: copy_sources.into(),
+            product_sources: (!product_sources.is_empty()).then(|| product_sources.into()),
+            copy_sources: (!copy_sources.is_empty()).then(|| copy_sources.into()),
             #[cfg(feature = "profiling")]
             rejected_numeric_sites: rejected_numeric_sites.into(),
             #[cfg(test)]
@@ -875,11 +875,14 @@ impl ExecCode {
     }
 
     pub(crate) fn product_source(&self, index: u32) -> Option<ArrayProductSource> {
-        self.product_sources.get(index as usize).copied()
+        self.product_sources
+            .as_deref()?
+            .get(index as usize)
+            .copied()
     }
 
     pub(crate) fn copy_source(&self, index: u32) -> Option<ArrayReadSource> {
-        self.copy_sources.get(index as usize).copied()
+        self.copy_sources.as_deref()?.get(index as usize).copied()
     }
 
     #[cfg(feature = "profiling")]
@@ -1301,18 +1304,22 @@ impl ExecCode {
 
     #[cfg(feature = "profiling")]
     pub(crate) fn product_source_storage(&self) -> (usize, usize) {
-        (
-            Rc::as_ptr(&self.product_sources) as *const ArrayProductSource as usize,
-            self.product_sources.len(),
-        )
+        self.product_sources.as_ref().map_or((0, 0), |sources| {
+            (
+                Rc::as_ptr(sources) as *const ArrayProductSource as usize,
+                sources.len(),
+            )
+        })
     }
 
     #[cfg(feature = "profiling")]
     pub(crate) fn copy_source_storage(&self) -> (usize, usize) {
-        (
-            Rc::as_ptr(&self.copy_sources) as *const ArrayReadSource as usize,
-            self.copy_sources.len(),
-        )
+        self.copy_sources.as_ref().map_or((0, 0), |sources| {
+            (
+                Rc::as_ptr(sources) as *const ArrayReadSource as usize,
+                sources.len(),
+            )
+        })
     }
 
     pub(crate) fn instruction_len(&self) -> usize {
