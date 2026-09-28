@@ -37,6 +37,15 @@ pub(crate) struct PropertyReadCache {
 }
 
 impl PropertyReadCache {
+    #[inline]
+    pub(crate) fn may_peek_own(&self) -> bool {
+        match self.state.get() {
+            State::Monomorphic(location) => location.depth == 0,
+            State::Polymorphic(locations) => locations.iter().any(|location| location.depth == 0),
+            State::Cold | State::Megamorphic(_) => false,
+        }
+    }
+
     /// Non-adapting own-data projection for a guard that will enter the
     /// ordinary read on a miss. It shares that read's location history but
     /// never changes retry state or promotes a value owner.

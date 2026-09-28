@@ -310,8 +310,11 @@ impl Runtime {
         field_pc: usize,
         key_index: u32,
     ) -> Option<bool> {
-        linked_field_atom(self, executable, key_index)?;
         let cache = executable.property_read_ic.site(field_pc)?;
+        if !cache.may_peek_own() {
+            return None;
+        }
+        linked_field_atom(self, executable, key_index)?;
         if self.0.deferred_references.has_pending() {
             return None;
         }
