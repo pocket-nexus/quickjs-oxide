@@ -1756,6 +1756,7 @@ fn collect_rejected_numeric_sites(
             omitted += 1;
             continue;
         }
+        let source_offset = usize::from(matches!(family, "accumulate"));
         let reason = if opcodes
             .get(start)
             .is_some_and(|op| *op != Opcode::from_instruction(&code[start]))
@@ -1763,8 +1764,8 @@ fn collect_rejected_numeric_sites(
             "overlap"
         } else if entries[start + 1..end].iter().any(|&entry| entry) {
             "control_flow"
-        } else if !direct(code.get(start + usize::from(family == "accumulate")))
-            || !number(code.get(start + 1 + usize::from(family == "accumulate")))
+        } else if !direct(code.get(start + source_offset))
+            || !number(code.get(start + 1 + source_offset))
         {
             "source"
         } else if matches!(family, "accumulate" | "store_product") {
