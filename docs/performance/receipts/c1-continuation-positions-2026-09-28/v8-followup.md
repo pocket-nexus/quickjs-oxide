@@ -5,8 +5,8 @@ This follow-up rebuilt #53 and C1 with Rust 1.88.0 at that base. The later
 #53 commit `bbd8adaf` changed documentation only; `git diff --quiet
 734bc128..bbd8adaf -- src apps scripts Cargo.toml Cargo.lock` passes.
 The measured C1 source is `9a9290dff8e2e7a18f3d2b54284ec518565a1a5d`;
-the rebased PR head `0bc98c9400ae85b2009aa39df4eac02d9deeaeb2` has
-identical production Rust code. Earlier receipts remain tied to their stated
+the first rebased C1 revision `0bc98c9400ae85b2009aa39df4eac02d9deeaeb2`
+and its later receipt-only commits have identical production Rust code. Earlier receipts remain tied to their stated
 revisions.
 
 [Build provenance](data/v8-builds.json) gives clean source trees, release
@@ -46,3 +46,10 @@ profiling, including actual wide comparison fallback, PostInc partial output,
 materialization retry, fault attribution, and the scoped no-recovery oracle.
 The C1 full Test262 outcome on its earlier M2 base is documented in
 [m2-followup.md](m2-followup.md); it is not relabeled as a V8-base result.
+The cumulative C1+C2 source at `80aef1f8c1b18381903fdfc7a1eecc9272fffa40`
+passed the fixed-timeout full Test262 vector on this V8 base: 80,010 of
+80,060 runnable variants across 102,037 total. Its TSV SHA-256 is
+`c5a335ea8b7db8ba47f401f9ed2b8c6168f25de62b31b575248c37dfbc6ea7b3`;
+the runner engine semantics fingerprint is
+`ed81c0f210d0b98745bfc52a843f9ae14f95336e88d264f5c37a8dc7f4d397f4`.
+This is cumulative validation of C1 and C2, not an isolated C1 full replay.

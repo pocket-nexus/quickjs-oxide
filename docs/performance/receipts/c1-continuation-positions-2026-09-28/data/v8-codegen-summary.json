@@ -1,5 +1,5 @@
 {
-  "schema": "oxide-c2-codegen-v1",
+  "schema": "oxide-c1-v8-codegen-v1",
   "method": "nm -nm; llvm-objdump --disassemble --no-show-raw-insn",
   "builds": [
     {
