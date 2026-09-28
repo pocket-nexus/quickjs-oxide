@@ -74,6 +74,48 @@ fn m2_regions_select_and_match_generic_execution() {
 }
 
 #[test]
+fn product_operand_order_matches_publication_and_fallback() {
+    let array_first_store = "(function(a,i,s){var out=0;out=a[i]*s;return out;})";
+    let scale_first_store = "(function(a,i,s){var out=0;out=s*a[i];return out;})";
+    assert!(opcodes(array_first_store).contains(&Opcode::NumericArrayStoreProduct));
+    assert!(!opcodes(scale_first_store).contains(&Opcode::NumericArrayStoreProduct));
+
+    let scale_first_update = "(function(x,s,dt,i){x[i]+=dt*s[i];return x[i];})";
+    let array_first_update = "(function(x,s,dt,i){x[i]+=s[i]*dt;return x[i];})";
+    assert!(opcodes(scale_first_update).contains(&Opcode::NumericArrayUpdateElement));
+    assert!(!opcodes(array_first_update).contains(&Opcode::NumericArrayUpdateElement));
+
+    for (expression, hits) in [("a[i]*s", 1), ("s*a[i]", 0)] {
+        let source = format!(
+            "(function(){{function f(a,i,s){{var out=0;out={expression};return out;}}return f([4],0,3);}})()"
+        );
+        assert_eq!(assert_same(&source, hits), Value::Int(12));
+        let getter = format!(
+            "(function(){{function f(a,i,s){{var out=0;out={expression};return out;}}var log='';var a=[];Object.defineProperty(a,'0',{{get(){{log+='g';return 4;}}}});return f(a,0,3)+':'+log;}})()"
+        );
+        let _ = assert_same(&getter, 0);
+        let coercion = format!(
+            "(function(){{function f(a,i,s){{var out=0;out={expression};return out;}}var log='';var a=[{{valueOf(){{log+='a';return 4;}}}}],s={{valueOf(){{log+='s';return 3;}}}};return f(a,0,s)+':'+log;}})()"
+        );
+        let _ = assert_same(&coercion, 0);
+    }
+    for (expression, hits) in [("dt*s[i]", 1), ("s[i]*dt", 0)] {
+        let source = format!(
+            "(function(){{function f(x,s,dt,i){{x[i]+={expression};return x[i];}}return f([1],[3],2,0);}})()"
+        );
+        assert_eq!(assert_same(&source, hits), Value::Int(7));
+        let getter = format!(
+            "(function(){{function f(x,s,dt,i){{x[i]+={expression};return x[i];}}var log='';var s=[];Object.defineProperty(s,'0',{{get(){{log+='g';return 3;}}}});return f([1],s,2,0)+':'+log;}})()"
+        );
+        let _ = assert_same(&getter, 0);
+        let coercion = format!(
+            "(function(){{function f(x,s,dt,i){{x[i]+={expression};return x[i];}}var log='';var s=[{{valueOf(){{log+='s';return 3;}}}}],dt={{valueOf(){{log+='d';return 2;}}}};return f([1],s,dt,0)+':'+log;}})()"
+        );
+        let _ = assert_same(&coercion, 0);
+    }
+}
+
+#[test]
 fn array_product_update_selects_and_preserves_aliases_and_misses() {
     assert!(
         opcodes("(function(x,s,dt){for(var i=0;i<3;i++)x[i]+=dt*s[i];return x[0];})")
@@ -117,6 +159,77 @@ fn array_product_update_selects_and_preserves_aliases_and_misses() {
         catch (e) { return e===sentinel; }
     })()"#;
     assert_eq!(assert_same(thrown_getter, 0), Value::Bool(true));
+}
+
+#[test]
+fn array_copy_region_preserves_source_read_and_target_write_order() {
+    assert!(
+        opcodes("(function(x,x0,i){x[i]=x0[i];return x[i];})")
+            .contains(&Opcode::NumericArrayCopyElement)
+    );
+    for (body, hits) in [
+        ("return f([1],[4],0);", 1),
+        ("var x=[4];return f(x,x,0);", 1),
+        (
+            "var x=[1],s=[];Object.defineProperty(s,'0',{get(){return 4;}});return f(x,s,0);",
+            0,
+        ),
+        (
+            "var x=[1],s=[{valueOf(){return 4;}}];return String(f(x,s,0));",
+            0,
+        ),
+        (
+            "var x=new Proxy([1],{set(t,k,v,r){return Reflect.set(t,k,v,r)}});return f(x,[4],0);",
+            0,
+        ),
+    ] {
+        let source =
+            format!("(function(){{function f(x,x0,i){{x[i]=x0[i];return x[i];}}{body}}})()");
+        let _ = assert_same(&source, hits);
+    }
+    let strict_frozen = "(function(){function f(x,x0){'use strict';x[0]=x0[0];}try{f(Object.freeze([1]),[4]);return false;}catch(e){return e instanceof TypeError;}})()";
+    assert_eq!(assert_same(strict_frozen, 0), Value::Bool(true));
+    let getter_order = "(function(){var log='';function f(x,s){x[0]=s[0];return x[0];}var x=[1],s=[];Object.defineProperty(s,'0',{get(){log+='g';return 4;}});return f(x,s)+':'+log;})()";
+    let _ = assert_same(getter_order, 0);
+}
+
+#[test]
+fn array_add_preinc_consumes_stack_number_and_preserves_miss_effects() {
+    let function = "(function(a){var i=0,sum=1;sum+=a[++i];return sum+':'+i;})";
+    assert!(opcodes(function).contains(&Opcode::NumericArrayAddPreInc));
+    let hit = "(function(){function f(a){var i=0,sum=1;sum+=a[++i];return sum+':'+i;}return f([0,4]);})()";
+    let _ = assert_same(hit, 1);
+    let getter = "(function(){var log='';function f(a){var i=0,sum=1;sum+=a[++i];return sum+':'+i+':'+log;}var a=[];Object.defineProperty(a,'1',{get(){log+='g';return 4;}});return f(a);})()";
+    let _ = assert_same(getter, 0);
+    let coercion = "(function(){var log='';function f(a){var i=0,sum=1;sum+=a[++i];return sum+':'+i+':'+log;}return f([0,{valueOf(){log+='v';return 4;}}]);})()";
+    let _ = assert_same(coercion, 0);
+    let index_miss = "(function(){function f(a){var i='0',sum=1;sum+=a[++i];return sum+':'+i;}return f([0,4]);})()";
+    let _ = assert_same(index_miss, 0);
+}
+
+#[test]
+fn array_store_and_local_uses_saved_stack_target_and_falls_back_cleanly() {
+    let function = "(function(a,i,v){var out=0;out=a[i]=v;return out;})";
+    assert!(opcodes(function).contains(&Opcode::NumericArrayStoreAndLocal));
+    for (body, hits) in [
+        ("return f([1],0,4);", 1),
+        ("var a=[1];return f(a,0,4)+':'+a[0];", 1),
+        (
+            "var a=Object.freeze([1]);try{f(a,0,4);return false;}catch(e){return e instanceof TypeError;}",
+            0,
+        ),
+        (
+            "var log='';var a=[1];Object.defineProperty(a,'0',{get(){log+='g';return 1;},set(v){log+='s';}});return f(a,0,4)+':'+log;",
+            0,
+        ),
+    ] {
+        let source = format!(
+            "(function(){{function f(a,i,v){{'use strict';var out=0;out=a[i]=v;return out;}}{body}}})()"
+        );
+        let _ = assert_same(&source, hits);
+    }
+    let saved_index = "(function(){function f(a){var i=0,out=0;out=a[i]=++i;return out+':'+i+':'+a.join(',');}return f([1,2]);})()";
+    let _ = assert_same(saved_index, 1);
 }
 
 #[test]

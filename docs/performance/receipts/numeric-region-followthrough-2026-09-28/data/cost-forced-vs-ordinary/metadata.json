@@ -1,0 +1,145 @@
+{
+  "machine": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "cpu": "Apple M1",
+    "logical_cpus": 8,
+    "python": "3.14.7",
+    "cpu_affinity": null,
+    "scaling_governors": {},
+    "load_average": [
+      4.5205078125,
+      4.92529296875,
+      5.875
+    ],
+    "macos": {
+      "physical_memory_bytes": 17179869184,
+      "power_settings": {
+        "command": [
+          "pmset",
+          "-g",
+          "custom"
+        ],
+        "exit_code": 0,
+        "stdout": "Battery Power:\n Sleep On Power Button 1\n lowpowermode         0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         20\n womp                 0\n networkoversleep     0\n sleep                1\n lessbright           1\n tcpkeepalive         1\n disksleep            10\nAC Power:\n Sleep On Power Button 1\n lowpowermode         0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         0\n womp                 1\n networkoversleep     0\n sleep                1\n tcpkeepalive         1\n disksleep            10",
+        "stderr": ""
+      },
+      "power_source": {
+        "command": [
+          "pmset",
+          "-g",
+          "batt"
+        ],
+        "exit_code": 0,
+        "stdout": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=22741091)\t100%; charged; 0:00 remaining present: true",
+        "stderr": ""
+      },
+      "vm_stat": {
+        "command": [
+          "vm_stat"
+        ],
+        "exit_code": 0,
+        "stdout": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                    47502.\nPages active:                                 249499.\nPages inactive:                               241557.\nPages speculative:                              7505.\nPages throttled:                                   0.\nPages wired down:                             172934.\nPages purgeable:                                1307.\n\"Translation faults\":                     5324157026.\nPages copy-on-write:                       318778350.\nPages zero filled:                        1956147288.\nPages reactivated:                         711668374.\nPages purged:                               37983850.\nFile-backed pages:                            152412.\nAnonymous pages:                              346149.\nPages stored in compressor:                  1502033.\nPages occupied by compressor:                 280955.\nDecompressions:                            661103022.\nCompressions:                              747316005.\nPageins:                                   107536712.\nPageouts:                                    1346174.\nSwapins:                                     5213067.\nSwapouts:                                    6770386.",
+        "stderr": ""
+      }
+    },
+    "runner_sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5",
+    "repository": {
+      "commit": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD"
+        ],
+        "exit_code": 0,
+        "stdout": "67a88fab7581ca444cd311883eb01d34bba19637",
+        "stderr": ""
+      },
+      "tree": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD^{tree}"
+        ],
+        "exit_code": 0,
+        "stdout": "feed0794a53b5919f02d6acaa9e8dd08d3e90816",
+        "stderr": ""
+      },
+      "top_level": {
+        "command": [
+          "git",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "exit_code": 0,
+        "stdout": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff",
+        "stderr": ""
+      },
+      "status": {
+        "command": [
+          "git",
+          "status",
+          "--porcelain"
+        ],
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    }
+  },
+  "runner_sha256": "8a852679221202ae6d3dac1e02b295368a79529a3e0c32e51fd6b914e5d4b425",
+  "manifest_sha256": "1761ef61fae41c8f0331b83a6045f4b0fe81a0e5470c03e99a085c9cd02c1ac8",
+  "workloads": [
+    {
+      "case": "update-product-hit",
+      "path": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js",
+      "sha256": "a4820ce93f5208df49a87bb255232510dec7f150059d842f8c618b6f2e7e33d7",
+      "expected": "2000000\n",
+      "size": 2000000
+    },
+    {
+      "case": "update-product-miss",
+      "path": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-miss.js",
+      "sha256": "c6a8ea31c41ad86e46d456673e33c6722dd62e39e4af28dc5d537f78e084d726",
+      "expected": "2000000\n",
+      "size": 2000000
+    }
+  ],
+  "engines": {
+    "forced": {
+      "path": "/private/tmp/quickjs-oxide-followthrough/qjs-forced-fallback",
+      "sha256": "3ae7e731b87d5e3074cd78e51a33b915bd6f0b91b8680d8ca20db3d382c682bf",
+      "version": {
+        "command": [
+          "/private/tmp/quickjs-oxide-followthrough/qjs-forced-fallback",
+          "--version"
+        ],
+        "exit_code": 0,
+        "stdout": "quickjs-oxide 0.0.1 (QuickJS 2026-06-04 compatibility target)",
+        "stderr": ""
+      },
+      "build": null
+    },
+    "ordinary": {
+      "path": "/private/tmp/quickjs-oxide-followthrough/qjs-ordinary-update",
+      "sha256": "d99250b11364ee3e71eac40b44147c869142cd431b6f49b5c42be29ea183ca8d",
+      "version": {
+        "command": [
+          "/private/tmp/quickjs-oxide-followthrough/qjs-ordinary-update",
+          "--version"
+        ],
+        "exit_code": 0,
+        "stdout": "quickjs-oxide 0.0.1 (QuickJS 2026-06-04 compatibility target)",
+        "stderr": ""
+      },
+      "build": null
+    }
+  },
+  "repeat": 8,
+  "order_strategy": "abba-baab",
+  "timeout_seconds": 180,
+  "cpu": null,
+  "darwin_counters": true,
+  "counter_scope": "whole process including startup and teardown",
+  "metric": "whole-process wall nanoseconds; not adaptive scores"
+}

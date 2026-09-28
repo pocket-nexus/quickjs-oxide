@@ -1277,6 +1277,24 @@ impl Runtime {
         state.heap.try_add_array_own_number(*id, index, atom, delta)
     }
 
+    pub(crate) fn try_replace_array_own_number(
+        &self,
+        base: &JsValue,
+        index: u32,
+        value: Number,
+    ) -> Result<(), Miss> {
+        let JsValue::Object(id) = base else {
+            return Err(Miss::ReceiverNotObject);
+        };
+        let Ok(mut state) = self.0.state.try_borrow_mut() else {
+            return Err(Miss::HeapBorrowUnavailable);
+        };
+        let atom = Atom::from_immediate_integer(index).map(|atom| AtomIdx::from_raw(atom.raw()));
+        state
+            .heap
+            .try_replace_array_own_number(*id, index, atom, value)
+    }
+
     /// Diagnose a *previously failed* numeric dense read. This performs an
     /// extra heap borrow only in profiling builds and never changes storage.
     #[cfg(all(test, feature = "profiling"))]

@@ -1,0 +1,13 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+   Compiling autocfg v1.5.1
+   Compiling tz-rs v0.7.3
+   Compiling num-traits v0.2.19
+   Compiling num-integer v0.1.46
+   Compiling num-bigint v0.5.1
+   Compiling quickjs-oxide v0.0.1 (/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff)
+   Compiling quickjs-oxide-host v0.0.1 (/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/adapters/native)
+   Compiling oxide-compile-probe v0.0.0 (/private/tmp/quickjs-oxide-followthrough/compile-probe-candidate)
+    Finished `release` profile [optimized] target(s) in 4m 12s

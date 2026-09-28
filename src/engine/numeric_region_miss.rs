@@ -9,6 +9,7 @@ pub(crate) enum NumericRegionMiss {
     IndexNotImmediate,
     ScaleNotNumber,
     DeltaNotNumber,
+    AccumulatorNotNumber,
     RhsNotNumber,
     DestinationOrReceiverUnavailable,
     ReceiverBindingUnavailable,
@@ -24,6 +25,7 @@ pub(crate) enum NumericRegionMiss {
     ArrayShapeUnavailable,
     OwnElementNotWritable,
     PropertyGenerationOverflow,
+    FrameNotMaterialized,
 }
 
 #[cfg(feature = "profiling")]
@@ -36,6 +38,7 @@ impl NumericRegionMiss {
             Self::IndexNotImmediate => "index_not_immediate",
             Self::ScaleNotNumber => "scale_not_number",
             Self::DeltaNotNumber => "delta_not_number",
+            Self::AccumulatorNotNumber => "accumulator_not_number",
             Self::RhsNotNumber => "rhs_not_number",
             Self::DestinationOrReceiverUnavailable => "destination_or_receiver_unavailable",
             Self::ReceiverBindingUnavailable => "receiver_binding_unavailable",
@@ -51,6 +54,7 @@ impl NumericRegionMiss {
             Self::ArrayShapeUnavailable => "array_shape_unavailable",
             Self::OwnElementNotWritable => "own_element_not_writable",
             Self::PropertyGenerationOverflow => "property_generation_overflow",
+            Self::FrameNotMaterialized => "frame_not_materialized",
         }
     }
 }

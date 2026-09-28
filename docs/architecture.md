@@ -118,14 +118,21 @@ the same position's ordinary read and then those generic words. The verifier
 rejects any span with a control-flow entry into its middle. Field and array
 cache misses similarly enter the new execution flow's general handlers.
 For discarded-result `sum += array[i] * scale`, `out = array[i] * scale`,
-`array[i] += delta`, and numeric element comparison branches, selection can
+`array[i] += delta`, `target[i] = source[j]`, and numeric element comparison branches, selection can
 publish one operation and a validated descriptor. The original words remain
 in the same stream for generic fallback. Each selected interval excludes only
-overlapping specialization; publication validates sources, block-local lexical
+overlapping specialization; publication validates sources, CFG-based lexical
 proofs, entry restrictions, continuations and logical stack requirements.
 Direct local/argument and numeric constant inputs are supported. The array
 update also accepts one planned array-element product as its delta, covering
-`x[i] += dt * s[i]` without a new opcode family. Initialized, uncaptured
+`x[i] += dt * s[i]` without a new opcode family.
+An array-first product assignment is selected only when its retained fallback
+words match that evaluation order; the scalar-first form stays generic. A
+stack-consuming add after `++index` and an array write followed by a local
+write also form short regions in the repeated `lin_solve` chain. Their
+published producer data uses opcode-specific tables, leaving the common
+descriptor at 80 inline bytes on the measured target.
+Initialized, uncaptured
 lexical `let` destinations and `const` sources can qualify when predecessor
 intersection proves initialization across reachable ordinary CFG edges.
 Unproven exception or resume entries, captured, dynamic and mapped bindings
@@ -138,8 +145,9 @@ or Number without observable release. Owned destination values fall back.
 Local operations retain a short-lived `FrameSlots` destination through
 computation and one write. An array update admits an
 existing writable own Number element, computes and writes within one mutable
-heap borrow. For an array-product delta, both source values are read before the
-target is written, including when the arrays alias. A frozen target or accessor
+heap borrow. For an array-product delta, the source read uses its own short
+shared heap borrow before a separate mutable target update borrow. Both source
+values are read before the target is written, including when the arrays alias. A frozen target or accessor
 element misses. A comparison branches
 directly without an intermediate Boolean owner. Guard failure runs the
 original first read and generic continuation without changing state. This is

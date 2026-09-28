@@ -414,6 +414,28 @@ impl FrameSlots<'_> {
         Ok(())
     }
 
+    /// Commit a proven numeric ++local and replace the existing top Number.
+    /// Both slots are authenticated before either scalar value changes.
+    pub(in crate::engine::vm) fn commit_number_local_and_top(
+        &mut self,
+        index: u16,
+        updated: Number,
+        result: Number,
+    ) -> Result<(), Error> {
+        if self.immediate_local(index).is_none() || self.peek(0)?.as_number_repr().is_none() {
+            return Err(Error::internal("numeric preincrement admission changed"));
+        }
+        let local = self.window.locals().start + usize::from(index);
+        let top = self.window.operands().start + self.window.depth - 1;
+        let number_value = |number| match number {
+            Number::Int(value) => JsValue::Int(value),
+            Number::Float(value) => JsValue::Float(value),
+        };
+        self.store.slots[local] = Some(FrameBinding::Direct(number_value(updated)));
+        self.store.slots[top] = Some(FrameBinding::Direct(number_value(result)));
+        Ok(())
+    }
+
     pub(in crate::engine::vm) fn property_ic_read(
         &mut self,
         runtime: &Runtime,
@@ -1040,7 +1062,8 @@ mod primitive_transaction_tests {
                 array: DirectSource::Argument(0),
                 index: NumberSource::Immediate(0),
                 value: NumberSource::Immediate(2),
-                update_product: None,
+                producer_index: None,
+                shared_update_index: false,
                 destination: 0,
                 checked: false,
                 comparison: crate::engine::code::exec_opcode::Opcode::Nop,

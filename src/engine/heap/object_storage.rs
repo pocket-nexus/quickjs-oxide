@@ -9,6 +9,18 @@ pub(crate) struct SlotReplacementError {
 }
 
 impl Heap {
+    /// Replace an existing writable own Number without releasing an owner.
+    /// The source Number was read before this mutable target access.
+    pub(crate) fn try_replace_array_own_number(
+        &mut self,
+        id: ObjectId,
+        index: u32,
+        atom: Option<AtomIdx>,
+        value: Number,
+    ) -> Result<(), Miss> {
+        self.try_update_array_own_number(id, index, atom, value, |_, new| new)
+    }
+
     /// The receiver has a frame owner. An existing Number-to-Number update
     /// changes neither graph edges nor the Array layout.
     pub(crate) fn try_add_array_own_number(
@@ -18,13 +30,28 @@ impl Heap {
         atom: Option<AtomIdx>,
         delta: Number,
     ) -> Result<(), Miss> {
-        fn add_cell(cell: &mut RawValue, delta: Number) -> Result<(), Miss> {
+        self.try_update_array_own_number(id, index, atom, delta, Number::add)
+    }
+
+    fn try_update_array_own_number(
+        &mut self,
+        id: ObjectId,
+        index: u32,
+        atom: Option<AtomIdx>,
+        input: Number,
+        operation: impl Fn(Number, Number) -> Number + Copy,
+    ) -> Result<(), Miss> {
+        fn update_cell(
+            cell: &mut RawValue,
+            input: Number,
+            operation: impl Fn(Number, Number) -> Number,
+        ) -> Result<(), Miss> {
             let old = match cell {
                 RawValue::Int(value) => Number::Int(*value),
                 RawValue::Float(value) => Number::Float(*value),
                 _ => return Err(Miss::OwnElementNotNumber),
             };
-            *cell = match old.add(delta) {
+            *cell = match operation(old, input) {
                 Number::Int(value) => RawValue::Int(value),
                 Number::Float(value) => RawValue::Float(value),
             };
@@ -39,11 +66,12 @@ impl Heap {
             }
             match &mut data.payload {
                 ObjectPayload::Array { dense: Some(dense) } => {
-                    return add_cell(
+                    return update_cell(
                         dense
                             .get_mut(index as usize)
                             .ok_or(Miss::MissingOwnElement)?,
-                        delta,
+                        input,
+                        operation,
                     );
                 }
                 ObjectPayload::Array { dense: None } => data.shape,
@@ -67,7 +95,7 @@ impl Heap {
             Some(PropertySlot::Data(raw)) => raw,
             _ => return Err(Miss::UnsupportedOwnElement),
         };
-        add_cell(cell, delta)
+        update_cell(cell, input, operation)
     }
 
     pub(crate) const fn property_layout_epoch(&self) -> u64 {

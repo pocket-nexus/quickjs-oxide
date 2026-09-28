@@ -147,6 +147,12 @@ impl Heap {
         let mut regions = storage("exec_numeric_regions", 0, 0, 1);
         regions.basis = "deduplicated-Rc-slice-inline-bytes; excludes Rc headers";
         let mut seen_regions = HashSet::new();
+        let mut product_sources = storage("exec_numeric_product_sources", 0, 0, 1);
+        product_sources.basis = "deduplicated-Rc-slice-inline-bytes; excludes Rc headers";
+        let mut seen_product_sources = HashSet::new();
+        let mut copy_sources = storage("exec_numeric_copy_sources", 0, 0, 1);
+        copy_sources.basis = "deduplicated-Rc-slice-inline-bytes; excludes Rc headers";
+        let mut seen_copy_sources = HashSet::new();
         let mut executable_projections = storage("bytecode_executable_projections", 0, 0, 1);
         executable_projections.basis = "one initialized shared projection per bytecode node; excludes Rc headers and shared slice payloads";
         let mut property_keys = storage("bytecode_property_keys", 0, 0, 1);
@@ -222,6 +228,24 @@ impl Heap {
                             size_of::<crate::engine::code::region::PublishedNumericRegion>(),
                         );
                     }
+                    let (identity, len) = data.exec.product_source_storage();
+                    if len != 0 && seen_product_sources.insert(identity) {
+                        add_storage(
+                            &mut product_sources,
+                            len,
+                            len,
+                            size_of::<crate::engine::code::region::ArrayProductSource>(),
+                        );
+                    }
+                    let (identity, len) = data.exec.copy_source_storage();
+                    if len != 0 && seen_copy_sources.insert(identity) {
+                        add_storage(
+                            &mut copy_sources,
+                            len,
+                            len,
+                            size_of::<crate::engine::code::region::ArrayReadSource>(),
+                        );
+                    }
                     if let Some(keys) = &data.property_key_atoms
                         && seen_property_keys.insert(Rc::as_ptr(keys))
                     {
@@ -260,6 +284,8 @@ impl Heap {
             code,
             boundaries,
             regions,
+            product_sources,
+            copy_sources,
             property_keys,
             executable_projections,
         ]);

@@ -1,0 +1,1643 @@
+{
+  "metadata": {
+    "machine": {
+      "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+      "machine": "arm64",
+      "cpu": "Apple M1",
+      "logical_cpus": 8,
+      "python": "3.14.7",
+      "cpu_affinity": null,
+      "scaling_governors": {},
+      "load_average": [
+        5.26513671875,
+        4.8515625,
+        5.7001953125
+      ],
+      "macos": {
+        "physical_memory_bytes": 17179869184,
+        "power_settings": {
+          "command": [
+            "pmset",
+            "-g",
+            "custom"
+          ],
+          "exit_code": 0,
+          "stdout": "Battery Power:\n Sleep On Power Button 1\n lowpowermode         0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         20\n womp                 0\n networkoversleep     0\n sleep                1\n lessbright           1\n tcpkeepalive         1\n disksleep            10\nAC Power:\n Sleep On Power Button 1\n lowpowermode         0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         0\n womp                 1\n networkoversleep     0\n sleep                1\n tcpkeepalive         1\n disksleep            10",
+          "stderr": ""
+        },
+        "power_source": {
+          "command": [
+            "pmset",
+            "-g",
+            "batt"
+          ],
+          "exit_code": 0,
+          "stdout": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=22741091)\t100%; charged; 0:00 remaining present: true",
+          "stderr": ""
+        },
+        "vm_stat": {
+          "command": [
+            "vm_stat"
+          ],
+          "exit_code": 0,
+          "stdout": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                     5195.\nPages active:                                 244183.\nPages inactive:                               231199.\nPages speculative:                             12048.\nPages throttled:                                   0.\nPages wired down:                             184190.\nPages purgeable:                                2011.\n\"Translation faults\":                     5325553876.\nPages copy-on-write:                       318870877.\nPages zero filled:                        1956529109.\nPages reactivated:                         711835141.\nPages purged:                               37992325.\nFile-backed pages:                            180770.\nAnonymous pages:                              306660.\nPages stored in compressor:                  1553390.\nPages occupied by compressor:                 323053.\nDecompressions:                            661294476.\nCompressions:                              747573871.\nPageins:                                   107593752.\nPageouts:                                    1346421.\nSwapins:                                     5219214.\nSwapouts:                                    6770386.",
+          "stderr": ""
+        }
+      },
+      "runner_sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5",
+      "repository": {
+        "commit": {
+          "command": [
+            "git",
+            "rev-parse",
+            "HEAD"
+          ],
+          "exit_code": 0,
+          "stdout": "67a88fab7581ca444cd311883eb01d34bba19637",
+          "stderr": ""
+        },
+        "tree": {
+          "command": [
+            "git",
+            "rev-parse",
+            "HEAD^{tree}"
+          ],
+          "exit_code": 0,
+          "stdout": "feed0794a53b5919f02d6acaa9e8dd08d3e90816",
+          "stderr": ""
+        },
+        "top_level": {
+          "command": [
+            "git",
+            "rev-parse",
+            "--show-toplevel"
+          ],
+          "exit_code": 0,
+          "stdout": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff",
+          "stderr": ""
+        },
+        "status": {
+          "command": [
+            "git",
+            "status",
+            "--porcelain"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": ""
+        }
+      }
+    },
+    "runner_sha256": "8a852679221202ae6d3dac1e02b295368a79529a3e0c32e51fd6b914e5d4b425",
+    "manifest_sha256": "1761ef61fae41c8f0331b83a6045f4b0fe81a0e5470c03e99a085c9cd02c1ac8",
+    "workloads": [
+      {
+        "case": "update-product-hit",
+        "path": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js",
+        "sha256": "a4820ce93f5208df49a87bb255232510dec7f150059d842f8c618b6f2e7e33d7",
+        "expected": "2000000\n",
+        "size": 2000000
+      },
+      {
+        "case": "update-product-miss",
+        "path": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-miss.js",
+        "sha256": "c6a8ea31c41ad86e46d456673e33c6722dd62e39e4af28dc5d537f78e084d726",
+        "expected": "2000000\n",
+        "size": 2000000
+      }
+    ],
+    "engines": {
+      "same_a": {
+        "path": "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "sha256": "4043f951c9843d99731c773f32b9829c84d9644dd0c44f261753e482992f288e",
+        "version": {
+          "command": [
+            "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+            "--version"
+          ],
+          "exit_code": 0,
+          "stdout": "quickjs-oxide 0.0.1 (QuickJS 2026-06-04 compatibility target)",
+          "stderr": ""
+        },
+        "build": {
+          "schema": "oxide-build-v2",
+          "mode": "plain",
+          "vm_configuration": "stack-vm",
+          "features": [],
+          "commit": "67a88fab7581ca444cd311883eb01d34bba19637",
+          "source": {
+            "commit": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD"
+              ],
+              "exit_code": 0,
+              "stdout": "67a88fab7581ca444cd311883eb01d34bba19637",
+              "stderr": ""
+            },
+            "tree": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD^{tree}"
+              ],
+              "exit_code": 0,
+              "stdout": "feed0794a53b5919f02d6acaa9e8dd08d3e90816",
+              "stderr": ""
+            },
+            "top_level": {
+              "command": [
+                "git",
+                "rev-parse",
+                "--show-toplevel"
+              ],
+              "exit_code": 0,
+              "stdout": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff",
+              "stderr": ""
+            },
+            "status": {
+              "command": [
+                "git",
+                "status",
+                "--porcelain"
+              ],
+              "exit_code": 0,
+              "stdout": "",
+              "stderr": ""
+            }
+          },
+          "binary_sha256": "4043f951c9843d99731c773f32b9829c84d9644dd0c44f261753e482992f288e",
+          "tooling": {
+            "repository": {
+              "commit": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "HEAD"
+                ],
+                "exit_code": 0,
+                "stdout": "67a88fab7581ca444cd311883eb01d34bba19637",
+                "stderr": ""
+              },
+              "tree": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "HEAD^{tree}"
+                ],
+                "exit_code": 0,
+                "stdout": "feed0794a53b5919f02d6acaa9e8dd08d3e90816",
+                "stderr": ""
+              },
+              "top_level": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "--show-toplevel"
+                ],
+                "exit_code": 0,
+                "stdout": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff",
+                "stderr": ""
+              },
+              "status": {
+                "command": [
+                  "git",
+                  "status",
+                  "--porcelain"
+                ],
+                "exit_code": 0,
+                "stdout": "",
+                "stderr": ""
+              }
+            },
+            "snapshots": {
+              "build.py": {
+                "path": "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs.build.tooling-build.py",
+                "sha256": "fc8392a9d26290a6095742b2ab4cb45f5ab37b964c9daa51d22f7088259b1f50"
+              },
+              "run.py": {
+                "path": "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs.build.tooling-run.py",
+                "sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5"
+              }
+            }
+          },
+          "command": [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "--verbose",
+            "-p",
+            "quickjs-oxide-cli",
+            "--no-default-features",
+            "--target-dir",
+            "/private/tmp/quickjs-oxide-followthrough/build-candidate",
+            "--jobs",
+            "2"
+          ],
+          "cwd": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff",
+          "exit_code": 0,
+          "stdout": {
+            "path": "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs.build.stdout.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "stderr": {
+            "path": "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs.build.stderr.log",
+            "sha256": "8d20bfde617618120a98d0cc13be8fd007840024192afc563c15a01192c1a4f6"
+          },
+          "rustc": {
+            "command": [
+              "rustc",
+              "-vV"
+            ],
+            "exit_code": 0,
+            "stdout": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2",
+            "stderr": ""
+          },
+          "cargo": {
+            "command": [
+              "cargo",
+              "-V"
+            ],
+            "exit_code": 0,
+            "stdout": "cargo 1.96.0 (30a34c682 2026-05-25)",
+            "stderr": ""
+          },
+          "cargo_toml_sha256": "14f5e4d4f172150d6c212b61871da24a4e5b26e34e363f6de2a7f250bbe6e48d",
+          "cargo_lock_sha256": "c26c9f1999da579c0d1176c62981afa716ea998949a8dd15b1365f85b66944e3",
+          "release_profile": {
+            "manifest": {
+              "lto": "\"fat\"",
+              "codegen-units": "1"
+            },
+            "environment_overrides": {},
+            "cargo_config_sha256": {},
+            "qjs_rustc_invocation": {
+              "command": "rustc --crate-name qjs --edition=2024 apps/cli/src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C opt-level=3 -C lto=fat -C codegen-units=1 '--warn=clippy::all' --forbid=unsafe_code --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values(\"default\", \"profiling\", \"test262-host\"))' -C metadata=f318d7eac3aa0c1d -C extra-filename=-3cfe3c105f2435ac --out-dir /private/tmp/quickjs-oxide-followthrough/build-candidate/release/deps -C strip=debuginfo -L dependency=/private/tmp/quickjs-oxide-followthrough/build-candidate/release/deps --extern quickjs_oxide=/private/tmp/quickjs-oxide-followthrough/build-candidate/release/deps/libquickjs_oxide-e0446d572207f926.rlib --extern quickjs_oxide_host=/private/tmp/quickjs-oxide-followthrough/build-candidate/release/deps/libquickjs_oxide_host-78c1c28f3dc115b8.rlib",
+              "crate": "qjs",
+              "codegen": {
+                "opt-level": "3",
+                "lto": "fat",
+                "codegen-units": "1"
+              },
+              "target": null
+            },
+            "observed_rustc_compilations": 3,
+            "observed_codegen_groups": [
+              {
+                "target": null,
+                "codegen": {
+                  "opt-level": "3",
+                  "codegen-units": "1"
+                },
+                "crates": [
+                  "quickjs_oxide",
+                  "quickjs_oxide_host"
+                ]
+              },
+              {
+                "target": null,
+                "codegen": {
+                  "opt-level": "3",
+                  "lto": "fat",
+                  "codegen-units": "1"
+                },
+                "crates": [
+                  "qjs"
+                ]
+              }
+            ]
+          },
+          "target": {
+            "requested_triple": null,
+            "rustc_host": "aarch64-apple-darwin",
+            "observed_triple": null,
+            "observed_target_cpu": null,
+            "observed_target_feature": null
+          },
+          "commit_environment": "67a88fab7581ca444cd311883eb01d34bba19637"
+        }
+      },
+      "same_b": {
+        "path": "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "sha256": "4043f951c9843d99731c773f32b9829c84d9644dd0c44f261753e482992f288e",
+        "version": {
+          "command": [
+            "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+            "--version"
+          ],
+          "exit_code": 0,
+          "stdout": "quickjs-oxide 0.0.1 (QuickJS 2026-06-04 compatibility target)",
+          "stderr": ""
+        },
+        "build": {
+          "schema": "oxide-build-v2",
+          "mode": "plain",
+          "vm_configuration": "stack-vm",
+          "features": [],
+          "commit": "67a88fab7581ca444cd311883eb01d34bba19637",
+          "source": {
+            "commit": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD"
+              ],
+              "exit_code": 0,
+              "stdout": "67a88fab7581ca444cd311883eb01d34bba19637",
+              "stderr": ""
+            },
+            "tree": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD^{tree}"
+              ],
+              "exit_code": 0,
+              "stdout": "feed0794a53b5919f02d6acaa9e8dd08d3e90816",
+              "stderr": ""
+            },
+            "top_level": {
+              "command": [
+                "git",
+                "rev-parse",
+                "--show-toplevel"
+              ],
+              "exit_code": 0,
+              "stdout": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff",
+              "stderr": ""
+            },
+            "status": {
+              "command": [
+                "git",
+                "status",
+                "--porcelain"
+              ],
+              "exit_code": 0,
+              "stdout": "",
+              "stderr": ""
+            }
+          },
+          "binary_sha256": "4043f951c9843d99731c773f32b9829c84d9644dd0c44f261753e482992f288e",
+          "tooling": {
+            "repository": {
+              "commit": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "HEAD"
+                ],
+                "exit_code": 0,
+                "stdout": "67a88fab7581ca444cd311883eb01d34bba19637",
+                "stderr": ""
+              },
+              "tree": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "HEAD^{tree}"
+                ],
+                "exit_code": 0,
+                "stdout": "feed0794a53b5919f02d6acaa9e8dd08d3e90816",
+                "stderr": ""
+              },
+              "top_level": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "--show-toplevel"
+                ],
+                "exit_code": 0,
+                "stdout": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff",
+                "stderr": ""
+              },
+              "status": {
+                "command": [
+                  "git",
+                  "status",
+                  "--porcelain"
+                ],
+                "exit_code": 0,
+                "stdout": "",
+                "stderr": ""
+              }
+            },
+            "snapshots": {
+              "build.py": {
+                "path": "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs.build.tooling-build.py",
+                "sha256": "fc8392a9d26290a6095742b2ab4cb45f5ab37b964c9daa51d22f7088259b1f50"
+              },
+              "run.py": {
+                "path": "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs.build.tooling-run.py",
+                "sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5"
+              }
+            }
+          },
+          "command": [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "--verbose",
+            "-p",
+            "quickjs-oxide-cli",
+            "--no-default-features",
+            "--target-dir",
+            "/private/tmp/quickjs-oxide-followthrough/build-candidate",
+            "--jobs",
+            "2"
+          ],
+          "cwd": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff",
+          "exit_code": 0,
+          "stdout": {
+            "path": "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs.build.stdout.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "stderr": {
+            "path": "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs.build.stderr.log",
+            "sha256": "8d20bfde617618120a98d0cc13be8fd007840024192afc563c15a01192c1a4f6"
+          },
+          "rustc": {
+            "command": [
+              "rustc",
+              "-vV"
+            ],
+            "exit_code": 0,
+            "stdout": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2",
+            "stderr": ""
+          },
+          "cargo": {
+            "command": [
+              "cargo",
+              "-V"
+            ],
+            "exit_code": 0,
+            "stdout": "cargo 1.96.0 (30a34c682 2026-05-25)",
+            "stderr": ""
+          },
+          "cargo_toml_sha256": "14f5e4d4f172150d6c212b61871da24a4e5b26e34e363f6de2a7f250bbe6e48d",
+          "cargo_lock_sha256": "c26c9f1999da579c0d1176c62981afa716ea998949a8dd15b1365f85b66944e3",
+          "release_profile": {
+            "manifest": {
+              "lto": "\"fat\"",
+              "codegen-units": "1"
+            },
+            "environment_overrides": {},
+            "cargo_config_sha256": {},
+            "qjs_rustc_invocation": {
+              "command": "rustc --crate-name qjs --edition=2024 apps/cli/src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C opt-level=3 -C lto=fat -C codegen-units=1 '--warn=clippy::all' --forbid=unsafe_code --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values(\"default\", \"profiling\", \"test262-host\"))' -C metadata=f318d7eac3aa0c1d -C extra-filename=-3cfe3c105f2435ac --out-dir /private/tmp/quickjs-oxide-followthrough/build-candidate/release/deps -C strip=debuginfo -L dependency=/private/tmp/quickjs-oxide-followthrough/build-candidate/release/deps --extern quickjs_oxide=/private/tmp/quickjs-oxide-followthrough/build-candidate/release/deps/libquickjs_oxide-e0446d572207f926.rlib --extern quickjs_oxide_host=/private/tmp/quickjs-oxide-followthrough/build-candidate/release/deps/libquickjs_oxide_host-78c1c28f3dc115b8.rlib",
+              "crate": "qjs",
+              "codegen": {
+                "opt-level": "3",
+                "lto": "fat",
+                "codegen-units": "1"
+              },
+              "target": null
+            },
+            "observed_rustc_compilations": 3,
+            "observed_codegen_groups": [
+              {
+                "target": null,
+                "codegen": {
+                  "opt-level": "3",
+                  "codegen-units": "1"
+                },
+                "crates": [
+                  "quickjs_oxide",
+                  "quickjs_oxide_host"
+                ]
+              },
+              {
+                "target": null,
+                "codegen": {
+                  "opt-level": "3",
+                  "lto": "fat",
+                  "codegen-units": "1"
+                },
+                "crates": [
+                  "qjs"
+                ]
+              }
+            ]
+          },
+          "target": {
+            "requested_triple": null,
+            "rustc_host": "aarch64-apple-darwin",
+            "observed_triple": null,
+            "observed_target_cpu": null,
+            "observed_target_feature": null
+          },
+          "commit_environment": "67a88fab7581ca444cd311883eb01d34bba19637"
+        }
+      }
+    },
+    "repeat": 8,
+    "order_strategy": "abba-baab",
+    "timeout_seconds": 180,
+    "cpu": null,
+    "darwin_counters": true,
+    "counter_scope": "whole process including startup and teardown",
+    "metric": "whole-process wall nanoseconds; not adaptive scores"
+  },
+  "summary": [
+    {
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "same_a",
+      "eligible": true,
+      "successful_wall_ns": [
+        199151166,
+        306586834,
+        269358292,
+        318558208,
+        299784333,
+        267280583,
+        327897042,
+        285059792
+      ],
+      "failures": [],
+      "median_wall_ns": 292422062.5
+    },
+    {
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "same_b",
+      "eligible": true,
+      "successful_wall_ns": [
+        196973459,
+        285443875,
+        289335042,
+        331419125,
+        323673250,
+        294450000,
+        279683875,
+        257500833
+      ],
+      "failures": [],
+      "median_wall_ns": 287389458.5
+    },
+    {
+      "case": "update-product-miss",
+      "size": 2000000,
+      "engine": "same_a",
+      "eligible": true,
+      "successful_wall_ns": [
+        2791898375,
+        3678729709,
+        2403654208,
+        2570257833,
+        2844666750,
+        2004483334,
+        3993259083,
+        4528021209
+      ],
+      "failures": [],
+      "median_wall_ns": 2818282562.5
+    },
+    {
+      "case": "update-product-miss",
+      "size": 2000000,
+      "engine": "same_b",
+      "eligible": true,
+      "successful_wall_ns": [
+        2399826042,
+        3515321166,
+        2419591209,
+        2198106333,
+        2067252250,
+        2045803666,
+        2457550292,
+        3107371041
+      ],
+      "failures": [],
+      "median_wall_ns": 2409708625.5
+    }
+  ],
+  "samples": [
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_a-0.time-l.txt",
+        "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 199151166,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_a-0.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_a-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_a-0.time-l.txt",
+        "raw_sha256": "b0c28d5aca6ce9705e5947e86d81fca88bb293eb59d1d34fd359451c6b7116b6",
+        "values": {
+          "maximum_resident_set_size": 6144000,
+          "instructions_retired": 2096020890,
+          "cycles_elapsed": 422910240,
+          "peak_memory_footprint": 2704192
+        }
+      },
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "same_a",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_b-0.time-l.txt",
+        "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 196973459,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_b-0.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_b-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_b-0.time-l.txt",
+        "raw_sha256": "3319f1d9bcd6e33c863cae3ea87aeb40f9dea228726d7bd977088753b13dc9e5",
+        "values": {
+          "maximum_resident_set_size": 6012928,
+          "instructions_retired": 2088547289,
+          "cycles_elapsed": 418029752,
+          "peak_memory_footprint": 2573120
+        }
+      },
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "same_b",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_b-1.time-l.txt",
+        "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 285443875,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_b-1.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_b-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_b-1.time-l.txt",
+        "raw_sha256": "6c102564b693087218919b46d4827dc33ce8fb9fdf81720c960b497f2b8cd1c4",
+        "values": {
+          "maximum_resident_set_size": 6144000,
+          "instructions_retired": 2094878858,
+          "cycles_elapsed": 453248884,
+          "peak_memory_footprint": 2704192
+        }
+      },
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "same_b",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_a-1.time-l.txt",
+        "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 306586834,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_a-1.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_a-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_a-1.time-l.txt",
+        "raw_sha256": "b04261d8d8a44e87f6f29ec5b7f879e0b50eefb1ab2b7941af0c4b3b22f63668",
+        "values": {
+          "maximum_resident_set_size": 6012928,
+          "instructions_retired": 2101166793,
+          "cycles_elapsed": 470696483,
+          "peak_memory_footprint": 2573120
+        }
+      },
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "same_a",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_b-2.time-l.txt",
+        "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 289335042,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_b-2.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_b-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_b-2.time-l.txt",
+        "raw_sha256": "1a4442403f3d648c7e064604e9b551a1f5a939415c63a9ee23a495c9c4d707d2",
+        "values": {
+          "maximum_resident_set_size": 5947392,
+          "instructions_retired": 2095518810,
+          "cycles_elapsed": 462908123,
+          "peak_memory_footprint": 2507584
+        }
+      },
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "same_b",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_a-2.time-l.txt",
+        "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 269358292,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_a-2.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_a-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_a-2.time-l.txt",
+        "raw_sha256": "9f6bf7556d8b8897362cca3a771c41f1650ae1e10be7d81edd24eba8bb1b2ac9",
+        "values": {
+          "maximum_resident_set_size": 6012928,
+          "instructions_retired": 2097006241,
+          "cycles_elapsed": 446324256,
+          "peak_memory_footprint": 2589568
+        }
+      },
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "same_a",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_a-3.time-l.txt",
+        "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 318558208,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_a-3.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_a-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_a-3.time-l.txt",
+        "raw_sha256": "473bfc7e11d94f179e165c0ea1da12399a34dfb8a366b416d2f7b7d3becd33fa",
+        "values": {
+          "maximum_resident_set_size": 6045696,
+          "instructions_retired": 2099971030,
+          "cycles_elapsed": 475728974,
+          "peak_memory_footprint": 2605888
+        }
+      },
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "same_a",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_b-3.time-l.txt",
+        "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 331419125,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_b-3.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_b-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_b-3.time-l.txt",
+        "raw_sha256": "0845aea0764f50f27695b56fe7e368c3d01149ddc441ebff06965b4364976ccb",
+        "values": {
+          "maximum_resident_set_size": 6045696,
+          "instructions_retired": 2107013272,
+          "cycles_elapsed": 508353015,
+          "peak_memory_footprint": 2622336
+        }
+      },
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "same_b",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_a-4.time-l.txt",
+        "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 299784333,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_a-4.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_a-4.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_a-4.time-l.txt",
+        "raw_sha256": "696adaedc77e3764c27cece44b03f3d1f12710ce220411ab80481a1ee67932fd",
+        "values": {
+          "maximum_resident_set_size": 6144000,
+          "instructions_retired": 2096295228,
+          "cycles_elapsed": 448839148,
+          "peak_memory_footprint": 2704192
+        }
+      },
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "same_a",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_b-4.time-l.txt",
+        "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 323673250,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_b-4.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_b-4.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_b-4.time-l.txt",
+        "raw_sha256": "d667f1005bf17b4869e69e1c808f796d16e8b53cf6aa25d2387b5e2ab2fa6593",
+        "values": {
+          "maximum_resident_set_size": 6012928,
+          "instructions_retired": 2102986742,
+          "cycles_elapsed": 472725097,
+          "peak_memory_footprint": 2573120
+        }
+      },
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "same_b",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_b-5.time-l.txt",
+        "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 294450000,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_b-5.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_b-5.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_b-5.time-l.txt",
+        "raw_sha256": "9c6f3a276bd3e8165a7d697cb9cfac73416b08d167dffbf917d08f1598c07af2",
+        "values": {
+          "maximum_resident_set_size": 5996544,
+          "instructions_retired": 2101063301,
+          "cycles_elapsed": 462702843,
+          "peak_memory_footprint": 2556736
+        }
+      },
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "same_b",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_a-5.time-l.txt",
+        "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 267280583,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_a-5.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_a-5.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_a-5.time-l.txt",
+        "raw_sha256": "0ef4d26dec03dbdb10b93f8a38a455d0be8dcd3d4ad25df2fe788809fcdc9ff3",
+        "values": {
+          "maximum_resident_set_size": 6012928,
+          "instructions_retired": 2095115189,
+          "cycles_elapsed": 440073063,
+          "peak_memory_footprint": 2573120
+        }
+      },
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "same_a",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_b-6.time-l.txt",
+        "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 279683875,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_b-6.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_b-6.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_b-6.time-l.txt",
+        "raw_sha256": "4e34601457e1d97901908a28ad1a69e39789d533d415d5700b744be3531df372",
+        "values": {
+          "maximum_resident_set_size": 6029312,
+          "instructions_retired": 2096051002,
+          "cycles_elapsed": 449653462,
+          "peak_memory_footprint": 2589504
+        }
+      },
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "same_b",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_a-6.time-l.txt",
+        "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 327897042,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_a-6.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_a-6.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_a-6.time-l.txt",
+        "raw_sha256": "af13dd0aea5d2d0702f1d271fe8777ab5ea84e197ee4a84eefcf7e5f933dd802",
+        "values": {
+          "maximum_resident_set_size": 6144000,
+          "instructions_retired": 2096342794,
+          "cycles_elapsed": 444158503,
+          "peak_memory_footprint": 2704192
+        }
+      },
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "same_a",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_a-7.time-l.txt",
+        "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 285059792,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_a-7.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_a-7.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_a-7.time-l.txt",
+        "raw_sha256": "010ceb59f6dfc790a70ffa9b82ae02cbd9c0c9c650d5542acebf412235cad759",
+        "values": {
+          "maximum_resident_set_size": 6144000,
+          "instructions_retired": 2100737507,
+          "cycles_elapsed": 455541464,
+          "peak_memory_footprint": 2720640
+        }
+      },
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "same_a",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_b-7.time-l.txt",
+        "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 257500833,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_b-7.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_b-7.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-hit-same_b-7.time-l.txt",
+        "raw_sha256": "ae2ce2d9770ea5717a2773c4bf6d2d8d8eb47c081a677b87f1fe767d48365747",
+        "values": {
+          "maximum_resident_set_size": 6012928,
+          "instructions_retired": 2094605943,
+          "cycles_elapsed": 438286425,
+          "peak_memory_footprint": 2589568
+        }
+      },
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "same_b",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_a-0.time-l.txt",
+        "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2791898375,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_a-0.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_a-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_a-0.time-l.txt",
+        "raw_sha256": "d4209bd49b2164ee892543b14dc070076817430c34d63b8843e23e28fc10aa08",
+        "values": {
+          "maximum_resident_set_size": 6193152,
+          "instructions_retired": 19835624789,
+          "cycles_elapsed": 4432886517,
+          "peak_memory_footprint": 2605888
+        }
+      },
+      "case": "update-product-miss",
+      "size": 2000000,
+      "engine": "same_a",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_b-0.time-l.txt",
+        "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2399826042,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_b-0.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_b-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_b-0.time-l.txt",
+        "raw_sha256": "3a8f9d0de52570c34bd6305917471c648f6a58e1346365af8e90169001d17ce5",
+        "values": {
+          "maximum_resident_set_size": 6471680,
+          "instructions_retired": 19812029452,
+          "cycles_elapsed": 4332295538,
+          "peak_memory_footprint": 2687872
+        }
+      },
+      "case": "update-product-miss",
+      "size": 2000000,
+      "engine": "same_b",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_b-1.time-l.txt",
+        "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 3515321166,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_b-1.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_b-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_b-1.time-l.txt",
+        "raw_sha256": "000a7375ec698f1d8b0ea572b046b425346c21a767076d0611bdc3cf83feb074",
+        "values": {
+          "maximum_resident_set_size": 6275072,
+          "instructions_retired": 19815005194,
+          "cycles_elapsed": 4316580544,
+          "peak_memory_footprint": 2720576
+        }
+      },
+      "case": "update-product-miss",
+      "size": 2000000,
+      "engine": "same_b",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_a-1.time-l.txt",
+        "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 3678729709,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_a-1.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_a-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_a-1.time-l.txt",
+        "raw_sha256": "3bb24fb2ce2c0f5e7958d9915fb9ecbabee6568967f15699347878f9ad48cb03",
+        "values": {
+          "maximum_resident_set_size": 6193152,
+          "instructions_retired": 19854132541,
+          "cycles_elapsed": 4719049659,
+          "peak_memory_footprint": 2605888
+        }
+      },
+      "case": "update-product-miss",
+      "size": 2000000,
+      "engine": "same_a",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_b-2.time-l.txt",
+        "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2419591209,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_b-2.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_b-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_b-2.time-l.txt",
+        "raw_sha256": "b149962bde813f478eda5daccd9a8ed274fbc5ac74477d63648b65f36d7d6025",
+        "values": {
+          "maximum_resident_set_size": 6389760,
+          "instructions_retired": 19774044915,
+          "cycles_elapsed": 4215609869,
+          "peak_memory_footprint": 2589504
+        }
+      },
+      "case": "update-product-miss",
+      "size": 2000000,
+      "engine": "same_b",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_a-2.time-l.txt",
+        "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2403654208,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_a-2.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_a-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_a-2.time-l.txt",
+        "raw_sha256": "216cb14dda02c7916e34f585fb1240ae6b3a637b9037ba1d120f707e2215809c",
+        "values": {
+          "maximum_resident_set_size": 6324224,
+          "instructions_retired": 19784931363,
+          "cycles_elapsed": 4195933580,
+          "peak_memory_footprint": 2523968
+        }
+      },
+      "case": "update-product-miss",
+      "size": 2000000,
+      "engine": "same_a",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_a-3.time-l.txt",
+        "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2570257833,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_a-3.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_a-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_a-3.time-l.txt",
+        "raw_sha256": "2e59811ac308838082a5710f5c19c304b7621aed341813edd7904ccaf5d2fdf8",
+        "values": {
+          "maximum_resident_set_size": 6504448,
+          "instructions_retired": 19772665453,
+          "cycles_elapsed": 4256039147,
+          "peak_memory_footprint": 2704192
+        }
+      },
+      "case": "update-product-miss",
+      "size": 2000000,
+      "engine": "same_a",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_b-3.time-l.txt",
+        "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2198106333,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_b-3.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_b-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_b-3.time-l.txt",
+        "raw_sha256": "0a3b95fb062ff3e2a72424a041a88fdf51152d1b76eb70459877425e2aa1724b",
+        "values": {
+          "maximum_resident_set_size": 6438912,
+          "instructions_retired": 19779021431,
+          "cycles_elapsed": 4207975324,
+          "peak_memory_footprint": 2655104
+        }
+      },
+      "case": "update-product-miss",
+      "size": 2000000,
+      "engine": "same_b",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_a-4.time-l.txt",
+        "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2844666750,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_a-4.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_a-4.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_a-4.time-l.txt",
+        "raw_sha256": "5865f39afd7983e3835b56b7495958354d1f194f6ac7413c6074f6c8320c29b8",
+        "values": {
+          "maximum_resident_set_size": 6094848,
+          "instructions_retired": 19834885604,
+          "cycles_elapsed": 4503151955,
+          "peak_memory_footprint": 2507584
+        }
+      },
+      "case": "update-product-miss",
+      "size": 2000000,
+      "engine": "same_a",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_b-4.time-l.txt",
+        "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2067252250,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_b-4.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_b-4.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_b-4.time-l.txt",
+        "raw_sha256": "3aa3561e764e1de2681f545b87ddbc857ba416dde1ad5bcd975439cb3a7cfd7e",
+        "values": {
+          "maximum_resident_set_size": 6389760,
+          "instructions_retired": 19751322963,
+          "cycles_elapsed": 4136610182,
+          "peak_memory_footprint": 2589504
+        }
+      },
+      "case": "update-product-miss",
+      "size": 2000000,
+      "engine": "same_b",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_b-5.time-l.txt",
+        "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2045803666,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_b-5.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_b-5.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_b-5.time-l.txt",
+        "raw_sha256": "d7f1ec11917d67f39d90063b40ee6dd16ee60f83c1f8080f98ebf631dc2dc4de",
+        "values": {
+          "maximum_resident_set_size": 6373376,
+          "instructions_retired": 19754279739,
+          "cycles_elapsed": 4131547802,
+          "peak_memory_footprint": 2573120
+        }
+      },
+      "case": "update-product-miss",
+      "size": 2000000,
+      "engine": "same_b",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_a-5.time-l.txt",
+        "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2004483334,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_a-5.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_a-5.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_a-5.time-l.txt",
+        "raw_sha256": "9b97d4e3c22ab935a99ea979f4e353ad629f1c34da09efa475035ad4e79a572f",
+        "values": {
+          "maximum_resident_set_size": 6488064,
+          "instructions_retired": 19750619716,
+          "cycles_elapsed": 4116000023,
+          "peak_memory_footprint": 2704256
+        }
+      },
+      "case": "update-product-miss",
+      "size": 2000000,
+      "engine": "same_a",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_b-6.time-l.txt",
+        "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2457550292,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_b-6.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_b-6.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_b-6.time-l.txt",
+        "raw_sha256": "b23fd8b9779f6afd4288974e429d66fb3308e2bceb9563bc92e334435088e2f3",
+        "values": {
+          "maximum_resident_set_size": 6422528,
+          "instructions_retired": 19797108476,
+          "cycles_elapsed": 4349577396,
+          "peak_memory_footprint": 2622272
+        }
+      },
+      "case": "update-product-miss",
+      "size": 2000000,
+      "engine": "same_b",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_a-6.time-l.txt",
+        "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 3993259083,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_a-6.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_a-6.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_a-6.time-l.txt",
+        "raw_sha256": "1317db0408a08e8ef35bdbc39c433082b67fb0efa7741f94b8a22f9db4305425",
+        "values": {
+          "maximum_resident_set_size": 6193152,
+          "instructions_retired": 19913500323,
+          "cycles_elapsed": 5076424368,
+          "peak_memory_footprint": 2605888
+        }
+      },
+      "case": "update-product-miss",
+      "size": 2000000,
+      "engine": "same_a",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_a-7.time-l.txt",
+        "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 4528021209,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_a-7.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_a-7.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_a-7.time-l.txt",
+        "raw_sha256": "44317c3e292f44954a87336562cb2e7d5cc8182afaebc3df05520a930d53b4af",
+        "values": {
+          "maximum_resident_set_size": 6275072,
+          "instructions_retired": 19879546182,
+          "cycles_elapsed": 5285261123,
+          "peak_memory_footprint": 2704192
+        }
+      },
+      "case": "update-product-miss",
+      "size": 2000000,
+      "engine": "same_a",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_b-7.time-l.txt",
+        "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 3107371041,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_b-7.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_b-7.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/quickjs-oxide-followthrough/cost-normal-aa/raw/update-product-miss-same_b-7.time-l.txt",
+        "raw_sha256": "e020a4977f55b4bb3b4f5d897fe4eba73a1351ba37ae98689a2a5d4e85b5cdd3",
+        "values": {
+          "maximum_resident_set_size": 6406144,
+          "instructions_retired": 19807356671,
+          "cycles_elapsed": 4379081374,
+          "peak_memory_footprint": 2605888
+        }
+      },
+      "case": "update-product-miss",
+      "size": 2000000,
+      "engine": "same_b",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    }
+  ]
+}

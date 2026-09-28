@@ -25,6 +25,12 @@ pub(crate) struct ArrayProductSource {
 }
 
 #[derive(Clone, Copy, Debug)]
+pub(crate) struct ArrayReadSource {
+    pub array: DirectSource,
+    pub index: NumberSource,
+}
+
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum UpdateDelta {
     Number(NumberSource),
     ArrayProduct(ArrayProductSource),
@@ -40,6 +46,17 @@ pub(crate) enum NumericOperation {
     StoreProduct {
         destination: u16,
         scale: NumberSource,
+        checked: bool,
+    },
+    CopyElement {
+        source: ArrayReadSource,
+    },
+    /// Add one Array Number to the existing top Number after ++local index.
+    AddPreInc,
+    /// Consume array, index and Number from the operand stack, then store the
+    /// Number into the array and an initialized direct local.
+    StoreElementAndLocal {
+        destination: u16,
         checked: bool,
     },
     UpdateElement {
@@ -73,8 +90,10 @@ pub(crate) struct PublishedNumericRegion {
     pub index: NumberSource,
     /// Scale, delta, or right-hand comparison operand, as selected by opcode.
     pub value: NumberSource,
-    /// Only an element update may use a second array read as its delta.
-    pub update_product: Option<ArrayProductSource>,
+    /// Index into the opcode-specific product or copy payload table.
+    pub producer_index: Option<u32>,
+    /// The update and product indices read the same stable direct binding.
+    pub shared_update_index: bool,
     /// Used only by local-write opcodes.
     pub destination: u16,
     pub checked: bool,

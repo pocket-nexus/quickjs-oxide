@@ -1,0 +1,76 @@
+--- a/src/engine/vm/execute.rs
++++ b/src/engine/vm/execute.rs
+@@ -481,71 +481,8 @@
+                         }
+                     }
+                     Opcode::NumericArrayUpdateElement => {
+-                        let generation = frame.property_generation.checked_add(1);
+-                        let result = cursor.with_slots(|slots| {
+-                            if generation.is_none() {
+-                                return Ok(Err(Miss::PropertyGenerationOverflow));
+-                            }
+-                            if !slots.has_operand_capacity(region.peak as usize) {
+-                                return Ok(Err(Miss::OperandCapacity));
+-                            }
+-                            let Some(index) =
+-                                region_number(slots, region.index).and_then(array_index)
+-                            else {
+-                                return Ok(Err(Miss::IndexNotNumericInteger));
+-                            };
+-                            let delta = if let Some(producer) = region.producer_index {
+-                                let product = executable
+-                                    .exec
+-                                    .product_source(producer)
+-                                    .expect("verified product payload");
+-                                let Some(scale) = region_number(slots, product.scale) else {
+-                                    return Ok(Err(Miss::ScaleNotNumber));
+-                                };
+-                                let product_index = if region.shared_update_index {
+-                                    index
+-                                } else {
+-                                    let Some(product_index) =
+-                                        region_number(slots, product.index).and_then(array_index)
+-                                    else {
+-                                        return Ok(Err(Miss::IndexNotNumericInteger));
+-                                    };
+-                                    product_index
+-                                };
+-                                let Some(product_base) =
+-                                    slots.direct_value(region_direct_slot(product.array))
+-                                else {
+-                                    return Ok(Err(Miss::ReceiverBindingUnavailable));
+-                                };
+-                                let element = match runtime
+-                                    .peek_dense_number_result(product_base, product_index)
+-                                {
+-                                    Ok(value) => value,
+-                                    Err(reason) => return Ok(Err(reason)),
+-                                };
+-                                element.mul(scale)
+-                            } else {
+-                                let Some(delta) = region_number(slots, region.value) else {
+-                                    return Ok(Err(Miss::DeltaNotNumber));
+-                                };
+-                                delta
+-                            };
+-                            let Some(base) = slots.direct_value(region_direct_slot(region.array))
+-                            else {
+-                                return Ok(Err(Miss::ReceiverBindingUnavailable));
+-                            };
+-                            Ok(runtime.try_add_array_own_number(base, index, delta))
+-                        })?;
+-                        match result {
+-                            Ok(()) => {
+-                                frame.property_generation = generation.unwrap();
+-                                true
+-                            }
+-                            Err(reason) => {
+-                                miss_reason = Some(reason);
+-                                false
+-                            }
+-                        }
++                        miss_reason = Some(Miss::ReceiverUnavailable);
++                        false
+                     }
+                     Opcode::NumericArrayCopyElement => {
+                         let generation = frame.property_generation.checked_add(1);

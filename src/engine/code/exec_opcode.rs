@@ -241,6 +241,9 @@ pub(crate) enum Opcode {
     CompareBranchLocalLt,
     CompareBranchArgLt,
     NumericArrayStoreProduct,
+    NumericArrayCopyElement,
+    NumericArrayAddPreInc,
+    NumericArrayStoreAndLocal,
     NumericArrayUpdateElement,
     NumericArrayCompareBranch,
 }
@@ -475,6 +478,9 @@ const OPCODES: &[Opcode] = &[
     Opcode::CompareBranchLocalLt,
     Opcode::CompareBranchArgLt,
     Opcode::NumericArrayStoreProduct,
+    Opcode::NumericArrayCopyElement,
+    Opcode::NumericArrayAddPreInc,
+    Opcode::NumericArrayStoreAndLocal,
     Opcode::NumericArrayUpdateElement,
     Opcode::NumericArrayCompareBranch,
 ];
@@ -919,6 +925,9 @@ impl Opcode {
             | Self::DensePostUpdateArg => 3,
             Self::NumericArrayAccumulate
             | Self::NumericArrayStoreProduct
+            | Self::NumericArrayCopyElement
+            | Self::NumericArrayAddPreInc
+            | Self::NumericArrayStoreAndLocal
             | Self::NumericArrayUpdateElement
             | Self::NumericArrayCompareBranch => 3,
         }
