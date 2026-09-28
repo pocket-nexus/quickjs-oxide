@@ -38,12 +38,12 @@ impl Heap {
 
     /// Strong count for diagnostics.
     pub fn shape_strong_count(&self, id: ShapeId) -> Result<u32, HeapError> {
-        self.shapes.strong_count(RawId::Shape(id))
+        self.shapes.strong_count(id)
     }
 
     /// Strong count for captured-variable diagnostics.
     pub fn var_ref_strong_count(&self, id: VarRefId) -> Result<u32, HeapError> {
-        self.var_refs.strong_count(RawId::VarRef(id))
+        self.var_refs.strong_count(id)
     }
 
     /// Strong count for context diagnostics.
@@ -484,7 +484,7 @@ impl Heap {
         &mut self,
         id: VarRefId,
     ) -> Result<&mut VarRefData, HeapError> {
-        Ok(&mut self.var_refs.live_mut(RawId::VarRef(id))?.data)
+        Ok(&mut self.var_refs.live_mut(id)?.data)
     }
 
     /// Strong count for a shared-arena handle. Leaf callers use
@@ -504,11 +504,11 @@ impl Heap {
         if id.is_leaf() {
             return Ok(self.leaf_slot(id)?.strong.get());
         }
-        if matches!(id, RawId::VarRef(_)) {
-            return self.var_refs.strong_count(id);
+        if let RawId::VarRef(cell) = id {
+            return self.var_refs.strong_count(cell);
         }
-        if matches!(id, RawId::Shape(_)) {
-            return self.shapes.strong_count(id);
+        if let RawId::Shape(shape) = id {
+            return self.shapes.strong_count(shape);
         }
         self.shared_strong_count(id)
     }
@@ -520,23 +520,23 @@ impl Heap {
             self.live_leaf_fast_mut(id).strong.set(count);
             return;
         }
-        if matches!(id, RawId::VarRef(_)) {
-            self.var_refs.live_fast_mut(id).strong.set(count);
+        if let RawId::VarRef(cell) = id {
+            self.var_refs.live_fast_mut(cell).strong.set(count);
             return;
         }
-        if matches!(id, RawId::Shape(_)) {
-            self.shapes.live_fast_mut(id).strong.set(count);
+        if let RawId::Shape(shape) = id {
+            self.shapes.live_fast_mut(shape).strong.set(count);
             return;
         }
         self.live_node_fast_mut(id).strong.set(count);
     }
 
     pub(in crate::engine::heap) fn is_live(&self, id: RawId) -> bool {
-        if matches!(id, RawId::VarRef(_)) {
-            return self.var_refs.is_live(id);
+        if let RawId::VarRef(cell) = id {
+            return self.var_refs.is_live(cell);
         }
-        if matches!(id, RawId::Shape(_)) {
-            return self.shapes.is_live(id);
+        if let RawId::Shape(shape) = id {
+            return self.shapes.is_live(shape);
         }
         if id.is_leaf() {
             return self

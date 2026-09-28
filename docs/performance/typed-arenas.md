@@ -44,6 +44,12 @@ FunctionBytecode remain active finalization anchors; cell and shape edges are
 still traced. Equal numeric indices in different arenas never imply equal
 identity.
 
+The follow-up arena interface associates `VarRefData` with `VarRefId` and
+`Shape` with `ShapeId`. Reservation returns the associated ID, and publication,
+lookup, release and reclamation accept that ID. The diagnostic kind comes from
+the payload type. Heterogeneous heap and collector paths match `RawId` before
+entering either arena; generation and liveness checks remain in the arena.
+
 ## Implementation sequence and evidence
 
 1. The frozen #53 build establishes common-slot capacity and relevant node

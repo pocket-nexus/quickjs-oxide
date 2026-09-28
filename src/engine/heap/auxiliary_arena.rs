@@ -5,6 +5,42 @@
 
 use super::*;
 
+/// The payload fixes both the accepted slot identity and its diagnostic kind.
+/// Heterogeneous `RawId` dispatch belongs to `Heap`, before entering an arena.
+pub(super) trait AuxiliaryPayload: Sized {
+    type Id: Copy;
+    const KIND: HeapNodeKind;
+
+    fn id(index: u32, generation: u32) -> Self::Id;
+    fn parts(id: Self::Id) -> (u32, u32);
+}
+
+impl AuxiliaryPayload for VarRefData {
+    type Id = VarRefId;
+    const KIND: HeapNodeKind = HeapNodeKind::VarRef;
+
+    fn id(index: u32, generation: u32) -> Self::Id {
+        VarRefId { index, generation }
+    }
+
+    fn parts(id: Self::Id) -> (u32, u32) {
+        (id.index, id.generation)
+    }
+}
+
+impl AuxiliaryPayload for Shape {
+    type Id = ShapeId;
+    const KIND: HeapNodeKind = HeapNodeKind::Shape;
+
+    fn id(index: u32, generation: u32) -> Self::Id {
+        ShapeId { index, generation }
+    }
+
+    fn parts(id: Self::Id) -> (u32, u32) {
+        (id.index, id.generation)
+    }
+}
+
 pub(super) struct AuxiliaryNode<T> {
     pub(super) strong: Cell<u32>,
     pub(super) data: T,
@@ -33,7 +69,7 @@ pub(super) struct AuxiliarySlot<T> {
     pub(super) state: AuxiliaryState<T>,
 }
 
-pub(super) struct AuxiliaryArena<T> {
+pub(super) struct AuxiliaryArena<T: AuxiliaryPayload> {
     #[cfg(not(feature = "profiling"))]
     pub(super) slots: Vec<AuxiliarySlot<T>>,
     #[cfg(feature = "profiling")]
@@ -43,7 +79,7 @@ pub(super) struct AuxiliaryArena<T> {
     pub(super) alloc_sites: Vec<Option<gc::AllocSite>>,
 }
 
-impl<T> AuxiliaryArena<T> {
+impl<T: AuxiliaryPayload> AuxiliaryArena<T> {
     pub(super) const fn new(allocation_id: u64) -> Self {
         #[cfg(not(feature = "profiling"))]
         let _ = allocation_id;
@@ -58,7 +94,7 @@ impl<T> AuxiliaryArena<T> {
         }
     }
 
-    pub(super) fn reserve(&mut self, kind: HeapNodeKind) -> Result<(u32, u32), HeapError> {
+    pub(super) fn reserve(&mut self) -> Result<T::Id, HeapError> {
         let index = if let Some(index) = self.free.pop() {
             index
         } else {
@@ -85,20 +121,21 @@ impl<T> AuxiliaryArena<T> {
         slot.state = AuxiliaryState::Initializing { strong: 1 };
         let generation = slot.generation;
         #[cfg(debug_assertions)]
-        self.record_alloc_site(index, generation, kind);
-        #[cfg(not(debug_assertions))]
-        let _ = kind;
-        Ok((index, generation))
+        self.record_alloc_site(index, generation);
+        Ok(T::id(index, generation))
     }
 
-    pub(super) fn abort_initializing(&mut self, index: u32) -> Result<(), HeapError> {
+    pub(super) fn abort_initializing(&mut self, id: T::Id) -> Result<(), HeapError> {
+        let (index, generation) = T::parts(id);
         let slot = self
             .slots
             .get_mut(index as usize)
             .ok_or(HeapError::Invariant(
                 "initializing auxiliary slot disappeared",
             ))?;
-        if !matches!(slot.state, AuxiliaryState::Initializing { .. }) {
+        if slot.generation != generation
+            || !matches!(slot.state, AuxiliaryState::Initializing { .. })
+        {
             return Err(HeapError::Invariant(
                 "attempted to abort a published auxiliary slot",
             ));
@@ -110,14 +147,17 @@ impl<T> AuxiliaryArena<T> {
         Ok(())
     }
 
-    pub(super) fn publish(&mut self, index: u32, data: T) -> Result<(), HeapError> {
+    pub(super) fn publish(&mut self, id: T::Id, data: T) -> Result<(), HeapError> {
+        let (index, generation) = T::parts(id);
         let slot = self
             .slots
             .get_mut(index as usize)
             .ok_or(HeapError::Invariant(
                 "initializing auxiliary slot disappeared",
             ))?;
-        if !matches!(slot.state, AuxiliaryState::Initializing { strong: 1 }) {
+        if slot.generation != generation
+            || !matches!(slot.state, AuxiliaryState::Initializing { strong: 1 })
+        {
             return Err(HeapError::Invariant(
                 "auxiliary slot was not singly owned before publication",
             ));
@@ -129,78 +169,83 @@ impl<T> AuxiliaryArena<T> {
         Ok(())
     }
 
-    pub(super) fn validate_identity(&self, id: RawId) -> Result<usize, HeapError> {
-        let index = id.index() as usize;
+    pub(super) fn validate_identity(&self, id: T::Id) -> Result<usize, HeapError> {
+        let (raw_index, generation) = T::parts(id);
+        let index = raw_index as usize;
         let slot = self.slots.get(index).ok_or(HeapError::Stale {
-            index: id.index(),
-            generation: id.generation(),
+            index: raw_index,
+            generation,
         })?;
-        if slot.generation != id.generation()
+        if slot.generation != generation
             || matches!(slot.state, AuxiliaryState::Vacant | AuxiliaryState::Retired)
         {
             return Err(HeapError::Stale {
-                index: id.index(),
-                generation: id.generation(),
+                index: raw_index,
+                generation,
             });
         }
         Ok(index)
     }
 
-    pub(super) fn live(&self, id: RawId) -> Result<&AuxiliaryNode<T>, HeapError> {
+    pub(super) fn live(&self, id: T::Id) -> Result<&AuxiliaryNode<T>, HeapError> {
         let index = self.validate_identity(id)?;
+        let (raw_index, generation) = T::parts(id);
         match &self.slots[index].state {
             AuxiliaryState::Live(node) => Ok(node),
             _ => Err(HeapError::Stale {
-                index: id.index(),
-                generation: id.generation(),
+                index: raw_index,
+                generation,
             }),
         }
     }
 
-    pub(super) fn live_mut(&mut self, id: RawId) -> Result<&mut AuxiliaryNode<T>, HeapError> {
+    pub(super) fn live_mut(&mut self, id: T::Id) -> Result<&mut AuxiliaryNode<T>, HeapError> {
         let index = self.validate_identity(id)?;
+        let (raw_index, generation) = T::parts(id);
         match &mut self.slots[index].state {
             AuxiliaryState::Live(node) => Ok(node),
             _ => Err(HeapError::Stale {
-                index: id.index(),
-                generation: id.generation(),
+                index: raw_index,
+                generation,
             }),
         }
     }
 
-    pub(super) fn live_fast(&self, id: RawId) -> &AuxiliaryNode<T> {
+    pub(super) fn live_fast(&self, id: T::Id) -> &AuxiliaryNode<T> {
         debug_assert!(self.validate_identity(id).is_ok());
-        match &self.slots[id.index() as usize].state {
+        match &self.slots[T::parts(id).0 as usize].state {
             AuxiliaryState::Live(node) => node,
             _ => unreachable!("trusted auxiliary handle reached a non-live slot"),
         }
     }
 
     #[cfg(test)]
-    pub(super) fn live_fast_mut(&mut self, id: RawId) -> &mut AuxiliaryNode<T> {
+    pub(super) fn live_fast_mut(&mut self, id: T::Id) -> &mut AuxiliaryNode<T> {
         debug_assert!(self.validate_identity(id).is_ok());
-        match &mut self.slots[id.index() as usize].state {
+        match &mut self.slots[T::parts(id).0 as usize].state {
             AuxiliaryState::Live(node) => node,
             _ => unreachable!("trusted auxiliary handle reached a non-live slot"),
         }
     }
 
-    pub(super) fn strong_count(&self, id: RawId) -> Result<u32, HeapError> {
+    pub(super) fn strong_count(&self, id: T::Id) -> Result<u32, HeapError> {
         let index = self.validate_identity(id)?;
+        let (raw_index, generation) = T::parts(id);
         self.slots[index].state.strong().ok_or(HeapError::Stale {
-            index: id.index(),
-            generation: id.generation(),
+            index: raw_index,
+            generation,
         })
     }
 
-    pub(super) fn is_live(&self, id: RawId) -> bool {
+    pub(super) fn is_live(&self, id: T::Id) -> bool {
         self.validate_identity(id)
             .is_ok_and(|index| matches!(self.slots[index].state, AuxiliaryState::Live(_)))
     }
 
     /// Decrement an owned reference. The caller enqueues the handle on `true`.
-    pub(super) fn release_no_drain(&mut self, id: RawId) -> Result<bool, HeapError> {
+    pub(super) fn release_no_drain(&mut self, id: T::Id) -> Result<bool, HeapError> {
         let index = self.validate_identity(id)?;
+        let (raw_index, generation) = T::parts(id);
         let slot = &mut self.slots[index];
         match &mut slot.state {
             AuxiliaryState::Live(node) => {
@@ -212,9 +257,9 @@ impl<T> AuxiliaryArena<T> {
                     .get()
                     .checked_sub(1)
                     .ok_or(HeapError::Underflow {
-                        kind: id.kind(),
-                        index: id.index(),
-                        generation: id.generation(),
+                        kind: T::KIND,
+                        index: raw_index,
+                        generation,
                     })?;
                 node.strong.set(strong);
                 if strong == 0 {
@@ -230,19 +275,19 @@ impl<T> AuxiliaryArena<T> {
             }
             AuxiliaryState::Initializing { .. } | AuxiliaryState::ZeroQueued(_) => {
                 Err(HeapError::Underflow {
-                    kind: id.kind(),
-                    index: id.index(),
-                    generation: id.generation(),
+                    kind: T::KIND,
+                    index: raw_index,
+                    generation,
                 })
             }
             AuxiliaryState::Vacant | AuxiliaryState::Retired => Err(HeapError::Stale {
-                index: id.index(),
-                generation: id.generation(),
+                index: raw_index,
+                generation,
             }),
         }
     }
 
-    pub(super) fn detach_zero_queued(&mut self, id: RawId) -> Result<T, HeapError> {
+    pub(super) fn detach_zero_queued(&mut self, id: T::Id) -> Result<T, HeapError> {
         let index = self.validate_identity(id)?;
         let slot = &mut self.slots[index];
         if !matches!(slot.state, AuxiliaryState::ZeroQueued(_)) {
@@ -262,12 +307,13 @@ impl<T> AuxiliaryArena<T> {
         Ok(node.data)
     }
 
-    pub(super) fn reclaim_vacant(&mut self, index: u32) -> Result<(), HeapError> {
+    pub(super) fn reclaim_vacant(&mut self, id: T::Id) -> Result<(), HeapError> {
+        let (index, generation) = T::parts(id);
         let slot = self
             .slots
             .get_mut(index as usize)
             .ok_or(HeapError::Invariant("reclaimed auxiliary slot disappeared"))?;
-        if !matches!(slot.state, AuxiliaryState::Vacant) {
+        if slot.generation != generation || !matches!(slot.state, AuxiliaryState::Vacant) {
             return Err(HeapError::Invariant(
                 "auxiliary generation advanced before payload detachment",
             ));
@@ -284,7 +330,7 @@ impl<T> AuxiliaryArena<T> {
     }
 
     #[cfg(debug_assertions)]
-    fn record_alloc_site(&mut self, index: u32, generation: u32, kind: HeapNodeKind) {
+    fn record_alloc_site(&mut self, index: u32, generation: u32) {
         if !super::ownership::alloc_site_capture_enabled() {
             return;
         }
@@ -294,7 +340,7 @@ impl<T> AuxiliaryArena<T> {
         }
         self.alloc_sites[index] = Some(gc::AllocSite {
             generation,
-            kind,
+            kind: T::KIND,
             backtrace: super::ownership::compact_backtrace(),
         });
     }
