@@ -1,0 +1,26 @@
+{
+  "command": [
+    "cargo",
+    "build",
+    "--release",
+    "--manifest-path",
+    "/tmp/oxide-phase2-baseline-compile-probe/Cargo.toml",
+    "--target-dir",
+    "/tmp/oxide-phase2-baseline-compile-probe/target"
+  ],
+  "repository": "/tmp/oxide-phase2-baseline-src",
+  "binary": "/tmp/oxide-phase2-baseline-compile-probe/target/release/oxide-compile-probe",
+  "binary_sha256": "f1d2cb6ad96ac11baa6158858c1738bc339644f1b9c6423cf7715d9d0fb02c39",
+  "source_sha256": "9c3ff10353b51995a90f2c62868e0b6337d3163983f3876e1f5c4f271829cfae",
+  "cargo_lock_sha256": "d1b16903f0b6008576770f59344f872080c600d52197b27ad6c13a007d3ac5b5",
+  "dependency_commit": "90c85e3d94cd66066fe1c4381608d497f1dab346",
+  "source_identity": {
+    "kind": "git-checkout",
+    "note": "patch covers tracked files; stage receipt must additionally hash untracked implementation files"
+  },
+  "source_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "features": [],
+  "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)\nbinary: rustc\ncommit-hash: e408947bfd200af42db322daf0fadfe7e26d3bd1\ncommit-date: 2026-03-25\nhost: x86_64-unknown-linux-gnu\nrelease: 1.94.1\nLLVM version: 21.1.8\n",
+  "rustflags": null,
+  "encoded_rustflags": null
+}

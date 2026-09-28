@@ -1,0 +1,207 @@
+{
+  "schema": "oxide-compile-matrix-v1",
+  "created_utc": "2026-09-28T19:32:11Z",
+  "metric": "compile",
+  "goal": "script",
+  "repeat": 24,
+  "timeout_seconds": 120,
+  "order": "serial, alternating per repetition",
+  "instrumentation": "off (no profiling flags)",
+  "machine": {
+    "platform": "Linux-7.2.7-arch1-1-x86_64-with-glibc2.44",
+    "machine": "x86_64",
+    "cpu": "AMD Ryzen 7 7840HS with Radeon 780M Graphics",
+    "logical_cpus": 16,
+    "python": "3.14.7",
+    "cpu_affinity": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15
+    ],
+    "scaling_governors": {
+      "0": "powersave",
+      "1": "powersave",
+      "2": "powersave",
+      "3": "powersave",
+      "4": "powersave",
+      "5": "powersave",
+      "6": "powersave",
+      "7": "powersave",
+      "8": "powersave",
+      "9": "powersave",
+      "10": "powersave",
+      "11": "powersave",
+      "12": "powersave",
+      "13": "powersave",
+      "14": "powersave",
+      "15": "powersave"
+    },
+    "load_average": [
+      1.2412109375,
+      0.9404296875,
+      1.0009765625
+    ],
+    "macos": null,
+    "runner_sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5",
+    "repository": {
+      "commit": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD"
+        ],
+        "exit_code": 0,
+        "stdout": "a870149743e02a2750fff89e75b00c3c20ca2fa3",
+        "stderr": ""
+      },
+      "tree": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD^{tree}"
+        ],
+        "exit_code": 0,
+        "stdout": "9063fde889123ee7797667dceea95f67dec2b091",
+        "stderr": ""
+      },
+      "top_level": {
+        "command": [
+          "git",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "exit_code": 0,
+        "stdout": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/378473c5-1638-4d3b-a285-a477e60c62bd",
+        "stderr": ""
+      },
+      "status": {
+        "command": [
+          "git",
+          "status",
+          "--porcelain"
+        ],
+        "exit_code": 0,
+        "stdout": "M scripts/benchmark/README.md\n?? docs/performance/receipts/region-phase2-v1/\n?? scripts/benchmark/paired_report.py\n?? scripts/benchmark/test_paired_report.py",
+        "stderr": ""
+      }
+    }
+  },
+  "corpus": "/tmp/oxide-phase2-app-bundles-v0",
+  "workloads": [
+    {
+      "case": "react-realworld",
+      "path": "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js",
+      "bytes": 248694,
+      "sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed"
+    },
+    {
+      "case": "solid-realworld",
+      "path": "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js",
+      "bytes": 187879,
+      "sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7"
+    },
+    {
+      "case": "vue-realworld",
+      "path": "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js",
+      "bytes": 961475,
+      "sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6"
+    }
+  ],
+  "engines": {
+    "baseline": {
+      "type": "oxide",
+      "path": "/tmp/oxide-phase2-baseline-compile-probe/target/release/oxide-compile-probe",
+      "sha256": "f1d2cb6ad96ac11baa6158858c1738bc339644f1b9c6423cf7715d9d0fb02c39",
+      "version": {
+        "command": [
+          "/tmp/oxide-phase2-baseline-compile-probe/target/release/oxide-compile-probe",
+          "--version"
+        ],
+        "exit_code": 0,
+        "stdout": "oxide-compile-probe 1",
+        "stderr": ""
+      },
+      "build": {
+        "command": [
+          "cargo",
+          "build",
+          "--release",
+          "--manifest-path",
+          "/tmp/oxide-phase2-baseline-compile-probe/Cargo.toml",
+          "--target-dir",
+          "/tmp/oxide-phase2-baseline-compile-probe/target"
+        ],
+        "repository": "/tmp/oxide-phase2-baseline-src",
+        "binary": "/tmp/oxide-phase2-baseline-compile-probe/target/release/oxide-compile-probe",
+        "binary_sha256": "f1d2cb6ad96ac11baa6158858c1738bc339644f1b9c6423cf7715d9d0fb02c39",
+        "source_sha256": "9c3ff10353b51995a90f2c62868e0b6337d3163983f3876e1f5c4f271829cfae",
+        "cargo_lock_sha256": "d1b16903f0b6008576770f59344f872080c600d52197b27ad6c13a007d3ac5b5",
+        "dependency_commit": "90c85e3d94cd66066fe1c4381608d497f1dab346",
+        "source_identity": {
+          "kind": "git-checkout",
+          "note": "patch covers tracked files; stage receipt must additionally hash untracked implementation files"
+        },
+        "source_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "features": [],
+        "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)\nbinary: rustc\ncommit-hash: e408947bfd200af42db322daf0fadfe7e26d3bd1\ncommit-date: 2026-03-25\nhost: x86_64-unknown-linux-gnu\nrelease: 1.94.1\nLLVM version: 21.1.8\n",
+        "rustflags": null,
+        "encoded_rustflags": null
+      }
+    },
+    "integrated": {
+      "type": "oxide",
+      "path": "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+      "sha256": "b000005d39f84dab94dbd0dd33920df41cb01c503767af6f8e8d2c52b14aff17",
+      "version": {
+        "command": [
+          "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+          "--version"
+        ],
+        "exit_code": 0,
+        "stdout": "oxide-compile-probe 1",
+        "stderr": ""
+      },
+      "build": {
+        "command": [
+          "cargo",
+          "build",
+          "--release",
+          "--manifest-path",
+          "/tmp/oxide-phase2-b2-compile-probe/Cargo.toml",
+          "--target-dir",
+          "/tmp/oxide-phase2-b2-compile-probe/target"
+        ],
+        "repository": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/378473c5-1638-4d3b-a285-a477e60c62bd",
+        "binary": "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "binary_sha256": "b000005d39f84dab94dbd0dd33920df41cb01c503767af6f8e8d2c52b14aff17",
+        "source_sha256": "9c3ff10353b51995a90f2c62868e0b6337d3163983f3876e1f5c4f271829cfae",
+        "cargo_lock_sha256": "d1b16903f0b6008576770f59344f872080c600d52197b27ad6c13a007d3ac5b5",
+        "dependency_commit": "85aa19565bba1c6a760cf737f74bf00a2c8df585",
+        "source_identity": {
+          "kind": "git-checkout",
+          "note": "patch covers tracked files; stage receipt must additionally hash untracked implementation files"
+        },
+        "source_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "features": [],
+        "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)\nbinary: rustc\ncommit-hash: e408947bfd200af42db322daf0fadfe7e26d3bd1\ncommit-date: 2026-03-25\nhost: x86_64-unknown-linux-gnu\nrelease: 1.94.1\nLLVM version: 21.1.8\n",
+        "rustflags": null,
+        "encoded_rustflags": null
+      }
+    }
+  },
+  "node_probe_sha256": "6c218529930ad316002eaa496ccaf40af6badffe77ec5e825ac1437a4752a938",
+  "runner_sha256": "37a3a6d66cd1e1582814257418f057a031846a0697c15dc0026bd72e6a00fd19"
+}

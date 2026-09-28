@@ -1,0 +1,3231 @@
+{
+  "schema": "oxide-compile-matrix-v1",
+  "created_utc": "2026-09-28T19:32:33Z",
+  "metric": "compile",
+  "goal": "script",
+  "repeat": 24,
+  "timeout_seconds": 120,
+  "order": "serial, alternating per repetition",
+  "instrumentation": "off (no profiling flags)",
+  "machine": {
+    "platform": "Linux-7.2.7-arch1-1-x86_64-with-glibc2.44",
+    "machine": "x86_64",
+    "cpu": "AMD Ryzen 7 7840HS with Radeon 780M Graphics",
+    "logical_cpus": 16,
+    "python": "3.14.7",
+    "cpu_affinity": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15
+    ],
+    "scaling_governors": {
+      "0": "powersave",
+      "1": "powersave",
+      "2": "powersave",
+      "3": "powersave",
+      "4": "powersave",
+      "5": "powersave",
+      "6": "powersave",
+      "7": "powersave",
+      "8": "powersave",
+      "9": "powersave",
+      "10": "powersave",
+      "11": "powersave",
+      "12": "powersave",
+      "13": "powersave",
+      "14": "powersave",
+      "15": "powersave"
+    },
+    "load_average": [
+      1.01806640625,
+      0.9111328125,
+      0.9892578125
+    ],
+    "macos": null,
+    "runner_sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5",
+    "repository": {
+      "commit": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD"
+        ],
+        "exit_code": 0,
+        "stdout": "a870149743e02a2750fff89e75b00c3c20ca2fa3",
+        "stderr": ""
+      },
+      "tree": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD^{tree}"
+        ],
+        "exit_code": 0,
+        "stdout": "9063fde889123ee7797667dceea95f67dec2b091",
+        "stderr": ""
+      },
+      "top_level": {
+        "command": [
+          "git",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "exit_code": 0,
+        "stdout": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/378473c5-1638-4d3b-a285-a477e60c62bd",
+        "stderr": ""
+      },
+      "status": {
+        "command": [
+          "git",
+          "status",
+          "--porcelain"
+        ],
+        "exit_code": 0,
+        "stdout": "M scripts/benchmark/README.md\n?? docs/performance/receipts/region-phase2-v1/\n?? scripts/benchmark/paired_report.py\n?? scripts/benchmark/test_paired_report.py",
+        "stderr": ""
+      }
+    }
+  },
+  "corpus": "/tmp/oxide-phase2-app-bundles-v0",
+  "workloads": [
+    {
+      "case": "react-realworld",
+      "path": "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js",
+      "bytes": 248694,
+      "sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed"
+    },
+    {
+      "case": "solid-realworld",
+      "path": "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js",
+      "bytes": 187879,
+      "sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7"
+    },
+    {
+      "case": "vue-realworld",
+      "path": "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js",
+      "bytes": 961475,
+      "sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6"
+    }
+  ],
+  "engines": {
+    "left": {
+      "type": "oxide",
+      "path": "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+      "sha256": "b000005d39f84dab94dbd0dd33920df41cb01c503767af6f8e8d2c52b14aff17",
+      "version": {
+        "command": [
+          "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+          "--version"
+        ],
+        "exit_code": 0,
+        "stdout": "oxide-compile-probe 1",
+        "stderr": ""
+      },
+      "build": {
+        "command": [
+          "cargo",
+          "build",
+          "--release",
+          "--manifest-path",
+          "/tmp/oxide-phase2-b2-compile-probe/Cargo.toml",
+          "--target-dir",
+          "/tmp/oxide-phase2-b2-compile-probe/target"
+        ],
+        "repository": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/378473c5-1638-4d3b-a285-a477e60c62bd",
+        "binary": "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "binary_sha256": "b000005d39f84dab94dbd0dd33920df41cb01c503767af6f8e8d2c52b14aff17",
+        "source_sha256": "9c3ff10353b51995a90f2c62868e0b6337d3163983f3876e1f5c4f271829cfae",
+        "cargo_lock_sha256": "d1b16903f0b6008576770f59344f872080c600d52197b27ad6c13a007d3ac5b5",
+        "dependency_commit": "85aa19565bba1c6a760cf737f74bf00a2c8df585",
+        "source_identity": {
+          "kind": "git-checkout",
+          "note": "patch covers tracked files; stage receipt must additionally hash untracked implementation files"
+        },
+        "source_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "features": [],
+        "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)\nbinary: rustc\ncommit-hash: e408947bfd200af42db322daf0fadfe7e26d3bd1\ncommit-date: 2026-03-25\nhost: x86_64-unknown-linux-gnu\nrelease: 1.94.1\nLLVM version: 21.1.8\n",
+        "rustflags": null,
+        "encoded_rustflags": null
+      }
+    },
+    "right": {
+      "type": "oxide",
+      "path": "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+      "sha256": "b000005d39f84dab94dbd0dd33920df41cb01c503767af6f8e8d2c52b14aff17",
+      "version": {
+        "command": [
+          "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+          "--version"
+        ],
+        "exit_code": 0,
+        "stdout": "oxide-compile-probe 1",
+        "stderr": ""
+      },
+      "build": {
+        "command": [
+          "cargo",
+          "build",
+          "--release",
+          "--manifest-path",
+          "/tmp/oxide-phase2-b2-compile-probe/Cargo.toml",
+          "--target-dir",
+          "/tmp/oxide-phase2-b2-compile-probe/target"
+        ],
+        "repository": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/378473c5-1638-4d3b-a285-a477e60c62bd",
+        "binary": "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "binary_sha256": "b000005d39f84dab94dbd0dd33920df41cb01c503767af6f8e8d2c52b14aff17",
+        "source_sha256": "9c3ff10353b51995a90f2c62868e0b6337d3163983f3876e1f5c4f271829cfae",
+        "cargo_lock_sha256": "d1b16903f0b6008576770f59344f872080c600d52197b27ad6c13a007d3ac5b5",
+        "dependency_commit": "85aa19565bba1c6a760cf737f74bf00a2c8df585",
+        "source_identity": {
+          "kind": "git-checkout",
+          "note": "patch covers tracked files; stage receipt must additionally hash untracked implementation files"
+        },
+        "source_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "features": [],
+        "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)\nbinary: rustc\ncommit-hash: e408947bfd200af42db322daf0fadfe7e26d3bd1\ncommit-date: 2026-03-25\nhost: x86_64-unknown-linux-gnu\nrelease: 1.94.1\nLLVM version: 21.1.8\n",
+        "rustflags": null,
+        "encoded_rustflags": null
+      }
+    }
+  },
+  "node_probe_sha256": "6c218529930ad316002eaa496ccaf40af6badffe77ec5e825ac1437a4752a938",
+  "runner_sha256": "37a3a6d66cd1e1582814257418f057a031846a0697c15dc0026bd72e6a00fd19",
+  "samples": [
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 63438893,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-0.stderr",
+      "case": "react-realworld",
+      "engine": "left",
+      "repetition": 0,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 57988586
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 65832232,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-0.stderr",
+      "case": "react-realworld",
+      "engine": "right",
+      "repetition": 0,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 59608357
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 63325931,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-1.stderr",
+      "case": "react-realworld",
+      "engine": "right",
+      "repetition": 1,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 57586269
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 63574689,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-1.stderr",
+      "case": "react-realworld",
+      "engine": "left",
+      "repetition": 1,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 58090970
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 66102451,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-2.stderr",
+      "case": "react-realworld",
+      "engine": "left",
+      "repetition": 2,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 59913342
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 61450397,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-2.stderr",
+      "case": "react-realworld",
+      "engine": "right",
+      "repetition": 2,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 56392580
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 65371895,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-3.stderr",
+      "case": "react-realworld",
+      "engine": "right",
+      "repetition": 3,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 60167832
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 62951676,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-3.stderr",
+      "case": "react-realworld",
+      "engine": "left",
+      "repetition": 3,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 56742008
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 63681119,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-4.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-4.stderr",
+      "case": "react-realworld",
+      "engine": "left",
+      "repetition": 4,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 56970107
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 61654442,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-4.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-4.stderr",
+      "case": "react-realworld",
+      "engine": "right",
+      "repetition": 4,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 56699207
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 61184637,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-5.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-5.stderr",
+      "case": "react-realworld",
+      "engine": "right",
+      "repetition": 5,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 56077266
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 63358231,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-5.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-5.stderr",
+      "case": "react-realworld",
+      "engine": "left",
+      "repetition": 5,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 57712747
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 69330452,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-6.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-6.stderr",
+      "case": "react-realworld",
+      "engine": "left",
+      "repetition": 6,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 62811421
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 61597535,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-6.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-6.stderr",
+      "case": "react-realworld",
+      "engine": "right",
+      "repetition": 6,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 56657579
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 64190700,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-7.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-7.stderr",
+      "case": "react-realworld",
+      "engine": "right",
+      "repetition": 7,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 59149113
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 62636491,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-7.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-7.stderr",
+      "case": "react-realworld",
+      "engine": "left",
+      "repetition": 7,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 56615039
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 63317003,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-8.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-8.stderr",
+      "case": "react-realworld",
+      "engine": "left",
+      "repetition": 8,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 57535051
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 62514422,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-8.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-8.stderr",
+      "case": "react-realworld",
+      "engine": "right",
+      "repetition": 8,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 56947606
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 62505856,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-9.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-9.stderr",
+      "case": "react-realworld",
+      "engine": "right",
+      "repetition": 9,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 57240508
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 61948836,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-9.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-9.stderr",
+      "case": "react-realworld",
+      "engine": "left",
+      "repetition": 9,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 56779960
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 63410520,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-10.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-10.stderr",
+      "case": "react-realworld",
+      "engine": "left",
+      "repetition": 10,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 57412050
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 64666215,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-10.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-10.stderr",
+      "case": "react-realworld",
+      "engine": "right",
+      "repetition": 10,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 58235902
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 65548898,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-11.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-11.stderr",
+      "case": "react-realworld",
+      "engine": "right",
+      "repetition": 11,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 59532634
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 63732797,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-11.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-11.stderr",
+      "case": "react-realworld",
+      "engine": "left",
+      "repetition": 11,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 57829387
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 63690878,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-12.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-12.stderr",
+      "case": "react-realworld",
+      "engine": "left",
+      "repetition": 12,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 57945987
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 63428774,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-12.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-12.stderr",
+      "case": "react-realworld",
+      "engine": "right",
+      "repetition": 12,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 57587701
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 63283009,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-13.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-13.stderr",
+      "case": "react-realworld",
+      "engine": "right",
+      "repetition": 13,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 57674815
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 62666267,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-13.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-13.stderr",
+      "case": "react-realworld",
+      "engine": "left",
+      "repetition": 13,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 56913772
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 64169811,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-14.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-14.stderr",
+      "case": "react-realworld",
+      "engine": "left",
+      "repetition": 14,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 58155500
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 65937630,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-14.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-14.stderr",
+      "case": "react-realworld",
+      "engine": "right",
+      "repetition": 14,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 59594802
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 64287663,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-15.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-15.stderr",
+      "case": "react-realworld",
+      "engine": "right",
+      "repetition": 15,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 58424797
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 65816632,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-15.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-15.stderr",
+      "case": "react-realworld",
+      "engine": "left",
+      "repetition": 15,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 58887079
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 66725404,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-16.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-16.stderr",
+      "case": "react-realworld",
+      "engine": "left",
+      "repetition": 16,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 60726925
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 62632995,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-16.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-16.stderr",
+      "case": "react-realworld",
+      "engine": "right",
+      "repetition": 16,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 57235417
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 64617483,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-17.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-17.stderr",
+      "case": "react-realworld",
+      "engine": "right",
+      "repetition": 17,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 58598135
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 65506057,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-17.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-17.stderr",
+      "case": "react-realworld",
+      "engine": "left",
+      "repetition": 17,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 59151237
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 62595034,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-18.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-18.stderr",
+      "case": "react-realworld",
+      "engine": "left",
+      "repetition": 18,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 56699096
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 67138712,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-18.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-18.stderr",
+      "case": "react-realworld",
+      "engine": "right",
+      "repetition": 18,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 61057758
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 63276026,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-19.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-19.stderr",
+      "case": "react-realworld",
+      "engine": "right",
+      "repetition": 19,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 57253020
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 64895878,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-19.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-19.stderr",
+      "case": "react-realworld",
+      "engine": "left",
+      "repetition": 19,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 58955899
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 63811545,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-20.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-20.stderr",
+      "case": "react-realworld",
+      "engine": "left",
+      "repetition": 20,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 57610804
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 65322371,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-20.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-20.stderr",
+      "case": "react-realworld",
+      "engine": "right",
+      "repetition": 20,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 59390938
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 63085087,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-21.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-21.stderr",
+      "case": "react-realworld",
+      "engine": "right",
+      "repetition": 21,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 57335746
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 62780232,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-21.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-21.stderr",
+      "case": "react-realworld",
+      "engine": "left",
+      "repetition": 21,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 57654917
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 64644023,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-22.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-22.stderr",
+      "case": "react-realworld",
+      "engine": "left",
+      "repetition": 22,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 58022620
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 66818219,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-22.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-22.stderr",
+      "case": "react-realworld",
+      "engine": "right",
+      "repetition": 22,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 61064480
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 65386933,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-23.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-right-23.stderr",
+      "case": "react-realworld",
+      "engine": "right",
+      "repetition": 23,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 59414052
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 64790780,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-23.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/react-realworld-left-23.stderr",
+      "case": "react-realworld",
+      "engine": "left",
+      "repetition": 23,
+      "workload_sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 58973912
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 34502895,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-0.stderr",
+      "case": "solid-realworld",
+      "engine": "left",
+      "repetition": 0,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 28406491
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 33671418,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-0.stderr",
+      "case": "solid-realworld",
+      "engine": "right",
+      "repetition": 0,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 28846720
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 32499672,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-1.stderr",
+      "case": "solid-realworld",
+      "engine": "right",
+      "repetition": 1,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 28309288
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 32327888,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-1.stderr",
+      "case": "solid-realworld",
+      "engine": "left",
+      "repetition": 1,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 27646178
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 31608944,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-2.stderr",
+      "case": "solid-realworld",
+      "engine": "left",
+      "repetition": 2,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 27335744
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 31296565,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-2.stderr",
+      "case": "solid-realworld",
+      "engine": "right",
+      "repetition": 2,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 27439239
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 31862882,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-3.stderr",
+      "case": "solid-realworld",
+      "engine": "right",
+      "repetition": 3,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 27589432
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 32528406,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-3.stderr",
+      "case": "solid-realworld",
+      "engine": "left",
+      "repetition": 3,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 28079485
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 34790226,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-4.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-4.stderr",
+      "case": "solid-realworld",
+      "engine": "left",
+      "repetition": 4,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 30053232
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 35410375,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-4.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-4.stderr",
+      "case": "solid-realworld",
+      "engine": "right",
+      "repetition": 4,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 30930646
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 33387975,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-5.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-5.stderr",
+      "case": "solid-realworld",
+      "engine": "right",
+      "repetition": 5,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 28901694
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 34448071,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-5.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-5.stderr",
+      "case": "solid-realworld",
+      "engine": "left",
+      "repetition": 5,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 30181675
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 31974472,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-6.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-6.stderr",
+      "case": "solid-realworld",
+      "engine": "left",
+      "repetition": 6,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 27716561
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 34084296,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-6.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-6.stderr",
+      "case": "solid-realworld",
+      "engine": "right",
+      "repetition": 6,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 29132469
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 32605972,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-7.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-7.stderr",
+      "case": "solid-realworld",
+      "engine": "right",
+      "repetition": 7,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 28186016
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 34920341,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-7.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-7.stderr",
+      "case": "solid-realworld",
+      "engine": "left",
+      "repetition": 7,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 29589530
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 33957317,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-8.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-8.stderr",
+      "case": "solid-realworld",
+      "engine": "left",
+      "repetition": 8,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 29393641
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 32916677,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-8.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-8.stderr",
+      "case": "solid-realworld",
+      "engine": "right",
+      "repetition": 8,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 28349253
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 31455854,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-9.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-9.stderr",
+      "case": "solid-realworld",
+      "engine": "right",
+      "repetition": 9,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 27553114
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 31651905,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-9.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-9.stderr",
+      "case": "solid-realworld",
+      "engine": "left",
+      "repetition": 9,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 27620240
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 31632127,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-10.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-10.stderr",
+      "case": "solid-realworld",
+      "engine": "left",
+      "repetition": 10,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 27645858
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 32333057,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-10.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-10.stderr",
+      "case": "solid-realworld",
+      "engine": "right",
+      "repetition": 10,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 28345085
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 32004658,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-11.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-11.stderr",
+      "case": "solid-realworld",
+      "engine": "right",
+      "repetition": 11,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 27358356
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 34102130,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-11.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-11.stderr",
+      "case": "solid-realworld",
+      "engine": "left",
+      "repetition": 11,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 29514297
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 35227259,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-12.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-12.stderr",
+      "case": "solid-realworld",
+      "engine": "left",
+      "repetition": 12,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 30864340
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 34965496,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-12.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-12.stderr",
+      "case": "solid-realworld",
+      "engine": "right",
+      "repetition": 12,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 30464647
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 32517554,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-13.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-13.stderr",
+      "case": "solid-realworld",
+      "engine": "right",
+      "repetition": 13,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 27939651
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 31372027,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-13.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-13.stderr",
+      "case": "solid-realworld",
+      "engine": "left",
+      "repetition": 13,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 27340082
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 33492972,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-14.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-14.stderr",
+      "case": "solid-realworld",
+      "engine": "left",
+      "repetition": 14,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 28663886
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 32887682,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-14.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-14.stderr",
+      "case": "solid-realworld",
+      "engine": "right",
+      "repetition": 14,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 28227774
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 34378921,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-15.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-15.stderr",
+      "case": "solid-realworld",
+      "engine": "right",
+      "repetition": 15,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 29551688
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 32299624,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-15.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-15.stderr",
+      "case": "solid-realworld",
+      "engine": "left",
+      "repetition": 15,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 27515874
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 30980650,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-16.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-16.stderr",
+      "case": "solid-realworld",
+      "engine": "left",
+      "repetition": 16,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 27177656
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 31404508,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-16.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-16.stderr",
+      "case": "solid-realworld",
+      "engine": "right",
+      "repetition": 16,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 27410535
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 33422220,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-17.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-17.stderr",
+      "case": "solid-realworld",
+      "engine": "right",
+      "repetition": 17,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 28165256
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 33092779,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-17.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-17.stderr",
+      "case": "solid-realworld",
+      "engine": "left",
+      "repetition": 17,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 28582031
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 31252462,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-18.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-18.stderr",
+      "case": "solid-realworld",
+      "engine": "left",
+      "repetition": 18,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 27401768
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 34044220,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-18.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-18.stderr",
+      "case": "solid-realworld",
+      "engine": "right",
+      "repetition": 18,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 29633632
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 31006700,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-19.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-19.stderr",
+      "case": "solid-realworld",
+      "engine": "right",
+      "repetition": 19,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 27203705
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 38771596,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-19.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-19.stderr",
+      "case": "solid-realworld",
+      "engine": "left",
+      "repetition": 19,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 34180568
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 33770025,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-20.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-20.stderr",
+      "case": "solid-realworld",
+      "engine": "left",
+      "repetition": 20,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 28366074
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 31351017,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-20.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-20.stderr",
+      "case": "solid-realworld",
+      "engine": "right",
+      "repetition": 20,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 27351623
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 33800521,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-21.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-21.stderr",
+      "case": "solid-realworld",
+      "engine": "right",
+      "repetition": 21,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 29055684
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 31715174,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-21.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-21.stderr",
+      "case": "solid-realworld",
+      "engine": "left",
+      "repetition": 21,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 27376040
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 31570200,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-22.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-22.stderr",
+      "case": "solid-realworld",
+      "engine": "left",
+      "repetition": 22,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 27530450
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 31529423,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-22.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-22.stderr",
+      "case": "solid-realworld",
+      "engine": "right",
+      "repetition": 22,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 27515122
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 32711611,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-23.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-right-23.stderr",
+      "case": "solid-realworld",
+      "engine": "right",
+      "repetition": 23,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 28164334
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 31422322,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-23.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/solid-realworld-left-23.stderr",
+      "case": "solid-realworld",
+      "engine": "left",
+      "repetition": 23,
+      "workload_sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 27365760
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 134914104,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-0.stderr",
+      "case": "vue-realworld",
+      "engine": "left",
+      "repetition": 0,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 124151481
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 134790101,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-0.stderr",
+      "case": "vue-realworld",
+      "engine": "right",
+      "repetition": 0,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 125510531
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 136489773,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-1.stderr",
+      "case": "vue-realworld",
+      "engine": "right",
+      "repetition": 1,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 126002247
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 137222203,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-1.stderr",
+      "case": "vue-realworld",
+      "engine": "left",
+      "repetition": 1,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 126767328
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 136220986,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-2.stderr",
+      "case": "vue-realworld",
+      "engine": "left",
+      "repetition": 2,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 126403322
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 136581285,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-2.stderr",
+      "case": "vue-realworld",
+      "engine": "right",
+      "repetition": 2,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 126571890
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 137061430,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-3.stderr",
+      "case": "vue-realworld",
+      "engine": "right",
+      "repetition": 3,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 126170754
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 134461421,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-3.stderr",
+      "case": "vue-realworld",
+      "engine": "left",
+      "repetition": 3,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 124602531
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 137967637,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-4.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-4.stderr",
+      "case": "vue-realworld",
+      "engine": "left",
+      "repetition": 4,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 127391995
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 135629612,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-4.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-4.stderr",
+      "case": "vue-realworld",
+      "engine": "right",
+      "repetition": 4,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 125237456
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 137110953,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-5.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-5.stderr",
+      "case": "vue-realworld",
+      "engine": "right",
+      "repetition": 5,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 126302061
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 133856041,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-5.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-5.stderr",
+      "case": "vue-realworld",
+      "engine": "left",
+      "repetition": 5,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 123986520
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 137281283,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-6.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-6.stderr",
+      "case": "vue-realworld",
+      "engine": "left",
+      "repetition": 6,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 127312886
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 132971265,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-6.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-6.stderr",
+      "case": "vue-realworld",
+      "engine": "right",
+      "repetition": 6,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 123685672
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 134878157,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-7.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-7.stderr",
+      "case": "vue-realworld",
+      "engine": "right",
+      "repetition": 7,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 124255215
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 133632671,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-7.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-7.stderr",
+      "case": "vue-realworld",
+      "engine": "left",
+      "repetition": 7,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 123513368
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 135684345,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-8.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-8.stderr",
+      "case": "vue-realworld",
+      "engine": "left",
+      "repetition": 8,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 125387579
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 139048592,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-8.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-8.stderr",
+      "case": "vue-realworld",
+      "engine": "right",
+      "repetition": 8,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 127517711
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 135662454,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-9.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-9.stderr",
+      "case": "vue-realworld",
+      "engine": "right",
+      "repetition": 9,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 125284525
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 141762155,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-9.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-9.stderr",
+      "case": "vue-realworld",
+      "engine": "left",
+      "repetition": 9,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 129288717
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 134781003,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-10.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-10.stderr",
+      "case": "vue-realworld",
+      "engine": "left",
+      "repetition": 10,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 125101290
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 135300282,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-10.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-10.stderr",
+      "case": "vue-realworld",
+      "engine": "right",
+      "repetition": 10,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 125110266
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 139383844,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-11.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-11.stderr",
+      "case": "vue-realworld",
+      "engine": "right",
+      "repetition": 11,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 128122912
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 139955210,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-11.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-11.stderr",
+      "case": "vue-realworld",
+      "engine": "left",
+      "repetition": 11,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 129649237
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 136688928,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-12.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-12.stderr",
+      "case": "vue-realworld",
+      "engine": "left",
+      "repetition": 12,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 125979103
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 133757356,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-12.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-12.stderr",
+      "case": "vue-realworld",
+      "engine": "right",
+      "repetition": 12,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 124535513
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 135819379,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-13.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-13.stderr",
+      "case": "vue-realworld",
+      "engine": "right",
+      "repetition": 13,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 125086612
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 136094337,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-13.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-13.stderr",
+      "case": "vue-realworld",
+      "engine": "left",
+      "repetition": 13,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 126395107
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 134731821,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-14.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-14.stderr",
+      "case": "vue-realworld",
+      "engine": "left",
+      "repetition": 14,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 124270254
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 132607348,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-14.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-14.stderr",
+      "case": "vue-realworld",
+      "engine": "right",
+      "repetition": 14,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 123266813
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 139828562,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-15.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-15.stderr",
+      "case": "vue-realworld",
+      "engine": "right",
+      "repetition": 15,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 128286198
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 135522871,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-15.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-15.stderr",
+      "case": "vue-realworld",
+      "engine": "left",
+      "repetition": 15,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 124954543
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 136366831,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-16.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-16.stderr",
+      "case": "vue-realworld",
+      "engine": "left",
+      "repetition": 16,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 126347767
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 135851831,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-16.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-16.stderr",
+      "case": "vue-realworld",
+      "engine": "right",
+      "repetition": 16,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 125154629
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 137961334,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-17.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-17.stderr",
+      "case": "vue-realworld",
+      "engine": "right",
+      "repetition": 17,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 128170821
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 134802113,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-17.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-17.stderr",
+      "case": "vue-realworld",
+      "engine": "left",
+      "repetition": 17,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 124302384
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 132279662,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-18.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-18.stderr",
+      "case": "vue-realworld",
+      "engine": "left",
+      "repetition": 18,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 123090231
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 136587997,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-18.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-18.stderr",
+      "case": "vue-realworld",
+      "engine": "right",
+      "repetition": 18,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 125293180
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 141856311,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-19.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-19.stderr",
+      "case": "vue-realworld",
+      "engine": "right",
+      "repetition": 19,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 131152308
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 137836248,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-19.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-19.stderr",
+      "case": "vue-realworld",
+      "engine": "left",
+      "repetition": 19,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 127603012
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 134538607,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-20.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-20.stderr",
+      "case": "vue-realworld",
+      "engine": "left",
+      "repetition": 20,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 124535654
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 139184418,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-20.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-20.stderr",
+      "case": "vue-realworld",
+      "engine": "right",
+      "repetition": 20,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 127755870
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 132842241,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-21.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-21.stderr",
+      "case": "vue-realworld",
+      "engine": "right",
+      "repetition": 21,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 123668390
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 134378395,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-21.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-21.stderr",
+      "case": "vue-realworld",
+      "engine": "left",
+      "repetition": 21,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 124498783
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 134583370,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-22.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-22.stderr",
+      "case": "vue-realworld",
+      "engine": "left",
+      "repetition": 22,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 123967453
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 136246994,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-22.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-22.stderr",
+      "case": "vue-realworld",
+      "engine": "right",
+      "repetition": 22,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 127152533
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 134474525,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-23.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-right-23.stderr",
+      "case": "vue-realworld",
+      "engine": "right",
+      "repetition": 23,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 123472541
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 134454869,
+      "stdout": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-23.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-compile-aa/raw/vue-realworld-left-23.stderr",
+      "case": "vue-realworld",
+      "engine": "left",
+      "repetition": 23,
+      "workload_sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 124495648
+      }
+    }
+  ],
+  "summary": [
+    {
+      "case": "react-realworld",
+      "engine": "left",
+      "samples": 24,
+      "successful": 24,
+      "failures": [],
+      "eligible": true,
+      "bytes": 248694,
+      "metrics": {
+        "ns": {
+          "raw": [
+            57988586,
+            58090970,
+            59913342,
+            56742008,
+            56970107,
+            57712747,
+            62811421,
+            56615039,
+            57535051,
+            56779960,
+            57412050,
+            57829387,
+            57945987,
+            56913772,
+            58155500,
+            58887079,
+            60726925,
+            59151237,
+            56699096,
+            58955899,
+            57610804,
+            57654917,
+            58022620,
+            58973912
+          ],
+          "minimum": 56615039,
+          "median": 57887687.0,
+          "maximum": 62811421,
+          "stdev": 1435929.2494660236
+        },
+        "mb_per_second": 4.296146778156812
+      }
+    },
+    {
+      "case": "react-realworld",
+      "engine": "right",
+      "samples": 24,
+      "successful": 24,
+      "failures": [],
+      "eligible": true,
+      "bytes": 248694,
+      "metrics": {
+        "ns": {
+          "raw": [
+            59608357,
+            57586269,
+            56392580,
+            60167832,
+            56699207,
+            56077266,
+            56657579,
+            59149113,
+            56947606,
+            57240508,
+            58235902,
+            59532634,
+            57587701,
+            57674815,
+            59594802,
+            58424797,
+            57235417,
+            58598135,
+            61057758,
+            57253020,
+            59390938,
+            57335746,
+            61064480,
+            59414052
+          ],
+          "minimum": 56077266,
+          "median": 57955358.5,
+          "maximum": 61064480,
+          "stdev": 1448523.6361348196
+        },
+        "mb_per_second": 4.2911303878829425
+      }
+    },
+    {
+      "case": "solid-realworld",
+      "engine": "left",
+      "samples": 24,
+      "successful": 24,
+      "failures": [],
+      "eligible": true,
+      "bytes": 187879,
+      "metrics": {
+        "ns": {
+          "raw": [
+            28406491,
+            27646178,
+            27335744,
+            28079485,
+            30053232,
+            30181675,
+            27716561,
+            29589530,
+            29393641,
+            27620240,
+            27645858,
+            29514297,
+            30864340,
+            27340082,
+            28663886,
+            27515874,
+            27177656,
+            28582031,
+            27401768,
+            34180568,
+            28366074,
+            27376040,
+            27530450,
+            27365760
+          ],
+          "minimum": 27177656,
+          "median": 27898023.0,
+          "maximum": 34180568,
+          "stdev": 1604498.578893811
+        },
+        "mb_per_second": 6.734491544436679
+      }
+    },
+    {
+      "case": "solid-realworld",
+      "engine": "right",
+      "samples": 24,
+      "successful": 24,
+      "failures": [],
+      "eligible": true,
+      "bytes": 187879,
+      "metrics": {
+        "ns": {
+          "raw": [
+            28846720,
+            28309288,
+            27439239,
+            27589432,
+            30930646,
+            28901694,
+            29132469,
+            28186016,
+            28349253,
+            27553114,
+            28345085,
+            27358356,
+            30464647,
+            27939651,
+            28227774,
+            29551688,
+            27410535,
+            28165256,
+            29633632,
+            27203705,
+            27351623,
+            29055684,
+            27515122,
+            28164334
+          ],
+          "minimum": 27203705,
+          "median": 28206895.0,
+          "maximum": 30930646,
+          "stdev": 1000418.4547097546
+        },
+        "mb_per_second": 6.66074731018781
+      }
+    },
+    {
+      "case": "vue-realworld",
+      "engine": "left",
+      "samples": 24,
+      "successful": 24,
+      "failures": [],
+      "eligible": true,
+      "bytes": 961475,
+      "metrics": {
+        "ns": {
+          "raw": [
+            124151481,
+            126767328,
+            126403322,
+            124602531,
+            127391995,
+            123986520,
+            127312886,
+            123513368,
+            125387579,
+            129288717,
+            125101290,
+            129649237,
+            125979103,
+            126395107,
+            124270254,
+            124954543,
+            126347767,
+            124302384,
+            123090231,
+            127603012,
+            124535654,
+            124498783,
+            123967453,
+            124495648
+          ],
+          "minimum": 123090231,
+          "median": 125027916.5,
+          "maximum": 129649237,
+          "stdev": 1747529.0568097793
+        },
+        "mb_per_second": 7.690082558482049
+      }
+    },
+    {
+      "case": "vue-realworld",
+      "engine": "right",
+      "samples": 24,
+      "successful": 24,
+      "failures": [],
+      "eligible": true,
+      "bytes": 961475,
+      "metrics": {
+        "ns": {
+          "raw": [
+            125510531,
+            126002247,
+            126571890,
+            126170754,
+            125237456,
+            126302061,
+            123685672,
+            124255215,
+            127517711,
+            125284525,
+            125110266,
+            128122912,
+            124535513,
+            125086612,
+            123266813,
+            128286198,
+            125154629,
+            128170821,
+            125293180,
+            131152308,
+            127755870,
+            123668390,
+            127152533,
+            123472541
+          ],
+          "minimum": 123266813,
+          "median": 125401855.5,
+          "maximum": 131152308,
+          "stdev": 1889376.7205907663
+        },
+        "mb_per_second": 7.667151304631214
+      }
+    }
+  ],
+  "ratios": [
+    {
+      "case": "react-realworld",
+      "engine": "right",
+      "reference": "left",
+      "ratio": 0.9988323512829276
+    },
+    {
+      "case": "solid-realworld",
+      "engine": "right",
+      "reference": "left",
+      "ratio": 0.9890497695687526
+    },
+    {
+      "case": "vue-realworld",
+      "engine": "right",
+      "reference": "left",
+      "ratio": 0.9970180744255415
+    }
+  ]
+}

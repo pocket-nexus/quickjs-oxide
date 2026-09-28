@@ -1,0 +1,1938 @@
+{
+  "metadata": {
+    "machine": {
+      "platform": "Linux-7.2.7-arch1-1-x86_64-with-glibc2.44",
+      "machine": "x86_64",
+      "cpu": "AMD Ryzen 7 7840HS with Radeon 780M Graphics",
+      "logical_cpus": 16,
+      "python": "3.14.7",
+      "cpu_affinity": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15
+      ],
+      "scaling_governors": {
+        "0": "powersave",
+        "1": "powersave",
+        "2": "powersave",
+        "3": "powersave",
+        "4": "powersave",
+        "5": "powersave",
+        "6": "powersave",
+        "7": "powersave",
+        "8": "powersave",
+        "9": "powersave",
+        "10": "powersave",
+        "11": "powersave",
+        "12": "powersave",
+        "13": "powersave",
+        "14": "powersave",
+        "15": "powersave"
+      },
+      "load_average": [
+        0.04248046875,
+        0.3388671875,
+        0.728515625
+      ],
+      "macos": null,
+      "runner_sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5",
+      "repository": {
+        "commit": {
+          "command": [
+            "git",
+            "rev-parse",
+            "HEAD"
+          ],
+          "exit_code": 0,
+          "stdout": "a870149743e02a2750fff89e75b00c3c20ca2fa3",
+          "stderr": ""
+        },
+        "tree": {
+          "command": [
+            "git",
+            "rev-parse",
+            "HEAD^{tree}"
+          ],
+          "exit_code": 0,
+          "stdout": "9063fde889123ee7797667dceea95f67dec2b091",
+          "stderr": ""
+        },
+        "top_level": {
+          "command": [
+            "git",
+            "rev-parse",
+            "--show-toplevel"
+          ],
+          "exit_code": 0,
+          "stdout": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/378473c5-1638-4d3b-a285-a477e60c62bd",
+          "stderr": ""
+        },
+        "status": {
+          "command": [
+            "git",
+            "status",
+            "--porcelain"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": ""
+        }
+      }
+    },
+    "runner_sha256": "8a852679221202ae6d3dac1e02b295368a79529a3e0c32e51fd6b914e5d4b425",
+    "manifest_sha256": "fa339986ff734b00e3d893d9ab62ae312474e53f050ec0620500c638bc40f122",
+    "workloads": [
+      {
+        "case": "realworld-solid",
+        "size": 60,
+        "path": "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js",
+        "sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+        "expected": "[{\"name\":\"home\",\"nodes\":234,\"hash\":\"a8ee98eb\",\"favorited\":false,\"comments\":0},{\"name\":\"tag\",\"nodes\":232,\"hash\":\"1ddde2c3\",\"favorited\":false,\"comments\":0},{\"name\":\"page\",\"nodes\":232,\"hash\":\"8e756fc7\",\"favorited\":false,\"comments\":0},{\"name\":\"article\",\"nodes\":48,\"hash\":\"22ee6e76\",\"favorited\":false,\"comments\":0},{\"name\":\"favorite\",\"nodes\":48,\"hash\":\"22ee6e76\",\"favorited\":true,\"comments\":0},{\"name\":\"comment\",\"nodes\":48,\"hash\":\"22ee6e76\",\"favorited\":true,\"comments\":1},{\"name\":\"profile\",\"nodes\":133,\"hash\":\"b9975ece\",\"favorited\":true,\"comments\":1}]\n"
+      },
+      {
+        "case": "realworld-vue",
+        "size": 60,
+        "path": "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js",
+        "sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+        "expected": "[{\"name\":\"home\",\"nodes\":314,\"hash\":\"170cf777\",\"favorited\":false,\"comments\":0},{\"name\":\"tag\",\"nodes\":308,\"hash\":\"fa714622\",\"favorited\":false,\"comments\":0},{\"name\":\"page\",\"nodes\":308,\"hash\":\"4e66a5a6\",\"favorited\":false,\"comments\":0},{\"name\":\"article\",\"nodes\":122,\"hash\":\"74f69a7d\",\"favorited\":false,\"comments\":0},{\"name\":\"favorite\",\"nodes\":122,\"hash\":\"74f69a7d\",\"favorited\":true,\"comments\":0},{\"name\":\"comment\",\"nodes\":148,\"hash\":\"3d64e7d\",\"favorited\":true,\"comments\":1},{\"name\":\"profile\",\"nodes\":187,\"hash\":\"b916c0a8\",\"favorited\":true,\"comments\":1}]\n"
+      },
+      {
+        "case": "realworld-react",
+        "size": 60,
+        "path": "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js",
+        "sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+        "expected": "[{\"name\":\"home\",\"bytes\":11978,\"hash\":\"31184120\"},{\"name\":\"tag\",\"bytes\":11865,\"hash\":\"96efe092\"},{\"name\":\"page\",\"bytes\":11880,\"hash\":\"fb8ab47a\"},{\"name\":\"article\",\"bytes\":3360,\"hash\":\"cd91d275\"},{\"name\":\"favorite\",\"bytes\":3352,\"hash\":\"bb3ed1b5\"},{\"name\":\"comment\",\"bytes\":4607,\"hash\":\"d8e1ddf9\"},{\"name\":\"profile\",\"bytes\":6784,\"hash\":\"d347447d\"}]\n"
+      }
+    ],
+    "engines": {
+      "baseline": {
+        "path": "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "sha256": "c8f6274b90511fa0e3446d87f825ec2f56402b1c1c8dbdb4f39aa2b41d9eb46a",
+        "version": {
+          "command": [
+            "/tmp/oxide-phase2-baseline-build/release/qjs",
+            "--version"
+          ],
+          "exit_code": 0,
+          "stdout": "quickjs-oxide 0.0.1 (QuickJS 2026-06-04 compatibility target)",
+          "stderr": ""
+        },
+        "build": {
+          "schema": "oxide-build-v2",
+          "mode": "plain",
+          "vm_configuration": "stack-vm",
+          "features": [],
+          "commit": "90c85e3d94cd66066fe1c4381608d497f1dab346",
+          "source": {
+            "commit": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD"
+              ],
+              "exit_code": 0,
+              "stdout": "90c85e3d94cd66066fe1c4381608d497f1dab346",
+              "stderr": ""
+            },
+            "tree": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD^{tree}"
+              ],
+              "exit_code": 0,
+              "stdout": "df000a8dbe38256b54b09929f3c917e8504b9d12",
+              "stderr": ""
+            },
+            "top_level": {
+              "command": [
+                "git",
+                "rev-parse",
+                "--show-toplevel"
+              ],
+              "exit_code": 0,
+              "stdout": "/tmp/oxide-phase2-baseline-src",
+              "stderr": ""
+            },
+            "status": {
+              "command": [
+                "git",
+                "status",
+                "--porcelain"
+              ],
+              "exit_code": 0,
+              "stdout": "",
+              "stderr": ""
+            }
+          },
+          "binary_sha256": "c8f6274b90511fa0e3446d87f825ec2f56402b1c1c8dbdb4f39aa2b41d9eb46a",
+          "tooling": {
+            "repository": {
+              "commit": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "HEAD"
+                ],
+                "exit_code": 0,
+                "stdout": "90c85e3d94cd66066fe1c4381608d497f1dab346",
+                "stderr": ""
+              },
+              "tree": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "HEAD^{tree}"
+                ],
+                "exit_code": 0,
+                "stdout": "df000a8dbe38256b54b09929f3c917e8504b9d12",
+                "stderr": ""
+              },
+              "top_level": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "--show-toplevel"
+                ],
+                "exit_code": 0,
+                "stdout": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/378473c5-1638-4d3b-a285-a477e60c62bd",
+                "stderr": ""
+              },
+              "status": {
+                "command": [
+                  "git",
+                  "status",
+                  "--porcelain"
+                ],
+                "exit_code": 0,
+                "stdout": "A  scripts/benchmark/realworld/README.md\nA  scripts/benchmark/realworld/build.mjs\nA  scripts/benchmark/realworld/expected.json\nA  scripts/benchmark/realworld/manifest.json\nA  scripts/benchmark/realworld/prepare.py\nA  scripts/benchmark/realworld/react_entry.js\nA  scripts/benchmark/realworld/react_router_host.js\nA  scripts/benchmark/realworld/solid_entry.js\nA  scripts/benchmark/realworld/solid_host.js\nA  scripts/benchmark/realworld/trusted_markdown.js\nA  scripts/benchmark/realworld/vue_entry.js\nA  scripts/benchmark/realworld/vue_host.js",
+                "stderr": ""
+              }
+            },
+            "snapshots": {
+              "build.py": {
+                "path": "/tmp/oxide-phase2-baseline-build/release/qjs.build.tooling-build.py",
+                "sha256": "fc8392a9d26290a6095742b2ab4cb45f5ab37b964c9daa51d22f7088259b1f50"
+              },
+              "run.py": {
+                "path": "/tmp/oxide-phase2-baseline-build/release/qjs.build.tooling-run.py",
+                "sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5"
+              }
+            }
+          },
+          "command": [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "--verbose",
+            "-p",
+            "quickjs-oxide-cli",
+            "--no-default-features",
+            "--target-dir",
+            "/tmp/oxide-phase2-baseline-build",
+            "--jobs",
+            "2"
+          ],
+          "cwd": "/tmp/oxide-phase2-baseline-src",
+          "exit_code": 0,
+          "stdout": {
+            "path": "/tmp/oxide-phase2-baseline-build/release/qjs.build.stdout.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "stderr": {
+            "path": "/tmp/oxide-phase2-baseline-build/release/qjs.build.stderr.log",
+            "sha256": "6bbde62749adb7af4b2e6ec349fad6c35f4f6d56deab74333fe908775bb92373"
+          },
+          "rustc": {
+            "command": [
+              "rustc",
+              "-vV"
+            ],
+            "exit_code": 0,
+            "stdout": "rustc 1.94.1 (e408947bf 2026-03-25)\nbinary: rustc\ncommit-hash: e408947bfd200af42db322daf0fadfe7e26d3bd1\ncommit-date: 2026-03-25\nhost: x86_64-unknown-linux-gnu\nrelease: 1.94.1\nLLVM version: 21.1.8",
+            "stderr": ""
+          },
+          "cargo": {
+            "command": [
+              "cargo",
+              "-V"
+            ],
+            "exit_code": 0,
+            "stdout": "cargo 1.94.1 (29ea6fb6a 2026-03-24)",
+            "stderr": ""
+          },
+          "cargo_toml_sha256": "14f5e4d4f172150d6c212b61871da24a4e5b26e34e363f6de2a7f250bbe6e48d",
+          "cargo_lock_sha256": "c26c9f1999da579c0d1176c62981afa716ea998949a8dd15b1365f85b66944e3",
+          "release_profile": {
+            "manifest": {
+              "lto": "\"fat\"",
+              "codegen-units": "1"
+            },
+            "environment_overrides": {},
+            "cargo_config_sha256": {},
+            "qjs_rustc_invocation": {
+              "command": "/home/eric/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name qjs --edition=2024 apps/cli/src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C opt-level=3 -C lto=fat -C codegen-units=1 '--warn=clippy::all' --forbid=unsafe_code --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values(\"default\", \"profiling\", \"test262-host\"))' -C metadata=2c3c1c97d85c5248 -C extra-filename=-a6159d3b4651fa75 --out-dir /tmp/oxide-phase2-baseline-build/release/deps -C strip=debuginfo -L dependency=/tmp/oxide-phase2-baseline-build/release/deps --extern quickjs_oxide=/tmp/oxide-phase2-baseline-build/release/deps/libquickjs_oxide-12e89011af3dce7e.rlib --extern quickjs_oxide_host=/tmp/oxide-phase2-baseline-build/release/deps/libquickjs_oxide_host-9e73cad3f8d8b0c7.rlib",
+              "crate": "qjs",
+              "codegen": {
+                "opt-level": "3",
+                "lto": "fat",
+                "codegen-units": "1"
+              },
+              "target": null
+            },
+            "observed_rustc_compilations": 9,
+            "observed_codegen_groups": [
+              {
+                "target": null,
+                "codegen": {},
+                "crates": [
+                  "autocfg",
+                  "build_script_build"
+                ]
+              },
+              {
+                "target": null,
+                "codegen": {
+                  "opt-level": "3",
+                  "codegen-units": "1"
+                },
+                "crates": [
+                  "tz",
+                  "num_traits",
+                  "num_integer",
+                  "num_bigint",
+                  "quickjs_oxide",
+                  "quickjs_oxide_host"
+                ]
+              },
+              {
+                "target": null,
+                "codegen": {
+                  "opt-level": "3",
+                  "lto": "fat",
+                  "codegen-units": "1"
+                },
+                "crates": [
+                  "qjs"
+                ]
+              }
+            ]
+          },
+          "target": {
+            "requested_triple": null,
+            "rustc_host": "x86_64-unknown-linux-gnu",
+            "observed_triple": null,
+            "observed_target_cpu": null,
+            "observed_target_feature": null
+          },
+          "commit_environment": "90c85e3d94cd66066fe1c4381608d497f1dab346"
+        }
+      },
+      "integrated": {
+        "path": "/tmp/oxide-phase2-b2-build/release/qjs",
+        "sha256": "45ccc5046c2a446e575a00ba7c9c8646b4ba66b65c3d9bf1cededa18cef8bff1",
+        "version": {
+          "command": [
+            "/tmp/oxide-phase2-b2-build/release/qjs",
+            "--version"
+          ],
+          "exit_code": 0,
+          "stdout": "quickjs-oxide 0.0.1 (QuickJS 2026-06-04 compatibility target)",
+          "stderr": ""
+        },
+        "build": {
+          "schema": "oxide-build-v2",
+          "mode": "plain",
+          "vm_configuration": "stack-vm",
+          "features": [],
+          "commit": "85aa19565bba1c6a760cf737f74bf00a2c8df585",
+          "source": {
+            "commit": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD"
+              ],
+              "exit_code": 0,
+              "stdout": "85aa19565bba1c6a760cf737f74bf00a2c8df585",
+              "stderr": ""
+            },
+            "tree": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD^{tree}"
+              ],
+              "exit_code": 0,
+              "stdout": "d7af5e6595bc28b0ccf3863f3ba5ed5b87ceb5c7",
+              "stderr": ""
+            },
+            "top_level": {
+              "command": [
+                "git",
+                "rev-parse",
+                "--show-toplevel"
+              ],
+              "exit_code": 0,
+              "stdout": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/378473c5-1638-4d3b-a285-a477e60c62bd",
+              "stderr": ""
+            },
+            "status": {
+              "command": [
+                "git",
+                "status",
+                "--porcelain"
+              ],
+              "exit_code": 0,
+              "stdout": "",
+              "stderr": ""
+            }
+          },
+          "binary_sha256": "45ccc5046c2a446e575a00ba7c9c8646b4ba66b65c3d9bf1cededa18cef8bff1",
+          "tooling": {
+            "repository": {
+              "commit": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "HEAD"
+                ],
+                "exit_code": 0,
+                "stdout": "85aa19565bba1c6a760cf737f74bf00a2c8df585",
+                "stderr": ""
+              },
+              "tree": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "HEAD^{tree}"
+                ],
+                "exit_code": 0,
+                "stdout": "d7af5e6595bc28b0ccf3863f3ba5ed5b87ceb5c7",
+                "stderr": ""
+              },
+              "top_level": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "--show-toplevel"
+                ],
+                "exit_code": 0,
+                "stdout": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/378473c5-1638-4d3b-a285-a477e60c62bd",
+                "stderr": ""
+              },
+              "status": {
+                "command": [
+                  "git",
+                  "status",
+                  "--porcelain"
+                ],
+                "exit_code": 0,
+                "stdout": "",
+                "stderr": ""
+              }
+            },
+            "snapshots": {
+              "build.py": {
+                "path": "/tmp/oxide-phase2-b2-build/release/qjs.build.tooling-build.py",
+                "sha256": "fc8392a9d26290a6095742b2ab4cb45f5ab37b964c9daa51d22f7088259b1f50"
+              },
+              "run.py": {
+                "path": "/tmp/oxide-phase2-b2-build/release/qjs.build.tooling-run.py",
+                "sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5"
+              }
+            }
+          },
+          "command": [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "--verbose",
+            "-p",
+            "quickjs-oxide-cli",
+            "--no-default-features",
+            "--target-dir",
+            "/tmp/oxide-phase2-b2-build",
+            "--jobs",
+            "2"
+          ],
+          "cwd": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/378473c5-1638-4d3b-a285-a477e60c62bd",
+          "exit_code": 0,
+          "stdout": {
+            "path": "/tmp/oxide-phase2-b2-build/release/qjs.build.stdout.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "stderr": {
+            "path": "/tmp/oxide-phase2-b2-build/release/qjs.build.stderr.log",
+            "sha256": "71b013e0bb4b213a9b017ea26477d9f01a27f8a1f2637fec4c48e5be62ceda93"
+          },
+          "rustc": {
+            "command": [
+              "rustc",
+              "-vV"
+            ],
+            "exit_code": 0,
+            "stdout": "rustc 1.94.1 (e408947bf 2026-03-25)\nbinary: rustc\ncommit-hash: e408947bfd200af42db322daf0fadfe7e26d3bd1\ncommit-date: 2026-03-25\nhost: x86_64-unknown-linux-gnu\nrelease: 1.94.1\nLLVM version: 21.1.8",
+            "stderr": ""
+          },
+          "cargo": {
+            "command": [
+              "cargo",
+              "-V"
+            ],
+            "exit_code": 0,
+            "stdout": "cargo 1.94.1 (29ea6fb6a 2026-03-24)",
+            "stderr": ""
+          },
+          "cargo_toml_sha256": "14f5e4d4f172150d6c212b61871da24a4e5b26e34e363f6de2a7f250bbe6e48d",
+          "cargo_lock_sha256": "c26c9f1999da579c0d1176c62981afa716ea998949a8dd15b1365f85b66944e3",
+          "release_profile": {
+            "manifest": {
+              "lto": "\"fat\"",
+              "codegen-units": "1"
+            },
+            "environment_overrides": {},
+            "cargo_config_sha256": {},
+            "qjs_rustc_invocation": {
+              "command": "/home/eric/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name qjs --edition=2024 apps/cli/src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C opt-level=3 -C lto=fat -C codegen-units=1 '--warn=clippy::all' --forbid=unsafe_code --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values(\"default\", \"profiling\", \"test262-host\"))' -C metadata=2c3c1c97d85c5248 -C extra-filename=-a6159d3b4651fa75 --out-dir /tmp/oxide-phase2-b2-build/release/deps -C strip=debuginfo -L dependency=/tmp/oxide-phase2-b2-build/release/deps --extern quickjs_oxide=/tmp/oxide-phase2-b2-build/release/deps/libquickjs_oxide-12e89011af3dce7e.rlib --extern quickjs_oxide_host=/tmp/oxide-phase2-b2-build/release/deps/libquickjs_oxide_host-9e73cad3f8d8b0c7.rlib",
+              "crate": "qjs",
+              "codegen": {
+                "opt-level": "3",
+                "lto": "fat",
+                "codegen-units": "1"
+              },
+              "target": null
+            },
+            "observed_rustc_compilations": 9,
+            "observed_codegen_groups": [
+              {
+                "target": null,
+                "codegen": {},
+                "crates": [
+                  "autocfg",
+                  "build_script_build"
+                ]
+              },
+              {
+                "target": null,
+                "codegen": {
+                  "opt-level": "3",
+                  "codegen-units": "1"
+                },
+                "crates": [
+                  "tz",
+                  "num_traits",
+                  "num_integer",
+                  "num_bigint",
+                  "quickjs_oxide",
+                  "quickjs_oxide_host"
+                ]
+              },
+              {
+                "target": null,
+                "codegen": {
+                  "opt-level": "3",
+                  "lto": "fat",
+                  "codegen-units": "1"
+                },
+                "crates": [
+                  "qjs"
+                ]
+              }
+            ]
+          },
+          "target": {
+            "requested_triple": null,
+            "rustc_host": "x86_64-unknown-linux-gnu",
+            "observed_triple": null,
+            "observed_target_cpu": null,
+            "observed_target_feature": null
+          },
+          "commit_environment": "85aa19565bba1c6a760cf737f74bf00a2c8df585"
+        }
+      }
+    },
+    "repeat": 12,
+    "order_strategy": "abba-baab",
+    "timeout_seconds": 180,
+    "cpu": null,
+    "darwin_counters": false,
+    "counter_scope": null,
+    "metric": "whole-process wall nanoseconds; not adaptive scores"
+  },
+  "summary": [
+    {
+      "case": "realworld-solid",
+      "size": 60,
+      "engine": "baseline",
+      "eligible": true,
+      "successful_wall_ns": [
+        194203799,
+        189215641,
+        192579345,
+        190832311,
+        190787558,
+        193621154,
+        189623298,
+        192616456,
+        192099423,
+        195935615,
+        190222605,
+        192600026
+      ],
+      "failures": [],
+      "median_wall_ns": 192339384.0
+    },
+    {
+      "case": "realworld-solid",
+      "size": 60,
+      "engine": "integrated",
+      "eligible": true,
+      "successful_wall_ns": [
+        191461303,
+        197235107,
+        193087050,
+        193544269,
+        190600446,
+        195595816,
+        195169906,
+        194542877,
+        193343793,
+        189077843,
+        195227334,
+        193150781
+      ],
+      "failures": [],
+      "median_wall_ns": 193444031.0
+    },
+    {
+      "case": "realworld-vue",
+      "size": 60,
+      "engine": "baseline",
+      "eligible": true,
+      "successful_wall_ns": [
+        860024366,
+        860285012,
+        850507417,
+        854251747,
+        856729509,
+        857261666,
+        866489477,
+        866557548,
+        853940252,
+        856172003,
+        859770462,
+        862203017
+      ],
+      "failures": [],
+      "median_wall_ns": 858516064.0
+    },
+    {
+      "case": "realworld-vue",
+      "size": 60,
+      "engine": "integrated",
+      "eligible": true,
+      "successful_wall_ns": [
+        851328932,
+        856361766,
+        858259287,
+        867848580,
+        859997545,
+        856558391,
+        853728185,
+        862451771,
+        861586558,
+        870999335,
+        872615809,
+        868411801
+      ],
+      "failures": [],
+      "median_wall_ns": 860792051.5
+    },
+    {
+      "case": "realworld-react",
+      "size": 60,
+      "engine": "baseline",
+      "eligible": true,
+      "successful_wall_ns": [
+        336434968,
+        335660853,
+        341904381,
+        331994091,
+        342456140,
+        337376671,
+        334278688,
+        334897201,
+        332702937,
+        340768500,
+        343091399,
+        337222204
+      ],
+      "failures": [],
+      "median_wall_ns": 336828586.0
+    },
+    {
+      "case": "realworld-react",
+      "size": 60,
+      "engine": "integrated",
+      "eligible": true,
+      "successful_wall_ns": [
+        338132850,
+        341813319,
+        349706299,
+        348924409,
+        342150476,
+        339879377,
+        336427077,
+        338404996,
+        337994695,
+        348098811,
+        343464960,
+        339243806
+      ],
+      "failures": [],
+      "median_wall_ns": 340846348.0
+    }
+  ],
+  "samples": [
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 194203799,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-baseline-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-baseline-0.stderr",
+      "case": "realworld-solid",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 191461303,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-integrated-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-integrated-0.stderr",
+      "case": "realworld-solid",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 197235107,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-integrated-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-integrated-1.stderr",
+      "case": "realworld-solid",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 189215641,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-baseline-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-baseline-1.stderr",
+      "case": "realworld-solid",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 193087050,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-integrated-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-integrated-2.stderr",
+      "case": "realworld-solid",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 192579345,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-baseline-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-baseline-2.stderr",
+      "case": "realworld-solid",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 190832311,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-baseline-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-baseline-3.stderr",
+      "case": "realworld-solid",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 193544269,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-integrated-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-integrated-3.stderr",
+      "case": "realworld-solid",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 190787558,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-baseline-4.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-baseline-4.stderr",
+      "case": "realworld-solid",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 190600446,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-integrated-4.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-integrated-4.stderr",
+      "case": "realworld-solid",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 195595816,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-integrated-5.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-integrated-5.stderr",
+      "case": "realworld-solid",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 193621154,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-baseline-5.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-baseline-5.stderr",
+      "case": "realworld-solid",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 195169906,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-integrated-6.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-integrated-6.stderr",
+      "case": "realworld-solid",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 189623298,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-baseline-6.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-baseline-6.stderr",
+      "case": "realworld-solid",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 192616456,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-baseline-7.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-baseline-7.stderr",
+      "case": "realworld-solid",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 194542877,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-integrated-7.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-integrated-7.stderr",
+      "case": "realworld-solid",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 192099423,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-baseline-8.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-baseline-8.stderr",
+      "case": "realworld-solid",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 8,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 193343793,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-integrated-8.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-integrated-8.stderr",
+      "case": "realworld-solid",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 8,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 189077843,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-integrated-9.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-integrated-9.stderr",
+      "case": "realworld-solid",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 9,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 195935615,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-baseline-9.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-baseline-9.stderr",
+      "case": "realworld-solid",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 9,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 195227334,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-integrated-10.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-integrated-10.stderr",
+      "case": "realworld-solid",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 10,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 190222605,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-baseline-10.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-baseline-10.stderr",
+      "case": "realworld-solid",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 10,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 192600026,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-baseline-11.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-baseline-11.stderr",
+      "case": "realworld-solid",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 11,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 193150781,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-integrated-11.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-solid-integrated-11.stderr",
+      "case": "realworld-solid",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 11,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 860024366,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-baseline-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-baseline-0.stderr",
+      "case": "realworld-vue",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 851328932,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-integrated-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-integrated-0.stderr",
+      "case": "realworld-vue",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 856361766,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-integrated-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-integrated-1.stderr",
+      "case": "realworld-vue",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 860285012,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-baseline-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-baseline-1.stderr",
+      "case": "realworld-vue",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 858259287,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-integrated-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-integrated-2.stderr",
+      "case": "realworld-vue",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 850507417,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-baseline-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-baseline-2.stderr",
+      "case": "realworld-vue",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 854251747,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-baseline-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-baseline-3.stderr",
+      "case": "realworld-vue",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 867848580,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-integrated-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-integrated-3.stderr",
+      "case": "realworld-vue",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 856729509,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-baseline-4.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-baseline-4.stderr",
+      "case": "realworld-vue",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 859997545,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-integrated-4.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-integrated-4.stderr",
+      "case": "realworld-vue",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 856558391,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-integrated-5.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-integrated-5.stderr",
+      "case": "realworld-vue",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 857261666,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-baseline-5.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-baseline-5.stderr",
+      "case": "realworld-vue",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 853728185,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-integrated-6.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-integrated-6.stderr",
+      "case": "realworld-vue",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 866489477,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-baseline-6.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-baseline-6.stderr",
+      "case": "realworld-vue",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 866557548,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-baseline-7.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-baseline-7.stderr",
+      "case": "realworld-vue",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 862451771,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-integrated-7.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-integrated-7.stderr",
+      "case": "realworld-vue",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 853940252,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-baseline-8.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-baseline-8.stderr",
+      "case": "realworld-vue",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 8,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 861586558,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-integrated-8.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-integrated-8.stderr",
+      "case": "realworld-vue",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 8,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 870999335,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-integrated-9.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-integrated-9.stderr",
+      "case": "realworld-vue",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 9,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 856172003,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-baseline-9.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-baseline-9.stderr",
+      "case": "realworld-vue",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 9,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 872615809,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-integrated-10.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-integrated-10.stderr",
+      "case": "realworld-vue",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 10,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 859770462,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-baseline-10.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-baseline-10.stderr",
+      "case": "realworld-vue",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 10,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 862203017,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-baseline-11.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-baseline-11.stderr",
+      "case": "realworld-vue",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 11,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 868411801,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-integrated-11.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-vue-integrated-11.stderr",
+      "case": "realworld-vue",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 11,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 336434968,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-baseline-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-baseline-0.stderr",
+      "case": "realworld-react",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 338132850,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-integrated-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-integrated-0.stderr",
+      "case": "realworld-react",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 341813319,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-integrated-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-integrated-1.stderr",
+      "case": "realworld-react",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 335660853,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-baseline-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-baseline-1.stderr",
+      "case": "realworld-react",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 349706299,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-integrated-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-integrated-2.stderr",
+      "case": "realworld-react",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 341904381,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-baseline-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-baseline-2.stderr",
+      "case": "realworld-react",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 331994091,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-baseline-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-baseline-3.stderr",
+      "case": "realworld-react",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 348924409,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-integrated-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-integrated-3.stderr",
+      "case": "realworld-react",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 342456140,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-baseline-4.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-baseline-4.stderr",
+      "case": "realworld-react",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 342150476,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-integrated-4.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-integrated-4.stderr",
+      "case": "realworld-react",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 339879377,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-integrated-5.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-integrated-5.stderr",
+      "case": "realworld-react",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 337376671,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-baseline-5.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-baseline-5.stderr",
+      "case": "realworld-react",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 336427077,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-integrated-6.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-integrated-6.stderr",
+      "case": "realworld-react",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 334278688,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-baseline-6.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-baseline-6.stderr",
+      "case": "realworld-react",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 334897201,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-baseline-7.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-baseline-7.stderr",
+      "case": "realworld-react",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 338404996,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-integrated-7.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-integrated-7.stderr",
+      "case": "realworld-react",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 332702937,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-baseline-8.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-baseline-8.stderr",
+      "case": "realworld-react",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 8,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 337994695,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-integrated-8.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-integrated-8.stderr",
+      "case": "realworld-react",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 8,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 348098811,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-integrated-9.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-integrated-9.stderr",
+      "case": "realworld-react",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 9,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 340768500,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-baseline-9.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-baseline-9.stderr",
+      "case": "realworld-react",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 9,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 343464960,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-integrated-10.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-integrated-10.stderr",
+      "case": "realworld-react",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 10,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 343091399,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-baseline-10.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-baseline-10.stderr",
+      "case": "realworld-react",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 10,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 337222204,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-baseline-11.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-baseline-11.stderr",
+      "case": "realworld-react",
+      "size": 60,
+      "engine": "baseline",
+      "repetition": 11,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 339243806,
+      "stdout": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-integrated-11.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-app-holdout-ab/raw/realworld-react-integrated-11.stderr",
+      "case": "realworld-react",
+      "size": 60,
+      "engine": "integrated",
+      "repetition": 11,
+      "semantic_status": "ok",
+      "status": "ok"
+    }
+  ]
+}

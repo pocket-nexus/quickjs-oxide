@@ -1,0 +1,571 @@
+{
+  "schema": "oxide-region-phase2-resource-diagnostic-v1",
+  "method": "perf stat -e instructions, userspace only; three fresh processes per engine; wait4.ru_maxrss, one separate process; profiling build -d --profile-json, one separate process",
+  "perf_version": "perf version 7.2.8-1",
+  "engines": {
+    "baseline": {
+      "path": "/tmp/oxide-phase2-baseline-build/release/qjs",
+      "sha256": "c8f6274b90511fa0e3446d87f825ec2f56402b1c1c8dbdb4f39aa2b41d9eb46a"
+    },
+    "integrated": {
+      "path": "/tmp/oxide-phase2-b2-build/release/qjs",
+      "sha256": "45ccc5046c2a446e575a00ba7c9c8646b4ba66b65c3d9bf1cededa18cef8bff1"
+    }
+  },
+  "cases": {
+    "solid": {
+      "workload": {
+        "sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+        "expected_stdout_sha256": "31cf5a475ad6ede7993296de608ba99f5d75c5d03f4483f8d18e535974dc1881"
+      },
+      "engines": {
+        "baseline": {
+          "instructions_userspace": [
+            1860342662,
+            1860393320,
+            1860368697
+          ],
+          "median_instructions_userspace": 1860368697,
+          "maximum_resident_set_size_kib_one_process": 17480,
+          "profile_only_memory": {
+            "live_heap_node_count": 14465,
+            "categories": {
+              "exec_words": {
+                "count": 24743,
+                "used_bytes": 98972,
+                "capacity_bytes": 98972,
+                "basis": "deduplicated-Rc-slice-inline-bytes; includes extension words, excludes Rc headers"
+              },
+              "exec_boundaries": {
+                "count": 22843,
+                "used_bytes": 91372,
+                "capacity_bytes": 91372,
+                "basis": "deduplicated-Rc-slice-inline-bytes; excludes Rc headers"
+              },
+              "exec_numeric_regions": {
+                "count": 2,
+                "used_bytes": 160,
+                "capacity_bytes": 160,
+                "basis": "deduplicated-Rc-slice-inline-bytes; excludes Rc headers"
+              },
+              "bytecode_executable_projections": {
+                "count": 339,
+                "used_bytes": 108480,
+                "capacity_bytes": 108480,
+                "basis": "one initialized shared projection per bytecode node; excludes Rc headers and shared slice payloads"
+              },
+              "arena_slots": {
+                "count": 6672,
+                "used_bytes": 1868160,
+                "capacity_bytes": 2293760,
+                "basis": "owned-inline-storage; excludes nested allocations and allocator overhead"
+              },
+              "property_slots": {
+                "count": 14349,
+                "used_bytes": 344376,
+                "capacity_bytes": 401520,
+                "basis": "owned-inline-storage; excludes nested allocations and allocator overhead"
+              }
+            }
+          }
+        },
+        "integrated": {
+          "instructions_userspace": [
+            1871237197,
+            1871194772,
+            1871243627
+          ],
+          "median_instructions_userspace": 1871237197,
+          "maximum_resident_set_size_kib_one_process": 17724,
+          "profile_only_memory": {
+            "live_heap_node_count": 14465,
+            "categories": {
+              "exec_words": {
+                "count": 24759,
+                "used_bytes": 99036,
+                "capacity_bytes": 99036,
+                "basis": "deduplicated-Rc-slice-inline-bytes; includes extension words, excludes Rc headers"
+              },
+              "exec_boundaries": {
+                "count": 22843,
+                "used_bytes": 91372,
+                "capacity_bytes": 91372,
+                "basis": "deduplicated-Rc-slice-inline-bytes; excludes Rc headers"
+              },
+              "exec_numeric_regions": {
+                "count": 2,
+                "used_bytes": 160,
+                "capacity_bytes": 160,
+                "basis": "deduplicated-Rc-slice-inline-bytes; excludes Rc headers"
+              },
+              "bytecode_executable_projections": {
+                "count": 339,
+                "used_bytes": 130176,
+                "capacity_bytes": 130176,
+                "basis": "one initialized shared projection per bytecode node; excludes Rc headers and shared slice payloads"
+              },
+              "arena_slots": {
+                "count": 6672,
+                "used_bytes": 1868160,
+                "capacity_bytes": 2293760,
+                "basis": "owned-inline-storage; excludes nested allocations and allocator overhead"
+              },
+              "property_slots": {
+                "count": 14349,
+                "used_bytes": 344376,
+                "capacity_bytes": 401520,
+                "basis": "owned-inline-storage; excludes nested allocations and allocator overhead"
+              }
+            }
+          }
+        }
+      },
+      "integrated_over_baseline_median_instructions": 1.0058421215200655
+    },
+    "vue": {
+      "workload": {
+        "sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+        "expected_stdout_sha256": "c9f82552cae2b24e56498fca33c7454d61a9771393345cbe005ad81603c2c967"
+      },
+      "engines": {
+        "baseline": {
+          "instructions_userspace": [
+            8064927780,
+            8064917516,
+            8065282606
+          ],
+          "median_instructions_userspace": 8064927780,
+          "maximum_resident_set_size_kib_one_process": 53748,
+          "profile_only_memory": {
+            "live_heap_node_count": 84390,
+            "categories": {
+              "exec_words": {
+                "count": 96052,
+                "used_bytes": 384208,
+                "capacity_bytes": 384208,
+                "basis": "deduplicated-Rc-slice-inline-bytes; includes extension words, excludes Rc headers"
+              },
+              "exec_boundaries": {
+                "count": 86748,
+                "used_bytes": 346992,
+                "capacity_bytes": 346992,
+                "basis": "deduplicated-Rc-slice-inline-bytes; excludes Rc headers"
+              },
+              "exec_numeric_regions": {
+                "count": 13,
+                "used_bytes": 1040,
+                "capacity_bytes": 1040,
+                "basis": "deduplicated-Rc-slice-inline-bytes; excludes Rc headers"
+              },
+              "bytecode_executable_projections": {
+                "count": 628,
+                "used_bytes": 200960,
+                "capacity_bytes": 200960,
+                "basis": "one initialized shared projection per bytecode node; excludes Rc headers and shared slice payloads"
+              },
+              "arena_slots": {
+                "count": 33737,
+                "used_bytes": 9446360,
+                "capacity_bytes": 18350080,
+                "basis": "owned-inline-storage; excludes nested allocations and allocator overhead"
+              },
+              "property_slots": {
+                "count": 186292,
+                "used_bytes": 4471008,
+                "capacity_bytes": 6788400,
+                "basis": "owned-inline-storage; excludes nested allocations and allocator overhead"
+              }
+            }
+          }
+        },
+        "integrated": {
+          "instructions_userspace": [
+            8111695757,
+            8111098265,
+            8111575474
+          ],
+          "median_instructions_userspace": 8111575474,
+          "maximum_resident_set_size_kib_one_process": 54136,
+          "profile_only_memory": {
+            "live_heap_node_count": 84390,
+            "categories": {
+              "exec_words": {
+                "count": 96135,
+                "used_bytes": 384540,
+                "capacity_bytes": 384540,
+                "basis": "deduplicated-Rc-slice-inline-bytes; includes extension words, excludes Rc headers"
+              },
+              "exec_boundaries": {
+                "count": 86748,
+                "used_bytes": 346992,
+                "capacity_bytes": 346992,
+                "basis": "deduplicated-Rc-slice-inline-bytes; excludes Rc headers"
+              },
+              "exec_numeric_regions": {
+                "count": 13,
+                "used_bytes": 1040,
+                "capacity_bytes": 1040,
+                "basis": "deduplicated-Rc-slice-inline-bytes; excludes Rc headers"
+              },
+              "bytecode_executable_projections": {
+                "count": 628,
+                "used_bytes": 241152,
+                "capacity_bytes": 241152,
+                "basis": "one initialized shared projection per bytecode node; excludes Rc headers and shared slice payloads"
+              },
+              "arena_slots": {
+                "count": 33737,
+                "used_bytes": 9446360,
+                "capacity_bytes": 18350080,
+                "basis": "owned-inline-storage; excludes nested allocations and allocator overhead"
+              },
+              "property_slots": {
+                "count": 186292,
+                "used_bytes": 4471008,
+                "capacity_bytes": 6788400,
+                "basis": "owned-inline-storage; excludes nested allocations and allocator overhead"
+              }
+            }
+          }
+        }
+      },
+      "integrated_over_baseline_median_instructions": 1.0057840188123792
+    },
+    "react": {
+      "workload": {
+        "sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+        "expected_stdout_sha256": "df5ae6b6553419a7bad64af09277441aa287203ec10b647414e5537eb41cc35b"
+      },
+      "engines": {
+        "baseline": {
+          "instructions_userspace": [
+            3501283434,
+            3501448987,
+            3501134979
+          ],
+          "median_instructions_userspace": 3501283434,
+          "maximum_resident_set_size_kib_one_process": 31244,
+          "profile_only_memory": {
+            "live_heap_node_count": 20681,
+            "categories": {
+              "exec_words": {
+                "count": 70223,
+                "used_bytes": 280892,
+                "capacity_bytes": 280892,
+                "basis": "deduplicated-Rc-slice-inline-bytes; includes extension words, excludes Rc headers"
+              },
+              "exec_boundaries": {
+                "count": 58410,
+                "used_bytes": 233640,
+                "capacity_bytes": 233640,
+                "basis": "deduplicated-Rc-slice-inline-bytes; excludes Rc headers"
+              },
+              "exec_numeric_regions": {
+                "count": 3,
+                "used_bytes": 240,
+                "capacity_bytes": 240,
+                "basis": "deduplicated-Rc-slice-inline-bytes; excludes Rc headers"
+              },
+              "bytecode_executable_projections": {
+                "count": 191,
+                "used_bytes": 61120,
+                "capacity_bytes": 61120,
+                "basis": "one initialized shared projection per bytecode node; excludes Rc headers and shared slice payloads"
+              },
+              "arena_slots": {
+                "count": 4656,
+                "used_bytes": 1303680,
+                "capacity_bytes": 2293760,
+                "basis": "owned-inline-storage; excludes nested allocations and allocator overhead"
+              },
+              "property_slots": {
+                "count": 8393,
+                "used_bytes": 201432,
+                "capacity_bytes": 240432,
+                "basis": "owned-inline-storage; excludes nested allocations and allocator overhead"
+              }
+            }
+          }
+        },
+        "integrated": {
+          "instructions_userspace": [
+            3530931045,
+            3531527076,
+            3530798872
+          ],
+          "median_instructions_userspace": 3530931045,
+          "maximum_resident_set_size_kib_one_process": 29392,
+          "profile_only_memory": {
+            "live_heap_node_count": 20681,
+            "categories": {
+              "exec_words": {
+                "count": 70351,
+                "used_bytes": 281404,
+                "capacity_bytes": 281404,
+                "basis": "deduplicated-Rc-slice-inline-bytes; includes extension words, excludes Rc headers"
+              },
+              "exec_boundaries": {
+                "count": 58410,
+                "used_bytes": 233640,
+                "capacity_bytes": 233640,
+                "basis": "deduplicated-Rc-slice-inline-bytes; excludes Rc headers"
+              },
+              "exec_numeric_regions": {
+                "count": 3,
+                "used_bytes": 240,
+                "capacity_bytes": 240,
+                "basis": "deduplicated-Rc-slice-inline-bytes; excludes Rc headers"
+              },
+              "bytecode_executable_projections": {
+                "count": 191,
+                "used_bytes": 73344,
+                "capacity_bytes": 73344,
+                "basis": "one initialized shared projection per bytecode node; excludes Rc headers and shared slice payloads"
+              },
+              "arena_slots": {
+                "count": 4656,
+                "used_bytes": 1303680,
+                "capacity_bytes": 2293760,
+                "basis": "owned-inline-storage; excludes nested allocations and allocator overhead"
+              },
+              "property_slots": {
+                "count": 8393,
+                "used_bytes": 201432,
+                "capacity_bytes": 240432,
+                "basis": "owned-inline-storage; excludes nested allocations and allocator overhead"
+              }
+            }
+          }
+        }
+      },
+      "integrated_over_baseline_median_instructions": 1.008467640954771
+    },
+    "v8-combined": {
+      "workload": {
+        "sha256": "dbd4d6676e56f40d6b0763a18d5ae322dec55299462f405adc37fe83cd4441e0",
+        "expected_stdout_sha256": "bcc5cd4bd07522f6f27f8ee21a74257db33d1580acffaf924480c868edaac6c5"
+      },
+      "engines": {
+        "baseline": {
+          "instructions_userspace": [
+            100576702507,
+            100584646788,
+            100585811663
+          ],
+          "median_instructions_userspace": 100584646788,
+          "maximum_resident_set_size_kib_one_process": 361580
+        },
+        "integrated": {
+          "instructions_userspace": [
+            100518539677,
+            100514351552,
+            100515568298
+          ],
+          "median_instructions_userspace": 100515568298,
+          "maximum_resident_set_size_kib_one_process": 361772
+        }
+      },
+      "integrated_over_baseline_median_instructions": 0.9993132302771257
+    },
+    "v8-richards": {
+      "workload": {
+        "sha256": "7925040f31be22cb2487a88cce443b73bc7ae9f0e57d575af09743ed09f7e593",
+        "expected_stdout_sha256": "2d915045fe2d6d674d8794ecfb50d1ca09fb7468192ce05a85e7bd69c88fcb6c"
+      },
+      "engines": {
+        "baseline": {
+          "instructions_userspace": [
+            1523081591,
+            1523083659,
+            1523082482
+          ],
+          "median_instructions_userspace": 1523082482
+        },
+        "integrated": {
+          "instructions_userspace": [
+            1528228715,
+            1528226026,
+            1528228353
+          ],
+          "median_instructions_userspace": 1528228353
+        }
+      },
+      "integrated_over_baseline_median_instructions": 1.0033785898405467
+    },
+    "v8-deltablue": {
+      "workload": {
+        "sha256": "613412ebe97ae0a87a7c5c3eadb1e6e0b6900376dc3b14c73f2cce564ac9bcdf",
+        "expected_stdout_sha256": "1a0883914689436a63f0304098306c1185d89b94b752816ff7e28567bb021649"
+      },
+      "engines": {
+        "baseline": {
+          "instructions_userspace": [
+            1098189405,
+            1098168398,
+            1098171816
+          ],
+          "median_instructions_userspace": 1098171816
+        },
+        "integrated": {
+          "instructions_userspace": [
+            1101910419,
+            1101911130,
+            1101911723
+          ],
+          "median_instructions_userspace": 1101911130
+        }
+      },
+      "integrated_over_baseline_median_instructions": 1.0034050354830815
+    },
+    "v8-crypto": {
+      "workload": {
+        "sha256": "a5b78df12c7f677163b8ee06a5e3e4990eebe22e4ddd8a6354e21beabe7d2367",
+        "expected_stdout_sha256": "c46907269bee2dc54d651d7ea3c44fd75ad95328a40b363f5232b0ed2fd33738"
+      },
+      "engines": {
+        "baseline": {
+          "instructions_userspace": [
+            12209073255,
+            12208978713,
+            12209033224
+          ],
+          "median_instructions_userspace": 12209033224
+        },
+        "integrated": {
+          "instructions_userspace": [
+            12274845444,
+            12274825163,
+            12274853395
+          ],
+          "median_instructions_userspace": 12274845444
+        }
+      },
+      "integrated_over_baseline_median_instructions": 1.0053904530188869
+    },
+    "v8-raytrace": {
+      "workload": {
+        "sha256": "3163f4f20297282de55dab21979b898363cd5dea62e027f8f945f7c27c6b8fee",
+        "expected_stdout_sha256": "cf943f7f664365563ad112760c9c0fcf2f22d01cf47f5734501b6cf49d18f4e4"
+      },
+      "engines": {
+        "baseline": {
+          "instructions_userspace": [
+            6501527585,
+            6503736781,
+            6500513460
+          ],
+          "median_instructions_userspace": 6501527585
+        },
+        "integrated": {
+          "instructions_userspace": [
+            6514523922,
+            6514514686,
+            6517713886
+          ],
+          "median_instructions_userspace": 6514523922
+        }
+      },
+      "integrated_over_baseline_median_instructions": 1.0019989666782287
+    },
+    "v8-earley-boyer": {
+      "workload": {
+        "sha256": "04fe426bcb8b907a041e3b47c9541b790537d0ce78f82cfc4734e3b16adf8453",
+        "expected_stdout_sha256": "192b6b5c90cd5ee154710ea8fcc796b3c95b1580cfce307dd4ea63b9356e7df4"
+      },
+      "engines": {
+        "baseline": {
+          "instructions_userspace": [
+            24959552923,
+            24958917027,
+            24958943333
+          ],
+          "median_instructions_userspace": 24958943333
+        },
+        "integrated": {
+          "instructions_userspace": [
+            24716189771,
+            24716224759,
+            24716472145
+          ],
+          "median_instructions_userspace": 24716224759
+        }
+      },
+      "integrated_over_baseline_median_instructions": 0.9902752864669921
+    },
+    "v8-regexp": {
+      "workload": {
+        "sha256": "d42b37d8c3bbe312642b9bb0e9f1b915cdff24eb4ea3f3cd427d670518968ca0",
+        "expected_stdout_sha256": "d7443bd33ca4e38f3ee8b3638c1ed21d785d170e3ceab298aeb95acee526684f"
+      },
+      "engines": {
+        "baseline": {
+          "instructions_userspace": [
+            25422249097,
+            25419417736,
+            25419407029
+          ],
+          "median_instructions_userspace": 25419417736
+        },
+        "integrated": {
+          "instructions_userspace": [
+            25440335695,
+            25440647487,
+            25444071166
+          ],
+          "median_instructions_userspace": 25440647487
+        }
+      },
+      "integrated_over_baseline_median_instructions": 1.000835178493091
+    },
+    "v8-splay": {
+      "workload": {
+        "sha256": "19de2183858c01c551e5fe37d128fbab631389b869cad190bba61c8854b4ec1f",
+        "expected_stdout_sha256": "46f55ac4e8c583354a8e255a32123c06887b0ceafeabc7a544fece0bc52c2f8f"
+      },
+      "engines": {
+        "baseline": {
+          "instructions_userspace": [
+            22518905656,
+            22518703271,
+            22518945576
+          ],
+          "median_instructions_userspace": 22518905656
+        },
+        "integrated": {
+          "instructions_userspace": [
+            22639682553,
+            22640253782,
+            22639682775
+          ],
+          "median_instructions_userspace": 22639682775
+        }
+      },
+      "integrated_over_baseline_median_instructions": 1.005363365380405
+    },
+    "v8-navier-stokes": {
+      "workload": {
+        "sha256": "831d2c9d36e65a4f788bbf6a28dbd3850d09fd0570088e97c2f6b41dd7f56563",
+        "expected_stdout_sha256": "4e62cca6a3481205c27dd7851676b66fa5757a8d5af436a77cd349acb0512384"
+      },
+      "engines": {
+        "baseline": {
+          "instructions_userspace": [
+            6617442939,
+            6617438346,
+            6617448033
+          ],
+          "median_instructions_userspace": 6617442939
+        },
+        "integrated": {
+          "instructions_userspace": [
+            6564895127,
+            6564890821,
+            6564894169
+          ],
+          "median_instructions_userspace": 6564894169
+        }
+      },
+      "integrated_over_baseline_median_instructions": 0.992059052041038
+    }
+  }
+}

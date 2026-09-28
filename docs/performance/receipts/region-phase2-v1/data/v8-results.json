@@ -1,0 +1,3731 @@
+{
+  "metadata": {
+    "schema": "oxide-v8-fixed-iteration-v1",
+    "scope": "whole-process wall nanoseconds including startup, compilation and teardown",
+    "not_original_v8_score": true,
+    "source": {
+      "repository": {
+        "commit": {
+          "command": [
+            "git",
+            "rev-parse",
+            "HEAD"
+          ],
+          "exit_code": 0,
+          "stdout": "2034d98fc8c5f8044e186267593f5d5ea5232caf",
+          "stderr": ""
+        },
+        "tree": {
+          "command": [
+            "git",
+            "rev-parse",
+            "HEAD^{tree}"
+          ],
+          "exit_code": 0,
+          "stdout": "4e86354f280d1a62a27e85b784bd17194694a9c7",
+          "stderr": ""
+        },
+        "top_level": {
+          "command": [
+            "git",
+            "rev-parse",
+            "--show-toplevel"
+          ],
+          "exit_code": 0,
+          "stdout": "/tmp/oxide-phase2-v8-source",
+          "stderr": ""
+        },
+        "status": {
+          "command": [
+            "git",
+            "status",
+            "--porcelain"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": ""
+        }
+      },
+      "expected_commit": "2034d98fc8c5f8044e186267593f5d5ea5232caf",
+      "root": "/tmp/oxide-phase2-v8-source",
+      "files": {
+        "base.js": {
+          "path": "/tmp/oxide-phase2-v8-source/v8-v7/base.js",
+          "sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51"
+        },
+        "richards.js": {
+          "path": "/tmp/oxide-phase2-v8-source/v8-v7/richards.js",
+          "sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11"
+        },
+        "deltablue.js": {
+          "path": "/tmp/oxide-phase2-v8-source/v8-v7/deltablue.js",
+          "sha256": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9"
+        },
+        "crypto.js": {
+          "path": "/tmp/oxide-phase2-v8-source/v8-v7/crypto.js",
+          "sha256": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af"
+        },
+        "raytrace.js": {
+          "path": "/tmp/oxide-phase2-v8-source/v8-v7/raytrace.js",
+          "sha256": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb"
+        },
+        "earley-boyer.js": {
+          "path": "/tmp/oxide-phase2-v8-source/v8-v7/earley-boyer.js",
+          "sha256": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01"
+        },
+        "regexp.js": {
+          "path": "/tmp/oxide-phase2-v8-source/v8-v7/regexp.js",
+          "sha256": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602"
+        },
+        "splay.js": {
+          "path": "/tmp/oxide-phase2-v8-source/v8-v7/splay.js",
+          "sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d"
+        },
+        "navier-stokes.js": {
+          "path": "/tmp/oxide-phase2-v8-source/v8-v7/navier-stokes.js",
+          "sha256": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84"
+        },
+        "run.js": {
+          "path": "/tmp/oxide-phase2-v8-source/v8-v7/run.js",
+          "sha256": "f13e44c0c4c70a9eb7bdab79956cab9faf59be8b9bec97f98f21548e01d9f938"
+        }
+      }
+    },
+    "rng_contract": "pinned base.js initializes deterministic Math.random once per process; no ResetRNG symbol",
+    "baseline": {
+      "path": "/tmp/oxide-phase2-baseline-build/release/qjs",
+      "sha256": "c8f6274b90511fa0e3446d87f825ec2f56402b1c1c8dbdb4f39aa2b41d9eb46a",
+      "version": {
+        "command": [
+          "/tmp/oxide-phase2-baseline-build/release/qjs",
+          "--version"
+        ],
+        "exit_code": 0,
+        "stdout": "quickjs-oxide 0.0.1 (QuickJS 2026-06-04 compatibility target)",
+        "stderr": ""
+      },
+      "build": {
+        "schema": "oxide-build-v2",
+        "mode": "plain",
+        "vm_configuration": "stack-vm",
+        "features": [],
+        "commit": "90c85e3d94cd66066fe1c4381608d497f1dab346",
+        "source": {
+          "commit": {
+            "command": [
+              "git",
+              "rev-parse",
+              "HEAD"
+            ],
+            "exit_code": 0,
+            "stdout": "90c85e3d94cd66066fe1c4381608d497f1dab346",
+            "stderr": ""
+          },
+          "tree": {
+            "command": [
+              "git",
+              "rev-parse",
+              "HEAD^{tree}"
+            ],
+            "exit_code": 0,
+            "stdout": "df000a8dbe38256b54b09929f3c917e8504b9d12",
+            "stderr": ""
+          },
+          "top_level": {
+            "command": [
+              "git",
+              "rev-parse",
+              "--show-toplevel"
+            ],
+            "exit_code": 0,
+            "stdout": "/tmp/oxide-phase2-baseline-src",
+            "stderr": ""
+          },
+          "status": {
+            "command": [
+              "git",
+              "status",
+              "--porcelain"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          }
+        },
+        "binary_sha256": "c8f6274b90511fa0e3446d87f825ec2f56402b1c1c8dbdb4f39aa2b41d9eb46a",
+        "tooling": {
+          "repository": {
+            "commit": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD"
+              ],
+              "exit_code": 0,
+              "stdout": "90c85e3d94cd66066fe1c4381608d497f1dab346",
+              "stderr": ""
+            },
+            "tree": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD^{tree}"
+              ],
+              "exit_code": 0,
+              "stdout": "df000a8dbe38256b54b09929f3c917e8504b9d12",
+              "stderr": ""
+            },
+            "top_level": {
+              "command": [
+                "git",
+                "rev-parse",
+                "--show-toplevel"
+              ],
+              "exit_code": 0,
+              "stdout": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/378473c5-1638-4d3b-a285-a477e60c62bd",
+              "stderr": ""
+            },
+            "status": {
+              "command": [
+                "git",
+                "status",
+                "--porcelain"
+              ],
+              "exit_code": 0,
+              "stdout": "A  scripts/benchmark/realworld/README.md\nA  scripts/benchmark/realworld/build.mjs\nA  scripts/benchmark/realworld/expected.json\nA  scripts/benchmark/realworld/manifest.json\nA  scripts/benchmark/realworld/prepare.py\nA  scripts/benchmark/realworld/react_entry.js\nA  scripts/benchmark/realworld/react_router_host.js\nA  scripts/benchmark/realworld/solid_entry.js\nA  scripts/benchmark/realworld/solid_host.js\nA  scripts/benchmark/realworld/trusted_markdown.js\nA  scripts/benchmark/realworld/vue_entry.js\nA  scripts/benchmark/realworld/vue_host.js",
+              "stderr": ""
+            }
+          },
+          "snapshots": {
+            "build.py": {
+              "path": "/tmp/oxide-phase2-baseline-build/release/qjs.build.tooling-build.py",
+              "sha256": "fc8392a9d26290a6095742b2ab4cb45f5ab37b964c9daa51d22f7088259b1f50"
+            },
+            "run.py": {
+              "path": "/tmp/oxide-phase2-baseline-build/release/qjs.build.tooling-run.py",
+              "sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5"
+            }
+          }
+        },
+        "command": [
+          "cargo",
+          "build",
+          "--locked",
+          "--release",
+          "--verbose",
+          "-p",
+          "quickjs-oxide-cli",
+          "--no-default-features",
+          "--target-dir",
+          "/tmp/oxide-phase2-baseline-build",
+          "--jobs",
+          "2"
+        ],
+        "cwd": "/tmp/oxide-phase2-baseline-src",
+        "exit_code": 0,
+        "stdout": {
+          "path": "/tmp/oxide-phase2-baseline-build/release/qjs.build.stdout.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "stderr": {
+          "path": "/tmp/oxide-phase2-baseline-build/release/qjs.build.stderr.log",
+          "sha256": "6bbde62749adb7af4b2e6ec349fad6c35f4f6d56deab74333fe908775bb92373"
+        },
+        "rustc": {
+          "command": [
+            "rustc",
+            "-vV"
+          ],
+          "exit_code": 0,
+          "stdout": "rustc 1.94.1 (e408947bf 2026-03-25)\nbinary: rustc\ncommit-hash: e408947bfd200af42db322daf0fadfe7e26d3bd1\ncommit-date: 2026-03-25\nhost: x86_64-unknown-linux-gnu\nrelease: 1.94.1\nLLVM version: 21.1.8",
+          "stderr": ""
+        },
+        "cargo": {
+          "command": [
+            "cargo",
+            "-V"
+          ],
+          "exit_code": 0,
+          "stdout": "cargo 1.94.1 (29ea6fb6a 2026-03-24)",
+          "stderr": ""
+        },
+        "cargo_toml_sha256": "14f5e4d4f172150d6c212b61871da24a4e5b26e34e363f6de2a7f250bbe6e48d",
+        "cargo_lock_sha256": "c26c9f1999da579c0d1176c62981afa716ea998949a8dd15b1365f85b66944e3",
+        "release_profile": {
+          "manifest": {
+            "lto": "\"fat\"",
+            "codegen-units": "1"
+          },
+          "environment_overrides": {},
+          "cargo_config_sha256": {},
+          "qjs_rustc_invocation": {
+            "command": "/home/eric/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name qjs --edition=2024 apps/cli/src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C opt-level=3 -C lto=fat -C codegen-units=1 '--warn=clippy::all' --forbid=unsafe_code --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values(\"default\", \"profiling\", \"test262-host\"))' -C metadata=2c3c1c97d85c5248 -C extra-filename=-a6159d3b4651fa75 --out-dir /tmp/oxide-phase2-baseline-build/release/deps -C strip=debuginfo -L dependency=/tmp/oxide-phase2-baseline-build/release/deps --extern quickjs_oxide=/tmp/oxide-phase2-baseline-build/release/deps/libquickjs_oxide-12e89011af3dce7e.rlib --extern quickjs_oxide_host=/tmp/oxide-phase2-baseline-build/release/deps/libquickjs_oxide_host-9e73cad3f8d8b0c7.rlib",
+            "crate": "qjs",
+            "codegen": {
+              "opt-level": "3",
+              "lto": "fat",
+              "codegen-units": "1"
+            },
+            "target": null
+          },
+          "observed_rustc_compilations": 9,
+          "observed_codegen_groups": [
+            {
+              "target": null,
+              "codegen": {},
+              "crates": [
+                "autocfg",
+                "build_script_build"
+              ]
+            },
+            {
+              "target": null,
+              "codegen": {
+                "opt-level": "3",
+                "codegen-units": "1"
+              },
+              "crates": [
+                "tz",
+                "num_traits",
+                "num_integer",
+                "num_bigint",
+                "quickjs_oxide",
+                "quickjs_oxide_host"
+              ]
+            },
+            {
+              "target": null,
+              "codegen": {
+                "opt-level": "3",
+                "lto": "fat",
+                "codegen-units": "1"
+              },
+              "crates": [
+                "qjs"
+              ]
+            }
+          ]
+        },
+        "target": {
+          "requested_triple": null,
+          "rustc_host": "x86_64-unknown-linux-gnu",
+          "observed_triple": null,
+          "observed_target_cpu": null,
+          "observed_target_feature": null
+        },
+        "commit_environment": "90c85e3d94cd66066fe1c4381608d497f1dab346"
+      }
+    },
+    "candidate": {
+      "path": "/tmp/oxide-phase2-b2-build/release/qjs",
+      "sha256": "45ccc5046c2a446e575a00ba7c9c8646b4ba66b65c3d9bf1cededa18cef8bff1",
+      "version": {
+        "command": [
+          "/tmp/oxide-phase2-b2-build/release/qjs",
+          "--version"
+        ],
+        "exit_code": 0,
+        "stdout": "quickjs-oxide 0.0.1 (QuickJS 2026-06-04 compatibility target)",
+        "stderr": ""
+      },
+      "build": {
+        "schema": "oxide-build-v2",
+        "mode": "plain",
+        "vm_configuration": "stack-vm",
+        "features": [],
+        "commit": "85aa19565bba1c6a760cf737f74bf00a2c8df585",
+        "source": {
+          "commit": {
+            "command": [
+              "git",
+              "rev-parse",
+              "HEAD"
+            ],
+            "exit_code": 0,
+            "stdout": "85aa19565bba1c6a760cf737f74bf00a2c8df585",
+            "stderr": ""
+          },
+          "tree": {
+            "command": [
+              "git",
+              "rev-parse",
+              "HEAD^{tree}"
+            ],
+            "exit_code": 0,
+            "stdout": "d7af5e6595bc28b0ccf3863f3ba5ed5b87ceb5c7",
+            "stderr": ""
+          },
+          "top_level": {
+            "command": [
+              "git",
+              "rev-parse",
+              "--show-toplevel"
+            ],
+            "exit_code": 0,
+            "stdout": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/378473c5-1638-4d3b-a285-a477e60c62bd",
+            "stderr": ""
+          },
+          "status": {
+            "command": [
+              "git",
+              "status",
+              "--porcelain"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          }
+        },
+        "binary_sha256": "45ccc5046c2a446e575a00ba7c9c8646b4ba66b65c3d9bf1cededa18cef8bff1",
+        "tooling": {
+          "repository": {
+            "commit": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD"
+              ],
+              "exit_code": 0,
+              "stdout": "85aa19565bba1c6a760cf737f74bf00a2c8df585",
+              "stderr": ""
+            },
+            "tree": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD^{tree}"
+              ],
+              "exit_code": 0,
+              "stdout": "d7af5e6595bc28b0ccf3863f3ba5ed5b87ceb5c7",
+              "stderr": ""
+            },
+            "top_level": {
+              "command": [
+                "git",
+                "rev-parse",
+                "--show-toplevel"
+              ],
+              "exit_code": 0,
+              "stdout": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/378473c5-1638-4d3b-a285-a477e60c62bd",
+              "stderr": ""
+            },
+            "status": {
+              "command": [
+                "git",
+                "status",
+                "--porcelain"
+              ],
+              "exit_code": 0,
+              "stdout": "",
+              "stderr": ""
+            }
+          },
+          "snapshots": {
+            "build.py": {
+              "path": "/tmp/oxide-phase2-b2-build/release/qjs.build.tooling-build.py",
+              "sha256": "fc8392a9d26290a6095742b2ab4cb45f5ab37b964c9daa51d22f7088259b1f50"
+            },
+            "run.py": {
+              "path": "/tmp/oxide-phase2-b2-build/release/qjs.build.tooling-run.py",
+              "sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5"
+            }
+          }
+        },
+        "command": [
+          "cargo",
+          "build",
+          "--locked",
+          "--release",
+          "--verbose",
+          "-p",
+          "quickjs-oxide-cli",
+          "--no-default-features",
+          "--target-dir",
+          "/tmp/oxide-phase2-b2-build",
+          "--jobs",
+          "2"
+        ],
+        "cwd": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/378473c5-1638-4d3b-a285-a477e60c62bd",
+        "exit_code": 0,
+        "stdout": {
+          "path": "/tmp/oxide-phase2-b2-build/release/qjs.build.stdout.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "stderr": {
+          "path": "/tmp/oxide-phase2-b2-build/release/qjs.build.stderr.log",
+          "sha256": "71b013e0bb4b213a9b017ea26477d9f01a27f8a1f2637fec4c48e5be62ceda93"
+        },
+        "rustc": {
+          "command": [
+            "rustc",
+            "-vV"
+          ],
+          "exit_code": 0,
+          "stdout": "rustc 1.94.1 (e408947bf 2026-03-25)\nbinary: rustc\ncommit-hash: e408947bfd200af42db322daf0fadfe7e26d3bd1\ncommit-date: 2026-03-25\nhost: x86_64-unknown-linux-gnu\nrelease: 1.94.1\nLLVM version: 21.1.8",
+          "stderr": ""
+        },
+        "cargo": {
+          "command": [
+            "cargo",
+            "-V"
+          ],
+          "exit_code": 0,
+          "stdout": "cargo 1.94.1 (29ea6fb6a 2026-03-24)",
+          "stderr": ""
+        },
+        "cargo_toml_sha256": "14f5e4d4f172150d6c212b61871da24a4e5b26e34e363f6de2a7f250bbe6e48d",
+        "cargo_lock_sha256": "c26c9f1999da579c0d1176c62981afa716ea998949a8dd15b1365f85b66944e3",
+        "release_profile": {
+          "manifest": {
+            "lto": "\"fat\"",
+            "codegen-units": "1"
+          },
+          "environment_overrides": {},
+          "cargo_config_sha256": {},
+          "qjs_rustc_invocation": {
+            "command": "/home/eric/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/bin/rustc --crate-name qjs --edition=2024 apps/cli/src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C opt-level=3 -C lto=fat -C codegen-units=1 '--warn=clippy::all' --forbid=unsafe_code --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values(\"default\", \"profiling\", \"test262-host\"))' -C metadata=2c3c1c97d85c5248 -C extra-filename=-a6159d3b4651fa75 --out-dir /tmp/oxide-phase2-b2-build/release/deps -C strip=debuginfo -L dependency=/tmp/oxide-phase2-b2-build/release/deps --extern quickjs_oxide=/tmp/oxide-phase2-b2-build/release/deps/libquickjs_oxide-12e89011af3dce7e.rlib --extern quickjs_oxide_host=/tmp/oxide-phase2-b2-build/release/deps/libquickjs_oxide_host-9e73cad3f8d8b0c7.rlib",
+            "crate": "qjs",
+            "codegen": {
+              "opt-level": "3",
+              "lto": "fat",
+              "codegen-units": "1"
+            },
+            "target": null
+          },
+          "observed_rustc_compilations": 9,
+          "observed_codegen_groups": [
+            {
+              "target": null,
+              "codegen": {},
+              "crates": [
+                "autocfg",
+                "build_script_build"
+              ]
+            },
+            {
+              "target": null,
+              "codegen": {
+                "opt-level": "3",
+                "codegen-units": "1"
+              },
+              "crates": [
+                "tz",
+                "num_traits",
+                "num_integer",
+                "num_bigint",
+                "quickjs_oxide",
+                "quickjs_oxide_host"
+              ]
+            },
+            {
+              "target": null,
+              "codegen": {
+                "opt-level": "3",
+                "lto": "fat",
+                "codegen-units": "1"
+              },
+              "crates": [
+                "qjs"
+              ]
+            }
+          ]
+        },
+        "target": {
+          "requested_triple": null,
+          "rustc_host": "x86_64-unknown-linux-gnu",
+          "observed_triple": null,
+          "observed_target_cpu": null,
+          "observed_target_feature": null
+        },
+        "commit_environment": "85aa19565bba1c6a760cf737f74bf00a2c8df585"
+      }
+    },
+    "machine": {
+      "platform": "Linux-7.2.7-arch1-1-x86_64-with-glibc2.44",
+      "machine": "x86_64",
+      "cpu": "AMD Ryzen 7 7840HS with Radeon 780M Graphics",
+      "logical_cpus": 16,
+      "python": "3.14.7",
+      "cpu_affinity": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15
+      ],
+      "scaling_governors": {
+        "0": "powersave",
+        "1": "powersave",
+        "2": "powersave",
+        "3": "powersave",
+        "4": "powersave",
+        "5": "powersave",
+        "6": "powersave",
+        "7": "powersave",
+        "8": "powersave",
+        "9": "powersave",
+        "10": "powersave",
+        "11": "powersave",
+        "12": "powersave",
+        "13": "powersave",
+        "14": "powersave",
+        "15": "powersave"
+      },
+      "load_average": [
+        0.10791015625,
+        0.22509765625,
+        0.52978515625
+      ],
+      "macos": null,
+      "runner_sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5",
+      "repository": {
+        "commit": {
+          "command": [
+            "git",
+            "rev-parse",
+            "HEAD"
+          ],
+          "exit_code": 0,
+          "stdout": "a870149743e02a2750fff89e75b00c3c20ca2fa3",
+          "stderr": ""
+        },
+        "tree": {
+          "command": [
+            "git",
+            "rev-parse",
+            "HEAD^{tree}"
+          ],
+          "exit_code": 0,
+          "stdout": "9063fde889123ee7797667dceea95f67dec2b091",
+          "stderr": ""
+        },
+        "top_level": {
+          "command": [
+            "git",
+            "rev-parse",
+            "--show-toplevel"
+          ],
+          "exit_code": 0,
+          "stdout": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/378473c5-1638-4d3b-a285-a477e60c62bd",
+          "stderr": ""
+        },
+        "status": {
+          "command": [
+            "git",
+            "status",
+            "--porcelain"
+          ],
+          "exit_code": 0,
+          "stdout": "?? scripts/benchmark/paired_report.py",
+          "stderr": ""
+        }
+      }
+    },
+    "tooling": {
+      "iterate_v8.py": {
+        "path": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/378473c5-1638-4d3b-a285-a477e60c62bd/scripts/benchmark/iterate_v8.py",
+        "sha256": "5abd0cb82d0f13ff03101731754e29778a990e13b635c4b3029854210bb79cff"
+      },
+      "profile_v8.py": {
+        "path": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/378473c5-1638-4d3b-a285-a477e60c62bd/scripts/benchmark/profile_v8.py",
+        "sha256": "7a466baf2dc114bb5daa387fd297015a5729527e1e8327bc4f543ea6a63bcb1e"
+      },
+      "run.py": {
+        "path": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/378473c5-1638-4d3b-a285-a477e60c62bd/scripts/benchmark/run.py",
+        "sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5"
+      },
+      "fixed.py": {
+        "path": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/378473c5-1638-4d3b-a285-a477e60c62bd/scripts/benchmark/fixed.py",
+        "sha256": "8a852679221202ae6d3dac1e02b295368a79529a3e0c32e51fd6b914e5d4b425"
+      }
+    },
+    "deadline_seconds": 600.0,
+    "target_seconds": 0.15,
+    "max_runs": 1000,
+    "warmup_per_benchmark": 0,
+    "order": "abba-baab",
+    "repeats_per_engine_per_phase": 4,
+    "darwin_counters": false,
+    "counter_scope": null,
+    "replayed_plan": null,
+    "actual_order": "abba-baab",
+    "actual_repeats_per_engine_per_phase": 4,
+    "budget_repeat_reduction": false
+  },
+  "pilot": [
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/pilot/richards.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 67732545,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/pilot-richards.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/pilot-richards.stderr",
+      "case": "richards",
+      "phase": "pilot",
+      "repetition": 0,
+      "engine": "baseline",
+      "generated_sha256": "bdf504be4914a4b9096ff203e1053c37800484e7b5cfad57cc9f046dafb150d5",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/pilot/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 90860873,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/pilot-deltablue.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/pilot-deltablue.stderr",
+      "case": "deltablue",
+      "phase": "pilot",
+      "repetition": 0,
+      "engine": "baseline",
+      "generated_sha256": "613412ebe97ae0a87a7c5c3eadb1e6e0b6900376dc3b14c73f2cce564ac9bcdf",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/pilot/crypto.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 825272668,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/pilot-crypto.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/pilot-crypto.stderr",
+      "case": "crypto",
+      "phase": "pilot",
+      "repetition": 0,
+      "engine": "baseline",
+      "generated_sha256": "a5b78df12c7f677163b8ee06a5e3e4990eebe22e4ddd8a6354e21beabe7d2367",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/pilot/raytrace.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 602785636,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/pilot-raytrace.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/pilot-raytrace.stderr",
+      "case": "raytrace",
+      "phase": "pilot",
+      "repetition": 0,
+      "engine": "baseline",
+      "generated_sha256": "3163f4f20297282de55dab21979b898363cd5dea62e027f8f945f7c27c6b8fee",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/pilot/earley-boyer.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2195173449,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/pilot-earley-boyer.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/pilot-earley-boyer.stderr",
+      "case": "earley-boyer",
+      "phase": "pilot",
+      "repetition": 0,
+      "engine": "baseline",
+      "generated_sha256": "04fe426bcb8b907a041e3b47c9541b790537d0ce78f82cfc4734e3b16adf8453",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/pilot/regexp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2127348646,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/pilot-regexp.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/pilot-regexp.stderr",
+      "case": "regexp",
+      "phase": "pilot",
+      "repetition": 0,
+      "engine": "baseline",
+      "generated_sha256": "d42b37d8c3bbe312642b9bb0e9f1b915cdff24eb4ea3f3cd427d670518968ca0",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/pilot/splay.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2082914613,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/pilot-splay.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/pilot-splay.stderr",
+      "case": "splay",
+      "phase": "pilot",
+      "repetition": 0,
+      "engine": "baseline",
+      "generated_sha256": "19de2183858c01c551e5fe37d128fbab631389b869cad190bba61c8854b4ec1f",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/pilot/navier-stokes.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 417812869,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/pilot-navier-stokes.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/pilot-navier-stokes.stderr",
+      "case": "navier-stokes",
+      "phase": "pilot",
+      "repetition": 0,
+      "engine": "baseline",
+      "generated_sha256": "831d2c9d36e65a4f788bbf6a28dbd3850d09fd0570088e97c2f6b41dd7f56563",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/pilot/combined.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 8392763729,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/pilot-combined.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/pilot-combined.stderr",
+      "case": "combined",
+      "phase": "pilot",
+      "repetition": 0,
+      "engine": "baseline",
+      "generated_sha256": "3388757f648d00195f122df6cf91db27438c81955a1d85794a2fa3134bec74fd",
+      "status": "ok"
+    }
+  ],
+  "freeze_plan": {
+    "path": "/tmp/oxide-phase2-v1-v8-fixed/freeze-plan.json",
+    "sha256": "83cf4aca4425874bcc8a0377d13960fb92c07e0106df89c86eb2179bb71dcef8"
+  },
+  "samples": [
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/richards.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 132216894,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/richards-aa-same_a-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/richards-aa-same_a-0.stderr",
+      "case": "richards",
+      "phase": "aa",
+      "repetition": 0,
+      "engine": "same_a",
+      "generated_sha256": "7925040f31be22cb2487a88cce443b73bc7ae9f0e57d575af09743ed09f7e593",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/richards.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 133530525,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/richards-aa-same_b-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/richards-aa-same_b-0.stderr",
+      "case": "richards",
+      "phase": "aa",
+      "repetition": 0,
+      "engine": "same_b",
+      "generated_sha256": "7925040f31be22cb2487a88cce443b73bc7ae9f0e57d575af09743ed09f7e593",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/richards.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 132381604,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/richards-aa-same_b-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/richards-aa-same_b-1.stderr",
+      "case": "richards",
+      "phase": "aa",
+      "repetition": 1,
+      "engine": "same_b",
+      "generated_sha256": "7925040f31be22cb2487a88cce443b73bc7ae9f0e57d575af09743ed09f7e593",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/richards.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 137067257,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/richards-aa-same_a-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/richards-aa-same_a-1.stderr",
+      "case": "richards",
+      "phase": "aa",
+      "repetition": 1,
+      "engine": "same_a",
+      "generated_sha256": "7925040f31be22cb2487a88cce443b73bc7ae9f0e57d575af09743ed09f7e593",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/richards.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 132736601,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/richards-aa-same_b-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/richards-aa-same_b-2.stderr",
+      "case": "richards",
+      "phase": "aa",
+      "repetition": 2,
+      "engine": "same_b",
+      "generated_sha256": "7925040f31be22cb2487a88cce443b73bc7ae9f0e57d575af09743ed09f7e593",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/richards.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 131653675,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/richards-aa-same_a-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/richards-aa-same_a-2.stderr",
+      "case": "richards",
+      "phase": "aa",
+      "repetition": 2,
+      "engine": "same_a",
+      "generated_sha256": "7925040f31be22cb2487a88cce443b73bc7ae9f0e57d575af09743ed09f7e593",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/richards.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 132291074,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/richards-aa-same_a-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/richards-aa-same_a-3.stderr",
+      "case": "richards",
+      "phase": "aa",
+      "repetition": 3,
+      "engine": "same_a",
+      "generated_sha256": "7925040f31be22cb2487a88cce443b73bc7ae9f0e57d575af09743ed09f7e593",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/richards.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 133714821,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/richards-aa-same_b-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/richards-aa-same_b-3.stderr",
+      "case": "richards",
+      "phase": "aa",
+      "repetition": 3,
+      "engine": "same_b",
+      "generated_sha256": "7925040f31be22cb2487a88cce443b73bc7ae9f0e57d575af09743ed09f7e593",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/richards.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 132780094,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/richards-ab-baseline-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/richards-ab-baseline-0.stderr",
+      "case": "richards",
+      "phase": "ab",
+      "repetition": 0,
+      "engine": "baseline",
+      "generated_sha256": "7925040f31be22cb2487a88cce443b73bc7ae9f0e57d575af09743ed09f7e593",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/richards.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 134710614,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/richards-ab-candidate-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/richards-ab-candidate-0.stderr",
+      "case": "richards",
+      "phase": "ab",
+      "repetition": 0,
+      "engine": "candidate",
+      "generated_sha256": "7925040f31be22cb2487a88cce443b73bc7ae9f0e57d575af09743ed09f7e593",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/richards.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 135959744,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/richards-ab-candidate-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/richards-ab-candidate-1.stderr",
+      "case": "richards",
+      "phase": "ab",
+      "repetition": 1,
+      "engine": "candidate",
+      "generated_sha256": "7925040f31be22cb2487a88cce443b73bc7ae9f0e57d575af09743ed09f7e593",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/richards.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 131519202,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/richards-ab-baseline-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/richards-ab-baseline-1.stderr",
+      "case": "richards",
+      "phase": "ab",
+      "repetition": 1,
+      "engine": "baseline",
+      "generated_sha256": "7925040f31be22cb2487a88cce443b73bc7ae9f0e57d575af09743ed09f7e593",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/richards.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 130579434,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/richards-ab-candidate-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/richards-ab-candidate-2.stderr",
+      "case": "richards",
+      "phase": "ab",
+      "repetition": 2,
+      "engine": "candidate",
+      "generated_sha256": "7925040f31be22cb2487a88cce443b73bc7ae9f0e57d575af09743ed09f7e593",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/richards.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 131431317,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/richards-ab-baseline-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/richards-ab-baseline-2.stderr",
+      "case": "richards",
+      "phase": "ab",
+      "repetition": 2,
+      "engine": "baseline",
+      "generated_sha256": "7925040f31be22cb2487a88cce443b73bc7ae9f0e57d575af09743ed09f7e593",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/richards.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 134272321,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/richards-ab-baseline-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/richards-ab-baseline-3.stderr",
+      "case": "richards",
+      "phase": "ab",
+      "repetition": 3,
+      "engine": "baseline",
+      "generated_sha256": "7925040f31be22cb2487a88cce443b73bc7ae9f0e57d575af09743ed09f7e593",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/richards.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 133073776,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/richards-ab-candidate-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/richards-ab-candidate-3.stderr",
+      "case": "richards",
+      "phase": "ab",
+      "repetition": 3,
+      "engine": "candidate",
+      "generated_sha256": "7925040f31be22cb2487a88cce443b73bc7ae9f0e57d575af09743ed09f7e593",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 92145842,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/deltablue-aa-same_a-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/deltablue-aa-same_a-0.stderr",
+      "case": "deltablue",
+      "phase": "aa",
+      "repetition": 0,
+      "engine": "same_a",
+      "generated_sha256": "613412ebe97ae0a87a7c5c3eadb1e6e0b6900376dc3b14c73f2cce564ac9bcdf",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 90577502,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/deltablue-aa-same_b-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/deltablue-aa-same_b-0.stderr",
+      "case": "deltablue",
+      "phase": "aa",
+      "repetition": 0,
+      "engine": "same_b",
+      "generated_sha256": "613412ebe97ae0a87a7c5c3eadb1e6e0b6900376dc3b14c73f2cce564ac9bcdf",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 94245451,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/deltablue-aa-same_b-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/deltablue-aa-same_b-1.stderr",
+      "case": "deltablue",
+      "phase": "aa",
+      "repetition": 1,
+      "engine": "same_b",
+      "generated_sha256": "613412ebe97ae0a87a7c5c3eadb1e6e0b6900376dc3b14c73f2cce564ac9bcdf",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 97321435,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/deltablue-aa-same_a-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/deltablue-aa-same_a-1.stderr",
+      "case": "deltablue",
+      "phase": "aa",
+      "repetition": 1,
+      "engine": "same_a",
+      "generated_sha256": "613412ebe97ae0a87a7c5c3eadb1e6e0b6900376dc3b14c73f2cce564ac9bcdf",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 97376329,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/deltablue-aa-same_b-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/deltablue-aa-same_b-2.stderr",
+      "case": "deltablue",
+      "phase": "aa",
+      "repetition": 2,
+      "engine": "same_b",
+      "generated_sha256": "613412ebe97ae0a87a7c5c3eadb1e6e0b6900376dc3b14c73f2cce564ac9bcdf",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 93218990,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/deltablue-aa-same_a-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/deltablue-aa-same_a-2.stderr",
+      "case": "deltablue",
+      "phase": "aa",
+      "repetition": 2,
+      "engine": "same_a",
+      "generated_sha256": "613412ebe97ae0a87a7c5c3eadb1e6e0b6900376dc3b14c73f2cce564ac9bcdf",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 93227206,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/deltablue-aa-same_a-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/deltablue-aa-same_a-3.stderr",
+      "case": "deltablue",
+      "phase": "aa",
+      "repetition": 3,
+      "engine": "same_a",
+      "generated_sha256": "613412ebe97ae0a87a7c5c3eadb1e6e0b6900376dc3b14c73f2cce564ac9bcdf",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 94290986,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/deltablue-aa-same_b-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/deltablue-aa-same_b-3.stderr",
+      "case": "deltablue",
+      "phase": "aa",
+      "repetition": 3,
+      "engine": "same_b",
+      "generated_sha256": "613412ebe97ae0a87a7c5c3eadb1e6e0b6900376dc3b14c73f2cce564ac9bcdf",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 93187541,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/deltablue-ab-baseline-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/deltablue-ab-baseline-0.stderr",
+      "case": "deltablue",
+      "phase": "ab",
+      "repetition": 0,
+      "engine": "baseline",
+      "generated_sha256": "613412ebe97ae0a87a7c5c3eadb1e6e0b6900376dc3b14c73f2cce564ac9bcdf",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 94104195,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/deltablue-ab-candidate-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/deltablue-ab-candidate-0.stderr",
+      "case": "deltablue",
+      "phase": "ab",
+      "repetition": 0,
+      "engine": "candidate",
+      "generated_sha256": "613412ebe97ae0a87a7c5c3eadb1e6e0b6900376dc3b14c73f2cce564ac9bcdf",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 92995359,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/deltablue-ab-candidate-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/deltablue-ab-candidate-1.stderr",
+      "case": "deltablue",
+      "phase": "ab",
+      "repetition": 1,
+      "engine": "candidate",
+      "generated_sha256": "613412ebe97ae0a87a7c5c3eadb1e6e0b6900376dc3b14c73f2cce564ac9bcdf",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 92569137,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/deltablue-ab-baseline-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/deltablue-ab-baseline-1.stderr",
+      "case": "deltablue",
+      "phase": "ab",
+      "repetition": 1,
+      "engine": "baseline",
+      "generated_sha256": "613412ebe97ae0a87a7c5c3eadb1e6e0b6900376dc3b14c73f2cce564ac9bcdf",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 94423926,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/deltablue-ab-candidate-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/deltablue-ab-candidate-2.stderr",
+      "case": "deltablue",
+      "phase": "ab",
+      "repetition": 2,
+      "engine": "candidate",
+      "generated_sha256": "613412ebe97ae0a87a7c5c3eadb1e6e0b6900376dc3b14c73f2cce564ac9bcdf",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 92158315,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/deltablue-ab-baseline-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/deltablue-ab-baseline-2.stderr",
+      "case": "deltablue",
+      "phase": "ab",
+      "repetition": 2,
+      "engine": "baseline",
+      "generated_sha256": "613412ebe97ae0a87a7c5c3eadb1e6e0b6900376dc3b14c73f2cce564ac9bcdf",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 92191568,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/deltablue-ab-baseline-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/deltablue-ab-baseline-3.stderr",
+      "case": "deltablue",
+      "phase": "ab",
+      "repetition": 3,
+      "engine": "baseline",
+      "generated_sha256": "613412ebe97ae0a87a7c5c3eadb1e6e0b6900376dc3b14c73f2cce564ac9bcdf",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 92294110,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/deltablue-ab-candidate-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/deltablue-ab-candidate-3.stderr",
+      "case": "deltablue",
+      "phase": "ab",
+      "repetition": 3,
+      "engine": "candidate",
+      "generated_sha256": "613412ebe97ae0a87a7c5c3eadb1e6e0b6900376dc3b14c73f2cce564ac9bcdf",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/crypto.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 833261773,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/crypto-aa-same_a-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/crypto-aa-same_a-0.stderr",
+      "case": "crypto",
+      "phase": "aa",
+      "repetition": 0,
+      "engine": "same_a",
+      "generated_sha256": "a5b78df12c7f677163b8ee06a5e3e4990eebe22e4ddd8a6354e21beabe7d2367",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/crypto.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 830317145,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/crypto-aa-same_b-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/crypto-aa-same_b-0.stderr",
+      "case": "crypto",
+      "phase": "aa",
+      "repetition": 0,
+      "engine": "same_b",
+      "generated_sha256": "a5b78df12c7f677163b8ee06a5e3e4990eebe22e4ddd8a6354e21beabe7d2367",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/crypto.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 836592850,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/crypto-aa-same_b-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/crypto-aa-same_b-1.stderr",
+      "case": "crypto",
+      "phase": "aa",
+      "repetition": 1,
+      "engine": "same_b",
+      "generated_sha256": "a5b78df12c7f677163b8ee06a5e3e4990eebe22e4ddd8a6354e21beabe7d2367",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/crypto.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 836166108,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/crypto-aa-same_a-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/crypto-aa-same_a-1.stderr",
+      "case": "crypto",
+      "phase": "aa",
+      "repetition": 1,
+      "engine": "same_a",
+      "generated_sha256": "a5b78df12c7f677163b8ee06a5e3e4990eebe22e4ddd8a6354e21beabe7d2367",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/crypto.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 836113118,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/crypto-aa-same_b-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/crypto-aa-same_b-2.stderr",
+      "case": "crypto",
+      "phase": "aa",
+      "repetition": 2,
+      "engine": "same_b",
+      "generated_sha256": "a5b78df12c7f677163b8ee06a5e3e4990eebe22e4ddd8a6354e21beabe7d2367",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/crypto.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 839741744,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/crypto-aa-same_a-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/crypto-aa-same_a-2.stderr",
+      "case": "crypto",
+      "phase": "aa",
+      "repetition": 2,
+      "engine": "same_a",
+      "generated_sha256": "a5b78df12c7f677163b8ee06a5e3e4990eebe22e4ddd8a6354e21beabe7d2367",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/crypto.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 834763232,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/crypto-aa-same_a-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/crypto-aa-same_a-3.stderr",
+      "case": "crypto",
+      "phase": "aa",
+      "repetition": 3,
+      "engine": "same_a",
+      "generated_sha256": "a5b78df12c7f677163b8ee06a5e3e4990eebe22e4ddd8a6354e21beabe7d2367",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/crypto.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 836355827,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/crypto-aa-same_b-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/crypto-aa-same_b-3.stderr",
+      "case": "crypto",
+      "phase": "aa",
+      "repetition": 3,
+      "engine": "same_b",
+      "generated_sha256": "a5b78df12c7f677163b8ee06a5e3e4990eebe22e4ddd8a6354e21beabe7d2367",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/crypto.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 834265156,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/crypto-ab-baseline-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/crypto-ab-baseline-0.stderr",
+      "case": "crypto",
+      "phase": "ab",
+      "repetition": 0,
+      "engine": "baseline",
+      "generated_sha256": "a5b78df12c7f677163b8ee06a5e3e4990eebe22e4ddd8a6354e21beabe7d2367",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/crypto.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 860379381,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/crypto-ab-candidate-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/crypto-ab-candidate-0.stderr",
+      "case": "crypto",
+      "phase": "ab",
+      "repetition": 0,
+      "engine": "candidate",
+      "generated_sha256": "a5b78df12c7f677163b8ee06a5e3e4990eebe22e4ddd8a6354e21beabe7d2367",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/crypto.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 848039774,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/crypto-ab-candidate-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/crypto-ab-candidate-1.stderr",
+      "case": "crypto",
+      "phase": "ab",
+      "repetition": 1,
+      "engine": "candidate",
+      "generated_sha256": "a5b78df12c7f677163b8ee06a5e3e4990eebe22e4ddd8a6354e21beabe7d2367",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/crypto.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 842294991,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/crypto-ab-baseline-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/crypto-ab-baseline-1.stderr",
+      "case": "crypto",
+      "phase": "ab",
+      "repetition": 1,
+      "engine": "baseline",
+      "generated_sha256": "a5b78df12c7f677163b8ee06a5e3e4990eebe22e4ddd8a6354e21beabe7d2367",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/crypto.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 851230778,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/crypto-ab-candidate-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/crypto-ab-candidate-2.stderr",
+      "case": "crypto",
+      "phase": "ab",
+      "repetition": 2,
+      "engine": "candidate",
+      "generated_sha256": "a5b78df12c7f677163b8ee06a5e3e4990eebe22e4ddd8a6354e21beabe7d2367",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/crypto.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 851075757,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/crypto-ab-baseline-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/crypto-ab-baseline-2.stderr",
+      "case": "crypto",
+      "phase": "ab",
+      "repetition": 2,
+      "engine": "baseline",
+      "generated_sha256": "a5b78df12c7f677163b8ee06a5e3e4990eebe22e4ddd8a6354e21beabe7d2367",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/crypto.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 852840787,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/crypto-ab-baseline-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/crypto-ab-baseline-3.stderr",
+      "case": "crypto",
+      "phase": "ab",
+      "repetition": 3,
+      "engine": "baseline",
+      "generated_sha256": "a5b78df12c7f677163b8ee06a5e3e4990eebe22e4ddd8a6354e21beabe7d2367",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/crypto.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 848260443,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/crypto-ab-candidate-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/crypto-ab-candidate-3.stderr",
+      "case": "crypto",
+      "phase": "ab",
+      "repetition": 3,
+      "engine": "candidate",
+      "generated_sha256": "a5b78df12c7f677163b8ee06a5e3e4990eebe22e4ddd8a6354e21beabe7d2367",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/raytrace.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 611423694,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/raytrace-aa-same_a-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/raytrace-aa-same_a-0.stderr",
+      "case": "raytrace",
+      "phase": "aa",
+      "repetition": 0,
+      "engine": "same_a",
+      "generated_sha256": "3163f4f20297282de55dab21979b898363cd5dea62e027f8f945f7c27c6b8fee",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/raytrace.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 605243732,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/raytrace-aa-same_b-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/raytrace-aa-same_b-0.stderr",
+      "case": "raytrace",
+      "phase": "aa",
+      "repetition": 0,
+      "engine": "same_b",
+      "generated_sha256": "3163f4f20297282de55dab21979b898363cd5dea62e027f8f945f7c27c6b8fee",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/raytrace.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 611507814,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/raytrace-aa-same_b-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/raytrace-aa-same_b-1.stderr",
+      "case": "raytrace",
+      "phase": "aa",
+      "repetition": 1,
+      "engine": "same_b",
+      "generated_sha256": "3163f4f20297282de55dab21979b898363cd5dea62e027f8f945f7c27c6b8fee",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/raytrace.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 607653534,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/raytrace-aa-same_a-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/raytrace-aa-same_a-1.stderr",
+      "case": "raytrace",
+      "phase": "aa",
+      "repetition": 1,
+      "engine": "same_a",
+      "generated_sha256": "3163f4f20297282de55dab21979b898363cd5dea62e027f8f945f7c27c6b8fee",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/raytrace.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 610743406,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/raytrace-aa-same_b-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/raytrace-aa-same_b-2.stderr",
+      "case": "raytrace",
+      "phase": "aa",
+      "repetition": 2,
+      "engine": "same_b",
+      "generated_sha256": "3163f4f20297282de55dab21979b898363cd5dea62e027f8f945f7c27c6b8fee",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/raytrace.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 615181714,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/raytrace-aa-same_a-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/raytrace-aa-same_a-2.stderr",
+      "case": "raytrace",
+      "phase": "aa",
+      "repetition": 2,
+      "engine": "same_a",
+      "generated_sha256": "3163f4f20297282de55dab21979b898363cd5dea62e027f8f945f7c27c6b8fee",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/raytrace.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 617230918,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/raytrace-aa-same_a-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/raytrace-aa-same_a-3.stderr",
+      "case": "raytrace",
+      "phase": "aa",
+      "repetition": 3,
+      "engine": "same_a",
+      "generated_sha256": "3163f4f20297282de55dab21979b898363cd5dea62e027f8f945f7c27c6b8fee",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/raytrace.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 616972452,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/raytrace-aa-same_b-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/raytrace-aa-same_b-3.stderr",
+      "case": "raytrace",
+      "phase": "aa",
+      "repetition": 3,
+      "engine": "same_b",
+      "generated_sha256": "3163f4f20297282de55dab21979b898363cd5dea62e027f8f945f7c27c6b8fee",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/raytrace.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 606303246,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/raytrace-ab-baseline-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/raytrace-ab-baseline-0.stderr",
+      "case": "raytrace",
+      "phase": "ab",
+      "repetition": 0,
+      "engine": "baseline",
+      "generated_sha256": "3163f4f20297282de55dab21979b898363cd5dea62e027f8f945f7c27c6b8fee",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/raytrace.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 616668131,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/raytrace-ab-candidate-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/raytrace-ab-candidate-0.stderr",
+      "case": "raytrace",
+      "phase": "ab",
+      "repetition": 0,
+      "engine": "candidate",
+      "generated_sha256": "3163f4f20297282de55dab21979b898363cd5dea62e027f8f945f7c27c6b8fee",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/raytrace.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 611600621,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/raytrace-ab-candidate-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/raytrace-ab-candidate-1.stderr",
+      "case": "raytrace",
+      "phase": "ab",
+      "repetition": 1,
+      "engine": "candidate",
+      "generated_sha256": "3163f4f20297282de55dab21979b898363cd5dea62e027f8f945f7c27c6b8fee",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/raytrace.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 614069655,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/raytrace-ab-baseline-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/raytrace-ab-baseline-1.stderr",
+      "case": "raytrace",
+      "phase": "ab",
+      "repetition": 1,
+      "engine": "baseline",
+      "generated_sha256": "3163f4f20297282de55dab21979b898363cd5dea62e027f8f945f7c27c6b8fee",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/raytrace.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 612750354,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/raytrace-ab-candidate-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/raytrace-ab-candidate-2.stderr",
+      "case": "raytrace",
+      "phase": "ab",
+      "repetition": 2,
+      "engine": "candidate",
+      "generated_sha256": "3163f4f20297282de55dab21979b898363cd5dea62e027f8f945f7c27c6b8fee",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/raytrace.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 605417172,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/raytrace-ab-baseline-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/raytrace-ab-baseline-2.stderr",
+      "case": "raytrace",
+      "phase": "ab",
+      "repetition": 2,
+      "engine": "baseline",
+      "generated_sha256": "3163f4f20297282de55dab21979b898363cd5dea62e027f8f945f7c27c6b8fee",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/raytrace.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 617859474,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/raytrace-ab-baseline-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/raytrace-ab-baseline-3.stderr",
+      "case": "raytrace",
+      "phase": "ab",
+      "repetition": 3,
+      "engine": "baseline",
+      "generated_sha256": "3163f4f20297282de55dab21979b898363cd5dea62e027f8f945f7c27c6b8fee",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/raytrace.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 611645918,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/raytrace-ab-candidate-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/raytrace-ab-candidate-3.stderr",
+      "case": "raytrace",
+      "phase": "ab",
+      "repetition": 3,
+      "engine": "candidate",
+      "generated_sha256": "3163f4f20297282de55dab21979b898363cd5dea62e027f8f945f7c27c6b8fee",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/earley-boyer.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2233496991,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/earley-boyer-aa-same_a-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/earley-boyer-aa-same_a-0.stderr",
+      "case": "earley-boyer",
+      "phase": "aa",
+      "repetition": 0,
+      "engine": "same_a",
+      "generated_sha256": "04fe426bcb8b907a041e3b47c9541b790537d0ce78f82cfc4734e3b16adf8453",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/earley-boyer.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2214763152,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/earley-boyer-aa-same_b-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/earley-boyer-aa-same_b-0.stderr",
+      "case": "earley-boyer",
+      "phase": "aa",
+      "repetition": 0,
+      "engine": "same_b",
+      "generated_sha256": "04fe426bcb8b907a041e3b47c9541b790537d0ce78f82cfc4734e3b16adf8453",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/earley-boyer.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2238071776,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/earley-boyer-aa-same_b-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/earley-boyer-aa-same_b-1.stderr",
+      "case": "earley-boyer",
+      "phase": "aa",
+      "repetition": 1,
+      "engine": "same_b",
+      "generated_sha256": "04fe426bcb8b907a041e3b47c9541b790537d0ce78f82cfc4734e3b16adf8453",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/earley-boyer.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2231477709,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/earley-boyer-aa-same_a-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/earley-boyer-aa-same_a-1.stderr",
+      "case": "earley-boyer",
+      "phase": "aa",
+      "repetition": 1,
+      "engine": "same_a",
+      "generated_sha256": "04fe426bcb8b907a041e3b47c9541b790537d0ce78f82cfc4734e3b16adf8453",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/earley-boyer.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2245719710,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/earley-boyer-aa-same_b-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/earley-boyer-aa-same_b-2.stderr",
+      "case": "earley-boyer",
+      "phase": "aa",
+      "repetition": 2,
+      "engine": "same_b",
+      "generated_sha256": "04fe426bcb8b907a041e3b47c9541b790537d0ce78f82cfc4734e3b16adf8453",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/earley-boyer.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2237854272,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/earley-boyer-aa-same_a-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/earley-boyer-aa-same_a-2.stderr",
+      "case": "earley-boyer",
+      "phase": "aa",
+      "repetition": 2,
+      "engine": "same_a",
+      "generated_sha256": "04fe426bcb8b907a041e3b47c9541b790537d0ce78f82cfc4734e3b16adf8453",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/earley-boyer.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2244844515,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/earley-boyer-aa-same_a-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/earley-boyer-aa-same_a-3.stderr",
+      "case": "earley-boyer",
+      "phase": "aa",
+      "repetition": 3,
+      "engine": "same_a",
+      "generated_sha256": "04fe426bcb8b907a041e3b47c9541b790537d0ce78f82cfc4734e3b16adf8453",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/earley-boyer.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2226931800,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/earley-boyer-aa-same_b-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/earley-boyer-aa-same_b-3.stderr",
+      "case": "earley-boyer",
+      "phase": "aa",
+      "repetition": 3,
+      "engine": "same_b",
+      "generated_sha256": "04fe426bcb8b907a041e3b47c9541b790537d0ce78f82cfc4734e3b16adf8453",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/earley-boyer.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2233178093,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/earley-boyer-ab-baseline-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/earley-boyer-ab-baseline-0.stderr",
+      "case": "earley-boyer",
+      "phase": "ab",
+      "repetition": 0,
+      "engine": "baseline",
+      "generated_sha256": "04fe426bcb8b907a041e3b47c9541b790537d0ce78f82cfc4734e3b16adf8453",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/earley-boyer.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2214047808,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/earley-boyer-ab-candidate-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/earley-boyer-ab-candidate-0.stderr",
+      "case": "earley-boyer",
+      "phase": "ab",
+      "repetition": 0,
+      "engine": "candidate",
+      "generated_sha256": "04fe426bcb8b907a041e3b47c9541b790537d0ce78f82cfc4734e3b16adf8453",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/earley-boyer.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2205732464,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/earley-boyer-ab-candidate-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/earley-boyer-ab-candidate-1.stderr",
+      "case": "earley-boyer",
+      "phase": "ab",
+      "repetition": 1,
+      "engine": "candidate",
+      "generated_sha256": "04fe426bcb8b907a041e3b47c9541b790537d0ce78f82cfc4734e3b16adf8453",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/earley-boyer.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2237479468,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/earley-boyer-ab-baseline-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/earley-boyer-ab-baseline-1.stderr",
+      "case": "earley-boyer",
+      "phase": "ab",
+      "repetition": 1,
+      "engine": "baseline",
+      "generated_sha256": "04fe426bcb8b907a041e3b47c9541b790537d0ce78f82cfc4734e3b16adf8453",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/earley-boyer.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2243476001,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/earley-boyer-ab-candidate-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/earley-boyer-ab-candidate-2.stderr",
+      "case": "earley-boyer",
+      "phase": "ab",
+      "repetition": 2,
+      "engine": "candidate",
+      "generated_sha256": "04fe426bcb8b907a041e3b47c9541b790537d0ce78f82cfc4734e3b16adf8453",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/earley-boyer.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2217004750,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/earley-boyer-ab-baseline-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/earley-boyer-ab-baseline-2.stderr",
+      "case": "earley-boyer",
+      "phase": "ab",
+      "repetition": 2,
+      "engine": "baseline",
+      "generated_sha256": "04fe426bcb8b907a041e3b47c9541b790537d0ce78f82cfc4734e3b16adf8453",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/earley-boyer.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2247542741,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/earley-boyer-ab-baseline-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/earley-boyer-ab-baseline-3.stderr",
+      "case": "earley-boyer",
+      "phase": "ab",
+      "repetition": 3,
+      "engine": "baseline",
+      "generated_sha256": "04fe426bcb8b907a041e3b47c9541b790537d0ce78f82cfc4734e3b16adf8453",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/earley-boyer.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2209508501,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/earley-boyer-ab-candidate-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/earley-boyer-ab-candidate-3.stderr",
+      "case": "earley-boyer",
+      "phase": "ab",
+      "repetition": 3,
+      "engine": "candidate",
+      "generated_sha256": "04fe426bcb8b907a041e3b47c9541b790537d0ce78f82cfc4734e3b16adf8453",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/regexp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2129043598,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/regexp-aa-same_a-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/regexp-aa-same_a-0.stderr",
+      "case": "regexp",
+      "phase": "aa",
+      "repetition": 0,
+      "engine": "same_a",
+      "generated_sha256": "d42b37d8c3bbe312642b9bb0e9f1b915cdff24eb4ea3f3cd427d670518968ca0",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/regexp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2131856302,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/regexp-aa-same_b-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/regexp-aa-same_b-0.stderr",
+      "case": "regexp",
+      "phase": "aa",
+      "repetition": 0,
+      "engine": "same_b",
+      "generated_sha256": "d42b37d8c3bbe312642b9bb0e9f1b915cdff24eb4ea3f3cd427d670518968ca0",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/regexp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2180710482,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/regexp-aa-same_b-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/regexp-aa-same_b-1.stderr",
+      "case": "regexp",
+      "phase": "aa",
+      "repetition": 1,
+      "engine": "same_b",
+      "generated_sha256": "d42b37d8c3bbe312642b9bb0e9f1b915cdff24eb4ea3f3cd427d670518968ca0",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/regexp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2129283482,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/regexp-aa-same_a-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/regexp-aa-same_a-1.stderr",
+      "case": "regexp",
+      "phase": "aa",
+      "repetition": 1,
+      "engine": "same_a",
+      "generated_sha256": "d42b37d8c3bbe312642b9bb0e9f1b915cdff24eb4ea3f3cd427d670518968ca0",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/regexp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2222816895,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/regexp-aa-same_b-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/regexp-aa-same_b-2.stderr",
+      "case": "regexp",
+      "phase": "aa",
+      "repetition": 2,
+      "engine": "same_b",
+      "generated_sha256": "d42b37d8c3bbe312642b9bb0e9f1b915cdff24eb4ea3f3cd427d670518968ca0",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/regexp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2156643420,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/regexp-aa-same_a-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/regexp-aa-same_a-2.stderr",
+      "case": "regexp",
+      "phase": "aa",
+      "repetition": 2,
+      "engine": "same_a",
+      "generated_sha256": "d42b37d8c3bbe312642b9bb0e9f1b915cdff24eb4ea3f3cd427d670518968ca0",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/regexp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2130393854,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/regexp-aa-same_a-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/regexp-aa-same_a-3.stderr",
+      "case": "regexp",
+      "phase": "aa",
+      "repetition": 3,
+      "engine": "same_a",
+      "generated_sha256": "d42b37d8c3bbe312642b9bb0e9f1b915cdff24eb4ea3f3cd427d670518968ca0",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/regexp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2161910455,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/regexp-aa-same_b-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/regexp-aa-same_b-3.stderr",
+      "case": "regexp",
+      "phase": "aa",
+      "repetition": 3,
+      "engine": "same_b",
+      "generated_sha256": "d42b37d8c3bbe312642b9bb0e9f1b915cdff24eb4ea3f3cd427d670518968ca0",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/regexp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2140403019,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/regexp-ab-baseline-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/regexp-ab-baseline-0.stderr",
+      "case": "regexp",
+      "phase": "ab",
+      "repetition": 0,
+      "engine": "baseline",
+      "generated_sha256": "d42b37d8c3bbe312642b9bb0e9f1b915cdff24eb4ea3f3cd427d670518968ca0",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/regexp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2135264378,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/regexp-ab-candidate-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/regexp-ab-candidate-0.stderr",
+      "case": "regexp",
+      "phase": "ab",
+      "repetition": 0,
+      "engine": "candidate",
+      "generated_sha256": "d42b37d8c3bbe312642b9bb0e9f1b915cdff24eb4ea3f3cd427d670518968ca0",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/regexp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2142707591,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/regexp-ab-candidate-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/regexp-ab-candidate-1.stderr",
+      "case": "regexp",
+      "phase": "ab",
+      "repetition": 1,
+      "engine": "candidate",
+      "generated_sha256": "d42b37d8c3bbe312642b9bb0e9f1b915cdff24eb4ea3f3cd427d670518968ca0",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/regexp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2143410378,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/regexp-ab-baseline-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/regexp-ab-baseline-1.stderr",
+      "case": "regexp",
+      "phase": "ab",
+      "repetition": 1,
+      "engine": "baseline",
+      "generated_sha256": "d42b37d8c3bbe312642b9bb0e9f1b915cdff24eb4ea3f3cd427d670518968ca0",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/regexp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2118881668,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/regexp-ab-candidate-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/regexp-ab-candidate-2.stderr",
+      "case": "regexp",
+      "phase": "ab",
+      "repetition": 2,
+      "engine": "candidate",
+      "generated_sha256": "d42b37d8c3bbe312642b9bb0e9f1b915cdff24eb4ea3f3cd427d670518968ca0",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/regexp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2156426438,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/regexp-ab-baseline-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/regexp-ab-baseline-2.stderr",
+      "case": "regexp",
+      "phase": "ab",
+      "repetition": 2,
+      "engine": "baseline",
+      "generated_sha256": "d42b37d8c3bbe312642b9bb0e9f1b915cdff24eb4ea3f3cd427d670518968ca0",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/regexp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2154238878,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/regexp-ab-baseline-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/regexp-ab-baseline-3.stderr",
+      "case": "regexp",
+      "phase": "ab",
+      "repetition": 3,
+      "engine": "baseline",
+      "generated_sha256": "d42b37d8c3bbe312642b9bb0e9f1b915cdff24eb4ea3f3cd427d670518968ca0",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/regexp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2143859219,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/regexp-ab-candidate-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/regexp-ab-candidate-3.stderr",
+      "case": "regexp",
+      "phase": "ab",
+      "repetition": 3,
+      "engine": "candidate",
+      "generated_sha256": "d42b37d8c3bbe312642b9bb0e9f1b915cdff24eb4ea3f3cd427d670518968ca0",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/splay.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2100378814,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/splay-aa-same_a-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/splay-aa-same_a-0.stderr",
+      "case": "splay",
+      "phase": "aa",
+      "repetition": 0,
+      "engine": "same_a",
+      "generated_sha256": "19de2183858c01c551e5fe37d128fbab631389b869cad190bba61c8854b4ec1f",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/splay.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2111788839,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/splay-aa-same_b-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/splay-aa-same_b-0.stderr",
+      "case": "splay",
+      "phase": "aa",
+      "repetition": 0,
+      "engine": "same_b",
+      "generated_sha256": "19de2183858c01c551e5fe37d128fbab631389b869cad190bba61c8854b4ec1f",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/splay.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2099508205,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/splay-aa-same_b-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/splay-aa-same_b-1.stderr",
+      "case": "splay",
+      "phase": "aa",
+      "repetition": 1,
+      "engine": "same_b",
+      "generated_sha256": "19de2183858c01c551e5fe37d128fbab631389b869cad190bba61c8854b4ec1f",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/splay.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2087219456,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/splay-aa-same_a-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/splay-aa-same_a-1.stderr",
+      "case": "splay",
+      "phase": "aa",
+      "repetition": 1,
+      "engine": "same_a",
+      "generated_sha256": "19de2183858c01c551e5fe37d128fbab631389b869cad190bba61c8854b4ec1f",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/splay.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2107438649,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/splay-aa-same_b-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/splay-aa-same_b-2.stderr",
+      "case": "splay",
+      "phase": "aa",
+      "repetition": 2,
+      "engine": "same_b",
+      "generated_sha256": "19de2183858c01c551e5fe37d128fbab631389b869cad190bba61c8854b4ec1f",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/splay.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2123308382,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/splay-aa-same_a-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/splay-aa-same_a-2.stderr",
+      "case": "splay",
+      "phase": "aa",
+      "repetition": 2,
+      "engine": "same_a",
+      "generated_sha256": "19de2183858c01c551e5fe37d128fbab631389b869cad190bba61c8854b4ec1f",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/splay.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2113104724,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/splay-aa-same_a-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/splay-aa-same_a-3.stderr",
+      "case": "splay",
+      "phase": "aa",
+      "repetition": 3,
+      "engine": "same_a",
+      "generated_sha256": "19de2183858c01c551e5fe37d128fbab631389b869cad190bba61c8854b4ec1f",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/splay.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2133000269,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/splay-aa-same_b-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/splay-aa-same_b-3.stderr",
+      "case": "splay",
+      "phase": "aa",
+      "repetition": 3,
+      "engine": "same_b",
+      "generated_sha256": "19de2183858c01c551e5fe37d128fbab631389b869cad190bba61c8854b4ec1f",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/splay.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2121675603,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/splay-ab-baseline-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/splay-ab-baseline-0.stderr",
+      "case": "splay",
+      "phase": "ab",
+      "repetition": 0,
+      "engine": "baseline",
+      "generated_sha256": "19de2183858c01c551e5fe37d128fbab631389b869cad190bba61c8854b4ec1f",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/splay.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2134663306,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/splay-ab-candidate-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/splay-ab-candidate-0.stderr",
+      "case": "splay",
+      "phase": "ab",
+      "repetition": 0,
+      "engine": "candidate",
+      "generated_sha256": "19de2183858c01c551e5fe37d128fbab631389b869cad190bba61c8854b4ec1f",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/splay.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2121329880,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/splay-ab-candidate-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/splay-ab-candidate-1.stderr",
+      "case": "splay",
+      "phase": "ab",
+      "repetition": 1,
+      "engine": "candidate",
+      "generated_sha256": "19de2183858c01c551e5fe37d128fbab631389b869cad190bba61c8854b4ec1f",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/splay.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2143696334,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/splay-ab-baseline-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/splay-ab-baseline-1.stderr",
+      "case": "splay",
+      "phase": "ab",
+      "repetition": 1,
+      "engine": "baseline",
+      "generated_sha256": "19de2183858c01c551e5fe37d128fbab631389b869cad190bba61c8854b4ec1f",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/splay.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2165745328,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/splay-ab-candidate-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/splay-ab-candidate-2.stderr",
+      "case": "splay",
+      "phase": "ab",
+      "repetition": 2,
+      "engine": "candidate",
+      "generated_sha256": "19de2183858c01c551e5fe37d128fbab631389b869cad190bba61c8854b4ec1f",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/splay.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2109604830,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/splay-ab-baseline-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/splay-ab-baseline-2.stderr",
+      "case": "splay",
+      "phase": "ab",
+      "repetition": 2,
+      "engine": "baseline",
+      "generated_sha256": "19de2183858c01c551e5fe37d128fbab631389b869cad190bba61c8854b4ec1f",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/splay.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2111613351,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/splay-ab-baseline-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/splay-ab-baseline-3.stderr",
+      "case": "splay",
+      "phase": "ab",
+      "repetition": 3,
+      "engine": "baseline",
+      "generated_sha256": "19de2183858c01c551e5fe37d128fbab631389b869cad190bba61c8854b4ec1f",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/splay.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2134065846,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/splay-ab-candidate-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/splay-ab-candidate-3.stderr",
+      "case": "splay",
+      "phase": "ab",
+      "repetition": 3,
+      "engine": "candidate",
+      "generated_sha256": "19de2183858c01c551e5fe37d128fbab631389b869cad190bba61c8854b4ec1f",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/navier-stokes.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 421150455,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/navier-stokes-aa-same_a-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/navier-stokes-aa-same_a-0.stderr",
+      "case": "navier-stokes",
+      "phase": "aa",
+      "repetition": 0,
+      "engine": "same_a",
+      "generated_sha256": "831d2c9d36e65a4f788bbf6a28dbd3850d09fd0570088e97c2f6b41dd7f56563",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/navier-stokes.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 431090651,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/navier-stokes-aa-same_b-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/navier-stokes-aa-same_b-0.stderr",
+      "case": "navier-stokes",
+      "phase": "aa",
+      "repetition": 0,
+      "engine": "same_b",
+      "generated_sha256": "831d2c9d36e65a4f788bbf6a28dbd3850d09fd0570088e97c2f6b41dd7f56563",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/navier-stokes.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 417775998,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/navier-stokes-aa-same_b-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/navier-stokes-aa-same_b-1.stderr",
+      "case": "navier-stokes",
+      "phase": "aa",
+      "repetition": 1,
+      "engine": "same_b",
+      "generated_sha256": "831d2c9d36e65a4f788bbf6a28dbd3850d09fd0570088e97c2f6b41dd7f56563",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/navier-stokes.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 420435391,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/navier-stokes-aa-same_a-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/navier-stokes-aa-same_a-1.stderr",
+      "case": "navier-stokes",
+      "phase": "aa",
+      "repetition": 1,
+      "engine": "same_a",
+      "generated_sha256": "831d2c9d36e65a4f788bbf6a28dbd3850d09fd0570088e97c2f6b41dd7f56563",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/navier-stokes.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 420636569,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/navier-stokes-aa-same_b-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/navier-stokes-aa-same_b-2.stderr",
+      "case": "navier-stokes",
+      "phase": "aa",
+      "repetition": 2,
+      "engine": "same_b",
+      "generated_sha256": "831d2c9d36e65a4f788bbf6a28dbd3850d09fd0570088e97c2f6b41dd7f56563",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/navier-stokes.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 420687585,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/navier-stokes-aa-same_a-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/navier-stokes-aa-same_a-2.stderr",
+      "case": "navier-stokes",
+      "phase": "aa",
+      "repetition": 2,
+      "engine": "same_a",
+      "generated_sha256": "831d2c9d36e65a4f788bbf6a28dbd3850d09fd0570088e97c2f6b41dd7f56563",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/navier-stokes.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 422904636,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/navier-stokes-aa-same_a-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/navier-stokes-aa-same_a-3.stderr",
+      "case": "navier-stokes",
+      "phase": "aa",
+      "repetition": 3,
+      "engine": "same_a",
+      "generated_sha256": "831d2c9d36e65a4f788bbf6a28dbd3850d09fd0570088e97c2f6b41dd7f56563",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/navier-stokes.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 419916034,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/navier-stokes-aa-same_b-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/navier-stokes-aa-same_b-3.stderr",
+      "case": "navier-stokes",
+      "phase": "aa",
+      "repetition": 3,
+      "engine": "same_b",
+      "generated_sha256": "831d2c9d36e65a4f788bbf6a28dbd3850d09fd0570088e97c2f6b41dd7f56563",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/navier-stokes.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 418127119,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/navier-stokes-ab-baseline-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/navier-stokes-ab-baseline-0.stderr",
+      "case": "navier-stokes",
+      "phase": "ab",
+      "repetition": 0,
+      "engine": "baseline",
+      "generated_sha256": "831d2c9d36e65a4f788bbf6a28dbd3850d09fd0570088e97c2f6b41dd7f56563",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/navier-stokes.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 428261221,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/navier-stokes-ab-candidate-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/navier-stokes-ab-candidate-0.stderr",
+      "case": "navier-stokes",
+      "phase": "ab",
+      "repetition": 0,
+      "engine": "candidate",
+      "generated_sha256": "831d2c9d36e65a4f788bbf6a28dbd3850d09fd0570088e97c2f6b41dd7f56563",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/navier-stokes.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 428901174,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/navier-stokes-ab-candidate-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/navier-stokes-ab-candidate-1.stderr",
+      "case": "navier-stokes",
+      "phase": "ab",
+      "repetition": 1,
+      "engine": "candidate",
+      "generated_sha256": "831d2c9d36e65a4f788bbf6a28dbd3850d09fd0570088e97c2f6b41dd7f56563",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/navier-stokes.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 423298316,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/navier-stokes-ab-baseline-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/navier-stokes-ab-baseline-1.stderr",
+      "case": "navier-stokes",
+      "phase": "ab",
+      "repetition": 1,
+      "engine": "baseline",
+      "generated_sha256": "831d2c9d36e65a4f788bbf6a28dbd3850d09fd0570088e97c2f6b41dd7f56563",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/navier-stokes.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 448531718,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/navier-stokes-ab-candidate-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/navier-stokes-ab-candidate-2.stderr",
+      "case": "navier-stokes",
+      "phase": "ab",
+      "repetition": 2,
+      "engine": "candidate",
+      "generated_sha256": "831d2c9d36e65a4f788bbf6a28dbd3850d09fd0570088e97c2f6b41dd7f56563",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/navier-stokes.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 418052920,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/navier-stokes-ab-baseline-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/navier-stokes-ab-baseline-2.stderr",
+      "case": "navier-stokes",
+      "phase": "ab",
+      "repetition": 2,
+      "engine": "baseline",
+      "generated_sha256": "831d2c9d36e65a4f788bbf6a28dbd3850d09fd0570088e97c2f6b41dd7f56563",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/navier-stokes.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 421337849,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/navier-stokes-ab-baseline-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/navier-stokes-ab-baseline-3.stderr",
+      "case": "navier-stokes",
+      "phase": "ab",
+      "repetition": 3,
+      "engine": "baseline",
+      "generated_sha256": "831d2c9d36e65a4f788bbf6a28dbd3850d09fd0570088e97c2f6b41dd7f56563",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/navier-stokes.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 429177014,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/navier-stokes-ab-candidate-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/navier-stokes-ab-candidate-3.stderr",
+      "case": "navier-stokes",
+      "phase": "ab",
+      "repetition": 3,
+      "engine": "candidate",
+      "generated_sha256": "831d2c9d36e65a4f788bbf6a28dbd3850d09fd0570088e97c2f6b41dd7f56563",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/combined.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 8543688778,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/combined-aa-same_a-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/combined-aa-same_a-0.stderr",
+      "case": "combined",
+      "phase": "aa",
+      "repetition": 0,
+      "engine": "same_a",
+      "generated_sha256": "dbd4d6676e56f40d6b0763a18d5ae322dec55299462f405adc37fe83cd4441e0",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/combined.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 8488164456,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/combined-aa-same_b-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/combined-aa-same_b-0.stderr",
+      "case": "combined",
+      "phase": "aa",
+      "repetition": 0,
+      "engine": "same_b",
+      "generated_sha256": "dbd4d6676e56f40d6b0763a18d5ae322dec55299462f405adc37fe83cd4441e0",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/combined.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 8585550949,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/combined-aa-same_b-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/combined-aa-same_b-1.stderr",
+      "case": "combined",
+      "phase": "aa",
+      "repetition": 1,
+      "engine": "same_b",
+      "generated_sha256": "dbd4d6676e56f40d6b0763a18d5ae322dec55299462f405adc37fe83cd4441e0",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/combined.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 8625765468,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/combined-aa-same_a-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/combined-aa-same_a-1.stderr",
+      "case": "combined",
+      "phase": "aa",
+      "repetition": 1,
+      "engine": "same_a",
+      "generated_sha256": "dbd4d6676e56f40d6b0763a18d5ae322dec55299462f405adc37fe83cd4441e0",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/combined.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 8580113292,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/combined-aa-same_b-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/combined-aa-same_b-2.stderr",
+      "case": "combined",
+      "phase": "aa",
+      "repetition": 2,
+      "engine": "same_b",
+      "generated_sha256": "dbd4d6676e56f40d6b0763a18d5ae322dec55299462f405adc37fe83cd4441e0",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/combined.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 8525126444,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/combined-aa-same_a-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/combined-aa-same_a-2.stderr",
+      "case": "combined",
+      "phase": "aa",
+      "repetition": 2,
+      "engine": "same_a",
+      "generated_sha256": "dbd4d6676e56f40d6b0763a18d5ae322dec55299462f405adc37fe83cd4441e0",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/combined.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 8495246551,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/combined-aa-same_a-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/combined-aa-same_a-3.stderr",
+      "case": "combined",
+      "phase": "aa",
+      "repetition": 3,
+      "engine": "same_a",
+      "generated_sha256": "dbd4d6676e56f40d6b0763a18d5ae322dec55299462f405adc37fe83cd4441e0",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/combined.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 8568022691,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/combined-aa-same_b-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/combined-aa-same_b-3.stderr",
+      "case": "combined",
+      "phase": "aa",
+      "repetition": 3,
+      "engine": "same_b",
+      "generated_sha256": "dbd4d6676e56f40d6b0763a18d5ae322dec55299462f405adc37fe83cd4441e0",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/combined.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 8547592048,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/combined-ab-baseline-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/combined-ab-baseline-0.stderr",
+      "case": "combined",
+      "phase": "ab",
+      "repetition": 0,
+      "engine": "baseline",
+      "generated_sha256": "dbd4d6676e56f40d6b0763a18d5ae322dec55299462f405adc37fe83cd4441e0",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/combined.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 8581258607,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/combined-ab-candidate-0.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/combined-ab-candidate-0.stderr",
+      "case": "combined",
+      "phase": "ab",
+      "repetition": 0,
+      "engine": "candidate",
+      "generated_sha256": "dbd4d6676e56f40d6b0763a18d5ae322dec55299462f405adc37fe83cd4441e0",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/combined.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 8536118755,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/combined-ab-candidate-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/combined-ab-candidate-1.stderr",
+      "case": "combined",
+      "phase": "ab",
+      "repetition": 1,
+      "engine": "candidate",
+      "generated_sha256": "dbd4d6676e56f40d6b0763a18d5ae322dec55299462f405adc37fe83cd4441e0",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/combined.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 8544857203,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/combined-ab-baseline-1.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/combined-ab-baseline-1.stderr",
+      "case": "combined",
+      "phase": "ab",
+      "repetition": 1,
+      "engine": "baseline",
+      "generated_sha256": "dbd4d6676e56f40d6b0763a18d5ae322dec55299462f405adc37fe83cd4441e0",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/combined.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 8537903606,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/combined-ab-candidate-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/combined-ab-candidate-2.stderr",
+      "case": "combined",
+      "phase": "ab",
+      "repetition": 2,
+      "engine": "candidate",
+      "generated_sha256": "dbd4d6676e56f40d6b0763a18d5ae322dec55299462f405adc37fe83cd4441e0",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/combined.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 8511837407,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/combined-ab-baseline-2.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/combined-ab-baseline-2.stderr",
+      "case": "combined",
+      "phase": "ab",
+      "repetition": 2,
+      "engine": "baseline",
+      "generated_sha256": "dbd4d6676e56f40d6b0763a18d5ae322dec55299462f405adc37fe83cd4441e0",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-baseline-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/combined.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 8589947319,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/combined-ab-baseline-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/combined-ab-baseline-3.stderr",
+      "case": "combined",
+      "phase": "ab",
+      "repetition": 3,
+      "engine": "baseline",
+      "generated_sha256": "dbd4d6676e56f40d6b0763a18d5ae322dec55299462f405adc37fe83cd4441e0",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-build/release/qjs",
+        "/tmp/oxide-phase2-v1-v8-fixed/generated/final/combined.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 8501968542,
+      "stdout": "/tmp/oxide-phase2-v1-v8-fixed/raw/combined-ab-candidate-3.stdout",
+      "stderr": "/tmp/oxide-phase2-v1-v8-fixed/raw/combined-ab-candidate-3.stderr",
+      "case": "combined",
+      "phase": "ab",
+      "repetition": 3,
+      "engine": "candidate",
+      "generated_sha256": "dbd4d6676e56f40d6b0763a18d5ae322dec55299462f405adc37fe83cd4441e0",
+      "status": "ok"
+    }
+  ],
+  "summary": {
+    "complete": true,
+    "scheduled": 144,
+    "recorded": 144,
+    "status_counts": {
+      "ok": 144
+    },
+    "cases": {
+      "richards": {
+        "aa": {
+          "raw_wall_ns": {
+            "same_a": [
+              132216894,
+              137067257,
+              131653675,
+              132291074
+            ],
+            "same_b": [
+              133530525,
+              132381604,
+              132736601,
+              133714821
+            ]
+          },
+          "median_wall_ns": {
+            "same_a": 132253984.0,
+            "same_b": 133133563.0
+          },
+          "complete": true,
+          "left_over_right_wall_ratio": 0.9933932587682641
+        },
+        "ab": {
+          "raw_wall_ns": {
+            "baseline": [
+              132780094,
+              131519202,
+              131431317,
+              134272321
+            ],
+            "candidate": [
+              134710614,
+              135959744,
+              130579434,
+              133073776
+            ]
+          },
+          "median_wall_ns": {
+            "baseline": 132149648.0,
+            "candidate": 133892195.0
+          },
+          "complete": true,
+          "left_over_right_wall_ratio": 0.9869854475087215
+        },
+        "aa_observed_span_pct": 4.0839006133132205,
+        "ab_baseline_over_candidate_pct": -1.3014552491278475,
+        "interpretation": "inconclusive_within_aa_span"
+      },
+      "deltablue": {
+        "aa": {
+          "raw_wall_ns": {
+            "same_a": [
+              92145842,
+              97321435,
+              93218990,
+              93227206
+            ],
+            "same_b": [
+              90577502,
+              94245451,
+              97376329,
+              94290986
+            ]
+          },
+          "median_wall_ns": {
+            "same_a": 93223098.0,
+            "same_b": 94268218.5
+          },
+          "complete": true,
+          "left_over_right_wall_ratio": 0.9889133313790162
+        },
+        "ab": {
+          "raw_wall_ns": {
+            "baseline": [
+              93187541,
+              92569137,
+              92158315,
+              92191568
+            ],
+            "candidate": [
+              94104195,
+              92995359,
+              94423926,
+              92294110
+            ]
+          },
+          "median_wall_ns": {
+            "baseline": 92380352.5,
+            "candidate": 93549777.0
+          },
+          "complete": true,
+          "left_over_right_wall_ratio": 0.9874994410729595
+        },
+        "aa_observed_span_pct": 7.253139853882798,
+        "ab_baseline_over_candidate_pct": -1.2500558927040495,
+        "interpretation": "inconclusive_within_aa_span"
+      },
+      "crypto": {
+        "aa": {
+          "raw_wall_ns": {
+            "same_a": [
+              833261773,
+              836166108,
+              839741744,
+              834763232
+            ],
+            "same_b": [
+              830317145,
+              836592850,
+              836113118,
+              836355827
+            ]
+          },
+          "median_wall_ns": {
+            "same_a": 835464670.0,
+            "same_b": 836234472.5
+          },
+          "complete": true,
+          "left_over_right_wall_ratio": 0.9990794418009358
+        },
+        "ab": {
+          "raw_wall_ns": {
+            "baseline": [
+              834265156,
+              842294991,
+              851075757,
+              852840787
+            ],
+            "candidate": [
+              860379381,
+              848039774,
+              851230778,
+              848260443
+            ]
+          },
+          "median_wall_ns": {
+            "baseline": 846685374.0,
+            "candidate": 849745610.5
+          },
+          "complete": true,
+          "left_over_right_wall_ratio": 0.9963986439445103
+        },
+        "aa_observed_span_pct": 1.1271561415665161,
+        "ab_baseline_over_candidate_pct": -0.3601356055489724,
+        "interpretation": "inconclusive_within_aa_span"
+      },
+      "raytrace": {
+        "aa": {
+          "raw_wall_ns": {
+            "same_a": [
+              611423694,
+              607653534,
+              615181714,
+              617230918
+            ],
+            "same_b": [
+              605243732,
+              611507814,
+              610743406,
+              616972452
+            ]
+          },
+          "median_wall_ns": {
+            "same_a": 613302704.0,
+            "same_b": 611125610.0
+          },
+          "complete": true,
+          "left_over_right_wall_ratio": 1.0035624329342048
+        },
+        "ab": {
+          "raw_wall_ns": {
+            "baseline": [
+              606303246,
+              614069655,
+              605417172,
+              617859474
+            ],
+            "candidate": [
+              616668131,
+              611600621,
+              612750354,
+              611645918
+            ]
+          },
+          "median_wall_ns": {
+            "baseline": 610186450.5,
+            "candidate": 612198136.0
+          },
+          "complete": true,
+          "left_over_right_wall_ratio": 0.9967139960386943
+        },
+        "aa_observed_span_pct": 1.960401857599371,
+        "ab_baseline_over_candidate_pct": -0.3286003961305739,
+        "interpretation": "inconclusive_within_aa_span"
+      },
+      "earley-boyer": {
+        "aa": {
+          "raw_wall_ns": {
+            "same_a": [
+              2233496991,
+              2231477709,
+              2237854272,
+              2244844515
+            ],
+            "same_b": [
+              2214763152,
+              2238071776,
+              2245719710,
+              2226931800
+            ]
+          },
+          "median_wall_ns": {
+            "same_a": 2235675631.5,
+            "same_b": 2232501788.0
+          },
+          "complete": true,
+          "left_over_right_wall_ratio": 1.001421653284696
+        },
+        "ab": {
+          "raw_wall_ns": {
+            "baseline": [
+              2233178093,
+              2237479468,
+              2217004750,
+              2247542741
+            ],
+            "candidate": [
+              2214047808,
+              2205732464,
+              2243476001,
+              2209508501
+            ]
+          },
+          "median_wall_ns": {
+            "baseline": 2235328780.5,
+            "candidate": 2211778154.5
+          },
+          "complete": true,
+          "left_over_right_wall_ratio": 1.0106478246708808
+        },
+        "aa_observed_span_pct": 1.384662317011975,
+        "ab_baseline_over_candidate_pct": 1.0647824670880768,
+        "interpretation": "inconclusive_within_aa_span"
+      },
+      "regexp": {
+        "aa": {
+          "raw_wall_ns": {
+            "same_a": [
+              2129043598,
+              2129283482,
+              2156643420,
+              2130393854
+            ],
+            "same_b": [
+              2131856302,
+              2180710482,
+              2222816895,
+              2161910455
+            ]
+          },
+          "median_wall_ns": {
+            "same_a": 2129838668.0,
+            "same_b": 2171310468.5
+          },
+          "complete": true,
+          "left_over_right_wall_ratio": 0.9809001056727508
+        },
+        "ab": {
+          "raw_wall_ns": {
+            "baseline": [
+              2140403019,
+              2143410378,
+              2156426438,
+              2154238878
+            ],
+            "candidate": [
+              2135264378,
+              2142707591,
+              2118881668,
+              2143859219
+            ]
+          },
+          "median_wall_ns": {
+            "baseline": 2148824628.0,
+            "candidate": 2138985984.5
+          },
+          "complete": true,
+          "left_over_right_wall_ratio": 1.004599676468801
+        },
+        "aa_observed_span_pct": 4.37324486784705,
+        "ab_baseline_over_candidate_pct": 0.4599676468800995,
+        "interpretation": "inconclusive_within_aa_span"
+      },
+      "splay": {
+        "aa": {
+          "raw_wall_ns": {
+            "same_a": [
+              2100378814,
+              2087219456,
+              2123308382,
+              2113104724
+            ],
+            "same_b": [
+              2111788839,
+              2099508205,
+              2107438649,
+              2133000269
+            ]
+          },
+          "median_wall_ns": {
+            "same_a": 2106741769.0,
+            "same_b": 2109613744.0
+          },
+          "complete": true,
+          "left_over_right_wall_ratio": 0.9986386251946981
+        },
+        "ab": {
+          "raw_wall_ns": {
+            "baseline": [
+              2121675603,
+              2143696334,
+              2109604830,
+              2111613351
+            ],
+            "candidate": [
+              2134663306,
+              2121329880,
+              2165745328,
+              2134065846
+            ]
+          },
+          "median_wall_ns": {
+            "baseline": 2116644477.0,
+            "candidate": 2134364576.0
+          },
+          "complete": true,
+          "left_over_right_wall_ratio": 0.9916977168759008
+        },
+        "aa_observed_span_pct": 2.170104035878902,
+        "ab_baseline_over_candidate_pct": -0.8302283124099197,
+        "interpretation": "inconclusive_within_aa_span"
+      },
+      "navier-stokes": {
+        "aa": {
+          "raw_wall_ns": {
+            "same_a": [
+              421150455,
+              420435391,
+              420687585,
+              422904636
+            ],
+            "same_b": [
+              431090651,
+              417775998,
+              420636569,
+              419916034
+            ]
+          },
+          "median_wall_ns": {
+            "same_a": 420919020.0,
+            "same_b": 420276301.5
+          },
+          "complete": true,
+          "left_over_right_wall_ratio": 1.0015292760921948
+        },
+        "ab": {
+          "raw_wall_ns": {
+            "baseline": [
+              418127119,
+              423298316,
+              418052920,
+              421337849
+            ],
+            "candidate": [
+              428261221,
+              428901174,
+              448531718,
+              429177014
+            ]
+          },
+          "median_wall_ns": {
+            "baseline": 419732484.0,
+            "candidate": 429039094.0
+          },
+          "complete": true,
+          "left_over_right_wall_ratio": 0.9783082471267758
+        },
+        "aa_observed_span_pct": 3.165165991418808,
+        "ab_baseline_over_candidate_pct": -2.1691752873224224,
+        "interpretation": "inconclusive_within_aa_span"
+      },
+      "combined": {
+        "aa": {
+          "raw_wall_ns": {
+            "same_a": [
+              8543688778,
+              8625765468,
+              8525126444,
+              8495246551
+            ],
+            "same_b": [
+              8488164456,
+              8585550949,
+              8580113292,
+              8568022691
+            ]
+          },
+          "median_wall_ns": {
+            "same_a": 8534407611.0,
+            "same_b": 8574067991.5
+          },
+          "complete": true,
+          "left_over_right_wall_ratio": 0.9953743799863358
+        },
+        "ab": {
+          "raw_wall_ns": {
+            "baseline": [
+              8547592048,
+              8544857203,
+              8511837407,
+              8589947319
+            ],
+            "candidate": [
+              8581258607,
+              8536118755,
+              8537903606,
+              8501968542
+            ]
+          },
+          "median_wall_ns": {
+            "baseline": 8546224625.5,
+            "candidate": 8537011180.5
+          },
+          "complete": true,
+          "left_over_right_wall_ratio": 1.0010792354379299
+        },
+        "aa_observed_span_pct": 1.6082670894642117,
+        "ab_baseline_over_candidate_pct": 0.10792354379298708,
+        "interpretation": "inconclusive_within_aa_span"
+      }
+    },
+    "aggregate": {
+      "isolated_eight_geomean_baseline_over_candidate_wall": 0.9940595454723006,
+      "combined_baseline_over_candidate_wall": 1.0010792354379299,
+      "meaning": "fixed-iteration whole-process speed ratios; not original V8-v7 Score"
+    }
+  }
+}

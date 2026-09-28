@@ -1,0 +1,35 @@
+{
+  "metadata": {
+    "schema": "oxide-realworld-phase2-v1",
+    "baseline": "90c85e3d94cd66066fe1c4381608d497f1dab346",
+    "baseline_binary_sha256": "c8f6274b90511fa0e3446d87f825ec2f56402b1c1c8dbdb4f39aa2b41d9eb46a",
+    "baseline_build_receipt_sha256": "a0052fd598185348d178ecdc44b56b5b22c1ba6758ba36006f2fff808464e1bb",
+    "receipt_sha256": "1d9d5cb6d93c1c7a4b7fc86b2d297b728458a950a903a71da8ce899eb550437f",
+    "expected_sha256": "b5f20b4ead762b5dfd3a097b7f1e474e33c7b47f0b94750eb5943c00505972ec",
+    "workloads": {
+      "workloads": [
+        {
+          "case": "realworld-solid",
+          "size": 60,
+          "path": "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js",
+          "sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+          "expected": "[{\"name\":\"home\",\"nodes\":234,\"hash\":\"a8ee98eb\",\"favorited\":false,\"comments\":0},{\"name\":\"tag\",\"nodes\":232,\"hash\":\"1ddde2c3\",\"favorited\":false,\"comments\":0},{\"name\":\"page\",\"nodes\":232,\"hash\":\"8e756fc7\",\"favorited\":false,\"comments\":0},{\"name\":\"article\",\"nodes\":48,\"hash\":\"22ee6e76\",\"favorited\":false,\"comments\":0},{\"name\":\"favorite\",\"nodes\":48,\"hash\":\"22ee6e76\",\"favorited\":true,\"comments\":0},{\"name\":\"comment\",\"nodes\":48,\"hash\":\"22ee6e76\",\"favorited\":true,\"comments\":1},{\"name\":\"profile\",\"nodes\":133,\"hash\":\"b9975ece\",\"favorited\":true,\"comments\":1}]\n"
+        },
+        {
+          "case": "realworld-vue",
+          "size": 60,
+          "path": "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js",
+          "sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+          "expected": "[{\"name\":\"home\",\"nodes\":314,\"hash\":\"170cf777\",\"favorited\":false,\"comments\":0},{\"name\":\"tag\",\"nodes\":308,\"hash\":\"fa714622\",\"favorited\":false,\"comments\":0},{\"name\":\"page\",\"nodes\":308,\"hash\":\"4e66a5a6\",\"favorited\":false,\"comments\":0},{\"name\":\"article\",\"nodes\":122,\"hash\":\"74f69a7d\",\"favorited\":false,\"comments\":0},{\"name\":\"favorite\",\"nodes\":122,\"hash\":\"74f69a7d\",\"favorited\":true,\"comments\":0},{\"name\":\"comment\",\"nodes\":148,\"hash\":\"3d64e7d\",\"favorited\":true,\"comments\":1},{\"name\":\"profile\",\"nodes\":187,\"hash\":\"b916c0a8\",\"favorited\":true,\"comments\":1}]\n"
+        },
+        {
+          "case": "realworld-react",
+          "size": 60,
+          "path": "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js",
+          "sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed",
+          "expected": "[{\"name\":\"home\",\"bytes\":11978,\"hash\":\"31184120\"},{\"name\":\"tag\",\"bytes\":11865,\"hash\":\"96efe092\"},{\"name\":\"page\",\"bytes\":11880,\"hash\":\"fb8ab47a\"},{\"name\":\"article\",\"bytes\":3360,\"hash\":\"cd91d275\"},{\"name\":\"favorite\",\"bytes\":3352,\"hash\":\"bb3ed1b5\"},{\"name\":\"comment\",\"bytes\":4607,\"hash\":\"d8e1ddf9\"},{\"name\":\"profile\",\"bytes\":6784,\"hash\":\"d347447d\"}]\n"
+        }
+      ]
+    }
+  }
+}

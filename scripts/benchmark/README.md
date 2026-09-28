@@ -351,6 +351,24 @@ for step-level experiments only. All times include the whole process; these are
 not adaptive harness scores. Preserve build receipts separately and do not run
 benchmarks alongside builds, tests or architecture canaries.
 
+For a balanced, even-repetition two-engine `fixed.py` comparison, run a
+same-binary A/A series with the same manifest and schedule, then summarize
+complete two-repetition process blocks:
+
+```sh
+python3 scripts/benchmark/paired_report.py \
+  --ab target/published-fixed/results.json \
+  --aa target/published-aa/results.json \
+  --reference before --candidate after \
+  --aa-left left --aa-right right \
+  --output target/published-paired
+```
+
+The report records per-block log ratios, their geometric mean, and a
+descriptive t interval over blocks. A/A checks drift; it is not a formal
+confidence interval. `paired_report.py` rejects failed or missing samples,
+changed work, and an A/A series made with a different candidate binary.
+
 All builds use the sole explicit-stack execution core. `build.py` records
 `vm_configuration: stack-vm`; no backend-selection feature or legacy build is available.
 
