@@ -1,0 +1,18 @@
+{
+  "parent": {
+    "commit": "38e9eb86e2c2db8fb2e607c9f3ff611407941b4b",
+    "instrumentation_patch_sha256": "ec1540a39033457c617b810374bcba73367f57919641f315b781926c20f72fbc",
+    "probe_source_sha256": "81aeb83997d4868f203289442adcf2caefd1dff4b39eae7a16b81dee4e7a742e",
+    "binary_sha256": "f91c23bbed9dba881cf08ed26d6a633f3328a7363dbf9830bcdbb94a3c7d0ddc",
+    "instrumentation_archive_sha256": "3887f05157b6751cea9aa7c278d959529f6b6bb1f18b4fa24a25684a308edd4e"
+  },
+  "candidate": {
+    "commit": "c31a22a87e78d31c6ba9fcb13fd1dc83370414b4",
+    "instrumentation_patch_sha256": "e87233133c7f0a7aa0efc9c9cf5bdcbd4860ada7cb01efa01b4294f073b51b6e",
+    "probe_source_sha256": "81aeb83997d4868f203289442adcf2caefd1dff4b39eae7a16b81dee4e7a742e",
+    "binary_sha256": "8d917da5c1134e04f117c20f3e21f78f829a28f3e88aa51abab170cd0f0b1e6f",
+    "instrumentation_archive_sha256": "bcbc04b4d8696dd9c24998c100c18e8ec85ca0ce9f1045eea106f9a91bb6edfd"
+  },
+  "toolchain": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2\n",
+  "build_command": "RUSTUP_TOOLCHAIN=stable cargo build --locked --release --manifest-path docs/performance/receipts/arena-gc-envelope-2026-09-28/probe/Cargo.toml --target-dir TARGET"
+}
