@@ -1,0 +1,32 @@
+{
+  "schema": "oxide-c1-m2-codegen-v1",
+  "tool": "nm -nm; llvm-objdump --disassemble --no-show-raw-insn; size -m",
+  "note": "Static call counts in ready::run and symbol-to-next-symbol spans; no dynamic instruction-count or isolated transport-cost claim.",
+  "builds": [
+    {
+      "build": "baseline",
+      "binary_sha256": "cbd05a5cc0f333af91b89741665f0dc96cf239550ca78daf35333ba88d13d762",
+      "binary_bytes": 8073552,
+      "ready_symbol_span_bytes": 10980,
+      "execute_frame_symbol_span_bytes": 29376,
+      "text_section_bytes": 5337212,
+      "ready_next_pc_static_calls": 2,
+      "ready_next_pc_call_addresses": [
+        "100179600",
+        "100179d08"
+      ]
+    },
+    {
+      "build": "candidate",
+      "binary_sha256": "25891746f76e574019b299fc15af7c1c07eb506339e832284e4da3bd7b44a943",
+      "binary_bytes": 8073552,
+      "ready_symbol_span_bytes": 10652,
+      "execute_frame_symbol_span_bytes": 28996,
+      "text_section_bytes": 5336520,
+      "ready_next_pc_static_calls": 1,
+      "ready_next_pc_call_addresses": [
+        "100179d4c"
+      ]
+    }
+  ]
+}

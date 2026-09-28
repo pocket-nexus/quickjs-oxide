@@ -14,6 +14,10 @@ fn main() {
             "(function(){function subtract(a,b){return a-b}var sum=0;for(var i=0;i<1000000;i++)sum+=subtract(true,2);return sum})()",
             Value::Int(-1_000_000),
         ),
+        "primitive-frame" => (
+            "(function(n,operand){var sum=0;for(var i=0;i<n;i++)sum+=operand-2;return sum})(1000000,true)",
+            Value::Int(-1_000_000),
+        ),
         "number" => (
             "(function(){function subtract(a,b){return a-b}var sum=0;for(var i=0;i<1000000;i++)sum+=subtract(3,2);return sum})()",
             Value::Int(1_000_000),

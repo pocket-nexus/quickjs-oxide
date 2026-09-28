@@ -8,7 +8,7 @@ import statistics
 import subprocess
 
 
-CASES = ("primitive", "number", "object", "compare", "m1-hit", "m1-miss")
+CASES = ("primitive", "primitive-frame", "number", "object", "compare", "m1-hit", "m1-miss")
 
 
 def digest(path):

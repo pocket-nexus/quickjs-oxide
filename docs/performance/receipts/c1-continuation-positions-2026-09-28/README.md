@@ -1,5 +1,9 @@
 # C1: decoded fallthrough for primitive numeric completion
 
+The [M2-base follow-up](m2-followup.md) records the later rebase onto #53
+`38e9eb86`, stronger boundary tests, fresh builds, and repeat measurements.
+The measurements below remain tied to their original #53 `10262309` base.
+
 This receipt starts from PR #53 at
 `10262309c580c43ba984b4f371acdc081147b4f0`. The change carries the
 published instruction's decoded next boundary in `VmAction::Numeric`, through
