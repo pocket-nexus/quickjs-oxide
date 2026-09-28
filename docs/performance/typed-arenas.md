@@ -10,6 +10,9 @@ head is measured separately. Identities, results and validation are in the
 [receipt](receipts/typed-arenas-2026-09-28/README.md).
 The owned-cell single-access follow-up and its release-build evidence are in a
 [separate receipt](receipts/owned-cell-access-2026-09-28/README.md).
+The paired host collection-memory envelope is in the
+[GC receipt](receipts/arena-gc-envelope-2026-09-28/README.md); embedded-target
+high-water measurements are still outstanding.
 
 ## Contract
 
