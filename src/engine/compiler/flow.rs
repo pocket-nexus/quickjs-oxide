@@ -312,7 +312,36 @@ pub(super) fn plan_numeric_regions(
             stack.clear();
         }
     }
-    selected
+    // Two adjacent AddPreInc fragments have one evolving stack Number. The
+    // second read of an aliased index is the post-first-write version; all
+    // admission still precedes either commit in the published operation.
+    let mut composed = Vec::with_capacity(selected.len());
+    let mut candidates = selected.into_iter().peekable();
+    while let Some(first) = candidates.next() {
+        if matches!(first.operation, NumericOperation::AddPreInc)
+            && let Some(second) = candidates.peek()
+            && matches!(second.operation, NumericOperation::AddPreInc)
+            && first.end == second.start
+            && !entries[second.start as usize]
+            && let NumberSource::Direct(second_index) = second.index
+        {
+            let second = candidates.next().expect("peeked second region");
+            let second_reads_updated_index = matches!(first.index, NumberSource::Direct(first_index) if first_index == second_index);
+            composed.push(NumericRegion {
+                end: second.end,
+                operation: NumericOperation::AddPreIncPair {
+                    second_array: second.array,
+                    second_index,
+                    second_reads_updated_index,
+                },
+                peak: first.peak.max(second.peak),
+                ..first
+            });
+        } else {
+            composed.push(first);
+        }
+    }
+    composed
 }
 
 fn numeric_region_at_drop(

@@ -436,6 +436,39 @@ impl FrameSlots<'_> {
         Ok(())
     }
 
+    /// Commit a two-read preincrement chain after both dense reads and all
+    /// numeric admission have succeeded. Aliased indices name the final
+    /// version; distinct indices each receive their own updated value.
+    pub(in crate::engine::vm) fn commit_two_number_locals_and_top(
+        &mut self,
+        first_index: u16,
+        first_updated: Number,
+        second_index: u16,
+        second_updated: Number,
+        result: Number,
+    ) -> Result<(), Error> {
+        if self.immediate_local(first_index).is_none()
+            || self.immediate_local(second_index).is_none()
+            || self.peek(0)?.as_number_repr().is_none()
+        {
+            return Err(Error::internal("numeric pair admission changed"));
+        }
+        let local_start = self.window.locals().start;
+        let top = self.window.operands().start + self.window.depth - 1;
+        let number_value = |number| match number {
+            Number::Int(value) => JsValue::Int(value),
+            Number::Float(value) => JsValue::Float(value),
+        };
+        if first_index != second_index {
+            self.store.slots[local_start + usize::from(first_index)] =
+                Some(FrameBinding::Direct(number_value(first_updated)));
+        }
+        self.store.slots[local_start + usize::from(second_index)] =
+            Some(FrameBinding::Direct(number_value(second_updated)));
+        self.store.slots[top] = Some(FrameBinding::Direct(number_value(result)));
+        Ok(())
+    }
+
     pub(in crate::engine::vm) fn property_ic_read(
         &mut self,
         runtime: &Runtime,

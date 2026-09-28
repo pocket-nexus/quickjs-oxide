@@ -469,6 +469,7 @@ pub(super) fn execute_frame(
             | Opcode::NumericArrayStoreProduct
             | Opcode::NumericArrayCopyElement
             | Opcode::NumericArrayAddPreInc
+            | Opcode::NumericArrayAddPreIncPair
             | Opcode::NumericArrayStoreAndLocal
             | Opcode::NumericArrayUpdateElement
             | Opcode::NumericArrayCompareBranch => {
@@ -665,6 +666,94 @@ pub(super) fn execute_frame(
                             }
                         }
                     }
+                    Opcode::NumericArrayAddPreIncPair => {
+                        let second = executable
+                            .exec
+                            .second_preinc(region.producer_index.ok_or_else(|| {
+                                Error::internal("published numeric pair source is missing")
+                            })?)
+                            .ok_or_else(|| Error::internal("published numeric pair is missing"))?;
+                        let result = cursor.with_slots(|slots| {
+                            if !slots.has_operand_capacity(region.peak as usize) {
+                                return Ok(Err(Miss::OperandCapacity));
+                            }
+                            let Some(accumulator) =
+                                slots.peek(0).ok().and_then(JsValue::as_number_repr)
+                            else {
+                                return Ok(Err(Miss::AccumulatorNotNumber));
+                            };
+                            let NumberSource::Direct(
+                                DirectSource::Local(first_slot)
+                                | DirectSource::CheckedLocal(first_slot),
+                            ) = region.index
+                            else {
+                                unreachable!("verified first pair index")
+                            };
+                            let second_slot = match second.index {
+                                DirectSource::Local(slot) | DirectSource::CheckedLocal(slot) => {
+                                    slot
+                                }
+                                DirectSource::Argument(_) => {
+                                    unreachable!("verified second pair index")
+                                }
+                            };
+                            let Some(first_old) = slots.immediate_local(first_slot) else {
+                                return Ok(Err(Miss::IndexNotNumber));
+                            };
+                            let first_updated = first_old.add(Number::Int(1));
+                            let Some(first_key) = array_index(first_updated) else {
+                                return Ok(Err(Miss::IndexNotNumericInteger));
+                            };
+                            let Some(first_base) =
+                                slots.direct_value(region_direct_slot(region.array))
+                            else {
+                                return Ok(Err(Miss::ReceiverBindingUnavailable));
+                            };
+                            let first_element =
+                                match runtime.peek_dense_number_result(first_base, first_key) {
+                                    Ok(value) => value,
+                                    Err(reason) => return Ok(Err(reason)),
+                                };
+                            let second_old = if second.reads_updated_index {
+                                first_updated
+                            } else {
+                                let Some(value) = slots.immediate_local(second_slot) else {
+                                    return Ok(Err(Miss::IndexNotNumber));
+                                };
+                                value
+                            };
+                            let second_updated = second_old.add(Number::Int(1));
+                            let Some(second_key) = array_index(second_updated) else {
+                                return Ok(Err(Miss::IndexNotNumericInteger));
+                            };
+                            let Some(second_base) =
+                                slots.direct_value(region_direct_slot(second.array))
+                            else {
+                                return Ok(Err(Miss::ReceiverBindingUnavailable));
+                            };
+                            let second_element =
+                                match runtime.peek_dense_number_result(second_base, second_key) {
+                                    Ok(value) => value,
+                                    Err(reason) => return Ok(Err(reason)),
+                                };
+                            let sum = accumulator.add(first_element).add(second_element);
+                            slots.commit_two_number_locals_and_top(
+                                first_slot,
+                                first_updated,
+                                second_slot,
+                                second_updated,
+                                sum,
+                            )?;
+                            Ok(Ok(()))
+                        })?;
+                        match result {
+                            Ok(()) => true,
+                            Err(reason) => {
+                                miss_reason = Some(reason);
+                                false
+                            }
+                        }
+                    }
                     Opcode::NumericArrayStoreAndLocal => {
                         if !frame.active_frame.is_materialized() {
                             miss_reason = Some(Miss::FrameNotMaterialized);
@@ -794,6 +883,7 @@ pub(super) fn execute_frame(
                         Opcode::NumericArrayStoreProduct => "numeric_array_store_product",
                         Opcode::NumericArrayCopyElement => "numeric_array_copy_element",
                         Opcode::NumericArrayAddPreInc => "numeric_array_add_preinc",
+                        Opcode::NumericArrayAddPreIncPair => "numeric_array_add_preinc_pair",
                         Opcode::NumericArrayStoreAndLocal => "numeric_array_store_and_local",
                         Opcode::NumericArrayUpdateElement => "numeric_array_update_element",
                         Opcode::NumericArrayCompareBranch => "numeric_array_compare_branch",
@@ -815,8 +905,9 @@ pub(super) fn execute_frame(
                 }
                 #[cfg(test)]
                 NUMERIC_REGION_MISSES.set(NUMERIC_REGION_MISSES.get() + 1);
-                if decoded.opcode == Opcode::NumericArrayUpdateElement
-                    && region.producer_index.is_some()
+                if decoded.opcode == Opcode::NumericArrayAddPreIncPair
+                    || decoded.opcode == Opcode::NumericArrayUpdateElement
+                        && region.producer_index.is_some()
                 {
                     // This product region has a separate physical ordinary
                     // entry. Admission has not changed guest state, so the

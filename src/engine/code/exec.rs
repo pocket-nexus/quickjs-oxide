@@ -19,7 +19,7 @@ use super::instruction::{Operand, OperandContract, StackStateEffect};
 use super::region::RejectedNumericSite;
 use super::region::{
     ArrayProductSource, ArrayReadSource, DirectSource, NumberSource, NumericOperation,
-    NumericRegion, PublishedNumericRegion, UpdateDelta,
+    NumericRegion, PublishedNumericRegion, SecondPreIncSource, UpdateDelta,
 };
 
 const OPCODE_MASK: u16 = 0x03ff;
@@ -138,6 +138,7 @@ pub(crate) struct ExecCode {
     field_truthy: Option<Rc<[FieldTruthyBranchPlan]>>,
     product_sources: Option<Rc<[ArrayProductSource]>>,
     copy_sources: Option<Rc<[ArrayReadSource]>>,
+    second_preincs: Option<Rc<[SecondPreIncSource]>>,
     #[cfg(feature = "profiling")]
     rejected_numeric_sites: Rc<[RejectedNumericSite]>,
     /// Compiler assertions inspect the exact prepublication IR. This field is
@@ -199,6 +200,7 @@ impl ExecCode {
             field_truthy: None,
             product_sources: None,
             copy_sources: None,
+            second_preincs: None,
             #[cfg(feature = "profiling")]
             rejected_numeric_sites: Rc::from([]),
             #[cfg(test)]
@@ -281,12 +283,7 @@ impl ExecCode {
         let mut schedule = Vec::with_capacity(code.len() + regions.len() + field_candidates.len());
         for (source, &opcode) in opcodes.iter().enumerate() {
             if let Some(id) = region_ids[source] {
-                if matches!(
-                    regions[id].operation,
-                    NumericOperation::UpdateElement {
-                        delta: UpdateDelta::ArrayProduct(_)
-                    }
-                ) {
+                if has_guarded_entry(regions[id].operation) {
                     schedule.push(ScheduledEntry {
                         source,
                         opcode: region_opcode(regions[id].operation),
@@ -321,14 +318,8 @@ impl ExecCode {
             }
             if !entry.guard
                 && (field_ids.get(source).is_some_and(Option::is_some)
-                    || region_ids[source].is_some_and(|id| {
-                        matches!(
-                            regions[id].operation,
-                            NumericOperation::UpdateElement {
-                                delta: UpdateDelta::ArrayProduct(_)
-                            }
-                        )
-                    }))
+                    || region_ids[source]
+                        .is_some_and(|id| has_guarded_entry(regions[id].operation)))
             {
                 guarded_fallbacks.push(GuardedFallback {
                     source: source as u32,
@@ -395,6 +386,7 @@ impl ExecCode {
         }
         let mut product_sources = Vec::new();
         let mut copy_sources = Vec::new();
+        let mut second_preincs = Vec::new();
         let published_regions = (!regions.is_empty())
             .then(|| {
                 regions
@@ -414,6 +406,20 @@ impl ExecCode {
                                 let index = u32::try_from(copy_sources.len())
                                     .map_err(|_| ExecCodeError::InvalidTarget)?;
                                 copy_sources.push(source);
+                                Some(index)
+                            }
+                            NumericOperation::AddPreIncPair {
+                                second_array,
+                                second_index,
+                                second_reads_updated_index,
+                            } => {
+                                let index = u32::try_from(second_preincs.len())
+                                    .map_err(|_| ExecCodeError::InvalidTarget)?;
+                                second_preincs.push(SecondPreIncSource {
+                                    array: second_array,
+                                    index: second_index,
+                                    reads_updated_index: second_reads_updated_index,
+                                });
                                 Some(index)
                             }
                             _ => None,
@@ -478,6 +484,7 @@ impl ExecCode {
             field_truthy,
             product_sources: (!product_sources.is_empty()).then(|| product_sources.into()),
             copy_sources: (!copy_sources.is_empty()).then(|| copy_sources.into()),
+            second_preincs: (!second_preincs.is_empty()).then(|| second_preincs.into()),
             #[cfg(feature = "profiling")]
             rejected_numeric_sites: rejected_numeric_sites.into(),
             #[cfg(test)]
@@ -1110,6 +1117,10 @@ impl ExecCode {
         self.regions.as_deref()?.get(index as usize)
     }
 
+    pub(crate) fn second_preinc(&self, index: u32) -> Option<SecondPreIncSource> {
+        self.second_preincs.as_deref()?.get(index as usize).copied()
+    }
+
     fn verify_field_truthy_branch(
         &self,
         source: usize,
@@ -1230,7 +1241,22 @@ impl ExecCode {
         } else {
             None
         };
-        if published.producer_index.is_some() && product.is_none() && copy.is_none()
+        let pair = if first.opcode == Opcode::NumericArrayAddPreIncPair {
+            Some(
+                self.second_preinc(
+                    published
+                        .producer_index
+                        .ok_or(ExecCodeError::InvalidTarget)?,
+                )
+                .ok_or(ExecCodeError::InvalidTarget)?,
+            )
+        } else {
+            None
+        };
+        if published.producer_index.is_some()
+            && product.is_none()
+            && copy.is_none()
+            && pair.is_none()
             || product.is_some() && !matches!(published.value, NumberSource::Immediate(0))
         {
             return Err(ExecCodeError::InvalidTarget);
@@ -1252,6 +1278,7 @@ impl ExecCode {
                 Opcode::NumericArrayStoreProduct => 7,
                 Opcode::NumericArrayCopyElement => 8,
                 Opcode::NumericArrayAddPreInc => 6,
+                Opcode::NumericArrayAddPreIncPair => 12,
                 Opcode::NumericArrayStoreAndLocal => 4,
                 Opcode::NumericArrayUpdateElement => {
                     if product.is_some() {
@@ -1278,6 +1305,14 @@ impl ExecCode {
                 source: copy.ok_or(ExecCodeError::InvalidTarget)?,
             },
             Opcode::NumericArrayAddPreInc => NumericOperation::AddPreInc,
+            Opcode::NumericArrayAddPreIncPair => {
+                let pair = pair.ok_or(ExecCodeError::InvalidTarget)?;
+                NumericOperation::AddPreIncPair {
+                    second_array: pair.array,
+                    second_index: pair.index,
+                    second_reads_updated_index: pair.reads_updated_index,
+                }
+            }
             Opcode::NumericArrayStoreAndLocal => NumericOperation::StoreElementAndLocal {
                 destination: published.destination,
                 checked: published.checked,
@@ -1316,7 +1351,7 @@ impl ExecCode {
             || first.opcode != region_opcode(region.operation)
             || Some(first.operand(1)) != success
             || first.operand(2)
-                != if product.is_some() {
+                != if product.is_some() || pair.is_some() {
                     self.guarded_fallbacks()
                         .iter()
                         .find(|fallback| fallback.source == start as u32)
@@ -1408,6 +1443,32 @@ impl ExecCode {
                 ]);
                 6
             }
+            NumericOperation::AddPreIncPair {
+                second_array,
+                second_index,
+                ..
+            } => {
+                let NumberSource::Direct(index) = region.index else {
+                    return Err(ExecCodeError::InvalidTarget);
+                };
+                for (offset, array, index) in
+                    [(0, region.array, index), (6, second_array, second_index)]
+                {
+                    expected[offset..offset + 6].copy_from_slice(&[
+                        direct_opcode(array),
+                        direct_opcode(index),
+                        Opcode::Inc,
+                        if matches!(index, DirectSource::CheckedLocal(_)) {
+                            Opcode::SetLocalCheck
+                        } else {
+                            Opcode::SetLocal
+                        },
+                        Opcode::GetArrayEl,
+                        Opcode::Add,
+                    ]);
+                }
+                12
+            }
             NumericOperation::StoreElementAndLocal { checked, .. } => {
                 expected[..4].copy_from_slice(&[
                     Opcode::Insert3,
@@ -1477,7 +1538,7 @@ impl ExecCode {
         if end != start + expected_len {
             return Err(ExecCodeError::InvalidTarget);
         }
-        if product.is_some() {
+        if product.is_some() || pair.is_some() {
             let fallback = self
                 .guarded_fallbacks()
                 .iter()
@@ -1485,6 +1546,11 @@ impl ExecCode {
                 .ok_or(ExecCodeError::InvalidTarget)?;
             let decoded = self.decode(fallback.pc)?;
             if decoded.opcode != expected[0]
+                && !(pair.is_some()
+                    && matches!(
+                        decoded.opcode,
+                        Opcode::DensePreUpdateLocal | Opcode::DensePreUpdateArg
+                    ))
                 || decoded.operand(0) != direct_index(region.array)
                 || decoded.next_pc != self.boundaries[start + 1]
             {
@@ -1493,13 +1559,15 @@ impl ExecCode {
         }
         for (offset, &opcode) in expected[..expected_len].iter().enumerate().skip(1) {
             let decoded = self.decode(self.boundaries[start + offset])?;
-            let compatible = if product.is_some() {
+            let compatible = if product.is_some() || pair.is_some() {
                 matches!(
                     (opcode, decoded.opcode),
                     (Opcode::GetArrayEl3, Opcode::GetArrayEl3Dense)
                         | (Opcode::GetArrayEl, Opcode::GetArrayElDense)
                         | (Opcode::GetLocal, Opcode::DenseReadLocal)
                         | (Opcode::GetArg, Opcode::DenseReadArg)
+                        | (Opcode::GetLocal, Opcode::DensePreUpdateLocal)
+                        | (Opcode::GetArg, Opcode::DensePreUpdateArg)
                 )
             } else {
                 false
@@ -1557,6 +1625,22 @@ impl ExecCode {
                 };
                 if self.decode(self.boundaries[start + 3])?.operand(0) != u32::from(slot)
                     || published.peak != 2
+                {
+                    return Err(ExecCodeError::InvalidTarget);
+                }
+            }
+            NumericOperation::AddPreIncPair {
+                second_array,
+                second_index,
+                second_reads_updated_index,
+            } => {
+                let NumberSource::Direct(first_index) = region.index else {
+                    return Err(ExecCodeError::InvalidTarget);
+                };
+                if second_reads_updated_index != (first_index == second_index)
+                    || published.peak != 2
+                    || !verify_preinc_half(self, start, first_index, region.array, true)?
+                    || !verify_preinc_half(self, start + 6, second_index, second_array, false)?
                 {
                     return Err(ExecCodeError::InvalidTarget);
                 }
@@ -2082,10 +2166,20 @@ fn region_opcode(operation: NumericOperation) -> Opcode {
         NumericOperation::StoreProduct { .. } => Opcode::NumericArrayStoreProduct,
         NumericOperation::CopyElement { .. } => Opcode::NumericArrayCopyElement,
         NumericOperation::AddPreInc => Opcode::NumericArrayAddPreInc,
+        NumericOperation::AddPreIncPair { .. } => Opcode::NumericArrayAddPreIncPair,
         NumericOperation::StoreElementAndLocal { .. } => Opcode::NumericArrayStoreAndLocal,
         NumericOperation::UpdateElement { .. } => Opcode::NumericArrayUpdateElement,
         NumericOperation::CompareBranch { .. } => Opcode::NumericArrayCompareBranch,
     }
+}
+
+fn has_guarded_entry(operation: NumericOperation) -> bool {
+    matches!(
+        operation,
+        NumericOperation::UpdateElement {
+            delta: UpdateDelta::ArrayProduct(_)
+        } | NumericOperation::AddPreIncPair { .. }
+    )
 }
 
 fn publish_numeric_region(
@@ -2116,7 +2210,7 @@ fn publish_numeric_region(
                 Opcode::Nop,
                 false,
             ),
-            NumericOperation::AddPreInc => (
+            NumericOperation::AddPreInc | NumericOperation::AddPreIncPair { .. } => (
                 NumberSource::Immediate(0),
                 None,
                 None,
@@ -2446,6 +2540,7 @@ fn is_region_opcode(opcode: Opcode) -> bool {
             | Opcode::NumericArrayStoreProduct
             | Opcode::NumericArrayCopyElement
             | Opcode::NumericArrayAddPreInc
+            | Opcode::NumericArrayAddPreIncPair
             | Opcode::NumericArrayStoreAndLocal
             | Opcode::NumericArrayUpdateElement
             | Opcode::NumericArrayCompareBranch
@@ -2609,6 +2704,36 @@ fn validate_region_plans(
                     && matches!(span[4], Instruction::GetArrayEl)
                     && matches!(span[5], Instruction::Add)
             }
+            NumericOperation::AddPreIncPair {
+                second_array,
+                second_index,
+                second_reads_updated_index,
+            } => {
+                let first_index = match region.index {
+                    NumberSource::Direct(DirectSource::Local(slot)) => DirectSource::Local(slot),
+                    NumberSource::Direct(DirectSource::CheckedLocal(slot)) => {
+                        DirectSource::CheckedLocal(slot)
+                    }
+                    _ => return Err(ExecCodeError::InvalidTarget),
+                };
+                span.len() == 12
+                    && second_reads_updated_index == (first_index == second_index)
+                    && valid_direct_source(second_array, locals, arguments, &initialized)
+                    && preinc_half_shape(
+                        &span[..6],
+                        region.array,
+                        first_index,
+                        locals,
+                        &initialized,
+                    )
+                    && preinc_half_shape(
+                        &span[6..],
+                        second_array,
+                        second_index,
+                        locals,
+                        &initialized,
+                    )
+            }
             NumericOperation::StoreElementAndLocal {
                 destination,
                 checked,
@@ -2684,7 +2809,7 @@ fn validate_region_plans(
             }
         };
         let (inputs, outputs) = match region.operation {
-            NumericOperation::AddPreInc => (1, 1),
+            NumericOperation::AddPreInc | NumericOperation::AddPreIncPair { .. } => (1, 1),
             NumericOperation::StoreElementAndLocal { .. } => (3, 0),
             _ => (0, 0),
         };
@@ -2713,6 +2838,28 @@ fn valid_direct_source(
         }
         DirectSource::Argument(index) => (index as usize) < arguments.len(),
     }
+}
+
+fn preinc_half_shape(
+    span: &[Instruction],
+    array: DirectSource,
+    index: DirectSource,
+    locals: &[VariableDefinition],
+    initialized: &[bool],
+) -> bool {
+    let (slot, checked) = match index {
+        DirectSource::Local(slot) => (slot, false),
+        DirectSource::CheckedLocal(slot) => (slot, true),
+        DirectSource::Argument(_) => return false,
+    };
+    span.len() == 6
+        && valid_numeric_destination(slot, checked, locals, initialized)
+        && instruction_matches_direct(&span[0], array)
+        && matches_local_read(&span[1], slot, checked)
+        && matches!(span[2], Instruction::Inc)
+        && matches_local_write(&span[3], slot, checked)
+        && matches!(span[4], Instruction::GetArrayEl)
+        && matches!(span[5], Instruction::Add)
 }
 
 fn valid_number_source(
@@ -2809,6 +2956,42 @@ fn verify_direct_operand(
     );
     Ok((decoded.opcode == direct_opcode(value) || selected)
         && decoded.operand(0) == direct_index(value))
+}
+
+fn verify_preinc_half(
+    code: &ExecCode,
+    start: usize,
+    index: DirectSource,
+    array: DirectSource,
+    guarded: bool,
+) -> Result<bool, ExecCodeError> {
+    let slot = match index {
+        DirectSource::Local(slot) | DirectSource::CheckedLocal(slot) => slot,
+        DirectSource::Argument(_) => return Ok(false),
+    };
+    let pc = if guarded {
+        code.guarded_fallbacks()
+            .iter()
+            .find(|fallback| fallback.source == start as u32)
+            .ok_or(ExecCodeError::InvalidTarget)?
+            .pc
+    } else {
+        code.boundaries[start]
+    };
+    let first = code.decode(pc)?;
+    let ordinary = first.opcode == direct_opcode(array);
+    let fused = matches!(
+        (array, first.opcode),
+        (DirectSource::Local(_), Opcode::DensePreUpdateLocal)
+            | (DirectSource::Argument(_), Opcode::DensePreUpdateArg)
+    );
+    Ok((ordinary || fused)
+        && first.operand(0) == direct_index(array)
+        && (!fused
+            || first.operand(1) == u32::from(slot)
+                && first.operand(2) == code.boundaries[start + 5])
+        && verify_direct_operand(code, start + 1, index)?
+        && code.decode(code.boundaries[start + 3])?.operand(0) == u32::from(slot))
 }
 
 fn select_field_truthy_candidates(
@@ -3183,12 +3366,7 @@ fn select_opcodes(
     for region in regions {
         let start = region.start as usize;
         let end = region.end as usize;
-        if matches!(
-            region.operation,
-            NumericOperation::UpdateElement {
-                delta: UpdateDelta::ArrayProduct(_)
-            }
-        ) {
+        if has_guarded_entry(region.operation) {
             // Publication inserts a distinct guard before the selected
             // ordinary first operation, keeping this schedule as fallback.
             continue;
@@ -4101,6 +4279,64 @@ mod tests {
         assert_eq!(
             ExecCode::encode_with_locals(&entered, &[local], &[local], &[shifted], &[])
                 .unwrap_err(),
+            ExecCodeError::InvalidTarget
+        );
+    }
+
+    #[test]
+    fn composed_preinc_has_distinct_guard_and_ordinary_entry() {
+        let local = VariableDefinition {
+            name: None,
+            is_lexical: false,
+            is_const: false,
+            is_parameter_initializer: false,
+            kind: ClosureVariableKind::Normal,
+        };
+        let code = [
+            Instruction::PushI32(1),
+            Instruction::GetArg(0),
+            Instruction::GetLocal(0),
+            Instruction::Inc,
+            Instruction::SetLocal(0),
+            Instruction::GetArrayEl,
+            Instruction::Add,
+            Instruction::GetArg(0),
+            Instruction::GetLocal(0),
+            Instruction::Inc,
+            Instruction::SetLocal(0),
+            Instruction::GetArrayEl,
+            Instruction::Add,
+            Instruction::Return,
+        ];
+        let region = NumericRegion {
+            start: 1,
+            end: 13,
+            array: DirectSource::Argument(0),
+            index: NumberSource::Direct(DirectSource::Local(0)),
+            operation: NumericOperation::AddPreIncPair {
+                second_array: DirectSource::Argument(0),
+                second_index: DirectSource::Local(0),
+                second_reads_updated_index: true,
+            },
+            peak: 2,
+        };
+        let published = ExecCode::encode_with_locals(&code, &[local], &[local], &[region], &[])
+            .expect("valid pair must publish");
+        let guard = published.decode(published.boundaries[1]).unwrap();
+        assert_eq!(guard.opcode, Opcode::NumericArrayAddPreIncPair);
+        assert_eq!(guard.operand(2), guard.next_pc);
+        assert_eq!(guard.operand(1), published.boundaries[13]);
+        assert_eq!(
+            published.decode(guard.next_pc).unwrap().opcode,
+            Opcode::DensePreUpdateArg
+        );
+        published.verify().unwrap();
+        published.words[(guard.next_pc - 1) as usize].set(published.boundaries[7]);
+        assert_eq!(published.verify(), Err(ExecCodeError::InvalidTarget));
+        let mut entered = code;
+        entered[0] = Instruction::Goto(7);
+        assert_eq!(
+            ExecCode::encode_with_locals(&entered, &[local], &[local], &[region], &[]).unwrap_err(),
             ExecCodeError::InvalidTarget
         );
     }

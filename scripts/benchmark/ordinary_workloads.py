@@ -69,6 +69,15 @@ def programs():
     yield loop("field-truthy-alternating-shapes",
                decision + "let child={};let a={next:child},b={tag:1,next:null};let s=0;",
                "s+=decide(i&1?a:b)", "s", count=200000)
+    # Adjacent numeric fragments share one accumulator. A getter on the
+    # second access forces the complete ordinary fallback with two ++ effects.
+    pair = "function pair(a){let index=0;return 1+a[++index]+a[++index]}"
+    yield loop("preinc-pair-hit",
+               pair + "let a=[0,4,7],s=0;", "s+=pair(a)", "s", count=200000)
+    yield loop("preinc-pair-second-getter",
+               pair + "let reads=0,a=[0,4],s=0;"
+               "Object.defineProperty(a,'2',{get(){reads++;return 7}});",
+               "s+=pair(a)", "s+':'+reads", count=200000)
     for kind, _, value in values:
         yield "write-same-value-" + kind, 100000, (
             f"let v={value};let o={{x:v}};for(let i=0;i<100000;i++){{o.x=v}} console.log(o.x===v);\n"

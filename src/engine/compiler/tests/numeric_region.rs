@@ -208,6 +208,50 @@ fn array_add_preinc_consumes_stack_number_and_preserves_miss_effects() {
 }
 
 #[test]
+fn adjacent_preincrement_adds_compose() {
+    let function = "(function(a){var i=0,acc=1;return acc+a[++i]+a[++i];})";
+    assert_eq!(
+        opcodes(function)
+            .into_iter()
+            .filter(|opcode| *opcode == Opcode::NumericArrayAddPreIncPair)
+            .count(),
+        1
+    );
+    for (source, hits) in [
+        (
+            "(function(){function f(a){var i=0,acc=1;return acc+a[++i]+a[++i]+':'+i;}return f([0,4,7]);})()",
+            1,
+        ),
+        (
+            "(function(){function f(a,b){var i=0,j=0,acc=1;return acc+a[++i]+b[++j]+':'+i+':'+j;}return f([0,4],[0,7]);})()",
+            1,
+        ),
+        (
+            "(function(){function f(a,b){var i=0,j=0,acc=1;return acc+a[++i]+b[++j]+':'+i+':'+j;}var a=[0,4];return f(a,a);})()",
+            1,
+        ),
+        (
+            "(function(){var log='';function f(a){var i=0,acc=1;return acc+a[++i]+a[++i]+':'+i+':'+log;}var a=[0,4];Object.defineProperty(a,'2',{get(){log+='g';return 7;}});return f(a);})()",
+            0,
+        ),
+        (
+            "(function(){var log='';function f(a){var i=0,acc=1;return acc+a[++i]+a[++i]+':'+i+':'+log;}var a=[0,,7];Object.defineProperty(a,'1',{get(){log+='f';return 4;}});return f(a);})()",
+            0,
+        ),
+        (
+            "(function(){function f(a){var i=0,acc=1;return acc+a[++i]+a[++i];}return f([0,2147483647,1]);})()",
+            1,
+        ),
+        (
+            "(function(){function f(a){var i=0,acc=-0;return Object.is(acc+a[++i]+a[++i],-0);}return f([0,-0,-0]);})()",
+            1,
+        ),
+    ] {
+        let _ = assert_same(source, hits);
+    }
+}
+
+#[test]
 fn array_store_and_local_uses_saved_stack_target_and_falls_back_cleanly() {
     let function = "(function(a,i,v){var out=0;out=a[i]=v;return out;})";
     assert!(opcodes(function).contains(&Opcode::NumericArrayStoreAndLocal));

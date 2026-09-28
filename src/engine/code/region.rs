@@ -53,6 +53,13 @@ pub(crate) enum NumericOperation {
     },
     /// Add one Array Number to the existing top Number after ++local index.
     AddPreInc,
+    /// Two adjacent preincremented reads feed the same stack accumulator.
+    /// The second index names a new binding version when it aliases the first.
+    AddPreIncPair {
+        second_array: DirectSource,
+        second_index: DirectSource,
+        second_reads_updated_index: bool,
+    },
     /// Consume array, index and Number from the operand stack, then store the
     /// Number into the array and an initialized direct local.
     StoreElementAndLocal {
@@ -102,6 +109,13 @@ pub(crate) struct PublishedNumericRegion {
     pub when_true: bool,
     pub fallthrough_pc: u32,
     pub peak: u16,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SecondPreIncSource {
+    pub array: DirectSource,
+    pub index: DirectSource,
+    pub reads_updated_index: bool,
 }
 
 #[cfg(feature = "profiling")]

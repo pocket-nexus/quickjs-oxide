@@ -243,6 +243,7 @@ pub(crate) enum Opcode {
     NumericArrayStoreProduct,
     NumericArrayCopyElement,
     NumericArrayAddPreInc,
+    NumericArrayAddPreIncPair,
     NumericArrayStoreAndLocal,
     NumericArrayUpdateElement,
     NumericArrayCompareBranch,
@@ -482,6 +483,7 @@ const OPCODES: &[Opcode] = &[
     Opcode::NumericArrayStoreProduct,
     Opcode::NumericArrayCopyElement,
     Opcode::NumericArrayAddPreInc,
+    Opcode::NumericArrayAddPreIncPair,
     Opcode::NumericArrayStoreAndLocal,
     Opcode::NumericArrayUpdateElement,
     Opcode::NumericArrayCompareBranch,
@@ -931,6 +933,7 @@ impl Opcode {
             | Self::NumericArrayStoreProduct
             | Self::NumericArrayCopyElement
             | Self::NumericArrayAddPreInc
+            | Self::NumericArrayAddPreIncPair
             | Self::NumericArrayStoreAndLocal
             | Self::NumericArrayUpdateElement
             | Self::NumericArrayCompareBranch => 3,
