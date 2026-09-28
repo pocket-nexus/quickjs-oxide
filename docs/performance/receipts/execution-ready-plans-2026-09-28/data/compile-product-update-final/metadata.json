@@ -1,0 +1,156 @@
+{
+  "schema": "oxide-compile-matrix-v1",
+  "created_utc": "2026-09-28T04:43:56Z",
+  "metric": "compile",
+  "goal": "script",
+  "repeat": 30,
+  "timeout_seconds": 120,
+  "order": "serial, alternating per repetition",
+  "instrumentation": "off (no profiling flags)",
+  "machine": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "cpu": "Apple M1",
+    "logical_cpus": 8,
+    "python": "3.14.7",
+    "cpu_affinity": null,
+    "scaling_governors": {},
+    "load_average": [
+      6.58203125,
+      25.54345703125,
+      67.240234375
+    ],
+    "macos": {
+      "physical_memory_bytes": 17179869184,
+      "power_settings": {
+        "command": [
+          "pmset",
+          "-g",
+          "custom"
+        ],
+        "exit_code": 0,
+        "stdout": "Battery Power:\n Sleep On Power Button 1\n lowpowermode         0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         20\n womp                 0\n networkoversleep     0\n sleep                1\n lessbright           1\n tcpkeepalive         1\n disksleep            10\nAC Power:\n Sleep On Power Button 1\n lowpowermode         0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         0\n womp                 1\n networkoversleep     0\n sleep                1\n tcpkeepalive         1\n disksleep            10",
+        "stderr": ""
+      },
+      "power_source": {
+        "command": [
+          "pmset",
+          "-g",
+          "batt"
+        ],
+        "exit_code": 0,
+        "stdout": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=22741091)\t100%; charged; 0:00 remaining present: true",
+        "stderr": ""
+      },
+      "vm_stat": {
+        "command": [
+          "vm_stat"
+        ],
+        "exit_code": 0,
+        "stdout": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                     4119.\nPages active:                                 267395.\nPages inactive:                               265643.\nPages speculative:                               940.\nPages throttled:                                   0.\nPages wired down:                             163935.\nPages purgeable:                                3796.\n\"Translation faults\":                     4909947193.\nPages copy-on-write:                       298756031.\nPages zero filled:                        1801319642.\nPages reactivated:                         646306987.\nPages purged:                               36909302.\nFile-backed pages:                            144741.\nAnonymous pages:                              389237.\nPages stored in compressor:                  1560240.\nPages occupied by compressor:                 297854.\nDecompressions:                            594130465.\nCompressions:                              672461266.\nPageins:                                   102458466.\nPageouts:                                    1240082.\nSwapins:                                     4610404.\nSwapouts:                                    6128901.",
+        "stderr": ""
+      }
+    },
+    "runner_sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5",
+    "repository": {
+      "commit": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD"
+        ],
+        "exit_code": 0,
+        "stdout": "734bc1285610652baccfd9373033ff652d2fc1e0",
+        "stderr": ""
+      },
+      "tree": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD^{tree}"
+        ],
+        "exit_code": 0,
+        "stdout": "bbb6c9d5dacd7cec3de8fedbc27b8bea7a8460f7",
+        "stderr": ""
+      },
+      "top_level": {
+        "command": [
+          "git",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "exit_code": 0,
+        "stdout": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide",
+        "stderr": ""
+      },
+      "status": {
+        "command": [
+          "git",
+          "status",
+          "--porcelain"
+        ],
+        "exit_code": 0,
+        "stdout": "M docs/performance/README.md\n M docs/performance/receipts/m2-numeric-operations-2026-09-28/README.md\n M docs/performance/roadmap.md\n?? docs/performance/receipts/execution-ready-plans-2026-09-28/",
+        "stderr": ""
+      }
+    }
+  },
+  "corpus": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/execution-ready-plans-2026-09-28/compile",
+  "workloads": [
+    {
+      "case": "product-update-500",
+      "path": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/execution-ready-plans-2026-09-28/compile/product-update-500.js",
+      "bytes": 28890,
+      "sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81"
+    }
+  ],
+  "engines": {
+    "candidate": {
+      "type": "oxide",
+      "path": "/private/tmp/oxide-next-probe-candidate-rust188/target/release/oxide-compile-probe",
+      "sha256": "cc5fab9bab4ac8fbe8e1c25e75b23bb169397e3ec069d7b99eff266dda3fafe1",
+      "version": {
+        "command": [
+          "/private/tmp/oxide-next-probe-candidate-rust188/target/release/oxide-compile-probe",
+          "--version"
+        ],
+        "exit_code": 0,
+        "stdout": "oxide-compile-probe 1",
+        "stderr": ""
+      },
+      "build": null
+    },
+    "pre53": {
+      "type": "oxide",
+      "path": "/private/tmp/oxide-next-probe-pr53-rust188/target/release/oxide-compile-probe",
+      "sha256": "8d28fbcc26243bbae98a5a0eb11f33015860415ead6a48f1d603257942ae3a20",
+      "version": {
+        "command": [
+          "/private/tmp/oxide-next-probe-pr53-rust188/target/release/oxide-compile-probe",
+          "--version"
+        ],
+        "exit_code": 0,
+        "stdout": "oxide-compile-probe 1",
+        "stderr": ""
+      },
+      "build": null
+    },
+    "pr52": {
+      "type": "oxide",
+      "path": "/private/tmp/oxide-next-probe-pr52-rust188/target/release/oxide-compile-probe",
+      "sha256": "2ebd4a6fae336713cff30373a3637b35f108d32e13f36ba2250791fc5eb04e79",
+      "version": {
+        "command": [
+          "/private/tmp/oxide-next-probe-pr52-rust188/target/release/oxide-compile-probe",
+          "--version"
+        ],
+        "exit_code": 0,
+        "stdout": "oxide-compile-probe 1",
+        "stderr": ""
+      },
+      "build": null
+    }
+  },
+  "node_probe_sha256": "6c218529930ad316002eaa496ccaf40af6badffe77ec5e825ac1437a4752a938",
+  "runner_sha256": "37a3a6d66cd1e1582814257418f057a031846a0697c15dc0026bd72e6a00fd19"
+}

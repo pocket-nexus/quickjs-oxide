@@ -1,0 +1,222 @@
+
+/private/tmp/oxide-next-candidate-dense/release/qjs:	file format mach-o arm64
+
+Disassembly of section __TEXT,__text:
+
+000000010045a83c <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E>:
+10045a83c: d10203ff    	sub	sp, sp, #0x80
+10045a840: a90367fa    	stp	x26, x25, [sp, #0x30]
+10045a844: a9045ff8    	stp	x24, x23, [sp, #0x40]
+10045a848: a90557f6    	stp	x22, x21, [sp, #0x50]
+10045a84c: a9064ff4    	stp	x20, x19, [sp, #0x60]
+10045a850: a9077bfd    	stp	x29, x30, [sp, #0x70]
+10045a854: 9101c3fd    	add	x29, sp, #0x70
+10045a858: 39400028    	ldrb	w8, [x1]
+10045a85c: 7100251f    	cmp	w8, #0x9
+10045a860: 540000a1    	b.ne	0x10045a874 <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x38>
+10045a864: f9401408    	ldr	x8, [x0, #0x28]
+10045a868: b40000a8    	cbz	x8, 0x10045a87c <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x40>
+10045a86c: 52800180    	mov	w0, #0xc                ; =12
+10045a870: 1400006a    	b	0x10045aa18 <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x1dc>
+10045a874: 52800120    	mov	w0, #0x9                ; =9
+10045a878: 14000068    	b	0x10045aa18 <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x1dc>
+10045a87c: aa0203f9    	mov	x25, x2
+10045a880: aa0303f3    	mov	x19, x3
+10045a884: 92800008    	mov	x8, #-0x1               ; =-1
+10045a888: f9001408    	str	x8, [x0, #0x28]
+10045a88c: 2940d835    	ldp	w21, w22, [x1, #0x4]
+10045a890: a94fd017    	ldp	x23, x20, [x0, #0xf8]
+10045a894: aa0003f8    	mov	x24, x0
+10045a898: 29025bf5    	stp	w21, w22, [sp, #0x10]
+10045a89c: b9000fff    	str	wzr, [sp, #0xc]
+10045a8a0: 910063e0    	add	x0, sp, #0x18
+10045a8a4: 910033e3    	add	x3, sp, #0xc
+10045a8a8: aa1703e1    	mov	x1, x23
+10045a8ac: aa1403e2    	mov	x2, x20
+10045a8b0: 97ef5e31    	bl	0x100032174 <__ZN13quickjs_oxide6engine4heap14object_storage51_$LT$impl$u20$quickjs_oxide..engine..heap..Heap$GT$22validate_slot_identity17h9c24141d9f2cc0c4E>
+10045a8b4: 394063e8    	ldrb	w8, [sp, #0x18]
+10045a8b8: 7100191f    	cmp	w8, #0x6
+10045a8bc: 54000a41    	b.ne	0x10045aa04 <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x1c8>
+10045a8c0: f94013e0    	ldr	x0, [sp, #0x20]
+10045a8c4: eb14001f    	cmp	x0, x20
+10045a8c8: 54001522    	b.hs	0x10045ab6c <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x330>
+10045a8cc: 52802308    	mov	w8, #0x118              ; =280
+10045a8d0: 9b085c09    	madd	x9, x0, x8, x23
+10045a8d4: 39400128    	ldrb	w8, [x9]
+10045a8d8: 7100051f    	cmp	w8, #0x1
+10045a8dc: aa1803e8    	mov	x8, x24
+10045a8e0: 54000941    	b.ne	0x10045aa08 <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x1cc>
+10045a8e4: f940052c    	ldr	x12, [x9, #0x8]
+10045a8e8: f100059f    	cmp	x12, #0x1
+10045a8ec: 540008e8    	b.hi	0x10045aa08 <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x1cc>
+10045a8f0: 3943b52c    	ldrb	w12, [x9, #0xed]
+10045a8f4: 71000d9f    	cmp	w12, #0x3
+10045a8f8: 540009e1    	b.ne	0x10045aa34 <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x1f8>
+10045a8fc: 3941612c    	ldrb	w12, [x9, #0x58]
+10045a900: 7100099f    	cmp	w12, #0x2
+10045a904: 540009c1    	b.ne	0x10045aa3c <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x200>
+10045a908: aa1903eb    	mov	x11, x25
+10045a90c: f940312c    	ldr	x12, [x9, #0x60]
+10045a910: d2f0000d    	mov	x13, #-0x8000000000000000 ; =-9223372036854775808
+10045a914: eb0d019f    	cmp	x12, x13
+10045a918: 54000961    	b.ne	0x10045aa44 <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x208>
+10045a91c: 37f80bab    	tbnz	w11, #0x1f, 0x10045aa90 <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x254>
+10045a920: fd407120    	ldr	d0, [x9, #0xe0]
+10045a924: fc0103e0    	stur	d0, [sp, #0x10]
+10045a928: 52800028    	mov	w8, #0x1                ; =1
+10045a92c: b9000fe8    	str	w8, [sp, #0xc]
+10045a930: 910063e0    	add	x0, sp, #0x18
+10045a934: 910033e3    	add	x3, sp, #0xc
+10045a938: aa1703e1    	mov	x1, x23
+10045a93c: aa1403e2    	mov	x2, x20
+10045a940: 97ef5e0d    	bl	0x100032174 <__ZN13quickjs_oxide6engine4heap14object_storage51_$LT$impl$u20$quickjs_oxide..engine..heap..Heap$GT$22validate_slot_identity17h9c24141d9f2cc0c4E>
+10045a944: 394063e8    	ldrb	w8, [sp, #0x18]
+10045a948: 7100191f    	cmp	w8, #0x6
+10045a94c: 54000a61    	b.ne	0x10045aa98 <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x25c>
+10045a950: f94013e0    	ldr	x0, [sp, #0x20]
+10045a954: eb14001f    	cmp	x0, x20
+10045a958: 54001142    	b.hs	0x10045ab80 <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x344>
+10045a95c: 52802308    	mov	w8, #0x118              ; =280
+10045a960: 9b085c1a    	madd	x26, x0, x8, x23
+10045a964: 39400348    	ldrb	w8, [x26]
+10045a968: 7100051f    	cmp	w8, #0x1
+10045a96c: aa1803e8    	mov	x8, x24
+10045a970: 540009a1    	b.ne	0x10045aaa4 <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x268>
+10045a974: f9400749    	ldr	x9, [x26, #0x8]
+10045a978: f100093f    	cmp	x9, #0x2
+10045a97c: 54000941    	b.ne	0x10045aaa4 <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x268>
+10045a980: 91004340    	add	x0, x26, #0x10
+10045a984: 32010321    	orr	w1, w25, #0x80000000
+10045a988: 97f0a053    	bl	0x100082ad4 <__ZN13quickjs_oxide6engine6object5shape5Shape4find17h3d79b3743fe65a32E>
+10045a98c: 36000d40    	tbz	w0, #0x0, 0x10045ab34 <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x2f8>
+10045a990: 2a0103e8    	mov	w8, w1
+10045a994: f9401349    	ldr	x9, [x26, #0x20]
+10045a998: eb08013f    	cmp	x9, x8
+10045a99c: 54000d29    	b.ls	0x10045ab40 <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x304>
+10045a9a0: f9400f49    	ldr	x9, [x26, #0x18]
+10045a9a4: f90003e8    	str	x8, [sp]
+10045a9a8: d37df108    	lsl	x8, x8, #3
+10045a9ac: 38686928    	ldrb	w8, [x9, x8]
+10045a9b0: 7100051f    	cmp	w8, #0x1
+10045a9b4: 54000c61    	b.ne	0x10045ab40 <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x304>
+10045a9b8: 910063e0    	add	x0, sp, #0x18
+10045a9bc: aa1703e1    	mov	x1, x23
+10045a9c0: aa1403e2    	mov	x2, x20
+10045a9c4: aa1503e3    	mov	x3, x21
+10045a9c8: aa1603e4    	mov	x4, x22
+10045a9cc: 97f0a94e    	bl	0x100084f04 <__ZN13quickjs_oxide6engine4heap5arena51_$LT$impl$u20$quickjs_oxide..engine..heap..Heap$GT$10object_mut17he4e48cdaea4f6f1aE>
+10045a9d0: 394063e8    	ldrb	w8, [sp, #0x18]
+10045a9d4: 7100191f    	cmp	w8, #0x6
+10045a9d8: 54000ba1    	b.ne	0x10045ab4c <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x310>
+10045a9dc: f94013e8    	ldr	x8, [sp, #0x20]
+10045a9e0: 91006100    	add	x0, x8, #0x18
+10045a9e4: f94003e1    	ldr	x1, [sp]
+10045a9e8: 97f104e3    	bl	0x10009bd74 <__ZN13quickjs_oxide6engine4heap14object_records5Slots7get_mut17he2bbfc1b7a0c1f65E>
+10045a9ec: b4000060    	cbz	x0, 0x10045a9f8 <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x1bc>
+10045a9f0: b9400008    	ldr	w8, [x0]
+10045a9f4: 34000b28    	cbz	w8, 0x10045ab58 <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x31c>
+10045a9f8: 52800200    	mov	w0, #0x10               ; =16
+10045a9fc: aa1803e8    	mov	x8, x24
+10045aa00: 14000003    	b	0x10045aa0c <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x1d0>
+10045aa04: aa1803e8    	mov	x8, x24
+10045aa08: 52800140    	mov	w0, #0xa                ; =10
+10045aa0c: f9401509    	ldr	x9, [x8, #0x28]
+10045aa10: 91000529    	add	x9, x9, #0x1
+10045aa14: f9001509    	str	x9, [x8, #0x28]
+10045aa18: a9477bfd    	ldp	x29, x30, [sp, #0x70]
+10045aa1c: a9464ff4    	ldp	x20, x19, [sp, #0x60]
+10045aa20: a94557f6    	ldp	x22, x21, [sp, #0x50]
+10045aa24: a9445ff8    	ldp	x24, x23, [sp, #0x40]
+10045aa28: a94367fa    	ldp	x26, x25, [sp, #0x30]
+10045aa2c: 910203ff    	add	sp, sp, #0x80
+10045aa30: d65f03c0    	ret
+10045aa34: 52800160    	mov	w0, #0xb                ; =11
+10045aa38: 17fffff5    	b	0x10045aa0c <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x1d0>
+10045aa3c: 52800220    	mov	w0, #0x11               ; =17
+10045aa40: 17fffff3    	b	0x10045aa0c <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x1d0>
+10045aa44: f940392c    	ldr	x12, [x9, #0x70]
+10045aa48: 2a0b03eb    	mov	w11, w11
+10045aa4c: eb0b019f    	cmp	x12, x11
+10045aa50: 540001c9    	b.ls	0x10045aa88 <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x24c>
+10045aa54: aa1303ea    	mov	x10, x19
+10045aa58: f9403529    	ldr	x9, [x9, #0x68]
+10045aa5c: 8b0b1129    	add	x9, x9, x11, lsl #4
+10045aa60: 3940012b    	ldrb	w11, [x9]
+10045aa64: 7100117f    	cmp	w11, #0x4
+10045aa68: 54000220    	b.eq	0x10045aaac <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x270>
+10045aa6c: 71000d7f    	cmp	w11, #0x3
+10045aa70: 54000441    	b.ne	0x10045aaf8 <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x2bc>
+10045aa74: b940052d    	ldr	w13, [x9, #0x4]
+10045aa78: b940014c    	ldr	w12, [x10]
+10045aa7c: 3600042c    	tbz	w12, #0x0, 0x10045ab00 <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x2c4>
+10045aa80: 1e6201a0    	scvtf	d0, w13
+10045aa84: 1400000c    	b	0x10045aab4 <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x278>
+10045aa88: 528001c0    	mov	w0, #0xe                ; =14
+10045aa8c: 17ffffe0    	b	0x10045aa0c <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x1d0>
+10045aa90: 52800060    	mov	w0, #0x3                ; =3
+10045aa94: 17ffffde    	b	0x10045aa0c <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x1d0>
+10045aa98: aa1803e8    	mov	x8, x24
+10045aa9c: 52800240    	mov	w0, #0x12               ; =18
+10045aaa0: 17ffffdb    	b	0x10045aa0c <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x1d0>
+10045aaa4: 52800240    	mov	w0, #0x12               ; =18
+10045aaa8: 17ffffd9    	b	0x10045aa0c <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x1d0>
+10045aaac: fd400520    	ldr	d0, [x9, #0x8]
+10045aab0: b940014c    	ldr	w12, [x10]
+10045aab4: fd400541    	ldr	d1, [x10, #0x8]
+10045aab8: bd400542    	ldr	s2, [x10, #0x4]
+10045aabc: 0f20a442    	sshll.2d	v2, v2, #0x0
+10045aac0: 5e61d842    	scvtf	d2, d2
+10045aac4: 7200019f    	tst	w12, #0x1
+10045aac8: 1e621c21    	fcsel	d1, d1, d2, ne
+10045aacc: 1e612800    	fadd	d0, d0, d1
+10045aad0: 1e78000b    	fcvtzs	w11, d0
+10045aad4: 1e620161    	scvtf	d1, w11
+10045aad8: 1e612000    	fcmp	d0, d1
+10045aadc: 540000a1    	b.ne	0x10045aaf0 <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x2b4>
+10045aae0: 1e602008    	fcmp	d0, #0.0
+10045aae4: 9e66000a    	fmov	x10, d0
+10045aae8: fa400944    	ccmp	x10, #0x0, #0x4, eq
+10045aaec: 54000100    	b.eq	0x10045ab0c <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x2d0>
+10045aaf0: 5280008a    	mov	w10, #0x4               ; =4
+10045aaf4: 14000007    	b	0x10045ab10 <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x2d4>
+10045aaf8: 528001a0    	mov	w0, #0xd                ; =13
+10045aafc: 17ffffc4    	b	0x10045aa0c <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x1d0>
+10045ab00: b940054b    	ldr	w11, [x10, #0x4]
+10045ab04: 2b0b01ab    	adds	w11, w13, w11
+10045ab08: 54fffbc6    	b.vs	0x10045aa80 <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x244>
+10045ab0c: 5280006a    	mov	w10, #0x3               ; =3
+10045ab10: 3900012a    	strb	w10, [x9]
+10045ab14: 794033ea    	ldrh	w10, [sp, #0x18]
+10045ab18: 7800112a    	sturh	w10, [x9, #0x1]
+10045ab1c: 39406bea    	ldrb	w10, [sp, #0x1a]
+10045ab20: 39000d2a    	strb	w10, [x9, #0x3]
+10045ab24: b900052b    	str	w11, [x9, #0x4]
+10045ab28: fd000520    	str	d0, [x9, #0x8]
+10045ab2c: 528002a0    	mov	w0, #0x15               ; =21
+10045ab30: 17ffffb7    	b	0x10045aa0c <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x1d0>
+10045ab34: 528001c0    	mov	w0, #0xe                ; =14
+10045ab38: aa1803e8    	mov	x8, x24
+10045ab3c: 17ffffb4    	b	0x10045aa0c <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x1d0>
+10045ab40: 52800260    	mov	w0, #0x13               ; =19
+10045ab44: aa1803e8    	mov	x8, x24
+10045ab48: 17ffffb1    	b	0x10045aa0c <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x1d0>
+10045ab4c: 52800140    	mov	w0, #0xa                ; =10
+10045ab50: aa1803e8    	mov	x8, x24
+10045ab54: 17ffffae    	b	0x10045aa0c <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x1d0>
+10045ab58: 91002000    	add	x0, x0, #0x8
+10045ab5c: aa1303e1    	mov	x1, x19
+10045ab60: 9400000f    	bl	0x10045ab9c <__ZN13quickjs_oxide6engine4heap14object_storage51_$LT$impl$u20$quickjs_oxide..engine..heap..Heap$GT$24try_add_array_own_number8add_cell17h4c4c8b3be578d9f1E>
+10045ab64: aa1803e8    	mov	x8, x24
+10045ab68: 17ffffa9    	b	0x10045aa0c <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x1d0>
+10045ab6c: f00011a2    	adrp	x2, 0x100691000 <dyld_stub_binder+0x100691000>
+10045ab70: 910c6042    	add	x2, x2, #0x318
+10045ab74: aa1403e1    	mov	x1, x20
+10045ab78: 9402b365    	bl	0x10050790c <__ZN4core9panicking18panic_bounds_check17h486908b9a487d47cE>
+10045ab7c: d4200020    	brk	#0x1
+10045ab80: f00011a2    	adrp	x2, 0x100691000 <dyld_stub_binder+0x100691000>
+10045ab84: 910b0042    	add	x2, x2, #0x2c0
+10045ab88: 17fffffb    	b	0x10045ab74 <__ZN13quickjs_oxide6engine6object16ordinary_storage62_$LT$impl$u20$quickjs_oxide..engine..api..runtime..Runtime$GT$24try_add_array_own_number17h0cac12f37c8e4ec2E+0x338>
+10045ab8c: f9401708    	ldr	x8, [x24, #0x28]
+10045ab90: 91000508    	add	x8, x8, #0x1
+10045ab94: f9001708    	str	x8, [x24, #0x28]
+10045ab98: 94030056    	bl	0x10051acf0 <dyld_stub_binder+0x10051acf0>

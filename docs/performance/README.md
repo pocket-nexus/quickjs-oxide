@@ -2,7 +2,8 @@
 
 以 PR #52 `996663f771afdabdc69d52c94bd4d2fb392e27b1` 为新起点：
 发布后使用单一 `ExecCode` 字流，`vm/execute.rs` 是唯一指令循环。
-PR #53 已实现 M1 数值累加及 M2 的直接目的地、数组更新和比较分支；
+PR #53 已实现 M1 数值累加及 M2 的直接目的地、数组更新和比较分支，
+并发布执行字 continuation 与一个在 V8 v7 中实际执行的数组乘积更新来源；
 其他工作流仍是设计提案。当前实现由
 [架构文档](../architecture.md)描述。
 
@@ -27,6 +28,7 @@ PR #53 已实现 M1 数值累加及 M2 的直接目的地、数组更新和比�
 
 | 日期 | 收据 | 内容 |
 | --- | --- | --- |
+| 2026-09-28 | [执行字计划与覆盖](receipts/execution-ready-plans-2026-09-28/README.md) | 运行时直接消费发布事实、V8 执行站点选择、dense 单次认证与三版对照 |
 | 2026-09-28 | [M2 数值操作扩展](receipts/m2-numeric-operations-2026-09-28/README.md) | 直接目的地、数组更新、比较分支及当前 #53/#52 独立对照 |
 | 2026-09-28 | [M1 数值区域](receipts/m1-numeric-region-2026-09-28/README.md) | 数据流选择、单操作执行、语义验证及 Parent/#52 新构建对照 |
 | 2026-09-27 | [VM 重写](receipts/vm-rewrite-2026-09-27/README.md) | 单流替换、语义验证、固定工作量与原版 Score |

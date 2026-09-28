@@ -1,0 +1,194 @@
+{
+  "machine": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "cpu": "Apple M1",
+    "logical_cpus": 8,
+    "python": "3.14.7",
+    "cpu_affinity": null,
+    "scaling_governors": {},
+    "load_average": [
+      88.341796875,
+      127.2734375,
+      124.59814453125
+    ],
+    "macos": {
+      "physical_memory_bytes": 17179869184,
+      "power_settings": {
+        "command": [
+          "pmset",
+          "-g",
+          "custom"
+        ],
+        "exit_code": 0,
+        "stdout": "Battery Power:\n Sleep On Power Button 1\n lowpowermode         0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         20\n womp                 0\n networkoversleep     0\n sleep                1\n lessbright           1\n tcpkeepalive         1\n disksleep            10\nAC Power:\n Sleep On Power Button 1\n lowpowermode         0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         0\n womp                 1\n networkoversleep     0\n sleep                1\n tcpkeepalive         1\n disksleep            10",
+        "stderr": ""
+      },
+      "power_source": {
+        "command": [
+          "pmset",
+          "-g",
+          "batt"
+        ],
+        "exit_code": 0,
+        "stdout": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=22741091)\t100%; finishing charge; 0:00 remaining present: true",
+        "stderr": ""
+      },
+      "vm_stat": {
+        "command": [
+          "vm_stat"
+        ],
+        "exit_code": 0,
+        "stdout": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                     4325.\nPages active:                                 238883.\nPages inactive:                               232612.\nPages speculative:                              5016.\nPages throttled:                                   0.\nPages wired down:                             184272.\nPages purgeable:                                 870.\n\"Translation faults\":                     4855186951.\nPages copy-on-write:                       295616967.\nPages zero filled:                        1775962889.\nPages reactivated:                         642551633.\nPages purged:                               36768853.\nFile-backed pages:                            149462.\nAnonymous pages:                              327049.\nPages stored in compressor:                  1578418.\nPages occupied by compressor:                 334806.\nDecompressions:                            591193829.\nCompressions:                              668824670.\nPageins:                                   102155581.\nPageouts:                                    1228725.\nSwapins:                                     4587186.\nSwapouts:                                    6072309.",
+        "stderr": ""
+      }
+    },
+    "runner_sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5",
+    "repository": {
+      "commit": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD"
+        ],
+        "exit_code": 0,
+        "stdout": "734bc1285610652baccfd9373033ff652d2fc1e0",
+        "stderr": ""
+      },
+      "tree": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD^{tree}"
+        ],
+        "exit_code": 0,
+        "stdout": "bbb6c9d5dacd7cec3de8fedbc27b8bea7a8460f7",
+        "stderr": ""
+      },
+      "top_level": {
+        "command": [
+          "git",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "exit_code": 0,
+        "stdout": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide",
+        "stderr": ""
+      },
+      "status": {
+        "command": [
+          "git",
+          "status",
+          "--porcelain"
+        ],
+        "exit_code": 0,
+        "stdout": "M docs/performance/README.md\n M docs/performance/receipts/m2-numeric-operations-2026-09-28/README.md\n M docs/performance/roadmap.md\n?? docs/performance/receipts/execution-ready-plans-2026-09-28/",
+        "stderr": ""
+      }
+    }
+  },
+  "runner_sha256": "8a852679221202ae6d3dac1e02b295368a79529a3e0c32e51fd6b914e5d4b425",
+  "manifest_sha256": "1761ef61fae41c8f0331b83a6045f4b0fe81a0e5470c03e99a085c9cd02c1ac8",
+  "workloads": [
+    {
+      "case": "branch-hit",
+      "path": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/branch-hit.js",
+      "sha256": "d18667d76e95d8eab8514e422d3c5d5dc3450f760212172c49739e8ade2077b3",
+      "expected": "2000000\n",
+      "size": 2000000
+    },
+    {
+      "case": "branch-miss",
+      "path": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/branch-miss.js",
+      "sha256": "3083237a3d009768564ff0b7d5d64970ba7a965fc59b9a4890625893fe4977f0",
+      "expected": "0\n",
+      "size": 2000000
+    },
+    {
+      "case": "nonapp",
+      "path": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/nonapp.js",
+      "sha256": "805a98a15cbdba18b11c349d2ed75c3f667d43851932da860dc35b12b6470ba9",
+      "expected": "2000000\n",
+      "size": 2000000
+    },
+    {
+      "case": "product-hit",
+      "path": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/product-hit.js",
+      "sha256": "81b30b7ad0464a443ed0aef9010a9ebf69fa3859cef09e3bb007cfaafc65ad16",
+      "expected": "10\n",
+      "size": 2000000
+    },
+    {
+      "case": "product-miss",
+      "path": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/product-miss.js",
+      "sha256": "ce10de4efa75cd7477013aeb82bdb848b318471cef72b16bace90d2cdf3a5a77",
+      "expected": "true\n",
+      "size": 2000000
+    },
+    {
+      "case": "update-hit",
+      "path": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-hit.js",
+      "sha256": "0149509bd5f460ad326ba70bb1f76908c94a063cea34bb25b350c9abf56ddb52",
+      "expected": "2000000\n",
+      "size": 2000000
+    },
+    {
+      "case": "update-miss",
+      "path": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-miss.js",
+      "sha256": "9878abaf6a5846ec8abc1e5338339e5247d4ff3d6e4326fd2113cbeca8dbccf2",
+      "expected": "0\n",
+      "size": 2000000
+    },
+    {
+      "case": "update-product-hit",
+      "path": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js",
+      "sha256": "a4820ce93f5208df49a87bb255232510dec7f150059d842f8c618b6f2e7e33d7",
+      "expected": "2000000\n",
+      "size": 2000000
+    },
+    {
+      "case": "update-product-miss",
+      "path": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-miss.js",
+      "sha256": "c6a8ea31c41ad86e46d456673e33c6722dd62e39e4af28dc5d537f78e084d726",
+      "expected": "2000000\n",
+      "size": 2000000
+    }
+  ],
+  "engines": {
+    "candidate": {
+      "path": "/private/tmp/oxide-next-candidate-dense/release/qjs",
+      "sha256": "b7a93458076bfbcf8fc0943957f0c9372ac47630e173c610e0f362767e570bb4",
+      "version": {
+        "command": [
+          "/private/tmp/oxide-next-candidate-dense/release/qjs",
+          "--version"
+        ],
+        "exit_code": 0,
+        "stdout": "quickjs-oxide 0.0.1 (QuickJS 2026-06-04 compatibility target)",
+        "stderr": ""
+      },
+      "build": null
+    },
+    "pre53": {
+      "path": "/private/tmp/oxide-next-pr53-target/release/qjs",
+      "sha256": "7570a75233501629d132acabebe371db845585562391aadd37e5cabb05fe33b1",
+      "version": {
+        "command": [
+          "/private/tmp/oxide-next-pr53-target/release/qjs",
+          "--version"
+        ],
+        "exit_code": 0,
+        "stdout": "quickjs-oxide 0.0.1 (QuickJS 2026-06-04 compatibility target)",
+        "stderr": ""
+      },
+      "build": null
+    }
+  },
+  "repeat": 8,
+  "order_strategy": "abba-baab",
+  "timeout_seconds": 180,
+  "cpu": null,
+  "darwin_counters": true,
+  "counter_scope": "whole process including startup and teardown",
+  "metric": "whole-process wall nanoseconds; not adaptive scores"
+}

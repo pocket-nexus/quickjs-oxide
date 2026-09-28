@@ -1,0 +1,2357 @@
+{
+  "metadata": {
+    "machine": {
+      "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+      "machine": "arm64",
+      "cpu": "Apple M1",
+      "logical_cpus": 8,
+      "python": "3.14.7",
+      "cpu_affinity": null,
+      "scaling_governors": {},
+      "load_average": [
+        31.9521484375,
+        32.48828125,
+        49.31298828125
+      ],
+      "macos": {
+        "physical_memory_bytes": 17179869184,
+        "power_settings": {
+          "command": [
+            "pmset",
+            "-g",
+            "custom"
+          ],
+          "exit_code": 0,
+          "stdout": "Battery Power:\n Sleep On Power Button 1\n lowpowermode         0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         20\n womp                 0\n networkoversleep     0\n sleep                1\n lessbright           1\n tcpkeepalive         1\n disksleep            10\nAC Power:\n Sleep On Power Button 1\n lowpowermode         0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         0\n womp                 1\n networkoversleep     0\n sleep                1\n tcpkeepalive         1\n disksleep            10",
+          "stderr": ""
+        },
+        "power_source": {
+          "command": [
+            "pmset",
+            "-g",
+            "batt"
+          ],
+          "exit_code": 0,
+          "stdout": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=22741091)\t90%; charging; 0:35 remaining present: true",
+          "stderr": ""
+        },
+        "vm_stat": {
+          "command": [
+            "vm_stat"
+          ],
+          "exit_code": 0,
+          "stdout": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                     4150.\nPages active:                                 334692.\nPages inactive:                               333532.\nPages speculative:                              1008.\nPages throttled:                                   0.\nPages wired down:                             158933.\nPages purgeable:                                1754.\n\"Translation faults\":                     4627497755.\nPages copy-on-write:                       285312832.\nPages zero filled:                        1702180930.\nPages reactivated:                         596200982.\nPages purged:                               35275692.\nFile-backed pages:                            142905.\nAnonymous pages:                              526327.\nPages stored in compressor:                  1161233.\nPages occupied by compressor:                 167582.\nDecompressions:                            539233459.\nCompressions:                              611493684.\nPageins:                                    99561628.\nPageouts:                                    1183844.\nSwapins:                                     3870905.\nSwapouts:                                    5218420.",
+          "stderr": ""
+        }
+      },
+      "runner_sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5",
+      "repository": {
+        "commit": {
+          "command": [
+            "git",
+            "rev-parse",
+            "HEAD"
+          ],
+          "exit_code": 0,
+          "stdout": "38e9eb86e2c2db8fb2e607c9f3ff611407941b4b",
+          "stderr": ""
+        },
+        "tree": {
+          "command": [
+            "git",
+            "rev-parse",
+            "HEAD^{tree}"
+          ],
+          "exit_code": 0,
+          "stdout": "6e87a4b07655078dd1680ca765501e619b9a7ed3",
+          "stderr": ""
+        },
+        "top_level": {
+          "command": [
+            "git",
+            "rev-parse",
+            "--show-toplevel"
+          ],
+          "exit_code": 0,
+          "stdout": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide",
+          "stderr": ""
+        },
+        "status": {
+          "command": [
+            "git",
+            "status",
+            "--porcelain"
+          ],
+          "exit_code": 0,
+          "stdout": "M apps/cli/src/profiling.rs\n M docs/architecture.md\n M docs/performance/receipts/m2-numeric-operations-2026-09-28/README.md\n M docs/profiling.md\n M src/engine/api/profiling.rs\n M src/engine/api/profiling/cost.rs\n M src/engine/api/profiling/cost/sites.rs\n M src/engine/code/exec.rs\n M src/engine/code/mod.rs\n M src/engine/code/region.rs\n M src/engine/compiler/flow.rs\n M src/engine/compiler/tests/numeric_region.rs\n M src/engine/heap/object_storage.rs\n M src/engine/heap/profiling.rs\n M src/engine/mod.rs\n M src/engine/object/ordinary_storage.rs\n M src/engine/vm/execute.rs\n M src/engine/vm/stack/window.rs\n?? docs/performance/receipts/execution-ready-plans-2026-09-28/\n?? src/engine/code/initialization.rs\n?? src/engine/numeric_region_miss.rs",
+          "stderr": ""
+        }
+      }
+    },
+    "runner_sha256": "8a852679221202ae6d3dac1e02b295368a79529a3e0c32e51fd6b914e5d4b425",
+    "manifest_sha256": "1761ef61fae41c8f0331b83a6045f4b0fe81a0e5470c03e99a085c9cd02c1ac8",
+    "workloads": [
+      {
+        "case": "nonapp",
+        "path": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/nonapp.js",
+        "sha256": "805a98a15cbdba18b11c349d2ed75c3f667d43851932da860dc35b12b6470ba9",
+        "expected": "2000000\n",
+        "size": 2000000
+      },
+      {
+        "case": "update-hit",
+        "path": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-hit.js",
+        "sha256": "0149509bd5f460ad326ba70bb1f76908c94a063cea34bb25b350c9abf56ddb52",
+        "expected": "2000000\n",
+        "size": 2000000
+      },
+      {
+        "case": "update-miss",
+        "path": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-miss.js",
+        "sha256": "9878abaf6a5846ec8abc1e5338339e5247d4ff3d6e4326fd2113cbeca8dbccf2",
+        "expected": "0\n",
+        "size": 2000000
+      },
+      {
+        "case": "update-product-hit",
+        "path": "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js",
+        "sha256": "a4820ce93f5208df49a87bb255232510dec7f150059d842f8c618b6f2e7e33d7",
+        "expected": "2000000\n",
+        "size": 2000000
+      }
+    ],
+    "engines": {
+      "dense_a": {
+        "path": "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "sha256": "d21ade9a3dd0815513ab591dc928b4a69eb33b998c42964ae7addc69b5c4ab6d",
+        "version": {
+          "command": [
+            "/private/tmp/oxide-next-candidate-dense/release/qjs",
+            "--version"
+          ],
+          "exit_code": 0,
+          "stdout": "quickjs-oxide 0.0.1 (QuickJS 2026-06-04 compatibility target)",
+          "stderr": ""
+        },
+        "build": null
+      },
+      "dense_b": {
+        "path": "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "sha256": "d21ade9a3dd0815513ab591dc928b4a69eb33b998c42964ae7addc69b5c4ab6d",
+        "version": {
+          "command": [
+            "/private/tmp/oxide-next-candidate-dense/release/qjs",
+            "--version"
+          ],
+          "exit_code": 0,
+          "stdout": "quickjs-oxide 0.0.1 (QuickJS 2026-06-04 compatibility target)",
+          "stderr": ""
+        },
+        "build": null
+      }
+    },
+    "repeat": 8,
+    "order_strategy": "abba-baab",
+    "timeout_seconds": 180,
+    "cpu": null,
+    "darwin_counters": true,
+    "counter_scope": "whole process including startup and teardown",
+    "metric": "whole-process wall nanoseconds; not adaptive scores"
+  },
+  "summary": [
+    {
+      "case": "nonapp",
+      "size": 2000000,
+      "engine": "dense_a",
+      "eligible": true,
+      "successful_wall_ns": [
+        222920250,
+        244703750,
+        235868750,
+        247318125,
+        233406875,
+        250300208,
+        249952667,
+        233136375
+      ],
+      "failures": [],
+      "median_wall_ns": 240286250.0
+    },
+    {
+      "case": "nonapp",
+      "size": 2000000,
+      "engine": "dense_b",
+      "eligible": true,
+      "successful_wall_ns": [
+        225097875,
+        248521208,
+        231568708,
+        250607750,
+        352568291,
+        226729000,
+        230843625,
+        240792209
+      ],
+      "failures": [],
+      "median_wall_ns": 236180458.5
+    },
+    {
+      "case": "update-hit",
+      "size": 2000000,
+      "engine": "dense_a",
+      "eligible": true,
+      "successful_wall_ns": [
+        320984084,
+        307314083,
+        309136916,
+        322000333,
+        296206834,
+        307121584,
+        304022083,
+        313065250
+      ],
+      "failures": [],
+      "median_wall_ns": 308225499.5
+    },
+    {
+      "case": "update-hit",
+      "size": 2000000,
+      "engine": "dense_b",
+      "eligible": true,
+      "successful_wall_ns": [
+        317396542,
+        345282459,
+        327102125,
+        312602458,
+        303013791,
+        305345834,
+        308903750,
+        309026708
+      ],
+      "failures": [],
+      "median_wall_ns": 310814583.0
+    },
+    {
+      "case": "update-miss",
+      "size": 2000000,
+      "engine": "dense_a",
+      "eligible": true,
+      "successful_wall_ns": [
+        2604548666,
+        2660390833,
+        2794425750,
+        2923231834,
+        2761447333,
+        2665557667,
+        2528052250,
+        2708268334
+      ],
+      "failures": [],
+      "median_wall_ns": 2686913000.5
+    },
+    {
+      "case": "update-miss",
+      "size": 2000000,
+      "engine": "dense_b",
+      "eligible": true,
+      "successful_wall_ns": [
+        2688565041,
+        2656922500,
+        2679322458,
+        2809740167,
+        2937388208,
+        2847977667,
+        2593455416,
+        2869677125
+      ],
+      "failures": [],
+      "median_wall_ns": 2749152604.0
+    },
+    {
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "dense_a",
+      "eligible": true,
+      "successful_wall_ns": [
+        350854084,
+        344347000,
+        327573209,
+        322749584,
+        318301542,
+        339983833,
+        335034375,
+        308512167
+      ],
+      "failures": [],
+      "median_wall_ns": 331303792.0
+    },
+    {
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "dense_b",
+      "eligible": true,
+      "successful_wall_ns": [
+        388713083,
+        356515667,
+        313535375,
+        336111667,
+        309346125,
+        318541416,
+        327243709,
+        347553625
+      ],
+      "failures": [],
+      "median_wall_ns": 331677688.0
+    }
+  ],
+  "samples": [
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_a-0.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 222920250,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_a-0.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_a-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_a-0.time-l.txt",
+        "raw_sha256": "0824edcbefc4d5ebc6eea58bff983edd760ef99596308ea4e63b1b3c9b7e9567",
+        "values": {
+          "maximum_resident_set_size": 5783552,
+          "instructions_retired": 1591776178,
+          "cycles_elapsed": 414556650,
+          "peak_memory_footprint": 2474880
+        }
+      },
+      "case": "nonapp",
+      "size": 2000000,
+      "engine": "dense_a",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_b-0.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 225097875,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_b-0.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_b-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_b-0.time-l.txt",
+        "raw_sha256": "3681066471cc78b8de6f00eec03815ab61e4e02e8fedee7d881b256e6df9bc11",
+        "values": {
+          "maximum_resident_set_size": 5931008,
+          "instructions_retired": 1585204537,
+          "cycles_elapsed": 411776799,
+          "peak_memory_footprint": 2605888
+        }
+      },
+      "case": "nonapp",
+      "size": 2000000,
+      "engine": "dense_b",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_b-1.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 248521208,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_b-1.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_b-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_b-1.time-l.txt",
+        "raw_sha256": "04c7050889d34dd5be474c8b37fa0ddc18c0e55b90fa3b31a3d2e44640fd0485",
+        "values": {
+          "maximum_resident_set_size": 5718016,
+          "instructions_retired": 1586513814,
+          "cycles_elapsed": 428028767,
+          "peak_memory_footprint": 2392896
+        }
+      },
+      "case": "nonapp",
+      "size": 2000000,
+      "engine": "dense_b",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_a-1.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 244703750,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_a-1.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_a-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_a-1.time-l.txt",
+        "raw_sha256": "acf8cdb45fed9eb8c93b0e91e4cf78f88b0be64d8219261428cd6774d0ca215b",
+        "values": {
+          "maximum_resident_set_size": 5783552,
+          "instructions_retired": 1586249258,
+          "cycles_elapsed": 431022923,
+          "peak_memory_footprint": 2458432
+        }
+      },
+      "case": "nonapp",
+      "size": 2000000,
+      "engine": "dense_a",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_b-2.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 231568708,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_b-2.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_b-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_b-2.time-l.txt",
+        "raw_sha256": "b4aa6f06aae64f6a67207a8cd3f13c3f9a72ff1dffc9ace289375712110efd21",
+        "values": {
+          "maximum_resident_set_size": 5816320,
+          "instructions_retired": 1586308421,
+          "cycles_elapsed": 428737526,
+          "peak_memory_footprint": 2491200
+        }
+      },
+      "case": "nonapp",
+      "size": 2000000,
+      "engine": "dense_b",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_a-2.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 235868750,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_a-2.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_a-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_a-2.time-l.txt",
+        "raw_sha256": "136600ba79a67584db74747f808dfd4fd65479bd66bc048360519d6530b21544",
+        "values": {
+          "maximum_resident_set_size": 5750784,
+          "instructions_retired": 1586255270,
+          "cycles_elapsed": 428491078,
+          "peak_memory_footprint": 2425664
+        }
+      },
+      "case": "nonapp",
+      "size": 2000000,
+      "engine": "dense_a",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_a-3.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 247318125,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_a-3.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_a-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_a-3.time-l.txt",
+        "raw_sha256": "6a402bb1b7df58a2d9bb8cb046179f125dcddf5d8f3738541ddafda3893484fc",
+        "values": {
+          "maximum_resident_set_size": 5750784,
+          "instructions_retired": 1586923337,
+          "cycles_elapsed": 432090652,
+          "peak_memory_footprint": 2425664
+        }
+      },
+      "case": "nonapp",
+      "size": 2000000,
+      "engine": "dense_a",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_b-3.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 250607750,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_b-3.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_b-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_b-3.time-l.txt",
+        "raw_sha256": "7900080dbb04d7272d90b3221345dcaa508ebe287967206f961542552ad91dd2",
+        "values": {
+          "maximum_resident_set_size": 5767168,
+          "instructions_retired": 1586698554,
+          "cycles_elapsed": 420352596,
+          "peak_memory_footprint": 2458496
+        }
+      },
+      "case": "nonapp",
+      "size": 2000000,
+      "engine": "dense_b",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_a-4.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 233406875,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_a-4.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_a-4.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_a-4.time-l.txt",
+        "raw_sha256": "12f3084c0125cd239f34bd28fb1541d875e158ff1e3763af74e943f24eb8530f",
+        "values": {
+          "maximum_resident_set_size": 5734400,
+          "instructions_retired": 1586279194,
+          "cycles_elapsed": 421774685,
+          "peak_memory_footprint": 2425728
+        }
+      },
+      "case": "nonapp",
+      "size": 2000000,
+      "engine": "dense_a",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_b-4.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 352568291,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_b-4.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_b-4.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_b-4.time-l.txt",
+        "raw_sha256": "8b93f1da8807f74c1287b4eca91e22ccd8813b6b95f8afaf3103258bbc65dc4e",
+        "values": {
+          "maximum_resident_set_size": 5767168,
+          "instructions_retired": 1587676754,
+          "cycles_elapsed": 429197541,
+          "peak_memory_footprint": 2442048
+        }
+      },
+      "case": "nonapp",
+      "size": 2000000,
+      "engine": "dense_b",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_b-5.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 226729000,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_b-5.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_b-5.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_b-5.time-l.txt",
+        "raw_sha256": "97a41b802c73ca72163fa674356845d56cc7b042d1fa27e42f3022febdf16805",
+        "values": {
+          "maximum_resident_set_size": 5750784,
+          "instructions_retired": 1585044856,
+          "cycles_elapsed": 408256679,
+          "peak_memory_footprint": 2442112
+        }
+      },
+      "case": "nonapp",
+      "size": 2000000,
+      "engine": "dense_b",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_a-5.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 250300208,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_a-5.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_a-5.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_a-5.time-l.txt",
+        "raw_sha256": "cdd01e8502d4eea006c65871d601d25697a53756df02eb9e9481adc39773bfe4",
+        "values": {
+          "maximum_resident_set_size": 5750784,
+          "instructions_retired": 1587427237,
+          "cycles_elapsed": 442784238,
+          "peak_memory_footprint": 2425664
+        }
+      },
+      "case": "nonapp",
+      "size": 2000000,
+      "engine": "dense_a",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_b-6.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 230843625,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_b-6.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_b-6.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_b-6.time-l.txt",
+        "raw_sha256": "4b6ac7860bf3a9fe3e9848edf0bfeac8b921130bcabb6d144f07b43c77f73d70",
+        "values": {
+          "maximum_resident_set_size": 5718016,
+          "instructions_retired": 1585950359,
+          "cycles_elapsed": 416680926,
+          "peak_memory_footprint": 2392896
+        }
+      },
+      "case": "nonapp",
+      "size": 2000000,
+      "engine": "dense_b",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_a-6.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 249952667,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_a-6.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_a-6.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_a-6.time-l.txt",
+        "raw_sha256": "74839f6fc80197d2249e85239020c4048137977f658b97d14b6496124f15dfde",
+        "values": {
+          "maximum_resident_set_size": 5685248,
+          "instructions_retired": 1586790893,
+          "cycles_elapsed": 441884804,
+          "peak_memory_footprint": 2360128
+        }
+      },
+      "case": "nonapp",
+      "size": 2000000,
+      "engine": "dense_a",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_a-7.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 233136375,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_a-7.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_a-7.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_a-7.time-l.txt",
+        "raw_sha256": "6fc0b13f870f4b93f6e5c2ae95031a4ece2e331773c43e11a92c41663f5e42ab",
+        "values": {
+          "maximum_resident_set_size": 5799936,
+          "instructions_retired": 1586351946,
+          "cycles_elapsed": 437054753,
+          "peak_memory_footprint": 2474816
+        }
+      },
+      "case": "nonapp",
+      "size": 2000000,
+      "engine": "dense_a",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_b-7.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/nonapp.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 240792209,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_b-7.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_b-7.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/nonapp-dense_b-7.time-l.txt",
+        "raw_sha256": "addc1daf5b1141236c90c40598ea681ff07e6fc641a70c4fb94068a70eca853a",
+        "values": {
+          "maximum_resident_set_size": 5783552,
+          "instructions_retired": 1586802589,
+          "cycles_elapsed": 444169216,
+          "peak_memory_footprint": 2458432
+        }
+      },
+      "case": "nonapp",
+      "size": 2000000,
+      "engine": "dense_b",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_a-0.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 320984084,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_a-0.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_a-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_a-0.time-l.txt",
+        "raw_sha256": "7642a77d8ab17c397b9dd8f5f4af2e3c58ce87d71d984ec75b1ff7eeb4b0c360",
+        "values": {
+          "maximum_resident_set_size": 5849088,
+          "instructions_retired": 2112062168,
+          "cycles_elapsed": 577257151,
+          "peak_memory_footprint": 2507584
+        }
+      },
+      "case": "update-hit",
+      "size": 2000000,
+      "engine": "dense_a",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_b-0.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 317396542,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_b-0.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_b-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_b-0.time-l.txt",
+        "raw_sha256": "f36f469bf7d424bab24e76ca554d8c52761ec07e6a1d3e9de7cb4380ec45ada0",
+        "values": {
+          "maximum_resident_set_size": 5799936,
+          "instructions_retired": 2112908492,
+          "cycles_elapsed": 564646151,
+          "peak_memory_footprint": 2458432
+        }
+      },
+      "case": "update-hit",
+      "size": 2000000,
+      "engine": "dense_b",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_b-1.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 345282459,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_b-1.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_b-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_b-1.time-l.txt",
+        "raw_sha256": "d2ea33239028e9eddfa1daf1dbfd2ea00944edf520f1b118fe68b5b38f10d3b2",
+        "values": {
+          "maximum_resident_set_size": 6045696,
+          "instructions_retired": 2112884010,
+          "cycles_elapsed": 575327925,
+          "peak_memory_footprint": 2704192
+        }
+      },
+      "case": "update-hit",
+      "size": 2000000,
+      "engine": "dense_b",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_a-1.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 307314083,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_a-1.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_a-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_a-1.time-l.txt",
+        "raw_sha256": "1c6f716073166e566397755e69ab0c617e31ab3a23bc08514516c50d7737c03b",
+        "values": {
+          "maximum_resident_set_size": 5816320,
+          "instructions_retired": 2111013529,
+          "cycles_elapsed": 570377647,
+          "peak_memory_footprint": 2474816
+        }
+      },
+      "case": "update-hit",
+      "size": 2000000,
+      "engine": "dense_a",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_b-2.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 327102125,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_b-2.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_b-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_b-2.time-l.txt",
+        "raw_sha256": "7b9c2d91392664c7d5020210bf3c05f7bdda70c54fae9eadc81cdcf7ad9543a5",
+        "values": {
+          "maximum_resident_set_size": 5734400,
+          "instructions_retired": 2111344385,
+          "cycles_elapsed": 579283142,
+          "peak_memory_footprint": 2392896
+        }
+      },
+      "case": "update-hit",
+      "size": 2000000,
+      "engine": "dense_b",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_a-2.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 309136916,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_a-2.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_a-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_a-2.time-l.txt",
+        "raw_sha256": "e150546090a29ef53bcdb8f034a5013e55f9171c085c4c5fa9a1624c46b639d9",
+        "values": {
+          "maximum_resident_set_size": 5963776,
+          "instructions_retired": 2112195617,
+          "cycles_elapsed": 568008735,
+          "peak_memory_footprint": 2622272
+        }
+      },
+      "case": "update-hit",
+      "size": 2000000,
+      "engine": "dense_a",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_a-3.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 322000333,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_a-3.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_a-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_a-3.time-l.txt",
+        "raw_sha256": "856b7797a98281be71013a0944d22e3e4d1bef652bdf24982758a37dd2966919",
+        "values": {
+          "maximum_resident_set_size": 5865472,
+          "instructions_retired": 2112510919,
+          "cycles_elapsed": 590843236,
+          "peak_memory_footprint": 2523968
+        }
+      },
+      "case": "update-hit",
+      "size": 2000000,
+      "engine": "dense_a",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_b-3.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 312602458,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_b-3.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_b-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_b-3.time-l.txt",
+        "raw_sha256": "1afdb25976f6db221ddbc8f893328db4249e4cb6845bbb87a3a4bd3aec4ce05c",
+        "values": {
+          "maximum_resident_set_size": 5963776,
+          "instructions_retired": 2111786276,
+          "cycles_elapsed": 573359791,
+          "peak_memory_footprint": 2622272
+        }
+      },
+      "case": "update-hit",
+      "size": 2000000,
+      "engine": "dense_b",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_a-4.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 296206834,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_a-4.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_a-4.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_a-4.time-l.txt",
+        "raw_sha256": "1729ba3840136dfbe07260d3d64938bffe574fa08656380d3501d45ca3cc709c",
+        "values": {
+          "maximum_resident_set_size": 5816320,
+          "instructions_retired": 2110730424,
+          "cycles_elapsed": 552172044,
+          "peak_memory_footprint": 2474816
+        }
+      },
+      "case": "update-hit",
+      "size": 2000000,
+      "engine": "dense_a",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_b-4.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 303013791,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_b-4.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_b-4.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_b-4.time-l.txt",
+        "raw_sha256": "eacc29708aeaefa7acd19dafd42a7d46e1ab9585ca21422dbb8556bd392be6d9",
+        "values": {
+          "maximum_resident_set_size": 5832704,
+          "instructions_retired": 2111435235,
+          "cycles_elapsed": 564320564,
+          "peak_memory_footprint": 2491200
+        }
+      },
+      "case": "update-hit",
+      "size": 2000000,
+      "engine": "dense_b",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_b-5.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 305345834,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_b-5.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_b-5.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_b-5.time-l.txt",
+        "raw_sha256": "25687950fcbb5e9b2e13dd0ee433f71ca58fe5fb1f54d4da6fe2c931d8894534",
+        "values": {
+          "maximum_resident_set_size": 5849088,
+          "instructions_retired": 2110977369,
+          "cycles_elapsed": 567729534,
+          "peak_memory_footprint": 2507584
+        }
+      },
+      "case": "update-hit",
+      "size": 2000000,
+      "engine": "dense_b",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_a-5.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 307121584,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_a-5.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_a-5.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_a-5.time-l.txt",
+        "raw_sha256": "8f043633a8730f8db3725275d6887cc780063a3a9970345e2e719561ad1b16b9",
+        "values": {
+          "maximum_resident_set_size": 5996544,
+          "instructions_retired": 2112241419,
+          "cycles_elapsed": 567726543,
+          "peak_memory_footprint": 2655040
+        }
+      },
+      "case": "update-hit",
+      "size": 2000000,
+      "engine": "dense_a",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_b-6.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 308903750,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_b-6.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_b-6.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_b-6.time-l.txt",
+        "raw_sha256": "78cfe8820d63e5a1762a5a7554a3d9efcda741b105b69dd7aaefb1c05a4a7c89",
+        "values": {
+          "maximum_resident_set_size": 5750784,
+          "instructions_retired": 2111703448,
+          "cycles_elapsed": 558434116,
+          "peak_memory_footprint": 2409280
+        }
+      },
+      "case": "update-hit",
+      "size": 2000000,
+      "engine": "dense_b",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_a-6.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 304022083,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_a-6.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_a-6.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_a-6.time-l.txt",
+        "raw_sha256": "3ba89a3f20e5d6e8c95aa378618ec429534e09235162b4feb37e1c48d1458daa",
+        "values": {
+          "maximum_resident_set_size": 5849088,
+          "instructions_retired": 2112358429,
+          "cycles_elapsed": 568491543,
+          "peak_memory_footprint": 2507584
+        }
+      },
+      "case": "update-hit",
+      "size": 2000000,
+      "engine": "dense_a",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_a-7.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 313065250,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_a-7.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_a-7.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_a-7.time-l.txt",
+        "raw_sha256": "0bc4bcc0d416dfdb04169cc635ef199b615e37c8ec3ccd9a22e580796d006d90",
+        "values": {
+          "maximum_resident_set_size": 5849088,
+          "instructions_retired": 2111458944,
+          "cycles_elapsed": 579538865,
+          "peak_memory_footprint": 2507584
+        }
+      },
+      "case": "update-hit",
+      "size": 2000000,
+      "engine": "dense_a",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_b-7.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 309026708,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_b-7.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_b-7.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-hit-dense_b-7.time-l.txt",
+        "raw_sha256": "37b051169d96528747163ce24222efefd69003405554818192d7119b2ca68e94",
+        "values": {
+          "maximum_resident_set_size": 5832704,
+          "instructions_retired": 2112475177,
+          "cycles_elapsed": 572899511,
+          "peak_memory_footprint": 2491200
+        }
+      },
+      "case": "update-hit",
+      "size": 2000000,
+      "engine": "dense_b",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_a-0.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2604548666,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_a-0.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_a-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_a-0.time-l.txt",
+        "raw_sha256": "582e950224de81cc2d329081b78bbacbf0193a0b2b64ddac4d5a85e6295a3dc8",
+        "values": {
+          "maximum_resident_set_size": 6193152,
+          "instructions_retired": 17480147451,
+          "cycles_elapsed": 5004645869,
+          "peak_memory_footprint": 2491200
+        }
+      },
+      "case": "update-miss",
+      "size": 2000000,
+      "engine": "dense_a",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_b-0.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2688565041,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_b-0.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_b-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_b-0.time-l.txt",
+        "raw_sha256": "5f51bce07da2aa8ac48776b8543e08696d4b915b3791db082d5ff31fdae0bfd4",
+        "values": {
+          "maximum_resident_set_size": 6242304,
+          "instructions_retired": 17478978431,
+          "cycles_elapsed": 5041701669,
+          "peak_memory_footprint": 2556800
+        }
+      },
+      "case": "update-miss",
+      "size": 2000000,
+      "engine": "dense_b",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_b-1.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2656922500,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_b-1.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_b-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_b-1.time-l.txt",
+        "raw_sha256": "4619693ff99cd6e360f589d70c66ffb4da5de9dd123dc54ceca28ccab8a24b2a",
+        "values": {
+          "maximum_resident_set_size": 6193152,
+          "instructions_retired": 17478334798,
+          "cycles_elapsed": 5020955259,
+          "peak_memory_footprint": 2491200
+        }
+      },
+      "case": "update-miss",
+      "size": 2000000,
+      "engine": "dense_b",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_a-1.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2660390833,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_a-1.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_a-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_a-1.time-l.txt",
+        "raw_sha256": "949447039806662f3c08823844c86e29ba21a1e2517f5b70c44a37a42bb67b9c",
+        "values": {
+          "maximum_resident_set_size": 6291456,
+          "instructions_retired": 17476966401,
+          "cycles_elapsed": 5027647594,
+          "peak_memory_footprint": 2589504
+        }
+      },
+      "case": "update-miss",
+      "size": 2000000,
+      "engine": "dense_a",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_b-2.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2679322458,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_b-2.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_b-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_b-2.time-l.txt",
+        "raw_sha256": "f429a3a58cd471c445f121a3bc404871a5bbe2390b3bb13f02dce82f43483640",
+        "values": {
+          "maximum_resident_set_size": 6225920,
+          "instructions_retired": 17477497663,
+          "cycles_elapsed": 5011661771,
+          "peak_memory_footprint": 2523968
+        }
+      },
+      "case": "update-miss",
+      "size": 2000000,
+      "engine": "dense_b",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_a-2.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2794425750,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_a-2.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_a-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_a-2.time-l.txt",
+        "raw_sha256": "81c95d801e7c24da719be6b4060609d660d7c22c9db563091f5a91852207f8c5",
+        "values": {
+          "maximum_resident_set_size": 6127616,
+          "instructions_retired": 17492836323,
+          "cycles_elapsed": 5047635551,
+          "peak_memory_footprint": 2425664
+        }
+      },
+      "case": "update-miss",
+      "size": 2000000,
+      "engine": "dense_a",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_a-3.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2923231834,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_a-3.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_a-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_a-3.time-l.txt",
+        "raw_sha256": "672e669b8c10c4aaeb580771a2fe4920dfe3a9a2cce44fd6afdc2772d43456fa",
+        "values": {
+          "maximum_resident_set_size": 6275072,
+          "instructions_retired": 17504360136,
+          "cycles_elapsed": 5208304338,
+          "peak_memory_footprint": 2573120
+        }
+      },
+      "case": "update-miss",
+      "size": 2000000,
+      "engine": "dense_a",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_b-3.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2809740167,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_b-3.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_b-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_b-3.time-l.txt",
+        "raw_sha256": "d22542583ab3242c12e0cbcdc3edba2a884fd4d0ab69f0a9d95e33cb918971da",
+        "values": {
+          "maximum_resident_set_size": 6291456,
+          "instructions_retired": 17512928143,
+          "cycles_elapsed": 5086852065,
+          "peak_memory_footprint": 2589504
+        }
+      },
+      "case": "update-miss",
+      "size": 2000000,
+      "engine": "dense_b",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_a-4.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2761447333,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_a-4.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_a-4.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_a-4.time-l.txt",
+        "raw_sha256": "e211c90430e6963961c8b5d8c4ff7dd2fc9a2d9e681762faf1f9da5851b5d157",
+        "values": {
+          "maximum_resident_set_size": 6455296,
+          "instructions_retired": 17507353299,
+          "cycles_elapsed": 5041677152,
+          "peak_memory_footprint": 2753344
+        }
+      },
+      "case": "update-miss",
+      "size": 2000000,
+      "engine": "dense_a",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_b-4.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2937388208,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_b-4.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_b-4.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_b-4.time-l.txt",
+        "raw_sha256": "94263021d697f12d3acd224dfd688dedb5b20827fea1e124ea89929cd9ff62ce",
+        "values": {
+          "maximum_resident_set_size": 6242304,
+          "instructions_retired": 17514651404,
+          "cycles_elapsed": 5137765982,
+          "peak_memory_footprint": 2540352
+        }
+      },
+      "case": "update-miss",
+      "size": 2000000,
+      "engine": "dense_b",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_b-5.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2847977667,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_b-5.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_b-5.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_b-5.time-l.txt",
+        "raw_sha256": "b3adb60300b36e6aed60ecdf8892f8ae1d84f2c3d0a72b43a49c1d4c1aab56ed",
+        "values": {
+          "maximum_resident_set_size": 6193152,
+          "instructions_retired": 17516043242,
+          "cycles_elapsed": 5120281803,
+          "peak_memory_footprint": 2491200
+        }
+      },
+      "case": "update-miss",
+      "size": 2000000,
+      "engine": "dense_b",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_a-5.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2665557667,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_a-5.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_a-5.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_a-5.time-l.txt",
+        "raw_sha256": "4ca1e7cb0b505a268213b819e49e2714627dea3742d7d4eb7566928b28f55a57",
+        "values": {
+          "maximum_resident_set_size": 6225920,
+          "instructions_retired": 17479648098,
+          "cycles_elapsed": 5025606086,
+          "peak_memory_footprint": 2523968
+        }
+      },
+      "case": "update-miss",
+      "size": 2000000,
+      "engine": "dense_a",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_b-6.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2593455416,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_b-6.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_b-6.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_b-6.time-l.txt",
+        "raw_sha256": "6ac697db11ca8635f7e5a2082ed1db627675e1aee3c2baca31e8ef825cc1e0b7",
+        "values": {
+          "maximum_resident_set_size": 6127616,
+          "instructions_retired": 17476062165,
+          "cycles_elapsed": 4986508896,
+          "peak_memory_footprint": 2425664
+        }
+      },
+      "case": "update-miss",
+      "size": 2000000,
+      "engine": "dense_b",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_a-6.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2528052250,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_a-6.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_a-6.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_a-6.time-l.txt",
+        "raw_sha256": "13d46f8275ed902e2d10d5cfbd788214ab35428837f941b82e944b8fa31fe86c",
+        "values": {
+          "maximum_resident_set_size": 6078464,
+          "instructions_retired": 17488912523,
+          "cycles_elapsed": 4614828502,
+          "peak_memory_footprint": 2589504
+        }
+      },
+      "case": "update-miss",
+      "size": 2000000,
+      "engine": "dense_a",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_a-7.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2708268334,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_a-7.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_a-7.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_a-7.time-l.txt",
+        "raw_sha256": "71b64ba8924e9bea9350a00acea20b913e1f0d163bb5cf19423231ea77c9faf3",
+        "values": {
+          "maximum_resident_set_size": 6275072,
+          "instructions_retired": 17497036386,
+          "cycles_elapsed": 4833762909,
+          "peak_memory_footprint": 2589568
+        }
+      },
+      "case": "update-miss",
+      "size": 2000000,
+      "engine": "dense_a",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_b-7.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/m2-numeric-operations-2026-09-28/workloads/update-miss.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2869677125,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_b-7.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_b-7.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-miss-dense_b-7.time-l.txt",
+        "raw_sha256": "38bd2718fa117741b5bbbd11ef66d712c05581eb505bb6fa54212027e0194805",
+        "values": {
+          "maximum_resident_set_size": 6193152,
+          "instructions_retired": 17480419178,
+          "cycles_elapsed": 5067486926,
+          "peak_memory_footprint": 2491200
+        }
+      },
+      "case": "update-miss",
+      "size": 2000000,
+      "engine": "dense_b",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_a-0.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 350854084,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_a-0.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_a-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_a-0.time-l.txt",
+        "raw_sha256": "285008691b78394020ade59d956502b03d4384326d523072e3836dba05f0ac20",
+        "values": {
+          "maximum_resident_set_size": 5734400,
+          "instructions_retired": 2589002160,
+          "cycles_elapsed": 633246720,
+          "peak_memory_footprint": 2392896
+        }
+      },
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "dense_a",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_b-0.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 388713083,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_b-0.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_b-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_b-0.time-l.txt",
+        "raw_sha256": "d172199288b815a9613dcc41e3db7c59077f2513945b9650894aeef0701f795d",
+        "values": {
+          "maximum_resident_set_size": 5783552,
+          "instructions_retired": 2589636341,
+          "cycles_elapsed": 688445302,
+          "peak_memory_footprint": 2442048
+        }
+      },
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "dense_b",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_b-1.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 356515667,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_b-1.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_b-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_b-1.time-l.txt",
+        "raw_sha256": "eff441b4d125b07640caad1032c252ec6bd043b8a9a066463d6204c20ffea602",
+        "values": {
+          "maximum_resident_set_size": 5832704,
+          "instructions_retired": 2589065590,
+          "cycles_elapsed": 628931268,
+          "peak_memory_footprint": 2491200
+        }
+      },
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "dense_b",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_a-1.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 344347000,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_a-1.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_a-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_a-1.time-l.txt",
+        "raw_sha256": "475dbd280c3c2106ad44c25b7793b43d0346dc48a6ee9360b3fd7cbaa123c7a0",
+        "values": {
+          "maximum_resident_set_size": 5865472,
+          "instructions_retired": 2589670600,
+          "cycles_elapsed": 634902533,
+          "peak_memory_footprint": 2523968
+        }
+      },
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "dense_a",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_b-2.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 313535375,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_b-2.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_b-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_b-2.time-l.txt",
+        "raw_sha256": "b3f7cae384e93ca7338d7578e274835b9caf03a2cdfceecb6ed3a484f2cc4890",
+        "values": {
+          "maximum_resident_set_size": 5816320,
+          "instructions_retired": 2589408413,
+          "cycles_elapsed": 594223990,
+          "peak_memory_footprint": 2491264
+        }
+      },
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "dense_b",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_a-2.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 327573209,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_a-2.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_a-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_a-2.time-l.txt",
+        "raw_sha256": "19d0f9aae9b49f6cf04484b94c8d40917e74c45fe3cc766bf8aa272440cf6dba",
+        "values": {
+          "maximum_resident_set_size": 5783552,
+          "instructions_retired": 2589997530,
+          "cycles_elapsed": 606716604,
+          "peak_memory_footprint": 2458496
+        }
+      },
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "dense_a",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_a-3.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 322749584,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_a-3.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_a-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_a-3.time-l.txt",
+        "raw_sha256": "82ced011f9152056a8fcfdeac2d7303bbcd6186ca0c484d839fe1c5a8a401727",
+        "values": {
+          "maximum_resident_set_size": 5799936,
+          "instructions_retired": 2589162596,
+          "cycles_elapsed": 605166059,
+          "peak_memory_footprint": 2458432
+        }
+      },
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "dense_a",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_b-3.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 336111667,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_b-3.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_b-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_b-3.time-l.txt",
+        "raw_sha256": "7ae10c40aef24ae7deee8d5cb51d8ad2221bff61aa873a1182ab145655669aea",
+        "values": {
+          "maximum_resident_set_size": 5816320,
+          "instructions_retired": 2589810479,
+          "cycles_elapsed": 624684310,
+          "peak_memory_footprint": 2474816
+        }
+      },
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "dense_b",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_a-4.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 318301542,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_a-4.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_a-4.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_a-4.time-l.txt",
+        "raw_sha256": "46e5e5601c80efec8721ccd4dfc6e9ec6edc5327a1193a4111bd195153adbcf9",
+        "values": {
+          "maximum_resident_set_size": 5832704,
+          "instructions_retired": 2588447817,
+          "cycles_elapsed": 601722703,
+          "peak_memory_footprint": 2491200
+        }
+      },
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "dense_a",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_b-4.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 309346125,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_b-4.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_b-4.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_b-4.time-l.txt",
+        "raw_sha256": "ea6397c3f455543442c1d807d54dfe97bcc19ff95d84a8dad6439007c107447e",
+        "values": {
+          "maximum_resident_set_size": 5799936,
+          "instructions_retired": 2588800488,
+          "cycles_elapsed": 573276404,
+          "peak_memory_footprint": 2458432
+        }
+      },
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "dense_b",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_b-5.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 318541416,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_b-5.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_b-5.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_b-5.time-l.txt",
+        "raw_sha256": "2ee6018c2d6c9f846f8361462df729548bce76765953863d41fa3fbb5c4d9be0",
+        "values": {
+          "maximum_resident_set_size": 5881856,
+          "instructions_retired": 2588847099,
+          "cycles_elapsed": 587231311,
+          "peak_memory_footprint": 2540352
+        }
+      },
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "dense_b",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_a-5.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 339983833,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_a-5.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_a-5.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_a-5.time-l.txt",
+        "raw_sha256": "51fbee8ca99db568c969cc0fdfed64e3b75c5407ae1eb9a50e9dfe9d09ea1b96",
+        "values": {
+          "maximum_resident_set_size": 5832704,
+          "instructions_retired": 2588854114,
+          "cycles_elapsed": 646043407,
+          "peak_memory_footprint": 2507648
+        }
+      },
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "dense_a",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_b-6.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 327243709,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_b-6.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_b-6.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_b-6.time-l.txt",
+        "raw_sha256": "530b85d2fa3480cf5f4df57a30c2ae695babe38da4d2cb718708c53d8f8d13fe",
+        "values": {
+          "maximum_resident_set_size": 5816320,
+          "instructions_retired": 2588876496,
+          "cycles_elapsed": 613566477,
+          "peak_memory_footprint": 2474816
+        }
+      },
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "dense_b",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_a-6.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 335034375,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_a-6.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_a-6.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_a-6.time-l.txt",
+        "raw_sha256": "5ba7040accf7f1e0b471e5bb2d34609abfeb1c3a23bc33cf329be3a2cd19b176",
+        "values": {
+          "maximum_resident_set_size": 5849088,
+          "instructions_retired": 2590182596,
+          "cycles_elapsed": 612163908,
+          "peak_memory_footprint": 2507584
+        }
+      },
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "dense_a",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_a-7.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 308512167,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_a-7.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_a-7.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_a-7.time-l.txt",
+        "raw_sha256": "0712bc95ba103d272876391f63d2092ae85cccdcc035ada10ad3556c6f5f9519",
+        "values": {
+          "maximum_resident_set_size": 5799936,
+          "instructions_retired": 2590085672,
+          "cycles_elapsed": 583698541,
+          "peak_memory_footprint": 2458432
+        }
+      },
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "dense_a",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_b-7.time-l.txt",
+        "/private/tmp/oxide-next-candidate-dense/release/qjs",
+        "/Users/eric/.codex/worktrees/2d55/quickjs-oxide/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 347553625,
+      "stdout": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_b-7.stdout",
+      "stderr": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_b-7.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-next-dense-aa/raw/update-product-hit-dense_b-7.time-l.txt",
+        "raw_sha256": "98e6cc0505d9538b84f8916e480c1475ab9aa2a76e78601d46fd37d979442951",
+        "values": {
+          "maximum_resident_set_size": 5734400,
+          "instructions_retired": 2589159528,
+          "cycles_elapsed": 648581620,
+          "peak_memory_footprint": 2409344
+        }
+      },
+      "case": "update-product-hit",
+      "size": 2000000,
+      "engine": "dense_b",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    }
+  ]
+}

@@ -1,8 +1,9 @@
 # #52 起点的执行优化路线
 
 状态：M1 在 `3d98c0a8ee065e5c71607b46bd0059282c6d7e87`
-实现；PR #53 随后扩展了 M2 的直接目的地、数组更新和比较分支。
-其余工作流与 M3 仍是提案。PR #53 的直接基线是 PR #52
+实现；PR #53 随后扩展了 M2 的直接目的地、数组更新和比较分支，
+并在 `6f1de9c5` 发布执行字 continuation、CFG lexical 初始化事实及
+V8 v7 数组乘积更新来源。其余工作流仍是提案。PR #53 的直接基线是 PR #52
 `4287e8c6019933289f3a06e703aea15bf79c9f11`；更早的
 `996663f771afdabdc69d52c94bd4d2fb392e27b1` 是原设计起点。
 M1 的历史验证和测量见[收据](receipts/m1-numeric-region-2026-09-28/README.md)。当前实现见
@@ -19,9 +20,9 @@ M1 的历史验证和测量见[收据](receipts/m1-numeric-region-2026-09-28/REA
 
 | 工作流 | 交付目标 | 顺序与依赖 |
 | --- | --- | --- |
-| 执行规划 | binding、effect、ownership 与局部 dataflow 决定显式操作数、目的地和执行形态 | M1/M2 已覆盖四种有限形态；继续减少精确形态匹配并扩展已证明的来源 |
+| 执行规划 | binding、effect、ownership 与局部 dataflow 决定显式操作数、目的地和执行形态 | M1/M2 已覆盖四种有限形态；数组乘积来源共享 producer fact，继续减少精确形态匹配 |
 | 作用域执行 | 准入返回可消费的目的地访问；数组事实在相应借用内有效 | local 提交与现有 own Number 元素更新已交付；继续复用准入契约 |
-| continuation 与调用 | 携带已知 fault/fallthrough 位置，按发布的布局安装帧，按被替换 owner 选择释放边界 | 可独立推进位置契约；调用布局基于精确 binding 事实继续扩展 |
+| continuation 与调用 | 携带已知 fault/fallthrough 位置，按发布的布局安装帧，按被替换 owner 选择释放边界 | 四种数值操作已使用执行字 continuation 与 scalar 替换准入；通用调用布局仍独立推进 |
 | 自适应操作 | 等布局 opcode family、直接 cache-site ID、有界重试、向回落传递已有 miss 事实 | 先确定操作的所有权与 continuation 契约，再接入生产适应机制 |
 | 存储 | 数值 backing 与 cell/shape 类型化 arena，保留完整身份及回收边 | 数组 backing 复用 M1/M2 操作契约；小节点 arena 可独立推进 |
 | 嵌入执行 | 有界 safepoint、activation scratch、只读 program image、明确语义的 native kernel | 扩大区域前定义中断/计费契约；冻结映像明确 linking 与自适应状态边界 |
