@@ -1,0 +1,96 @@
+{
+  "schema": "oxide-c2-codegen-v1",
+  "method": "nm -nm; llvm-objdump --disassemble --no-show-raw-insn",
+  "builds": [
+    {
+      "build": "c1",
+      "binary_sha256": "25891746f76e574019b299fc15af7c1c07eb506339e832284e4da3bd7b44a943",
+      "binary_bytes": 8073552,
+      "symbols": {
+        "ready_run": {
+          "start": "0x100179178",
+          "next_symbol": "0x10017bb14",
+          "span_bytes": 10652,
+          "next_pc_static_calls": 1,
+          "next_pc_call_addresses": [
+            "100179d4c"
+          ]
+        },
+        "execute_frame": {
+          "start": "0x100447e5c",
+          "next_symbol": "0x10044efa0",
+          "span_bytes": 28996,
+          "next_pc_static_calls": 0,
+          "next_pc_call_addresses": []
+        },
+        "read_progress": {
+          "start": "0x10042ac20",
+          "next_symbol": "0x10042bdf4",
+          "span_bytes": 4564,
+          "next_pc_static_calls": 1,
+          "next_pc_call_addresses": [
+            "10042aca4"
+          ]
+        },
+        "complete_read": {
+          "start": "0x10042c724",
+          "next_symbol": "0x10042cd98",
+          "span_bytes": 1652,
+          "next_pc_static_calls": 1,
+          "next_pc_call_addresses": [
+            "10042c814"
+          ]
+        },
+        "next_pc": {
+          "start": "0x100178ab4",
+          "next_symbol": "0x100178d04",
+          "span_bytes": 592
+        }
+      },
+      "text_section_bytes": 5336520
+    },
+    {
+      "build": "c2",
+      "binary_sha256": "8b719f47b07237b5783758eed4e783a0b7f445f3f2efca39acb40bd24768059a",
+      "binary_bytes": 8073280,
+      "symbols": {
+        "ready_run": {
+          "start": "0x100179290",
+          "next_symbol": "0x10017bc34",
+          "span_bytes": 10660,
+          "next_pc_static_calls": 1,
+          "next_pc_call_addresses": [
+            "100179e6c"
+          ]
+        },
+        "execute_frame": {
+          "start": "0x100447f20",
+          "next_symbol": "0x10044f034",
+          "span_bytes": 28948,
+          "next_pc_static_calls": 0,
+          "next_pc_call_addresses": []
+        },
+        "read_progress": {
+          "start": "0x10042ad84",
+          "next_symbol": "0x10042c0bc",
+          "span_bytes": 4920,
+          "next_pc_static_calls": 0,
+          "next_pc_call_addresses": []
+        },
+        "complete_read": {
+          "start": "0x10042c890",
+          "next_symbol": "0x10042cedc",
+          "span_bytes": 1612,
+          "next_pc_static_calls": 0,
+          "next_pc_call_addresses": []
+        },
+        "next_pc": {
+          "start": "0x100178bcc",
+          "next_symbol": "0x100178e1c",
+          "span_bytes": 592
+        }
+      },
+      "text_section_bytes": 5337012
+    }
+  ]
+}

@@ -1,0 +1,1515 @@
+{
+  "metadata": {
+    "machine": {
+      "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+      "machine": "arm64",
+      "cpu": "Apple M1",
+      "logical_cpus": 8,
+      "python": "3.14.7",
+      "cpu_affinity": null,
+      "scaling_governors": {},
+      "load_average": [
+        86.82763671875,
+        121.8427734375,
+        116.927734375
+      ],
+      "macos": {
+        "physical_memory_bytes": 17179869184,
+        "power_settings": {
+          "command": [
+            "pmset",
+            "-g",
+            "custom"
+          ],
+          "exit_code": 0,
+          "stdout": "Battery Power:\n Sleep On Power Button 1\n lowpowermode         0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         20\n womp                 0\n networkoversleep     0\n sleep                1\n lessbright           1\n tcpkeepalive         1\n disksleep            10\nAC Power:\n Sleep On Power Button 1\n lowpowermode         0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         0\n womp                 1\n networkoversleep     0\n sleep                1\n tcpkeepalive         1\n disksleep            10",
+          "stderr": ""
+        },
+        "power_source": {
+          "command": [
+            "pmset",
+            "-g",
+            "batt"
+          ],
+          "exit_code": 0,
+          "stdout": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=22741091)\t100%; finishing charge; 0:10 remaining present: true",
+          "stderr": ""
+        },
+        "vm_stat": {
+          "command": [
+            "vm_stat"
+          ],
+          "exit_code": 0,
+          "stdout": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                     4435.\nPages active:                                 189162.\nPages inactive:                               185564.\nPages speculative:                              2448.\nPages throttled:                                   0.\nPages wired down:                             168775.\nPages purgeable:                                   2.\n\"Translation faults\":                     4785195911.\nPages copy-on-write:                       291787047.\nPages zero filled:                        1752773461.\nPages reactivated:                         632296458.\nPages purged:                               36266780.\nFile-backed pages:                            135998.\nAnonymous pages:                              241176.\nPages stored in compressor:                  1877129.\nPages occupied by compressor:                 449596.\nDecompressions:                            580694307.\nCompressions:                              657486431.\nPageins:                                   101468318.\nPageouts:                                    1215665.\nSwapins:                                     4540256.\nSwapouts:                                    6042849.",
+          "stderr": ""
+        }
+      },
+      "runner_sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5",
+      "repository": {
+        "commit": {
+          "command": [
+            "git",
+            "rev-parse",
+            "HEAD"
+          ],
+          "exit_code": 0,
+          "stdout": "f285f8b913ad098bd5e8aea35cc80aa0fd8ca03e",
+          "stderr": ""
+        },
+        "tree": {
+          "command": [
+            "git",
+            "rev-parse",
+            "HEAD^{tree}"
+          ],
+          "exit_code": 0,
+          "stdout": "3b5a1117034048562f3d0801e99ce51690b93173",
+          "stderr": ""
+        },
+        "top_level": {
+          "command": [
+            "git",
+            "rev-parse",
+            "--show-toplevel"
+          ],
+          "exit_code": 0,
+          "stdout": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8",
+          "stderr": ""
+        },
+        "status": {
+          "command": [
+            "git",
+            "status",
+            "--porcelain"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": ""
+        }
+      }
+    },
+    "runner_sha256": "8a852679221202ae6d3dac1e02b295368a79529a3e0c32e51fd6b914e5d4b425",
+    "manifest_sha256": "cd71e1af4d9b2f9049c9294c1264135391f55e66f7a9759d7e35c80f0ddcca68",
+    "workloads": [
+      {
+        "case": "static-missing",
+        "size": 1000000,
+        "path": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8/docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/static-missing.js",
+        "sha256": "f70a1ac118757752528bbf7cecede8d5ca725462577020d2b6d92292d6e07fdd",
+        "expected": "1000000\n"
+      },
+      {
+        "case": "static-string",
+        "size": 1000000,
+        "path": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8/docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/static-string.js",
+        "sha256": "ce9a0598dfa69c7a434431b573d8bc1928fc9f389b3fb27df9301bf5a96c7145",
+        "expected": "3000000\n"
+      },
+      {
+        "case": "computed-object",
+        "size": 1000000,
+        "path": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8/docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/computed-object.js",
+        "sha256": "68b06ea8783eda182b739e4f0941be4619bc6602627e67bcb07fd8e2189bc6e8",
+        "expected": "7000000\n"
+      },
+      {
+        "case": "computed-frame",
+        "size": 1000000,
+        "path": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8/docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/computed-frame.js",
+        "sha256": "fd22473d7a422d212b58f83dabfd39f1dfcedd5ed6551716022cf6d2b07cd072",
+        "expected": "7000000\n"
+      },
+      {
+        "case": "warm-field",
+        "size": 1000000,
+        "path": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8/docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/warm-field.js",
+        "sha256": "5c527a7e0b0f66890368bcf7cafba25b3d52166894d19a8ed18e03a25b0bee9a",
+        "expected": "7000000\n"
+      },
+      {
+        "case": "getter",
+        "size": 10000,
+        "path": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8/docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/getter.js",
+        "sha256": "9fedf3ca3826f85c01c54a6dfa437292f11f578896beea1ed19b0c1ac510bdd4",
+        "expected": "40000\n"
+      }
+    ],
+    "engines": {
+      "c1": {
+        "path": "/private/tmp/oxide-c1-m2-candidate-plain/release/qjs",
+        "sha256": "25891746f76e574019b299fc15af7c1c07eb506339e832284e4da3bd7b44a943",
+        "version": {
+          "command": [
+            "/private/tmp/oxide-c1-m2-candidate-plain/release/qjs",
+            "--version"
+          ],
+          "exit_code": 0,
+          "stdout": "quickjs-oxide 0.0.1 (QuickJS 2026-06-04 compatibility target)",
+          "stderr": ""
+        },
+        "build": {
+          "schema": "oxide-build-v2",
+          "mode": "plain",
+          "vm_configuration": "stack-vm",
+          "features": [],
+          "commit": "5b0ded27ff2205426134a61333b0a02c0265022a",
+          "source": {
+            "commit": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD"
+              ],
+              "exit_code": 0,
+              "stdout": "5b0ded27ff2205426134a61333b0a02c0265022a",
+              "stderr": ""
+            },
+            "tree": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD^{tree}"
+              ],
+              "exit_code": 0,
+              "stdout": "0d53a0fec66f5fc8f6b487c303eef4acc58176de",
+              "stderr": ""
+            },
+            "top_level": {
+              "command": [
+                "git",
+                "rev-parse",
+                "--show-toplevel"
+              ],
+              "exit_code": 0,
+              "stdout": "/private/tmp/oxide-c1-candidate-5b0ded27",
+              "stderr": ""
+            },
+            "status": {
+              "command": [
+                "git",
+                "status",
+                "--porcelain"
+              ],
+              "exit_code": 0,
+              "stdout": "",
+              "stderr": ""
+            }
+          },
+          "binary_sha256": "25891746f76e574019b299fc15af7c1c07eb506339e832284e4da3bd7b44a943",
+          "tooling": {
+            "repository": {
+              "commit": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "HEAD"
+                ],
+                "exit_code": 0,
+                "stdout": "5b0ded27ff2205426134a61333b0a02c0265022a",
+                "stderr": ""
+              },
+              "tree": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "HEAD^{tree}"
+                ],
+                "exit_code": 0,
+                "stdout": "0d53a0fec66f5fc8f6b487c303eef4acc58176de",
+                "stderr": ""
+              },
+              "top_level": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "--show-toplevel"
+                ],
+                "exit_code": 0,
+                "stdout": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8",
+                "stderr": ""
+              },
+              "status": {
+                "command": [
+                  "git",
+                  "status",
+                  "--porcelain"
+                ],
+                "exit_code": 0,
+                "stdout": "",
+                "stderr": ""
+              }
+            },
+            "snapshots": {
+              "build.py": {
+                "path": "/private/tmp/oxide-c1-m2-candidate-plain/release/qjs.build.tooling-build.py",
+                "sha256": "fc8392a9d26290a6095742b2ab4cb45f5ab37b964c9daa51d22f7088259b1f50"
+              },
+              "run.py": {
+                "path": "/private/tmp/oxide-c1-m2-candidate-plain/release/qjs.build.tooling-run.py",
+                "sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5"
+              }
+            }
+          },
+          "command": [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "--verbose",
+            "-p",
+            "quickjs-oxide-cli",
+            "--no-default-features",
+            "--target-dir",
+            "/private/tmp/oxide-c1-m2-candidate-plain",
+            "--jobs",
+            "2"
+          ],
+          "cwd": "/private/tmp/oxide-c1-candidate-5b0ded27",
+          "exit_code": 0,
+          "stdout": {
+            "path": "/private/tmp/oxide-c1-m2-candidate-plain/release/qjs.build.stdout.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "stderr": {
+            "path": "/private/tmp/oxide-c1-m2-candidate-plain/release/qjs.build.stderr.log",
+            "sha256": "078b19f69e1b47f79e4b657346e9d546d82de8f2cd7eee6c05b884603b1fceb9"
+          },
+          "rustc": {
+            "command": [
+              "rustc",
+              "-vV"
+            ],
+            "exit_code": 0,
+            "stdout": "rustc 1.88.0 (6b00bc388 2025-06-23)\nbinary: rustc\ncommit-hash: 6b00bc3880198600130e1cf62b8f8a93494488cc\ncommit-date: 2025-06-23\nhost: aarch64-apple-darwin\nrelease: 1.88.0\nLLVM version: 20.1.5",
+            "stderr": ""
+          },
+          "cargo": {
+            "command": [
+              "cargo",
+              "-V"
+            ],
+            "exit_code": 0,
+            "stdout": "cargo 1.88.0 (873a06493 2025-05-10)",
+            "stderr": ""
+          },
+          "cargo_toml_sha256": "14f5e4d4f172150d6c212b61871da24a4e5b26e34e363f6de2a7f250bbe6e48d",
+          "cargo_lock_sha256": "c26c9f1999da579c0d1176c62981afa716ea998949a8dd15b1365f85b66944e3",
+          "release_profile": {
+            "manifest": {
+              "lto": "\"fat\"",
+              "codegen-units": "1"
+            },
+            "environment_overrides": {
+              "RUSTUP_TOOLCHAIN": "1.88.0"
+            },
+            "cargo_config_sha256": {},
+            "qjs_rustc_invocation": {
+              "command": "rustc --crate-name qjs --edition=2024 apps/cli/src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C opt-level=3 -C lto=fat -C codegen-units=1 '--warn=clippy::all' --forbid=unsafe_code --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values(\"default\", \"profiling\", \"test262-host\"))' -C metadata=fe6bdd401eddfd50 -C extra-filename=-0ece4688285d6d4f --out-dir /private/tmp/oxide-c1-m2-candidate-plain/release/deps -C strip=debuginfo -L dependency=/private/tmp/oxide-c1-m2-candidate-plain/release/deps --extern quickjs_oxide=/private/tmp/oxide-c1-m2-candidate-plain/release/deps/libquickjs_oxide-87e6abc49e10e601.rlib --extern quickjs_oxide_host=/private/tmp/oxide-c1-m2-candidate-plain/release/deps/libquickjs_oxide_host-c5af6d789609ebdc.rlib",
+              "crate": "qjs",
+              "codegen": {
+                "opt-level": "3",
+                "lto": "fat",
+                "codegen-units": "1"
+              },
+              "target": null
+            },
+            "observed_rustc_compilations": 9,
+            "observed_codegen_groups": [
+              {
+                "target": null,
+                "codegen": {
+                  "opt-level": "3",
+                  "codegen-units": "1"
+                },
+                "crates": [
+                  "tz",
+                  "num_traits",
+                  "num_integer",
+                  "num_bigint",
+                  "quickjs_oxide",
+                  "quickjs_oxide_host"
+                ]
+              },
+              {
+                "target": null,
+                "codegen": {},
+                "crates": [
+                  "autocfg",
+                  "build_script_build"
+                ]
+              },
+              {
+                "target": null,
+                "codegen": {
+                  "opt-level": "3",
+                  "lto": "fat",
+                  "codegen-units": "1"
+                },
+                "crates": [
+                  "qjs"
+                ]
+              }
+            ]
+          },
+          "target": {
+            "requested_triple": null,
+            "rustc_host": "aarch64-apple-darwin",
+            "observed_triple": null,
+            "observed_target_cpu": null,
+            "observed_target_feature": null
+          },
+          "commit_environment": "5b0ded27ff2205426134a61333b0a02c0265022a"
+        }
+      },
+      "c2": {
+        "path": "/private/tmp/oxide-c2-candidate-plain/release/qjs",
+        "sha256": "8b719f47b07237b5783758eed4e783a0b7f445f3f2efca39acb40bd24768059a",
+        "version": {
+          "command": [
+            "/private/tmp/oxide-c2-candidate-plain/release/qjs",
+            "--version"
+          ],
+          "exit_code": 0,
+          "stdout": "quickjs-oxide 0.0.1 (QuickJS 2026-06-04 compatibility target)",
+          "stderr": ""
+        },
+        "build": {
+          "schema": "oxide-build-v2",
+          "mode": "plain",
+          "vm_configuration": "stack-vm",
+          "features": [],
+          "commit": "da0c872d96a1205575624a55e5404be99a5e0c79",
+          "source": {
+            "commit": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD"
+              ],
+              "exit_code": 0,
+              "stdout": "da0c872d96a1205575624a55e5404be99a5e0c79",
+              "stderr": ""
+            },
+            "tree": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD^{tree}"
+              ],
+              "exit_code": 0,
+              "stdout": "6839557b9911fddbf144e8db3cf25b42648fb390",
+              "stderr": ""
+            },
+            "top_level": {
+              "command": [
+                "git",
+                "rev-parse",
+                "--show-toplevel"
+              ],
+              "exit_code": 0,
+              "stdout": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8",
+              "stderr": ""
+            },
+            "status": {
+              "command": [
+                "git",
+                "status",
+                "--porcelain"
+              ],
+              "exit_code": 0,
+              "stdout": "",
+              "stderr": ""
+            }
+          },
+          "binary_sha256": "8b719f47b07237b5783758eed4e783a0b7f445f3f2efca39acb40bd24768059a",
+          "tooling": {
+            "repository": {
+              "commit": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "HEAD"
+                ],
+                "exit_code": 0,
+                "stdout": "da0c872d96a1205575624a55e5404be99a5e0c79",
+                "stderr": ""
+              },
+              "tree": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "HEAD^{tree}"
+                ],
+                "exit_code": 0,
+                "stdout": "6839557b9911fddbf144e8db3cf25b42648fb390",
+                "stderr": ""
+              },
+              "top_level": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "--show-toplevel"
+                ],
+                "exit_code": 0,
+                "stdout": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8",
+                "stderr": ""
+              },
+              "status": {
+                "command": [
+                  "git",
+                  "status",
+                  "--porcelain"
+                ],
+                "exit_code": 0,
+                "stdout": "",
+                "stderr": ""
+              }
+            },
+            "snapshots": {
+              "build.py": {
+                "path": "/private/tmp/oxide-c2-candidate-plain/release/qjs.build.tooling-build.py",
+                "sha256": "fc8392a9d26290a6095742b2ab4cb45f5ab37b964c9daa51d22f7088259b1f50"
+              },
+              "run.py": {
+                "path": "/private/tmp/oxide-c2-candidate-plain/release/qjs.build.tooling-run.py",
+                "sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5"
+              }
+            }
+          },
+          "command": [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "--verbose",
+            "-p",
+            "quickjs-oxide-cli",
+            "--no-default-features",
+            "--target-dir",
+            "/private/tmp/oxide-c2-candidate-plain",
+            "--jobs",
+            "2"
+          ],
+          "cwd": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8",
+          "exit_code": 0,
+          "stdout": {
+            "path": "/private/tmp/oxide-c2-candidate-plain/release/qjs.build.stdout.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "stderr": {
+            "path": "/private/tmp/oxide-c2-candidate-plain/release/qjs.build.stderr.log",
+            "sha256": "7ad2e741bc8e005b6e31ad0b41f18229c1f1040e6604c9ec3b881947915fcf06"
+          },
+          "rustc": {
+            "command": [
+              "rustc",
+              "-vV"
+            ],
+            "exit_code": 0,
+            "stdout": "rustc 1.88.0 (6b00bc388 2025-06-23)\nbinary: rustc\ncommit-hash: 6b00bc3880198600130e1cf62b8f8a93494488cc\ncommit-date: 2025-06-23\nhost: aarch64-apple-darwin\nrelease: 1.88.0\nLLVM version: 20.1.5",
+            "stderr": ""
+          },
+          "cargo": {
+            "command": [
+              "cargo",
+              "-V"
+            ],
+            "exit_code": 0,
+            "stdout": "cargo 1.88.0 (873a06493 2025-05-10)",
+            "stderr": ""
+          },
+          "cargo_toml_sha256": "14f5e4d4f172150d6c212b61871da24a4e5b26e34e363f6de2a7f250bbe6e48d",
+          "cargo_lock_sha256": "c26c9f1999da579c0d1176c62981afa716ea998949a8dd15b1365f85b66944e3",
+          "release_profile": {
+            "manifest": {
+              "lto": "\"fat\"",
+              "codegen-units": "1"
+            },
+            "environment_overrides": {
+              "RUSTUP_TOOLCHAIN": "1.88.0"
+            },
+            "cargo_config_sha256": {},
+            "qjs_rustc_invocation": {
+              "command": "rustc --crate-name qjs --edition=2024 apps/cli/src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C opt-level=3 -C lto=fat -C codegen-units=1 '--warn=clippy::all' --forbid=unsafe_code --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values(\"default\", \"profiling\", \"test262-host\"))' -C metadata=fe6bdd401eddfd50 -C extra-filename=-0ece4688285d6d4f --out-dir /private/tmp/oxide-c2-candidate-plain/release/deps -C strip=debuginfo -L dependency=/private/tmp/oxide-c2-candidate-plain/release/deps --extern quickjs_oxide=/private/tmp/oxide-c2-candidate-plain/release/deps/libquickjs_oxide-87e6abc49e10e601.rlib --extern quickjs_oxide_host=/private/tmp/oxide-c2-candidate-plain/release/deps/libquickjs_oxide_host-c5af6d789609ebdc.rlib",
+              "crate": "qjs",
+              "codegen": {
+                "opt-level": "3",
+                "lto": "fat",
+                "codegen-units": "1"
+              },
+              "target": null
+            },
+            "observed_rustc_compilations": 9,
+            "observed_codegen_groups": [
+              {
+                "target": null,
+                "codegen": {},
+                "crates": [
+                  "autocfg",
+                  "build_script_build"
+                ]
+              },
+              {
+                "target": null,
+                "codegen": {
+                  "opt-level": "3",
+                  "codegen-units": "1"
+                },
+                "crates": [
+                  "tz",
+                  "num_traits",
+                  "num_integer",
+                  "num_bigint",
+                  "quickjs_oxide",
+                  "quickjs_oxide_host"
+                ]
+              },
+              {
+                "target": null,
+                "codegen": {
+                  "opt-level": "3",
+                  "lto": "fat",
+                  "codegen-units": "1"
+                },
+                "crates": [
+                  "qjs"
+                ]
+              }
+            ]
+          },
+          "target": {
+            "requested_triple": null,
+            "rustc_host": "aarch64-apple-darwin",
+            "observed_triple": null,
+            "observed_target_cpu": null,
+            "observed_target_feature": null
+          },
+          "commit_environment": "da0c872d96a1205575624a55e5404be99a5e0c79"
+        }
+      }
+    },
+    "repeat": 2,
+    "order_strategy": "abba",
+    "timeout_seconds": 180,
+    "cpu": null,
+    "darwin_counters": true,
+    "counter_scope": "whole process including startup and teardown",
+    "metric": "whole-process wall nanoseconds; not adaptive scores"
+  },
+  "summary": [
+    {
+      "case": "static-missing",
+      "size": 1000000,
+      "engine": "c1",
+      "eligible": true,
+      "successful_wall_ns": [
+        4872963792,
+        6587177000
+      ],
+      "failures": [],
+      "median_wall_ns": 5730070396.0
+    },
+    {
+      "case": "static-missing",
+      "size": 1000000,
+      "engine": "c2",
+      "eligible": true,
+      "successful_wall_ns": [
+        5995373583,
+        5019424458
+      ],
+      "failures": [],
+      "median_wall_ns": 5507399020.5
+    },
+    {
+      "case": "static-string",
+      "size": 1000000,
+      "engine": "c1",
+      "eligible": true,
+      "successful_wall_ns": [
+        4454400291,
+        2991721625
+      ],
+      "failures": [],
+      "median_wall_ns": 3723060958.0
+    },
+    {
+      "case": "static-string",
+      "size": 1000000,
+      "engine": "c2",
+      "eligible": true,
+      "successful_wall_ns": [
+        2873554500,
+        2713005542
+      ],
+      "failures": [],
+      "median_wall_ns": 2793280021.0
+    },
+    {
+      "case": "computed-object",
+      "size": 1000000,
+      "engine": "c1",
+      "eligible": true,
+      "successful_wall_ns": [
+        4824890041,
+        3669061625
+      ],
+      "failures": [],
+      "median_wall_ns": 4246975833.0
+    },
+    {
+      "case": "computed-object",
+      "size": 1000000,
+      "engine": "c2",
+      "eligible": true,
+      "successful_wall_ns": [
+        4618556291,
+        3766359917
+      ],
+      "failures": [],
+      "median_wall_ns": 4192458104.0
+    },
+    {
+      "case": "computed-frame",
+      "size": 1000000,
+      "engine": "c1",
+      "eligible": true,
+      "successful_wall_ns": [
+        2385969666,
+        2534931250
+      ],
+      "failures": [],
+      "median_wall_ns": 2460450458.0
+    },
+    {
+      "case": "computed-frame",
+      "size": 1000000,
+      "engine": "c2",
+      "eligible": true,
+      "successful_wall_ns": [
+        2736320375,
+        2648503084
+      ],
+      "failures": [],
+      "median_wall_ns": 2692411729.5
+    },
+    {
+      "case": "warm-field",
+      "size": 1000000,
+      "engine": "c1",
+      "eligible": true,
+      "successful_wall_ns": [
+        2663442125,
+        2589412125
+      ],
+      "failures": [],
+      "median_wall_ns": 2626427125.0
+    },
+    {
+      "case": "warm-field",
+      "size": 1000000,
+      "engine": "c2",
+      "eligible": true,
+      "successful_wall_ns": [
+        2270942500,
+        2542161875
+      ],
+      "failures": [],
+      "median_wall_ns": 2406552187.5
+    },
+    {
+      "case": "getter",
+      "size": 10000,
+      "engine": "c1",
+      "eligible": true,
+      "successful_wall_ns": [
+        69733875,
+        45389667
+      ],
+      "failures": [],
+      "median_wall_ns": 57561771.0
+    },
+    {
+      "case": "getter",
+      "size": 10000,
+      "engine": "c2",
+      "eligible": true,
+      "successful_wall_ns": [
+        54594209,
+        60463292
+      ],
+      "failures": [],
+      "median_wall_ns": 57528750.5
+    }
+  ],
+  "samples": [
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-c2-fixed-ab/raw/static-missing-c1-0.time-l.txt",
+        "/private/tmp/oxide-c1-m2-candidate-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8/docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/static-missing.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 4872963792,
+      "stdout": "/private/tmp/oxide-c2-fixed-ab/raw/static-missing-c1-0.stdout",
+      "stderr": "/private/tmp/oxide-c2-fixed-ab/raw/static-missing-c1-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-c2-fixed-ab/raw/static-missing-c1-0.time-l.txt",
+        "raw_sha256": "bac5a35a3009863324e7211dc715331d776c9a500eaf1833db8fa62a588d048e",
+        "values": {
+          "maximum_resident_set_size": 5881856,
+          "instructions_retired": 24193357384,
+          "cycles_elapsed": 6206612957,
+          "peak_memory_footprint": 2622272
+        }
+      },
+      "case": "static-missing",
+      "size": 1000000,
+      "engine": "c1",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-c2-fixed-ab/raw/static-missing-c2-0.time-l.txt",
+        "/private/tmp/oxide-c2-candidate-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8/docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/static-missing.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 5995373583,
+      "stdout": "/private/tmp/oxide-c2-fixed-ab/raw/static-missing-c2-0.stdout",
+      "stderr": "/private/tmp/oxide-c2-fixed-ab/raw/static-missing-c2-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-c2-fixed-ab/raw/static-missing-c2-0.time-l.txt",
+        "raw_sha256": "95505988301fc45871bf4e27057b8d08f9114aa120ee50333222065faf003ea0",
+        "values": {
+          "maximum_resident_set_size": 6160384,
+          "instructions_retired": 24117933238,
+          "cycles_elapsed": 6536048978,
+          "peak_memory_footprint": 2655104
+        }
+      },
+      "case": "static-missing",
+      "size": 1000000,
+      "engine": "c2",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-c2-fixed-ab/raw/static-missing-c2-1.time-l.txt",
+        "/private/tmp/oxide-c2-candidate-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8/docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/static-missing.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 5019424458,
+      "stdout": "/private/tmp/oxide-c2-fixed-ab/raw/static-missing-c2-1.stdout",
+      "stderr": "/private/tmp/oxide-c2-fixed-ab/raw/static-missing-c2-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-c2-fixed-ab/raw/static-missing-c2-1.time-l.txt",
+        "raw_sha256": "63fbbc2fc196140d1f89ff3b26a7bdfabda7cee64e780d45808fe934c90a7342",
+        "values": {
+          "maximum_resident_set_size": 6307840,
+          "instructions_retired": 24092946450,
+          "cycles_elapsed": 6206439389,
+          "peak_memory_footprint": 2802560
+        }
+      },
+      "case": "static-missing",
+      "size": 1000000,
+      "engine": "c2",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-c2-fixed-ab/raw/static-missing-c1-1.time-l.txt",
+        "/private/tmp/oxide-c1-m2-candidate-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8/docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/static-missing.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 6587177000,
+      "stdout": "/private/tmp/oxide-c2-fixed-ab/raw/static-missing-c1-1.stdout",
+      "stderr": "/private/tmp/oxide-c2-fixed-ab/raw/static-missing-c1-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-c2-fixed-ab/raw/static-missing-c1-1.time-l.txt",
+        "raw_sha256": "b5db51141cb35438c19737d782cadbda05c0b61d2086f280178f03d2fa5c4680",
+        "values": {
+          "maximum_resident_set_size": 5849088,
+          "instructions_retired": 24205138925,
+          "cycles_elapsed": 6461217434,
+          "peak_memory_footprint": 2540352
+        }
+      },
+      "case": "static-missing",
+      "size": 1000000,
+      "engine": "c1",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-c2-fixed-ab/raw/static-string-c1-0.time-l.txt",
+        "/private/tmp/oxide-c1-m2-candidate-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8/docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/static-string.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 4454400291,
+      "stdout": "/private/tmp/oxide-c2-fixed-ab/raw/static-string-c1-0.stdout",
+      "stderr": "/private/tmp/oxide-c2-fixed-ab/raw/static-string-c1-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-c2-fixed-ab/raw/static-string-c1-0.time-l.txt",
+        "raw_sha256": "88b29a861f87657889685f0880d77d9775014012c2de949b14eaf91c24ca223b",
+        "values": {
+          "maximum_resident_set_size": 5619712,
+          "instructions_retired": 15604617757,
+          "cycles_elapsed": 4193052980,
+          "peak_memory_footprint": 2589504
+        }
+      },
+      "case": "static-string",
+      "size": 1000000,
+      "engine": "c1",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-c2-fixed-ab/raw/static-string-c2-0.time-l.txt",
+        "/private/tmp/oxide-c2-candidate-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8/docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/static-string.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2873554500,
+      "stdout": "/private/tmp/oxide-c2-fixed-ab/raw/static-string-c2-0.stdout",
+      "stderr": "/private/tmp/oxide-c2-fixed-ab/raw/static-string-c2-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-c2-fixed-ab/raw/static-string-c2-0.time-l.txt",
+        "raw_sha256": "33465cd5203bf2d0b020db2e397385a0a6b4fe4805c939fac9a0613eee141f5c",
+        "values": {
+          "maximum_resident_set_size": 5701632,
+          "instructions_retired": 15610156603,
+          "cycles_elapsed": 3853733161,
+          "peak_memory_footprint": 2687808
+        }
+      },
+      "case": "static-string",
+      "size": 1000000,
+      "engine": "c2",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-c2-fixed-ab/raw/static-string-c2-1.time-l.txt",
+        "/private/tmp/oxide-c2-candidate-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8/docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/static-string.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2713005542,
+      "stdout": "/private/tmp/oxide-c2-fixed-ab/raw/static-string-c2-1.stdout",
+      "stderr": "/private/tmp/oxide-c2-fixed-ab/raw/static-string-c2-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-c2-fixed-ab/raw/static-string-c2-1.time-l.txt",
+        "raw_sha256": "f11fa03b1ca5e42bb945e21090abdf3c88a25394ebb54c33054269f87486ca71",
+        "values": {
+          "maximum_resident_set_size": 6144000,
+          "instructions_retired": 15601893391,
+          "cycles_elapsed": 3915137006,
+          "peak_memory_footprint": 2786112
+        }
+      },
+      "case": "static-string",
+      "size": 1000000,
+      "engine": "c2",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-c2-fixed-ab/raw/static-string-c1-1.time-l.txt",
+        "/private/tmp/oxide-c1-m2-candidate-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8/docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/static-string.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2991721625,
+      "stdout": "/private/tmp/oxide-c2-fixed-ab/raw/static-string-c1-1.stdout",
+      "stderr": "/private/tmp/oxide-c2-fixed-ab/raw/static-string-c1-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-c2-fixed-ab/raw/static-string-c1-1.time-l.txt",
+        "raw_sha256": "64f8968cb14cb5d41230b830a646a1a54fbeb80eb1b947a791d100349b03b117",
+        "values": {
+          "maximum_resident_set_size": 5636096,
+          "instructions_retired": 15579988513,
+          "cycles_elapsed": 3960908104,
+          "peak_memory_footprint": 2622272
+        }
+      },
+      "case": "static-string",
+      "size": 1000000,
+      "engine": "c1",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-c2-fixed-ab/raw/computed-object-c1-0.time-l.txt",
+        "/private/tmp/oxide-c1-m2-candidate-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8/docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/computed-object.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 4824890041,
+      "stdout": "/private/tmp/oxide-c2-fixed-ab/raw/computed-object-c1-0.stdout",
+      "stderr": "/private/tmp/oxide-c2-fixed-ab/raw/computed-object-c1-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-c2-fixed-ab/raw/computed-object-c1-0.time-l.txt",
+        "raw_sha256": "a69cc1b7efeb2e84ac9bde8b0dc60d00ed6c2402f833384e55ad8a5ce3a2a18b",
+        "values": {
+          "maximum_resident_set_size": 5849088,
+          "instructions_retired": 20833451676,
+          "cycles_elapsed": 5410913460,
+          "peak_memory_footprint": 2589504
+        }
+      },
+      "case": "computed-object",
+      "size": 1000000,
+      "engine": "c1",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-c2-fixed-ab/raw/computed-object-c2-0.time-l.txt",
+        "/private/tmp/oxide-c2-candidate-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8/docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/computed-object.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 4618556291,
+      "stdout": "/private/tmp/oxide-c2-fixed-ab/raw/computed-object-c2-0.stdout",
+      "stderr": "/private/tmp/oxide-c2-fixed-ab/raw/computed-object-c2-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-c2-fixed-ab/raw/computed-object-c2-0.time-l.txt",
+        "raw_sha256": "ee99e0316a3679df248a5af06bc40a7cad5e0b8c3bcff85022e9e9e01d2b5a7b",
+        "values": {
+          "maximum_resident_set_size": 6062080,
+          "instructions_retired": 20726888029,
+          "cycles_elapsed": 5453395196,
+          "peak_memory_footprint": 2802496
+        }
+      },
+      "case": "computed-object",
+      "size": 1000000,
+      "engine": "c2",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-c2-fixed-ab/raw/computed-object-c2-1.time-l.txt",
+        "/private/tmp/oxide-c2-candidate-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8/docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/computed-object.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 3766359917,
+      "stdout": "/private/tmp/oxide-c2-fixed-ab/raw/computed-object-c2-1.stdout",
+      "stderr": "/private/tmp/oxide-c2-fixed-ab/raw/computed-object-c2-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-c2-fixed-ab/raw/computed-object-c2-1.time-l.txt",
+        "raw_sha256": "2a4d3bfd232572003aff2b046389114c38d2df736db880b39077f52c3cb5cdd8",
+        "values": {
+          "maximum_resident_set_size": 6291456,
+          "instructions_retired": 20705629651,
+          "cycles_elapsed": 5215291701,
+          "peak_memory_footprint": 2769728
+        }
+      },
+      "case": "computed-object",
+      "size": 1000000,
+      "engine": "c2",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-c2-fixed-ab/raw/computed-object-c1-1.time-l.txt",
+        "/private/tmp/oxide-c1-m2-candidate-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8/docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/computed-object.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 3669061625,
+      "stdout": "/private/tmp/oxide-c2-fixed-ab/raw/computed-object-c1-1.stdout",
+      "stderr": "/private/tmp/oxide-c2-fixed-ab/raw/computed-object-c1-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-c2-fixed-ab/raw/computed-object-c1-1.time-l.txt",
+        "raw_sha256": "123b10375ed6ef46bfa7fe65ca8bb58f92bdaf5492b90a0514690e582a0d5d9a",
+        "values": {
+          "maximum_resident_set_size": 6127616,
+          "instructions_retired": 20793772603,
+          "cycles_elapsed": 5177493650,
+          "peak_memory_footprint": 2605888
+        }
+      },
+      "case": "computed-object",
+      "size": 1000000,
+      "engine": "c1",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-c2-fixed-ab/raw/computed-frame-c1-0.time-l.txt",
+        "/private/tmp/oxide-c1-m2-candidate-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8/docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/computed-frame.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2385969666,
+      "stdout": "/private/tmp/oxide-c2-fixed-ab/raw/computed-frame-c1-0.stdout",
+      "stderr": "/private/tmp/oxide-c2-fixed-ab/raw/computed-frame-c1-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-c2-fixed-ab/raw/computed-frame-c1-0.time-l.txt",
+        "raw_sha256": "6cabeab7d9c699901979c79c8b955ef5af1fe20ab0ee03f3d4e05ae68c240e2c",
+        "values": {
+          "maximum_resident_set_size": 5996544,
+          "instructions_retired": 15349203441,
+          "cycles_elapsed": 3678846329,
+          "peak_memory_footprint": 2524032
+        }
+      },
+      "case": "computed-frame",
+      "size": 1000000,
+      "engine": "c1",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-c2-fixed-ab/raw/computed-frame-c2-0.time-l.txt",
+        "/private/tmp/oxide-c2-candidate-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8/docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/computed-frame.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2736320375,
+      "stdout": "/private/tmp/oxide-c2-fixed-ab/raw/computed-frame-c2-0.stdout",
+      "stderr": "/private/tmp/oxide-c2-fixed-ab/raw/computed-frame-c2-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-c2-fixed-ab/raw/computed-frame-c2-0.time-l.txt",
+        "raw_sha256": "7b8c83613933f18d88f0ea828bce808950a88f00d1d658686f68f2fe2d8e0ec7",
+        "values": {
+          "maximum_resident_set_size": 6275072,
+          "instructions_retired": 15250734061,
+          "cycles_elapsed": 3784769168,
+          "peak_memory_footprint": 2802560
+        }
+      },
+      "case": "computed-frame",
+      "size": 1000000,
+      "engine": "c2",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-c2-fixed-ab/raw/computed-frame-c2-1.time-l.txt",
+        "/private/tmp/oxide-c2-candidate-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8/docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/computed-frame.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2648503084,
+      "stdout": "/private/tmp/oxide-c2-fixed-ab/raw/computed-frame-c2-1.stdout",
+      "stderr": "/private/tmp/oxide-c2-fixed-ab/raw/computed-frame-c2-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-c2-fixed-ab/raw/computed-frame-c2-1.time-l.txt",
+        "raw_sha256": "03e01ac9cee0c58271b826b78a86558dc495666c9481e385455512dd253dcea2",
+        "values": {
+          "maximum_resident_set_size": 6291456,
+          "instructions_retired": 15247015164,
+          "cycles_elapsed": 3729717237,
+          "peak_memory_footprint": 2802496
+        }
+      },
+      "case": "computed-frame",
+      "size": 1000000,
+      "engine": "c2",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-c2-fixed-ab/raw/computed-frame-c1-1.time-l.txt",
+        "/private/tmp/oxide-c1-m2-candidate-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8/docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/computed-frame.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2534931250,
+      "stdout": "/private/tmp/oxide-c2-fixed-ab/raw/computed-frame-c1-1.stdout",
+      "stderr": "/private/tmp/oxide-c2-fixed-ab/raw/computed-frame-c1-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-c2-fixed-ab/raw/computed-frame-c1-1.time-l.txt",
+        "raw_sha256": "a317f00d9ef5b52a88178969dbca29e7a065469ec1a779565c71fde7bba9eb05",
+        "values": {
+          "maximum_resident_set_size": 6029312,
+          "instructions_retired": 15355525251,
+          "cycles_elapsed": 3768171736,
+          "peak_memory_footprint": 2540352
+        }
+      },
+      "case": "computed-frame",
+      "size": 1000000,
+      "engine": "c1",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-c2-fixed-ab/raw/warm-field-c1-0.time-l.txt",
+        "/private/tmp/oxide-c1-m2-candidate-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8/docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/warm-field.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2663442125,
+      "stdout": "/private/tmp/oxide-c2-fixed-ab/raw/warm-field-c1-0.stdout",
+      "stderr": "/private/tmp/oxide-c2-fixed-ab/raw/warm-field-c1-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-c2-fixed-ab/raw/warm-field-c1-0.time-l.txt",
+        "raw_sha256": "f5fe004581e95c6faa35feb3a0f0f5687eda0365d2bbe6c9f564ff6e3b0ab4f0",
+        "values": {
+          "maximum_resident_set_size": 6029312,
+          "instructions_retired": 16664369335,
+          "cycles_elapsed": 3937629531,
+          "peak_memory_footprint": 2556736
+        }
+      },
+      "case": "warm-field",
+      "size": 1000000,
+      "engine": "c1",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-c2-fixed-ab/raw/warm-field-c2-0.time-l.txt",
+        "/private/tmp/oxide-c2-candidate-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8/docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/warm-field.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2270942500,
+      "stdout": "/private/tmp/oxide-c2-fixed-ab/raw/warm-field-c2-0.stdout",
+      "stderr": "/private/tmp/oxide-c2-fixed-ab/raw/warm-field-c2-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-c2-fixed-ab/raw/warm-field-c2-0.time-l.txt",
+        "raw_sha256": "512840f8ef6c79a9cfca8b306fb43d6974882929a9390a041fa1a1eb1958b545",
+        "values": {
+          "maximum_resident_set_size": 6111232,
+          "instructions_retired": 16684717211,
+          "cycles_elapsed": 3838909973,
+          "peak_memory_footprint": 2638656
+        }
+      },
+      "case": "warm-field",
+      "size": 1000000,
+      "engine": "c2",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-c2-fixed-ab/raw/warm-field-c2-1.time-l.txt",
+        "/private/tmp/oxide-c2-candidate-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8/docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/warm-field.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2542161875,
+      "stdout": "/private/tmp/oxide-c2-fixed-ab/raw/warm-field-c2-1.stdout",
+      "stderr": "/private/tmp/oxide-c2-fixed-ab/raw/warm-field-c2-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-c2-fixed-ab/raw/warm-field-c2-1.time-l.txt",
+        "raw_sha256": "09a2044cdf24a39d207f9e314d6cd069a1b9f0686f0859c55956709f2648b50e",
+        "values": {
+          "maximum_resident_set_size": 6111232,
+          "instructions_retired": 16695749975,
+          "cycles_elapsed": 3994285868,
+          "peak_memory_footprint": 2638656
+        }
+      },
+      "case": "warm-field",
+      "size": 1000000,
+      "engine": "c2",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-c2-fixed-ab/raw/warm-field-c1-1.time-l.txt",
+        "/private/tmp/oxide-c1-m2-candidate-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8/docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/warm-field.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 2589412125,
+      "stdout": "/private/tmp/oxide-c2-fixed-ab/raw/warm-field-c1-1.stdout",
+      "stderr": "/private/tmp/oxide-c2-fixed-ab/raw/warm-field-c1-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-c2-fixed-ab/raw/warm-field-c1-1.time-l.txt",
+        "raw_sha256": "1b62d2c256c16d55a1424399b40c534a243121063d0f942281b8a89dda34a8f0",
+        "values": {
+          "maximum_resident_set_size": 6062080,
+          "instructions_retired": 16664882295,
+          "cycles_elapsed": 4017886680,
+          "peak_memory_footprint": 2589504
+        }
+      },
+      "case": "warm-field",
+      "size": 1000000,
+      "engine": "c1",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-c2-fixed-ab/raw/getter-c1-0.time-l.txt",
+        "/private/tmp/oxide-c1-m2-candidate-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8/docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/getter.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 69733875,
+      "stdout": "/private/tmp/oxide-c2-fixed-ab/raw/getter-c1-0.stdout",
+      "stderr": "/private/tmp/oxide-c2-fixed-ab/raw/getter-c1-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-c2-fixed-ab/raw/getter-c1-0.time-l.txt",
+        "raw_sha256": "c02a2fe17d66c82e7d215b6eba45097270c7dd73b921d182e5133896a2c87ded",
+        "values": {
+          "maximum_resident_set_size": 6176768,
+          "instructions_retired": 247154931,
+          "cycles_elapsed": 66934561,
+          "peak_memory_footprint": 2638656
+        }
+      },
+      "case": "getter",
+      "size": 10000,
+      "engine": "c1",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-c2-fixed-ab/raw/getter-c2-0.time-l.txt",
+        "/private/tmp/oxide-c2-candidate-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8/docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/getter.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 54594209,
+      "stdout": "/private/tmp/oxide-c2-fixed-ab/raw/getter-c2-0.stdout",
+      "stderr": "/private/tmp/oxide-c2-fixed-ab/raw/getter-c2-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-c2-fixed-ab/raw/getter-c2-0.time-l.txt",
+        "raw_sha256": "931d8d97f1b9fe48ef8aaaef2da1d6479e1007c4e7d8f17e6c0aea0acec9980d",
+        "values": {
+          "maximum_resident_set_size": 6160384,
+          "instructions_retired": 246242874,
+          "cycles_elapsed": 79800015,
+          "peak_memory_footprint": 2605888
+        }
+      },
+      "case": "getter",
+      "size": 10000,
+      "engine": "c2",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-c2-fixed-ab/raw/getter-c2-1.time-l.txt",
+        "/private/tmp/oxide-c2-candidate-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8/docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/getter.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 60463292,
+      "stdout": "/private/tmp/oxide-c2-fixed-ab/raw/getter-c2-1.stdout",
+      "stderr": "/private/tmp/oxide-c2-fixed-ab/raw/getter-c2-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-c2-fixed-ab/raw/getter-c2-1.time-l.txt",
+        "raw_sha256": "b5d754c4b1e8bf32a2d107503b3ef54dbd786074ba6045bdb14181c61c7f4421",
+        "values": {
+          "maximum_resident_set_size": 6209536,
+          "instructions_retired": 246089869,
+          "cycles_elapsed": 69692248,
+          "peak_memory_footprint": 2655040
+        }
+      },
+      "case": "getter",
+      "size": 10000,
+      "engine": "c2",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/private/tmp/oxide-c2-fixed-ab/raw/getter-c1-1.time-l.txt",
+        "/private/tmp/oxide-c1-m2-candidate-plain/release/qjs",
+        "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/158a2632-f0f3-4c56-b600-78c0a73a72e8/docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/getter.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 45389667,
+      "stdout": "/private/tmp/oxide-c2-fixed-ab/raw/getter-c1-1.stdout",
+      "stderr": "/private/tmp/oxide-c2-fixed-ab/raw/getter-c1-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/private/tmp/oxide-c2-fixed-ab/raw/getter-c1-1.time-l.txt",
+        "raw_sha256": "4c408102a2a47d49a5f0d84d91b238cfee80dcb975ff5a10c2c38aaf806a1e50",
+        "values": {
+          "maximum_resident_set_size": 6176768,
+          "instructions_retired": 245990554,
+          "cycles_elapsed": 62803683,
+          "peak_memory_footprint": 2638656
+        }
+      },
+      "case": "getter",
+      "size": 10000,
+      "engine": "c1",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    }
+  ]
+}

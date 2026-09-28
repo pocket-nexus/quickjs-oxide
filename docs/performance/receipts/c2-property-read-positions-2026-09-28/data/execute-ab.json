@@ -1,0 +1,514 @@
+{
+  "schema": "oxide-c2-execute-v1",
+  "probe_source_sha256": "3effd109dc4983d3d69cc9c91d4ae744ffca26a932e78f97b08f0f1d2d8db6d7",
+  "engines": {
+    "baseline": {
+      "sha256": "93011a47c7f202e45e76cf3259c66c14441309b9c2eb0949bd74a579ba4b37b9",
+      "path": "/private/tmp/oxide-c1-m2-candidate-plain/release/examples/execute_probe"
+    },
+    "candidate": {
+      "sha256": "18b47a77fc6cd313aa61e1d1897763251928b3061919b95b8204649f0b1d286e",
+      "path": "/private/tmp/oxide-c2-candidate-plain/release/examples/execute_probe"
+    }
+  },
+  "warmups_per_process": 3,
+  "samples_per_process": 9,
+  "processes_per_engine_case": 2,
+  "order": "ABBA",
+  "rows": [
+    {
+      "case": "static-missing",
+      "engine": "baseline",
+      "repetition": 0,
+      "execute_ns": [
+        2236015792,
+        1883986458,
+        2105705584,
+        2420795500,
+        2491805250,
+        2977691000,
+        2753619083,
+        2658184125,
+        2300221709
+      ]
+    },
+    {
+      "case": "static-missing",
+      "engine": "candidate",
+      "repetition": 0,
+      "execute_ns": [
+        2175149834,
+        2179866125,
+        2075807875,
+        1971868791,
+        1764171125,
+        2109898500,
+        2173356625,
+        2388644375,
+        2091612709
+      ]
+    },
+    {
+      "case": "static-missing",
+      "engine": "candidate",
+      "repetition": 1,
+      "execute_ns": [
+        1873222541,
+        1798917625,
+        2065710417,
+        2396075125,
+        2148817250,
+        1915804834,
+        2003591916,
+        1906315417,
+        2037473208
+      ]
+    },
+    {
+      "case": "static-missing",
+      "engine": "baseline",
+      "repetition": 1,
+      "execute_ns": [
+        1650821959,
+        1868583333,
+        2610039750,
+        3116588000,
+        2797700042,
+        2918308375,
+        2318330084,
+        2032829625,
+        2776689209
+      ]
+    },
+    {
+      "case": "static-string",
+      "engine": "baseline",
+      "repetition": 0,
+      "execute_ns": [
+        1038299750,
+        1188750042,
+        1363327542,
+        946259125,
+        1158469792,
+        831901250,
+        796730333,
+        890081458,
+        758603417
+      ]
+    },
+    {
+      "case": "static-string",
+      "engine": "candidate",
+      "repetition": 0,
+      "execute_ns": [
+        1166929417,
+        1151503416,
+        1161699791,
+        1074590042,
+        1051385833,
+        1374171667,
+        2676062208,
+        1097014667,
+        1150077666
+      ]
+    },
+    {
+      "case": "static-string",
+      "engine": "candidate",
+      "repetition": 1,
+      "execute_ns": [
+        1083666000,
+        3360584459,
+        2068879167,
+        2039430667,
+        1858837000,
+        2233050292,
+        1078564083,
+        1046196584,
+        977611375
+      ]
+    },
+    {
+      "case": "static-string",
+      "engine": "baseline",
+      "repetition": 1,
+      "execute_ns": [
+        1027452584,
+        956367292,
+        839337917,
+        844653542,
+        816274833,
+        919831708,
+        1134150625,
+        850189750,
+        910137000
+      ]
+    },
+    {
+      "case": "computed-object",
+      "engine": "baseline",
+      "repetition": 0,
+      "execute_ns": [
+        1956775417,
+        1816158250,
+        3431034083,
+        2807476916,
+        3440299250,
+        2412194583,
+        1814274542,
+        1977977416,
+        2525497208
+      ]
+    },
+    {
+      "case": "computed-object",
+      "engine": "candidate",
+      "repetition": 0,
+      "execute_ns": [
+        1996874584,
+        1813887375,
+        1725761834,
+        2379693125,
+        2036532875,
+        2323261291,
+        4002328250,
+        3441094792,
+        2511807791
+      ]
+    },
+    {
+      "case": "computed-object",
+      "engine": "candidate",
+      "repetition": 1,
+      "execute_ns": [
+        2549671417,
+        1915262625,
+        2483765500,
+        2390726917,
+        3446287916,
+        2210973417,
+        2483979083,
+        2141763250,
+        2285202333
+      ]
+    },
+    {
+      "case": "computed-object",
+      "engine": "baseline",
+      "repetition": 1,
+      "execute_ns": [
+        1761859042,
+        2375055042,
+        2951269417,
+        2207738875,
+        2007761000,
+        2948026667,
+        1820413167,
+        2356747000,
+        1849649084
+      ]
+    },
+    {
+      "case": "computed-frame",
+      "engine": "baseline",
+      "repetition": 0,
+      "execute_ns": [
+        815079209,
+        855299042,
+        934531916,
+        785384542,
+        752371958,
+        918441500,
+        707951875,
+        855807834,
+        791288958
+      ]
+    },
+    {
+      "case": "computed-frame",
+      "engine": "candidate",
+      "repetition": 0,
+      "execute_ns": [
+        923284250,
+        823701500,
+        712723583,
+        912737042,
+        742211125,
+        736395542,
+        755325875,
+        800710375,
+        1055494083
+      ]
+    },
+    {
+      "case": "computed-frame",
+      "engine": "candidate",
+      "repetition": 1,
+      "execute_ns": [
+        980875458,
+        1148701542,
+        1138854125,
+        1580653583,
+        1099526250,
+        1250966792,
+        874281667,
+        969242417,
+        1048150292
+      ]
+    },
+    {
+      "case": "computed-frame",
+      "engine": "baseline",
+      "repetition": 1,
+      "execute_ns": [
+        685107750,
+        914226209,
+        767518000,
+        765017958,
+        788661333,
+        745837500,
+        749197750,
+        748702916,
+        812324292
+      ]
+    },
+    {
+      "case": "warm-field",
+      "engine": "baseline",
+      "repetition": 0,
+      "execute_ns": [
+        1055721792,
+        932845208,
+        890734083,
+        899269958,
+        1001216416,
+        893582666,
+        991427125,
+        909140625,
+        1268390042
+      ]
+    },
+    {
+      "case": "warm-field",
+      "engine": "candidate",
+      "repetition": 0,
+      "execute_ns": [
+        1024775167,
+        997201084,
+        1015833459,
+        1048503250,
+        1078938625,
+        970271250,
+        1003917166,
+        1090867750,
+        1065008916
+      ]
+    },
+    {
+      "case": "warm-field",
+      "engine": "candidate",
+      "repetition": 1,
+      "execute_ns": [
+        1225959542,
+        1073482500,
+        1023170750,
+        1062980084,
+        1126785291,
+        1054838000,
+        1481560458,
+        1533527291,
+        1397429750
+      ]
+    },
+    {
+      "case": "warm-field",
+      "engine": "baseline",
+      "repetition": 1,
+      "execute_ns": [
+        1215302250,
+        1113852708,
+        1044359958,
+        1056273125,
+        1020107875,
+        974151833,
+        1061105542,
+        834701750,
+        924259875
+      ]
+    },
+    {
+      "case": "getter",
+      "engine": "baseline",
+      "repetition": 0,
+      "execute_ns": [
+        16231833,
+        13907125,
+        14014667,
+        15710875,
+        19073875,
+        343629625,
+        63475208,
+        20364917,
+        30814334
+      ]
+    },
+    {
+      "case": "getter",
+      "engine": "candidate",
+      "repetition": 0,
+      "execute_ns": [
+        19180750,
+        17303250,
+        17644791,
+        13848875,
+        15462000,
+        16530041,
+        16294500,
+        14031000,
+        13205959
+      ]
+    },
+    {
+      "case": "getter",
+      "engine": "candidate",
+      "repetition": 1,
+      "execute_ns": [
+        15410042,
+        14943833,
+        13306916,
+        18885083,
+        15222500,
+        16201791,
+        14210125,
+        17291875,
+        16683208
+      ]
+    },
+    {
+      "case": "getter",
+      "engine": "baseline",
+      "repetition": 1,
+      "execute_ns": [
+        18305125,
+        15941042,
+        13877791,
+        21431291,
+        59862584,
+        184469542,
+        62555250,
+        33328333,
+        18645375
+      ]
+    }
+  ],
+  "summary": [
+    {
+      "case": "static-missing",
+      "engines": {
+        "baseline": {
+          "count": 18,
+          "median_ns": 2456300375.0,
+          "min_ns": 1650821959,
+          "max_ns": 3116588000
+        },
+        "candidate": {
+          "count": 18,
+          "median_ns": 2070759146.0,
+          "min_ns": 1764171125,
+          "max_ns": 2396075125
+        }
+      },
+      "candidate_over_baseline_median": 0.8430398688515447
+    },
+    {
+      "case": "static-string",
+      "engines": {
+        "baseline": {
+          "count": 18,
+          "median_ns": 914984354.0,
+          "min_ns": 758603417,
+          "max_ns": 1363327542
+        },
+        "candidate": {
+          "count": 18,
+          "median_ns": 1156601603.5,
+          "min_ns": 977611375,
+          "max_ns": 3360584459
+        }
+      },
+      "candidate_over_baseline_median": 1.264067083162386
+    },
+    {
+      "case": "computed-object",
+      "engines": {
+        "baseline": {
+          "count": 18,
+          "median_ns": 2282242937.5,
+          "min_ns": 1761859042,
+          "max_ns": 3440299250
+        },
+        "candidate": {
+          "count": 18,
+          "median_ns": 2351477208.0,
+          "min_ns": 1725761834,
+          "max_ns": 4002328250
+        }
+      },
+      "candidate_over_baseline_median": 1.030336065176234
+    },
+    {
+      "case": "computed-frame",
+      "engines": {
+        "baseline": {
+          "count": 18,
+          "median_ns": 787022937.5,
+          "min_ns": 685107750,
+          "max_ns": 934531916
+        },
+        "candidate": {
+          "count": 18,
+          "median_ns": 946263333.5,
+          "min_ns": 712723583,
+          "max_ns": 1580653583
+        }
+      },
+      "candidate_over_baseline_median": 1.2023325984701685
+    },
+    {
+      "case": "warm-field",
+      "engines": {
+        "baseline": {
+          "count": 18,
+          "median_ns": 996321770.5,
+          "min_ns": 834701750,
+          "max_ns": 1268390042
+        },
+        "candidate": {
+          "count": 18,
+          "median_ns": 1063994500.0,
+          "min_ns": 970271250,
+          "max_ns": 1533527291
+        }
+      },
+      "candidate_over_baseline_median": 1.067922564279649
+    },
+    {
+      "case": "getter",
+      "engines": {
+        "baseline": {
+          "count": 18,
+          "median_ns": 19719396.0,
+          "min_ns": 13877791,
+          "max_ns": 343629625
+        },
+        "candidate": {
+          "count": 18,
+          "median_ns": 15831895.5,
+          "min_ns": 13205959,
+          "max_ns": 19180750
+        }
+      },
+      "candidate_over_baseline_median": 0.8028590480154666
+    }
+  ]
+}
