@@ -199,35 +199,26 @@ impl ExecCode {
         constants: &[BytecodeConstant],
     ) -> Result<Self, ExecCodeError> {
         validate_region_plans(code, locals, arguments, regions, constants)?;
-        // A guarded entry must leave an ordinary first operation at F. Only
-        // product candidates need a preliminary selection; all other code is
-        // selected once, as before.
-        let selected_regions: Vec<_> = if regions.iter().any(|region| {
-            matches!(
-                region.operation,
-                NumericOperation::UpdateElement {
-                    delta: UpdateDelta::ArrayProduct(_)
-                }
-            )
-        }) {
-            let selected = select_opcodes(code, locals, regions);
-            regions
-                .iter()
-                .filter(|region| {
-                    !matches!(
-                        region.operation,
-                        NumericOperation::UpdateElement {
-                            delta: UpdateDelta::ArrayProduct(_)
-                        }
-                    ) || selected[region.start as usize] == direct_opcode(region.array)
-                })
-                .copied()
-                .collect()
-        } else {
-            regions.to_vec()
-        };
+        // A guarded entry must leave an ordinary first operation at F. Most
+        // functions need one selection pass; reselect only if a product
+        // candidate cannot publish its selected first operation.
+        let mut opcodes = select_opcodes(code, locals, regions);
+        let selected_regions: Vec<_> = regions
+            .iter()
+            .filter(|region| {
+                !matches!(
+                    region.operation,
+                    NumericOperation::UpdateElement {
+                        delta: UpdateDelta::ArrayProduct(_)
+                    }
+                ) || opcodes[region.start as usize] == direct_opcode(region.array)
+            })
+            .copied()
+            .collect();
+        if selected_regions.len() != regions.len() {
+            opcodes = select_opcodes(code, locals, &selected_regions);
+        }
         let regions = selected_regions.as_slice();
-        let opcodes = select_opcodes(code, locals, regions);
         let mut region_ids = vec![None; code.len()];
         for (id, region) in regions.iter().enumerate() {
             region_ids[region.start as usize] = Some(id);
