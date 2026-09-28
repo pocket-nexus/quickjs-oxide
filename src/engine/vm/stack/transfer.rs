@@ -196,7 +196,11 @@ fn is_scalar(value: &JsValue) -> bool {
 fn release_displaced(runtime: &Runtime, old: FrameBinding, class: Displaced) -> Result<(), Error> {
     match (class, old) {
         (Displaced::Uninitialized, FrameBinding::Uninitialized) => Ok(()),
-        (Displaced::Scalar | Displaced::Owned, FrameBinding::Direct(value)) => runtime
+        (Displaced::Scalar, FrameBinding::Direct(value)) => {
+            debug_assert!(is_scalar(&value));
+            Ok(())
+        }
+        (Displaced::Owned, FrameBinding::Direct(value)) => runtime
             .release_jsvalue(value)
             .map_err(runtime_error_to_vm_error),
         _ => unreachable!("displaced binding changed during admission"),
