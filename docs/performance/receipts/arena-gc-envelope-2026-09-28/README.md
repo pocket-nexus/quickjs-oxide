@@ -27,14 +27,14 @@ At the burst collection, the candidate's scratch rises by exactly 262,144 bytes 
 
 Host load averages at sample start were roughly 136–155. Collection durations and process wall times are present in the raw records but are **not used for a latency conclusion** under this contention. The slot-capacity sum may exceed process RSS because reserved virtual backing need not be resident. Neither metric is an embedded-target high-water measurement, and the in-collection observations cover only the named buffers at two points rather than every transient allocation.
 
-The [parsed results](data/results.json), [binary/source identities](data/build-identities.json), and [archive of all 96 per-process stdout, stderr, and `/usr/bin/time -l` records](data/raw-samples.tar.gz) preserve every sample. `results.json` contains each archive member's SHA-256 and relative name. Both engines reported the same live-node and cleanup counts at matching phases; the [runner](run.py) rejects missing or extra explicit phases and malformed capacity observations.
+The [parsed results](data/results.json), [binary/source identities](data/build-identities.json), and [archive of all 96 per-process stdout, stderr, and `/usr/bin/time -l` records](data/raw-samples.tar.gz) preserve every sample. `results.json` contains each archive member's SHA-256 and relative name. Both engines reported the same live-node and cleanup counts at matching phases; the [runner](run.py) now checks that parity automatically and rejects missing or extra explicit phases and malformed capacity observations. The recorded samples are unchanged.
 
 ## Reproduction
 
 Use clean detached worktrees at the two commits named above. Copy this receipt's `probe/` directory into the corresponding path under each checkout, decompress and apply only its matching temporary instrumentation patch (`gzip -dc PATH.patch.gz | git apply -`), and build each probe with Rust 1.96.0 on AArch64 macOS:
 
 ```sh
-RUSTUP_TOOLCHAIN=stable cargo build --locked --release \
+RUSTUP_TOOLCHAIN=1.96.0 cargo build --locked --release \
   --manifest-path docs/performance/receipts/arena-gc-envelope-2026-09-28/probe/Cargo.toml \
   --target-dir /tmp/oxide-gc-envelope-PARENT-OR-CANDIDATE-target
 ```

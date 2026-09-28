@@ -89,6 +89,19 @@ def parse_stdout(content, mode):
     return categories, gc_rows
 
 
+def validate_semantic_parity(samples):
+    """All paired runs must report the same phase-level GC outcomes."""
+    expected = {}
+    for sample in samples:
+        for row in sample["gc_rows"]:
+            key = (sample["mode"], row["phase"])
+            outcome = {name: value for name, value in row.items()
+                       if name not in ("phase", "elapsed_ns")}
+            if key in expected and expected[key] != outcome:
+                raise ValueError(f"GC outcome differs at {key}: {expected[key]} != {outcome}")
+            expected[key] = outcome
+
+
 def archive_raw(output, report):
     names = sorted({sample[key] for sample in report["samples"]
                     for key in ("stdout", "stderr", "time")})
@@ -162,6 +175,7 @@ def main():
                 samples.append(sample)
                 print(mode, repetition, position, name,
                       f"{wall_ns / 1e9:.2f}s", rss[0], flush=True)
+    validate_semantic_parity(samples)
     report = {
         "schema": "oxide-gc-envelope-host-v1",
         "host": platform.platform(),
