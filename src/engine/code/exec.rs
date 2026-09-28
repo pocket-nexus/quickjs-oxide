@@ -117,6 +117,9 @@ impl PublishedDecoded<'_> {
 pub(crate) struct ExecCode {
     words: Rc<[Cell<u32>]>,
     boundaries: Rc<[u32]>,
+    /// The original first operation of a guarded region has its own physical
+    /// entry, but keeps the guard's logical source/debug identity.
+    guarded_fallbacks: Option<Rc<[GuardedFallback]>>,
     regions: Option<Rc<[PublishedNumericRegion]>>,
     product_sources: Option<Rc<[ArrayProductSource]>>,
     copy_sources: Option<Rc<[ArrayReadSource]>>,
@@ -135,12 +138,26 @@ struct EncodedOperand {
     target: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct GuardedFallback {
+    source: u32,
+    pc: u32,
+}
+
+#[derive(Clone, Copy)]
+struct ScheduledEntry {
+    source: usize,
+    opcode: Opcode,
+    guard: bool,
+}
+
 impl ExecCode {
     #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self {
             words: Rc::from([]),
             boundaries: Rc::from([0]),
+            guarded_fallbacks: None,
             regions: None,
             product_sources: None,
             copy_sources: None,
@@ -182,19 +199,85 @@ impl ExecCode {
         constants: &[BytecodeConstant],
     ) -> Result<Self, ExecCodeError> {
         validate_region_plans(code, locals, arguments, regions, constants)?;
-        let opcodes = select_opcodes(code, locals, regions);
-        let mut region_ids = if regions.is_empty() {
-            Vec::new()
+        // A guarded entry must leave an ordinary first operation at F. Only
+        // product candidates need a preliminary selection; all other code is
+        // selected once, as before.
+        let selected_regions: Vec<_> = if regions.iter().any(|region| {
+            matches!(
+                region.operation,
+                NumericOperation::UpdateElement {
+                    delta: UpdateDelta::ArrayProduct(_)
+                }
+            )
+        }) {
+            let selected = select_opcodes(code, locals, regions);
+            regions
+                .iter()
+                .filter(|region| {
+                    !matches!(
+                        region.operation,
+                        NumericOperation::UpdateElement {
+                            delta: UpdateDelta::ArrayProduct(_)
+                        }
+                    ) || selected[region.start as usize] == direct_opcode(region.array)
+                })
+                .copied()
+                .collect()
         } else {
-            vec![None; code.len()]
+            regions.to_vec()
         };
+        let regions = selected_regions.as_slice();
+        let opcodes = select_opcodes(code, locals, regions);
+        let mut region_ids = vec![None; code.len()];
         for (id, region) in regions.iter().enumerate() {
             region_ids[region.start as usize] = Some(id);
         }
-        let mut boundaries = Vec::with_capacity(code.len() + 1);
-        let mut length = 0u32;
+        let mut schedule = Vec::with_capacity(code.len() + regions.len());
         for (source, &opcode) in opcodes.iter().enumerate() {
-            boundaries.push(length);
+            if let Some(id) = region_ids[source] {
+                if matches!(
+                    regions[id].operation,
+                    NumericOperation::UpdateElement {
+                        delta: UpdateDelta::ArrayProduct(_)
+                    }
+                ) {
+                    schedule.push(ScheduledEntry {
+                        source,
+                        opcode: region_opcode(regions[id].operation),
+                        guard: true,
+                    });
+                }
+            }
+            schedule.push(ScheduledEntry {
+                source,
+                opcode,
+                guard: false,
+            });
+        }
+        let mut boundaries = Vec::with_capacity(code.len() + 1);
+        let mut guarded_fallbacks = Vec::new();
+        let mut length = 0u32;
+        for entry in &schedule {
+            let source = entry.source;
+            let opcode = entry.opcode;
+            if boundaries.len() == source {
+                boundaries.push(length);
+            }
+            if !entry.guard
+                && region_ids[source].is_some_and(|id| {
+                    matches!(
+                        regions[id].operation,
+                        NumericOperation::UpdateElement {
+                            delta: UpdateDelta::ArrayProduct(_)
+                        }
+                    )
+                })
+            {
+                guarded_fallbacks.push(GuardedFallback {
+                    source: source as u32,
+                    pc: length,
+                });
+            }
             let operands = published_operands(code, source, opcode, regions, &region_ids);
             let count = operands.len();
             if count != usize::from(opcode.operand_count()) {
@@ -211,8 +294,21 @@ impl ExecCode {
         }
         boundaries.push(length);
         let mut words = Vec::with_capacity(length as usize);
-        for (source, &opcode) in opcodes.iter().enumerate() {
-            let operands = published_operands(code, source, opcode, regions, &region_ids);
+        for entry in &schedule {
+            let source = entry.source;
+            let opcode = entry.opcode;
+            let mut operands = published_operands(code, source, opcode, regions, &region_ids);
+            if entry.guard {
+                operands[2] = EncodedOperand {
+                    bits: guarded_fallbacks
+                        .iter()
+                        .find(|fallback| fallback.source == source as u32)
+                        .ok_or(ExecCodeError::InvalidTarget)?
+                        .pc,
+                    short: false,
+                    target: false,
+                };
+            }
             let count = operands.len();
             let first_wide = count > 0 && !operands[0].short;
             let width = 1 + count - usize::from(count != 0 && !first_wide);
@@ -282,6 +378,7 @@ impl ExecCode {
         let result = Self {
             words: words.into_iter().map(Cell::new).collect::<Vec<_>>().into(),
             boundaries: boundaries.into(),
+            guarded_fallbacks: (!guarded_fallbacks.is_empty()).then(|| Rc::from(guarded_fallbacks)),
             regions: published_regions,
             product_sources: (!product_sources.is_empty()).then(|| product_sources.into()),
             copy_sources: (!copy_sources.is_empty()).then(|| copy_sources.into()),
@@ -383,7 +480,8 @@ impl ExecCode {
         let mut entries = HashSet::new();
         let mut seen_regions =
             vec![false; self.regions.as_ref().map_or(0, |regions| regions.len())];
-        for &expected in self.boundaries.iter().take(self.boundaries.len() - 1) {
+        for source in 0..self.instruction_len() {
+            let expected = self.boundaries[source];
             if pc != expected {
                 return Err(ExecCodeError::InvalidBoundary);
             }
@@ -407,8 +505,14 @@ impl ExecCode {
                 *seen = true;
                 for index in [1, 2] {
                     let target = decoded.operand(index);
+                    let guarded = index == 2
+                        && self.guarded_fallbacks().iter().any(|fallback| {
+                            fallback.source == source as u32
+                                && fallback.pc == target
+                                && target == decoded.next_pc
+                        });
                     if target == self.words.len() as u32
-                        || self.boundaries.binary_search(&target).is_err()
+                        || !guarded && self.boundaries.binary_search(&target).is_err()
                     {
                         return Err(ExecCodeError::InvalidTarget);
                     }
@@ -421,6 +525,16 @@ impl ExecCode {
                 entries.insert(decoded.next_pc);
             }
             pc = decoded.next_pc;
+            if let Some(fallback) = self
+                .guarded_fallbacks()
+                .iter()
+                .find(|fallback| fallback.source == source as u32)
+            {
+                if pc != fallback.pc {
+                    return Err(ExecCodeError::InvalidTarget);
+                }
+                pc = self.decode(pc)?.next_pc;
+            }
         }
         if pc != self.words.len() as u32 {
             return Err(ExecCodeError::InvalidBoundary);
@@ -1007,7 +1121,16 @@ impl ExecCode {
             || published.fallthrough_pc != self.boundaries[end]
             || first.opcode != region_opcode(region.operation)
             || Some(first.operand(1)) != success
-            || first.operand(2) != self.boundaries[start + 1]
+            || first.operand(2)
+                != if product.is_some() {
+                    self.guarded_fallbacks()
+                        .iter()
+                        .find(|fallback| fallback.source == start as u32)
+                        .ok_or(ExecCodeError::InvalidTarget)?
+                        .pc
+                } else {
+                    self.boundaries[start + 1]
+                }
             || (start + 1..end).any(|index| entries.contains(&self.boundaries[index]))
         {
             return Err(ExecCodeError::InvalidTarget);
@@ -1160,9 +1283,34 @@ impl ExecCode {
         if end != start + expected_len {
             return Err(ExecCodeError::InvalidTarget);
         }
+        if product.is_some() {
+            let fallback = self
+                .guarded_fallbacks()
+                .iter()
+                .find(|fallback| fallback.source == start as u32)
+                .ok_or(ExecCodeError::InvalidTarget)?;
+            let decoded = self.decode(fallback.pc)?;
+            if decoded.opcode != expected[0]
+                || decoded.operand(0) != direct_index(region.array)
+                || decoded.next_pc != self.boundaries[start + 1]
+            {
+                return Err(ExecCodeError::InvalidTarget);
+            }
+        }
         for (offset, &opcode) in expected[..expected_len].iter().enumerate().skip(1) {
             let decoded = self.decode(self.boundaries[start + offset])?;
-            if decoded.opcode != opcode {
+            let compatible = if product.is_some() {
+                matches!(
+                    (opcode, decoded.opcode),
+                    (Opcode::GetArrayEl3, Opcode::GetArrayEl3Dense)
+                        | (Opcode::GetArrayEl, Opcode::GetArrayElDense)
+                        | (Opcode::GetLocal, Opcode::DenseReadLocal)
+                        | (Opcode::GetArg, Opcode::DenseReadArg)
+                )
+            } else {
+                false
+            };
+            if decoded.opcode != opcode && !compatible {
                 return Err(ExecCodeError::InvalidTarget);
             }
         }
@@ -1259,11 +1407,22 @@ impl ExecCode {
     }
 
     #[inline]
+    fn guarded_fallbacks(&self) -> &[GuardedFallback] {
+        self.guarded_fallbacks.as_deref().unwrap_or(&[])
+    }
+
+    #[inline]
     pub(crate) fn source_pc(&self, exec_pc: u32) -> Option<u32> {
         self.boundaries
             .binary_search(&exec_pc)
             .ok()
             .and_then(|index| u32::try_from(index).ok())
+            .or_else(|| {
+                self.guarded_fallbacks()
+                    .iter()
+                    .find(|fallback| fallback.pc == exec_pc)
+                    .map(|fallback| fallback.source)
+            })
     }
 
     #[inline]
@@ -1338,28 +1497,44 @@ impl ExecCode {
 
     pub(crate) fn opcode_at_exec(&self, exec_pc: usize) -> Option<Opcode> {
         let pc = u32::try_from(exec_pc).ok()?;
-        self.boundaries.binary_search(&pc).ok()?;
+        self.is_boundary(exec_pc).then_some(())?;
         self.decode(pc).ok().map(|decoded| decoded.opcode)
     }
 
     pub(crate) fn opcode_before(&self, resume_pc: usize) -> Option<Opcode> {
-        let pc = u32::try_from(resume_pc).ok()?;
-        let source = self.boundaries.binary_search(&pc).ok()?;
-        source
-            .checked_sub(1)
-            .and_then(|source| self.opcode_at_source(source))
+        let previous = self.previous_pc(resume_pc)?;
+        self.opcode_at_exec(previous)
     }
 
     pub(crate) fn previous_pc(&self, resume_pc: usize) -> Option<usize> {
         let pc = u32::try_from(resume_pc).ok()?;
-        let source = self.boundaries.binary_search(&pc).ok()?;
-        Some(self.boundaries[source.saturating_sub(1)] as usize)
+        let source = self.source_pc(pc)? as usize;
+        if self
+            .guarded_fallbacks()
+            .iter()
+            .any(|fallback| fallback.pc == pc)
+        {
+            return Some(self.boundaries[source] as usize);
+        }
+        if source == 0 {
+            return Some(0);
+        }
+        Some(
+            self.guarded_fallbacks()
+                .iter()
+                .find(|fallback| fallback.source == (source - 1) as u32)
+                .map_or(self.boundaries[source - 1], |fallback| fallback.pc) as usize,
+        )
     }
 
     pub(crate) fn is_boundary(&self, exec_pc: usize) -> bool {
-        u32::try_from(exec_pc)
-            .ok()
-            .is_some_and(|pc| self.boundaries.binary_search(&pc).is_ok())
+        u32::try_from(exec_pc).ok().is_some_and(|pc| {
+            self.boundaries.binary_search(&pc).is_ok()
+                || self
+                    .guarded_fallbacks()
+                    .iter()
+                    .any(|fallback| fallback.pc == pc)
+        })
     }
 
     /// Only the opcode bits change. Operand count, extension width, and all
@@ -1397,7 +1572,7 @@ impl ExecCode {
         {
             return Err(ExecCodeError::BadOperandCount);
         }
-        if self.boundaries.binary_search(&pc).is_err() {
+        if !self.is_boundary(pc as usize) {
             return Err(ExecCodeError::InvalidBoundary);
         }
         let cell = self
@@ -2434,7 +2609,12 @@ fn verify_direct_operand(
     value: DirectSource,
 ) -> Result<bool, ExecCodeError> {
     let decoded = code.decode(code.boundaries[source])?;
-    Ok(decoded.opcode == direct_opcode(value) && decoded.operand(0) == direct_index(value))
+    let selected = matches!(
+        (direct_opcode(value), decoded.opcode),
+        (Opcode::GetLocal, Opcode::DenseReadLocal) | (Opcode::GetArg, Opcode::DenseReadArg)
+    );
+    Ok((decoded.opcode == direct_opcode(value) || selected)
+        && decoded.operand(0) == direct_index(value))
 }
 
 fn select_opcodes(
@@ -2455,6 +2635,7 @@ fn select_opcodes(
     }
     for region in regions {
         entries.insert(region.start as usize);
+        entries.insert(region.end as usize);
     }
     let direct_source = |instruction: &Instruction| match instruction {
         Instruction::GetLocal(index) => locals.is_none_or(|definitions| {
@@ -2738,6 +2919,16 @@ fn select_opcodes(
     for region in regions {
         let start = region.start as usize;
         let end = region.end as usize;
+        if matches!(
+            region.operation,
+            NumericOperation::UpdateElement {
+                delta: UpdateDelta::ArrayProduct(_)
+            }
+        ) {
+            // Publication inserts a distinct guard before the selected
+            // ordinary first operation, keeping this schedule as fallback.
+            continue;
+        }
         // Region starts are entries for the other selectors, so no selected
         // operation can consume across this boundary. Preserve the exact
         // generic interval without erasing an adjacent selection.
@@ -3661,6 +3852,32 @@ mod tests {
             (
                 vec![
                     Instruction::GetArg(0),
+                    Instruction::GetArg(1),
+                    Instruction::GetArrayEl3,
+                    Instruction::GetArg(3),
+                    Instruction::GetArg(2),
+                    Instruction::GetArg(1),
+                    Instruction::GetArrayEl,
+                    Instruction::Mul,
+                    Instruction::Add,
+                    Instruction::Insert3,
+                    Instruction::PutArrayEl,
+                    Instruction::Drop,
+                    Instruction::ReturnUndefined,
+                ],
+                NumericOperation::UpdateElement {
+                    delta: UpdateDelta::ArrayProduct(super::super::region::ArrayProductSource {
+                        array: DirectSource::Argument(2),
+                        index: NumberSource::Direct(DirectSource::Argument(1)),
+                        scale: NumberSource::Direct(DirectSource::Argument(3)),
+                    }),
+                },
+                6,
+                Opcode::NumericArrayUpdateElement,
+            ),
+            (
+                vec![
+                    Instruction::GetArg(0),
                     Instruction::PushI32(0),
                     Instruction::GetArrayEl,
                     Instruction::PushI32(2),
@@ -3679,6 +3896,7 @@ mod tests {
                 Opcode::NumericArrayCompareBranch,
             ),
         ];
+        let arguments = [local; 4];
         for (code, operation, peak, opcode) in cases {
             let region = NumericRegion {
                 start: 0,
@@ -3689,12 +3907,17 @@ mod tests {
                         1
                     }) as u32,
                 array: DirectSource::Argument(0),
-                index: NumberSource::Immediate(0),
+                index: match operation {
+                    NumericOperation::UpdateElement {
+                        delta: UpdateDelta::ArrayProduct(product),
+                    } => product.index,
+                    _ => NumberSource::Immediate(0),
+                },
                 operation,
                 peak,
             };
             let published =
-                ExecCode::encode_with_locals(&code, &[local], &[local], &[region], &[]).unwrap();
+                ExecCode::encode_with_locals(&code, &[local], &arguments, &[region], &[]).unwrap();
             assert_eq!(published.opcode_at_source(0), Some(opcode));
             published.verify().unwrap();
             if matches!(
@@ -3703,6 +3926,46 @@ mod tests {
                     delta: UpdateDelta::ArrayProduct(_)
                 }
             ) {
+                let guard = published.decode(published.exec_pc(0).unwrap()).unwrap();
+                let fallback = guard.operand(2);
+                assert_eq!(fallback, guard.next_pc);
+                assert_eq!(published.source_pc(fallback), Some(0));
+                assert!(published.is_boundary(fallback as usize));
+                assert_eq!(
+                    published.opcode_at_exec(fallback as usize),
+                    Some(Opcode::GetArg)
+                );
+                assert_eq!(
+                    published.decode(fallback).unwrap().next_pc,
+                    published.exec_pc(1).unwrap()
+                );
+                let ordinary =
+                    ExecCode::encode_with_locals(&code, &[local], &arguments, &[], &[]).unwrap();
+                for source in 1..region.end as usize {
+                    assert_eq!(
+                        published.opcode_at_source(source),
+                        ordinary.opcode_at_source(source)
+                    );
+                }
+                assert_eq!(
+                    published.opcode_at_source(2),
+                    Some(Opcode::GetArrayEl3Dense)
+                );
+                assert_eq!(published.opcode_at_source(6), Some(Opcode::GetArrayElDense));
+                if matches!(region.index, NumberSource::Direct(_)) {
+                    assert_eq!(published.opcode_at_source(4), Some(Opcode::DenseReadArg));
+                }
+                let fallback_target = published.words[2].get();
+                published.words[2].set(published.exec_pc(1).unwrap());
+                assert_eq!(published.verify(), Err(ExecCodeError::InvalidTarget));
+                published.words[2].set(fallback_target);
+                let fallback_header = published.words[fallback as usize].get();
+                published.words[fallback as usize].set(
+                    (fallback_header & !(u32::from(OPCODE_MASK) << 16))
+                        | (u32::from(Opcode::GetLocal as u16) << 16),
+                );
+                assert_eq!(published.verify(), Err(ExecCodeError::InvalidTarget));
+                published.words[fallback as usize].set(fallback_header);
                 let mut malformed_payload = published.clone();
                 let mut descriptors = malformed_payload.regions.as_ref().unwrap().to_vec();
                 descriptors[0].value = NumberSource::Immediate(1);
@@ -3715,7 +3978,7 @@ mod tests {
             let mut malformed = region;
             malformed.peak -= 1;
             assert_eq!(
-                ExecCode::encode_with_locals(&code, &[local], &[local], &[malformed], &[])
+                ExecCode::encode_with_locals(&code, &[local], &arguments, &[malformed], &[])
                     .unwrap_err(),
                 ExecCodeError::InvalidTarget
             );
@@ -3725,7 +3988,7 @@ mod tests {
                 ..region
             };
             assert_eq!(
-                ExecCode::encode_with_locals(&code, &[local], &[local], &[terminal], &[])
+                ExecCode::encode_with_locals(&code, &[local], &arguments, &[terminal], &[])
                     .unwrap_err(),
                 ExecCodeError::InvalidTarget
             );
@@ -3737,7 +4000,7 @@ mod tests {
                 ..region
             };
             assert_eq!(
-                ExecCode::encode_with_locals(&entered, &[local], &[local], &[shifted], &[])
+                ExecCode::encode_with_locals(&entered, &[local], &arguments, &[shifted], &[])
                     .unwrap_err(),
                 ExecCodeError::InvalidTarget
             );

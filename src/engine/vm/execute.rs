@@ -797,6 +797,15 @@ pub(super) fn execute_frame(
                 }
                 #[cfg(test)]
                 NUMERIC_REGION_MISSES.set(NUMERIC_REGION_MISSES.get() + 1);
+                if decoded.opcode == Opcode::NumericArrayUpdateElement
+                    && region.producer_index.is_some()
+                {
+                    // This product region has a separate physical ordinary
+                    // entry. Admission has not changed guest state, so the
+                    // interpreter executes its selected first operation once.
+                    cursor.advance(decoded.operand(2) as usize);
+                    continue;
+                }
                 let first = match decoded.opcode {
                     Opcode::NumericArrayStoreAndLocal => {
                         cursor.with_slots(|slots| {
