@@ -36,6 +36,7 @@ pub(super) enum PropertyProgress {
 pub(super) enum SelectedNamedRead {
     Read(OrdinaryRead),
     LookupError(Error),
+    ContinueGeneral,
 }
 
 impl SelectedNamedRead {
@@ -152,10 +153,15 @@ pub(super) fn read_progress_selected(
     let computed = matches!(key_kind, ReadKey::Computed { .. });
     let realm = frame.executable.realm;
     let next_pc = fallthrough.index();
+    let mut skip_own_selection = false;
     let selected_read = match selected.selected.take() {
         Some(SelectedNamedRead::Read(read)) => Some(read),
         Some(SelectedNamedRead::LookupError(error)) => {
             return throw_error(runtime, realm, error).map(PropertyProgress::Deferred);
+        }
+        Some(SelectedNamedRead::ContinueGeneral) => {
+            skip_own_selection = true;
+            None
         }
         None => None,
     };
@@ -165,6 +171,7 @@ pub(super) fn read_progress_selected(
     };
     if let ReadKey::Static(index) = key_kind
         && selected_read.read.is_none()
+        && !skip_own_selection
     {
         use super::stack::LinkedReadCompletion;
         let body = &mut *frame.cold;
@@ -1035,6 +1042,38 @@ mod read_completion_tests {
         assert!(matches!(
             execution.selected_named_read,
             Some(SelectedNamedRead::Read(OrdinaryRead::Call { .. }))
+        ));
+    }
+
+    #[test]
+    fn declined_named_read_carries_the_general_lookup_stage() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let Value::Object(object) = context
+            .eval("globalThis.generalRead = new Proxy({x:7}, {get(t,k,r){return Reflect.get(t,k,r)}}); generalRead")
+            .unwrap()
+        else {
+            panic!("object");
+        };
+        let _other_owner = object.clone();
+        let (mut execution, id) = read_fixture(
+            &runtime,
+            &mut context,
+            "(function(o){return o.x})",
+            Opcode::GetFieldCached,
+        );
+        let frame = execution.frames.current_mut(id).unwrap();
+        execution
+            .slots
+            .push(&mut frame.window, JsValue::Object(object.into_handle()))
+            .unwrap();
+        assert!(matches!(
+            execute_frame(&mut execution, id).unwrap(),
+            VmAction::GetField { .. }
+        ));
+        assert!(matches!(
+            execution.selected_named_read,
+            Some(SelectedNamedRead::ContinueGeneral)
         ));
     }
 

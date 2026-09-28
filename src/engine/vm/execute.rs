@@ -2066,7 +2066,12 @@ pub(super) fn execute_frame(
                                 );
                                 return Ok(pending.action());
                             }
-                            LinkedReadCompletion::Declined => return Ok(pending.action()),
+                            LinkedReadCompletion::Declined => {
+                                execution.selected_named_read = Some(
+                                    super::property_driver::SelectedNamedRead::ContinueGeneral,
+                                );
+                                return Ok(pending.action());
+                            }
                         }
                     }
                 }
