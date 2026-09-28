@@ -162,7 +162,8 @@ CFG 前驱的交集证明；不确定的异常或恢复入口及其他不确定 
 [后续收据](receipts/numeric-region-followthrough-2026-09-28/README.md)。
 读资格与写资格分开，数组 alias 的动态事实仅在借用期有效。自适应 family
 与数值 backing 仍是独立实验，不作为下一段执行链的前提。
-cell/shape arena 已独立于完整优化器完成；后续 continuation 工作单独推进。
+cell/shape arena 已独立于完整优化器完成；四种数值操作的执行字 continuation
+已在 #53 发布，通用调用布局仍可另行推进。
 扩大区域及长 kernel 前先确定精确逻辑耗尽还是块级计费、轮询上界及 root 发布点。
 
 ## 4. 验证与完成条件
