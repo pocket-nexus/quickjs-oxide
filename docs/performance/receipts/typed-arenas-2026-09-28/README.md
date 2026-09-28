@@ -204,3 +204,78 @@ doc, `test262-host`, compiled-oracle inventory, all five production CI Clippy
 commands, source layout, formatting and documentation gates also pass on the
 rebased branch. Its full Test262 replay matches the frozen vector exactly:
 80,010 passes of 80,060 runnable cases (102,037 total variants).
+
+## Broader fixed-iteration V8-v7 comparison
+
+The existing [`iterate_v8.py`](../../../../scripts/benchmark/iterate_v8.py)
+runner compared all eight isolated V8-v7 suites and their combined program.
+This is a **fixed-work diagnostic, not the original adaptive V8 Score**. The
+external `ahaoboy/js-engine-benchmark` checkout was clean at
+`2034d98fc8c5f8044e186267593f5d5ea5232caf`. Three clean-source, plain
+release CLIs were rebuilt serially with Rust 1.96.0, fat LTO and one codegen
+unit: #52 `996663f7`, current #53 `38e9eb86`, and this branch `223c067a`.
+The final candidate commit only changed documentation and receipts after the
+engine source at `0a529c3b`. The runner verified the binary
+hashes, build receipts, matching toolchains, release flags and clean source
+identities before sampling.
+
+The #53/candidate invocation piloted each suite, targeted approximately two
+seconds per isolated process, and froze the generated work and run counts in
+[`freeze-plan.json`](data/timing/v8-freeze-plan.json) (SHA-256
+`4c24a83094e971836424b2b63f1a408afdc16689d470d12490f53e9d673a5d98`).
+The #52/candidate invocation replayed that exact plan; both resulting plan
+hashes match. Each invocation used four repetitions per engine per phase,
+ABBA/BAAB order, a 900-second sampling deadline, a 90-second sample timeout,
+same-binary A/A followed by A/B, and macOS `/usr/bin/time -l` counters. Both
+finished all 144 scheduled samples with `ok` status and valid counters. The
+raw process outputs, counters and build artifacts are retained at
+`/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7`;
+the checked sample records are in the [#53/candidate](data/timing/v8-pr53-candidate-results.json)
+and [#52/candidate](data/timing/v8-pr52-candidate-results.json) results
+(SHA-256 `7bb819fcc77f2c43aea840419955a3a7c09bd42be824ad933ef6cb119df02ea0`
+and `16ac59e0692f7b4a2d03b51a62b0735f6b8c1cce552cc745928d`).
+
+The table uses the medians of each A/B label. A ratio above one favors the
+candidate. A/A span is `(maximum - minimum) / median` across the eight
+same-binary samples for that case, a conservative indicator of observed wall
+noise. RSS is the median of each label's whole-process maximum RSS counter.
+
+| Suite | #53 wall ms | Candidate wall ms | #53 / candidate | #53 A/A span | #52 / candidate | #52 A/A span | RSS MiB, #53 → candidate |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Richards | 1,672.3 | 1,704.6 | 0.981 | 12.1% | 0.995 | 4.9% | 8.02 → 7.87 |
+| DeltaBlue | 1,765.6 | 1,849.4 | 0.955 | 14.0% | 0.903 | 7.6% | 27.27 → 24.88 |
+| Crypto | 1,360.3 | 1,474.4 | 0.923 | 10.9% | 0.993 | 3.7% | 11.36 → 11.27 |
+| RayTrace | 1,717.1 | 1,651.9 | 1.039 | 9.0% | 1.005 | 8.6% | 9.40 → 9.27 |
+| EarleyBoyer | 2,055.4 | 1,996.2 | 1.030 | 4.3% | 1.016 | 3.5% | 48.91 → 42.80 |
+| RegExp | 1,920.0 | 1,935.7 | 0.992 | 13.7% | 1.001 | 4.3% | 17.84 → 17.87 |
+| Splay | 1,981.7 | 1,944.0 | 1.019 | 6.2% | 1.031 | 3.3% | 512.72 → 501.57 |
+| NavierStokes | 1,429.7 | 1,425.4 | 1.003 | 1.5% | 0.996 | 0.9% | 10.48 → 10.37 |
+| Combined | 13,851.2 | 13,848.9 | 1.000 | 1.9% | 1.000 | 1.5% | 524.12 → 524.38 |
+
+The eight-isolated-suite geometric-mean wall ratios are **0.9920** against
+#53 and **0.9919** against #52; combined wall ratios are **1.0002** and
+**0.9997**. Every #53/candidate case falls inside its observed A/A wall span.
+Median retired-instruction ratios for the eight isolated suites have geometric
+means of 1.0036 (#53/candidate) and 1.0020 (#52/candidate); corresponding
+elapsed-cycle ratios are 0.9994 and 1.0012. Combined instruction ratios are
+1.0034 and 1.0015, and combined cycle ratios are 1.0013 and 1.0005. Raw
+per-case counter samples are in the linked results, not inferred from wall
+time. None of these near-unity totals isolates heap access cost.
+
+DeltaBlue in the #52/candidate series was the one wall outlier beyond that
+series' A/A span: its initial ratio was 0.903, while retired instructions
+were almost unchanged. A focused replay of the *same frozen JS*
+([manifest](data/timing/v8-deltablue-manifest.json)) used 12 repetitions per
+label and ABBA/BAAB ordering. Its [#52 A/A](data/timing/v8-deltablue-pr52-aa-results.json)
+medians were 1,787.4/1,783.1 ms; the [#52/candidate A/B](data/timing/v8-deltablue-pr52-ab-results.json)
+medians were 1,804.3/1,813.1 ms, a baseline/candidate ratio of 0.9952.
+All 48 focused samples were valid. The initial 9.7% wall gap did not repeat;
+it is not admitted as a demonstrated regression.
+
+The Apple M1 host was on AC power with low-power mode off. Load averages at
+the two full invocations were 3.99/3.57/2.53 and 3.72/4.06/3.27. Other
+sessions could run on the same host, and the observed A/A spans reach 14.0%
+and 8.6%. These data establish **no resolved V8-v7 throughput change** for
+this branch. Wall time, instructions, cycles and RSS cover startup, source
+compilation, execution and teardown; this is not an execution-only or
+embedded-target measurement.

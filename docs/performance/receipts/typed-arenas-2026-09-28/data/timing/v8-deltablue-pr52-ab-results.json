@@ -1,0 +1,1380 @@
+{
+  "metadata": {
+    "machine": {
+      "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+      "machine": "arm64",
+      "cpu": "Apple M1",
+      "logical_cpus": 8,
+      "python": "3.14.7",
+      "cpu_affinity": null,
+      "scaling_governors": {},
+      "load_average": [
+        4.291015625,
+        5.392578125,
+        4.51025390625
+      ],
+      "macos": {
+        "physical_memory_bytes": 17179869184,
+        "power_settings": {
+          "command": [
+            "pmset",
+            "-g",
+            "custom"
+          ],
+          "exit_code": 0,
+          "stdout": "Battery Power:\n Sleep On Power Button 1\n lowpowermode         0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         20\n womp                 0\n networkoversleep     0\n sleep                1\n lessbright           1\n tcpkeepalive         1\n disksleep            10\nAC Power:\n Sleep On Power Button 1\n lowpowermode         0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         0\n womp                 1\n networkoversleep     0\n sleep                1\n tcpkeepalive         1\n disksleep            10",
+          "stderr": ""
+        },
+        "power_source": {
+          "command": [
+            "pmset",
+            "-g",
+            "batt"
+          ],
+          "exit_code": 0,
+          "stdout": "Now drawing from 'Battery Power'\n -InternalBattery-0 (id=22741091)\t100%; discharging; 9:30 remaining present: true",
+          "stderr": ""
+        },
+        "vm_stat": {
+          "command": [
+            "vm_stat"
+          ],
+          "exit_code": 0,
+          "stdout": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                     6884.\nPages active:                                 214816.\nPages inactive:                               213723.\nPages speculative:                               809.\nPages throttled:                                   0.\nPages wired down:                             175507.\nPages purgeable:                                3755.\n\"Translation faults\":                     4350724673.\nPages copy-on-write:                       273496150.\nPages zero filled:                        1604022225.\nPages reactivated:                         535471420.\nPages purged:                               33859234.\nFile-backed pages:                            155602.\nAnonymous pages:                              273746.\nPages stored in compressor:                  1252699.\nPages occupied by compressor:                 388169.\nDecompressions:                            475763836.\nCompressions:                              541058123.\nPageins:                                    95615094.\nPageouts:                                    1101114.\nSwapins:                                     3427911.\nSwapouts:                                    4524288.",
+          "stderr": ""
+        }
+      },
+      "runner_sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5",
+      "repository": {
+        "commit": {
+          "command": [
+            "git",
+            "rev-parse",
+            "HEAD"
+          ],
+          "exit_code": 0,
+          "stdout": "223c067a67825ed229239de6f60dfe2efc2c6658",
+          "stderr": ""
+        },
+        "tree": {
+          "command": [
+            "git",
+            "rev-parse",
+            "HEAD^{tree}"
+          ],
+          "exit_code": 0,
+          "stdout": "514069db30547c4ee3064014880d4d5e89c3b2e5",
+          "stderr": ""
+        },
+        "top_level": {
+          "command": [
+            "git",
+            "rev-parse",
+            "--show-toplevel"
+          ],
+          "exit_code": 0,
+          "stdout": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7",
+          "stderr": ""
+        },
+        "status": {
+          "command": [
+            "git",
+            "status",
+            "--porcelain"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": ""
+        }
+      }
+    },
+    "runner_sha256": "8a852679221202ae6d3dac1e02b295368a79529a3e0c32e51fd6b914e5d4b425",
+    "manifest_sha256": "ec676def7c4d0caeb359502c4d07a65c86de6d928419be80ed18e1625d0f37bf",
+    "workloads": [
+      {
+        "case": "deltablue",
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/v8-pr53-vs-candidate/generated/final/deltablue.js",
+        "sha256": "8c0410833c3a5795dbc913ca243bc01d2b5d45d0c25c9193f916463af3519d6b",
+        "expected": "__oxide_v8_fixed_iteration_complete__:deltablue:1:24\n",
+        "size": 24
+      }
+    ],
+    "engines": {
+      "baseline": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-pr52/release/qjs",
+        "sha256": "be1a7795b6067bc52febedb76fb0977191112341a8f79f491455b75653d1df44",
+        "version": {
+          "command": [
+            "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-pr52/release/qjs",
+            "--version"
+          ],
+          "exit_code": 0,
+          "stdout": "quickjs-oxide 0.0.1 (QuickJS 2026-06-04 compatibility target)",
+          "stderr": ""
+        },
+        "build": {
+          "schema": "oxide-build-v2",
+          "mode": "plain",
+          "vm_configuration": "stack-vm",
+          "features": [],
+          "commit": "996663f771afdabdc69d52c94bd4d2fb392e27b1",
+          "source": {
+            "commit": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD"
+              ],
+              "exit_code": 0,
+              "stdout": "996663f771afdabdc69d52c94bd4d2fb392e27b1",
+              "stderr": ""
+            },
+            "tree": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD^{tree}"
+              ],
+              "exit_code": 0,
+              "stdout": "d9393e3097f7b0404d5f6f07bec41f27e5b59cc5",
+              "stderr": ""
+            },
+            "top_level": {
+              "command": [
+                "git",
+                "rev-parse",
+                "--show-toplevel"
+              ],
+              "exit_code": 0,
+              "stdout": "/private/tmp/oxide-typed-arenas.ZngRCR/pr52",
+              "stderr": ""
+            },
+            "status": {
+              "command": [
+                "git",
+                "status",
+                "--porcelain"
+              ],
+              "exit_code": 0,
+              "stdout": "",
+              "stderr": ""
+            }
+          },
+          "binary_sha256": "be1a7795b6067bc52febedb76fb0977191112341a8f79f491455b75653d1df44",
+          "tooling": {
+            "repository": {
+              "commit": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "HEAD"
+                ],
+                "exit_code": 0,
+                "stdout": "223c067a67825ed229239de6f60dfe2efc2c6658",
+                "stderr": ""
+              },
+              "tree": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "HEAD^{tree}"
+                ],
+                "exit_code": 0,
+                "stdout": "514069db30547c4ee3064014880d4d5e89c3b2e5",
+                "stderr": ""
+              },
+              "top_level": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "--show-toplevel"
+                ],
+                "exit_code": 0,
+                "stdout": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7",
+                "stderr": ""
+              },
+              "status": {
+                "command": [
+                  "git",
+                  "status",
+                  "--porcelain"
+                ],
+                "exit_code": 0,
+                "stdout": "",
+                "stderr": ""
+              }
+            },
+            "snapshots": {
+              "build.py": {
+                "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-pr52/release/qjs.build.tooling-build.py",
+                "sha256": "fc8392a9d26290a6095742b2ab4cb45f5ab37b964c9daa51d22f7088259b1f50"
+              },
+              "run.py": {
+                "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-pr52/release/qjs.build.tooling-run.py",
+                "sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5"
+              }
+            }
+          },
+          "command": [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "--verbose",
+            "-p",
+            "quickjs-oxide-cli",
+            "--no-default-features",
+            "--target-dir",
+            "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-pr52",
+            "--jobs",
+            "4"
+          ],
+          "cwd": "/private/tmp/oxide-typed-arenas.ZngRCR/pr52",
+          "exit_code": 0,
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-pr52/release/qjs.build.stdout.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-pr52/release/qjs.build.stderr.log",
+            "sha256": "ded96aacef795497f71ebc78e6f3976b5f342ca651a7514fea6becc67f3bd644"
+          },
+          "rustc": {
+            "command": [
+              "rustc",
+              "-vV"
+            ],
+            "exit_code": 0,
+            "stdout": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2",
+            "stderr": ""
+          },
+          "cargo": {
+            "command": [
+              "cargo",
+              "-V"
+            ],
+            "exit_code": 0,
+            "stdout": "cargo 1.96.0 (30a34c682 2026-05-25)",
+            "stderr": ""
+          },
+          "cargo_toml_sha256": "14f5e4d4f172150d6c212b61871da24a4e5b26e34e363f6de2a7f250bbe6e48d",
+          "cargo_lock_sha256": "c26c9f1999da579c0d1176c62981afa716ea998949a8dd15b1365f85b66944e3",
+          "release_profile": {
+            "manifest": {
+              "lto": "\"fat\"",
+              "codegen-units": "1"
+            },
+            "environment_overrides": {
+              "RUSTUP_TOOLCHAIN": "stable"
+            },
+            "cargo_config_sha256": {},
+            "qjs_rustc_invocation": {
+              "command": "rustc --crate-name qjs --edition=2024 apps/cli/src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C opt-level=3 -C lto=fat -C codegen-units=1 '--warn=clippy::all' --forbid=unsafe_code --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values(\"default\", \"profiling\", \"test262-host\"))' -C metadata=f318d7eac3aa0c1d -C extra-filename=-3cfe3c105f2435ac --out-dir /Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-pr52/release/deps -C strip=debuginfo -L dependency=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-pr52/release/deps --extern quickjs_oxide=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-pr52/release/deps/libquickjs_oxide-e0446d572207f926.rlib --extern quickjs_oxide_host=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-pr52/release/deps/libquickjs_oxide_host-78c1c28f3dc115b8.rlib",
+              "crate": "qjs",
+              "codegen": {
+                "opt-level": "3",
+                "lto": "fat",
+                "codegen-units": "1"
+              },
+              "target": null
+            },
+            "observed_rustc_compilations": 9,
+            "observed_codegen_groups": [
+              {
+                "target": null,
+                "codegen": {},
+                "crates": [
+                  "autocfg",
+                  "build_script_build"
+                ]
+              },
+              {
+                "target": null,
+                "codegen": {
+                  "opt-level": "3",
+                  "codegen-units": "1"
+                },
+                "crates": [
+                  "tz",
+                  "num_traits",
+                  "num_integer",
+                  "num_bigint",
+                  "quickjs_oxide",
+                  "quickjs_oxide_host"
+                ]
+              },
+              {
+                "target": null,
+                "codegen": {
+                  "opt-level": "3",
+                  "lto": "fat",
+                  "codegen-units": "1"
+                },
+                "crates": [
+                  "qjs"
+                ]
+              }
+            ]
+          },
+          "target": {
+            "requested_triple": null,
+            "rustc_host": "aarch64-apple-darwin",
+            "observed_triple": null,
+            "observed_target_cpu": null,
+            "observed_target_feature": null
+          },
+          "commit_environment": "996663f771afdabdc69d52c94bd4d2fb392e27b1"
+        }
+      },
+      "candidate": {
+        "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-candidate/release/qjs",
+        "sha256": "8a4102014bcf0445a118cc451ee2f81f55a0be60c6ea0591de07121823498bb8",
+        "version": {
+          "command": [
+            "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-candidate/release/qjs",
+            "--version"
+          ],
+          "exit_code": 0,
+          "stdout": "quickjs-oxide 0.0.1 (QuickJS 2026-06-04 compatibility target)",
+          "stderr": ""
+        },
+        "build": {
+          "schema": "oxide-build-v2",
+          "mode": "plain",
+          "vm_configuration": "stack-vm",
+          "features": [],
+          "commit": "223c067a67825ed229239de6f60dfe2efc2c6658",
+          "source": {
+            "commit": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD"
+              ],
+              "exit_code": 0,
+              "stdout": "223c067a67825ed229239de6f60dfe2efc2c6658",
+              "stderr": ""
+            },
+            "tree": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD^{tree}"
+              ],
+              "exit_code": 0,
+              "stdout": "514069db30547c4ee3064014880d4d5e89c3b2e5",
+              "stderr": ""
+            },
+            "top_level": {
+              "command": [
+                "git",
+                "rev-parse",
+                "--show-toplevel"
+              ],
+              "exit_code": 0,
+              "stdout": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7",
+              "stderr": ""
+            },
+            "status": {
+              "command": [
+                "git",
+                "status",
+                "--porcelain"
+              ],
+              "exit_code": 0,
+              "stdout": "",
+              "stderr": ""
+            }
+          },
+          "binary_sha256": "8a4102014bcf0445a118cc451ee2f81f55a0be60c6ea0591de07121823498bb8",
+          "tooling": {
+            "repository": {
+              "commit": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "HEAD"
+                ],
+                "exit_code": 0,
+                "stdout": "223c067a67825ed229239de6f60dfe2efc2c6658",
+                "stderr": ""
+              },
+              "tree": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "HEAD^{tree}"
+                ],
+                "exit_code": 0,
+                "stdout": "514069db30547c4ee3064014880d4d5e89c3b2e5",
+                "stderr": ""
+              },
+              "top_level": {
+                "command": [
+                  "git",
+                  "rev-parse",
+                  "--show-toplevel"
+                ],
+                "exit_code": 0,
+                "stdout": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7",
+                "stderr": ""
+              },
+              "status": {
+                "command": [
+                  "git",
+                  "status",
+                  "--porcelain"
+                ],
+                "exit_code": 0,
+                "stdout": "",
+                "stderr": ""
+              }
+            },
+            "snapshots": {
+              "build.py": {
+                "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-candidate/release/qjs.build.tooling-build.py",
+                "sha256": "fc8392a9d26290a6095742b2ab4cb45f5ab37b964c9daa51d22f7088259b1f50"
+              },
+              "run.py": {
+                "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-candidate/release/qjs.build.tooling-run.py",
+                "sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5"
+              }
+            }
+          },
+          "command": [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "--verbose",
+            "-p",
+            "quickjs-oxide-cli",
+            "--no-default-features",
+            "--target-dir",
+            "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-candidate",
+            "--jobs",
+            "4"
+          ],
+          "cwd": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/d4be61a9-a99b-4277-9e82-da03733bb2b7",
+          "exit_code": 0,
+          "stdout": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-candidate/release/qjs.build.stdout.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "stderr": {
+            "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-candidate/release/qjs.build.stderr.log",
+            "sha256": "00593f435dc82b5c67de86a5bc6e72b757e61f8d4937ce920b0165440c754caa"
+          },
+          "rustc": {
+            "command": [
+              "rustc",
+              "-vV"
+            ],
+            "exit_code": 0,
+            "stdout": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2",
+            "stderr": ""
+          },
+          "cargo": {
+            "command": [
+              "cargo",
+              "-V"
+            ],
+            "exit_code": 0,
+            "stdout": "cargo 1.96.0 (30a34c682 2026-05-25)",
+            "stderr": ""
+          },
+          "cargo_toml_sha256": "14f5e4d4f172150d6c212b61871da24a4e5b26e34e363f6de2a7f250bbe6e48d",
+          "cargo_lock_sha256": "c26c9f1999da579c0d1176c62981afa716ea998949a8dd15b1365f85b66944e3",
+          "release_profile": {
+            "manifest": {
+              "lto": "\"fat\"",
+              "codegen-units": "1"
+            },
+            "environment_overrides": {
+              "RUSTUP_TOOLCHAIN": "stable"
+            },
+            "cargo_config_sha256": {},
+            "qjs_rustc_invocation": {
+              "command": "rustc --crate-name qjs --edition=2024 apps/cli/src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C opt-level=3 -C lto=fat -C codegen-units=1 '--warn=clippy::all' --forbid=unsafe_code --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values(\"default\", \"profiling\", \"test262-host\"))' -C metadata=f318d7eac3aa0c1d -C extra-filename=-3cfe3c105f2435ac --out-dir /Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-candidate/release/deps -C strip=debuginfo -L dependency=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-candidate/release/deps --extern quickjs_oxide=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-candidate/release/deps/libquickjs_oxide-e0446d572207f926.rlib --extern quickjs_oxide_host=/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-candidate/release/deps/libquickjs_oxide_host-78c1c28f3dc115b8.rlib",
+              "crate": "qjs",
+              "codegen": {
+                "opt-level": "3",
+                "lto": "fat",
+                "codegen-units": "1"
+              },
+              "target": null
+            },
+            "observed_rustc_compilations": 9,
+            "observed_codegen_groups": [
+              {
+                "target": null,
+                "codegen": {},
+                "crates": [
+                  "autocfg",
+                  "build_script_build"
+                ]
+              },
+              {
+                "target": null,
+                "codegen": {
+                  "opt-level": "3",
+                  "codegen-units": "1"
+                },
+                "crates": [
+                  "tz",
+                  "num_traits",
+                  "num_integer",
+                  "num_bigint",
+                  "quickjs_oxide",
+                  "quickjs_oxide_host"
+                ]
+              },
+              {
+                "target": null,
+                "codegen": {
+                  "opt-level": "3",
+                  "lto": "fat",
+                  "codegen-units": "1"
+                },
+                "crates": [
+                  "qjs"
+                ]
+              }
+            ]
+          },
+          "target": {
+            "requested_triple": null,
+            "rustc_host": "aarch64-apple-darwin",
+            "observed_triple": null,
+            "observed_target_cpu": null,
+            "observed_target_feature": null
+          },
+          "commit_environment": "223c067a67825ed229239de6f60dfe2efc2c6658"
+        }
+      }
+    },
+    "repeat": 12,
+    "order_strategy": "abba-baab",
+    "timeout_seconds": 90.0,
+    "cpu": null,
+    "darwin_counters": true,
+    "counter_scope": "whole process including startup and teardown",
+    "metric": "whole-process wall nanoseconds; not adaptive scores"
+  },
+  "summary": [
+    {
+      "case": "deltablue",
+      "size": 24,
+      "engine": "baseline",
+      "eligible": true,
+      "successful_wall_ns": [
+        1821299208,
+        1762343959,
+        1820693625,
+        1839237125,
+        1799044208,
+        1856201709,
+        1765589792,
+        1809545292,
+        1922070666,
+        1775995291,
+        1762149083,
+        1779665750
+      ],
+      "failures": [],
+      "median_wall_ns": 1804294750.0
+    },
+    {
+      "case": "deltablue",
+      "size": 24,
+      "engine": "candidate",
+      "eligible": true,
+      "successful_wall_ns": [
+        1842696875,
+        1806917834,
+        1781537125,
+        1975420417,
+        1819190333,
+        1793102750,
+        1769466250,
+        1992754416,
+        1803011959,
+        1824203584,
+        1768132917,
+        1825180417
+      ],
+      "failures": [],
+      "median_wall_ns": 1813054083.5
+    }
+  ],
+  "samples": [
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-0.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-pr52/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/v8-pr53-vs-candidate/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1821299208,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-0.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-0.time-l.txt",
+        "raw_sha256": "3002f32e1bed5ceca640d26eeeed8ff4a8a9ce2a8fc44697a3cee6396db8f91e",
+        "values": {
+          "maximum_resident_set_size": 28622848,
+          "instructions_retired": 24713796148,
+          "cycles_elapsed": 5566402274,
+          "peak_memory_footprint": 24626176
+        }
+      },
+      "case": "deltablue",
+      "size": 24,
+      "engine": "baseline",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-0.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-candidate/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/v8-pr53-vs-candidate/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1842696875,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-0.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-0.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-0.time-l.txt",
+        "raw_sha256": "19bd081e79dba9906cb4ae6e78f6ac38524c345e9f313b9e6f1331deba14f6e4",
+        "values": {
+          "maximum_resident_set_size": 26083328,
+          "instructions_retired": 24740006072,
+          "cycles_elapsed": 5572535298,
+          "peak_memory_footprint": 22119424
+        }
+      },
+      "case": "deltablue",
+      "size": 24,
+      "engine": "candidate",
+      "repetition": 0,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-1.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-candidate/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/v8-pr53-vs-candidate/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1806917834,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-1.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-1.time-l.txt",
+        "raw_sha256": "3a1819c7ecd5c282f7e263c588ab457b75695f4e59cc664913290cbf35bc8c5c",
+        "values": {
+          "maximum_resident_set_size": 26116096,
+          "instructions_retired": 24733090077,
+          "cycles_elapsed": 5572757034,
+          "peak_memory_footprint": 22152192
+        }
+      },
+      "case": "deltablue",
+      "size": 24,
+      "engine": "candidate",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-1.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-pr52/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/v8-pr53-vs-candidate/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1762343959,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-1.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-1.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-1.time-l.txt",
+        "raw_sha256": "a30f95844dfb2e6b13c35cfafa4adab5cd69c0dfd664282e3653e3aef5d56dee",
+        "values": {
+          "maximum_resident_set_size": 28622848,
+          "instructions_retired": 24693993202,
+          "cycles_elapsed": 5499861579,
+          "peak_memory_footprint": 24609728
+        }
+      },
+      "case": "deltablue",
+      "size": 24,
+      "engine": "baseline",
+      "repetition": 1,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-2.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-candidate/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/v8-pr53-vs-candidate/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1781537125,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-2.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-2.time-l.txt",
+        "raw_sha256": "2c77150df9f9e867a48448aafe1893500024ea4250017b12a9d2bd581bdf8c45",
+        "values": {
+          "maximum_resident_set_size": 26034176,
+          "instructions_retired": 24725375308,
+          "cycles_elapsed": 5549358888,
+          "peak_memory_footprint": 22053824
+        }
+      },
+      "case": "deltablue",
+      "size": 24,
+      "engine": "candidate",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-2.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-pr52/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/v8-pr53-vs-candidate/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1820693625,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-2.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-2.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-2.time-l.txt",
+        "raw_sha256": "79f42923f6fce2c8823c063d3f439347c83cc1adc13a399809e3e2b731e53269",
+        "values": {
+          "maximum_resident_set_size": 28622848,
+          "instructions_retired": 24707022750,
+          "cycles_elapsed": 5568242251,
+          "peak_memory_footprint": 24609728
+        }
+      },
+      "case": "deltablue",
+      "size": 24,
+      "engine": "baseline",
+      "repetition": 2,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-3.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-pr52/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/v8-pr53-vs-candidate/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1839237125,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-3.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-3.time-l.txt",
+        "raw_sha256": "d28674a4f4697b7eb1eb4ca324681d5d889516cfbecb3e4ef362466a3919889f",
+        "values": {
+          "maximum_resident_set_size": 28573696,
+          "instructions_retired": 24715467932,
+          "cycles_elapsed": 5593043018,
+          "peak_memory_footprint": 24577024
+        }
+      },
+      "case": "deltablue",
+      "size": 24,
+      "engine": "baseline",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-3.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-candidate/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/v8-pr53-vs-candidate/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1975420417,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-3.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-3.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-3.time-l.txt",
+        "raw_sha256": "ed41c68fe3b57ad27d3d74535bc1bd49d70a87530a1d3afece18f76d608125c6",
+        "values": {
+          "maximum_resident_set_size": 25985024,
+          "instructions_retired": 24749013925,
+          "cycles_elapsed": 5675043266,
+          "peak_memory_footprint": 22004672
+        }
+      },
+      "case": "deltablue",
+      "size": 24,
+      "engine": "candidate",
+      "repetition": 3,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-4.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-pr52/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/v8-pr53-vs-candidate/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1799044208,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-4.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-4.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-4.time-l.txt",
+        "raw_sha256": "859ac0fe3bc9f0aa4091d12c2dfb4aebf144332513a122ec0bf741f23ccd85e7",
+        "values": {
+          "maximum_resident_set_size": 28721152,
+          "instructions_retired": 24703463767,
+          "cycles_elapsed": 5544369902,
+          "peak_memory_footprint": 24724480
+        }
+      },
+      "case": "deltablue",
+      "size": 24,
+      "engine": "baseline",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-4.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-candidate/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/v8-pr53-vs-candidate/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1819190333,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-4.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-4.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-4.time-l.txt",
+        "raw_sha256": "3b36b97f249d8be53a0e694ed1be6873714988d9c512cbf5231712d06ea0293f",
+        "values": {
+          "maximum_resident_set_size": 26017792,
+          "instructions_retired": 24730552654,
+          "cycles_elapsed": 5548037779,
+          "peak_memory_footprint": 22070336
+        }
+      },
+      "case": "deltablue",
+      "size": 24,
+      "engine": "candidate",
+      "repetition": 4,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-5.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-candidate/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/v8-pr53-vs-candidate/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1793102750,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-5.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-5.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-5.time-l.txt",
+        "raw_sha256": "86d7a748235d2bc70df8471ef05f768e4824e8213e3c23574f605356c91d97b0",
+        "values": {
+          "maximum_resident_set_size": 26083328,
+          "instructions_retired": 24729157339,
+          "cycles_elapsed": 5550723635,
+          "peak_memory_footprint": 22102976
+        }
+      },
+      "case": "deltablue",
+      "size": 24,
+      "engine": "candidate",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-5.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-pr52/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/v8-pr53-vs-candidate/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1856201709,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-5.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-5.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-5.time-l.txt",
+        "raw_sha256": "70c14b5d09d90bd332836072bd10eb5c124cf427bc105a0e2dbc28c5f9f73566",
+        "values": {
+          "maximum_resident_set_size": 28721152,
+          "instructions_retired": 24709705044,
+          "cycles_elapsed": 5571282352,
+          "peak_memory_footprint": 24724480
+        }
+      },
+      "case": "deltablue",
+      "size": 24,
+      "engine": "baseline",
+      "repetition": 5,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-6.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-candidate/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/v8-pr53-vs-candidate/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1769466250,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-6.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-6.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-6.time-l.txt",
+        "raw_sha256": "c95b532bae2298cfc81f4c85571fa9768f1653c240b618246fd669807aa4fe4c",
+        "values": {
+          "maximum_resident_set_size": 26116096,
+          "instructions_retired": 24724860396,
+          "cycles_elapsed": 5526560385,
+          "peak_memory_footprint": 22135744
+        }
+      },
+      "case": "deltablue",
+      "size": 24,
+      "engine": "candidate",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-6.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-pr52/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/v8-pr53-vs-candidate/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1765589792,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-6.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-6.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-6.time-l.txt",
+        "raw_sha256": "04a054efc12e4c854457086930b1e2920b95b864fb646d96e1173627a4442310",
+        "values": {
+          "maximum_resident_set_size": 28590080,
+          "instructions_retired": 24691007514,
+          "cycles_elapsed": 5517926820,
+          "peak_memory_footprint": 24576960
+        }
+      },
+      "case": "deltablue",
+      "size": 24,
+      "engine": "baseline",
+      "repetition": 6,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-7.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-pr52/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/v8-pr53-vs-candidate/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1809545292,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-7.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-7.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-7.time-l.txt",
+        "raw_sha256": "a1c0b85d1bd6d1bba7ae8aca042eaebdaac7dfa5c241fdfc46edf325faf47768",
+        "values": {
+          "maximum_resident_set_size": 28688384,
+          "instructions_retired": 24700066367,
+          "cycles_elapsed": 5529473723,
+          "peak_memory_footprint": 24675264
+        }
+      },
+      "case": "deltablue",
+      "size": 24,
+      "engine": "baseline",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-7.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-candidate/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/v8-pr53-vs-candidate/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1992754416,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-7.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-7.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-7.time-l.txt",
+        "raw_sha256": "60b8dc80ecb83e1a8114d75dfcd18c22aa3e14222045e34f8cbd3b42bd225e8a",
+        "values": {
+          "maximum_resident_set_size": 25051136,
+          "instructions_retired": 24762270204,
+          "cycles_elapsed": 5674462289,
+          "peak_memory_footprint": 22152192
+        }
+      },
+      "case": "deltablue",
+      "size": 24,
+      "engine": "candidate",
+      "repetition": 7,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-8.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-pr52/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/v8-pr53-vs-candidate/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1922070666,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-8.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-8.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-8.time-l.txt",
+        "raw_sha256": "8ad90faeb0ba3dee8881e5423771cf5cbdc94b3c0fe7435053f9d6499de1b419",
+        "values": {
+          "maximum_resident_set_size": 28639232,
+          "instructions_retired": 24700913431,
+          "cycles_elapsed": 5548328119,
+          "peak_memory_footprint": 24626112
+        }
+      },
+      "case": "deltablue",
+      "size": 24,
+      "engine": "baseline",
+      "repetition": 8,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-8.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-candidate/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/v8-pr53-vs-candidate/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1803011959,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-8.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-8.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-8.time-l.txt",
+        "raw_sha256": "1658161c268c77fcf80aa19baeb3bb89f5ea5c95930298353d41ce2c9ae039c5",
+        "values": {
+          "maximum_resident_set_size": 26017792,
+          "instructions_retired": 24733226942,
+          "cycles_elapsed": 5552199580,
+          "peak_memory_footprint": 22037440
+        }
+      },
+      "case": "deltablue",
+      "size": 24,
+      "engine": "candidate",
+      "repetition": 8,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-9.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-candidate/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/v8-pr53-vs-candidate/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1824203584,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-9.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-9.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-9.time-l.txt",
+        "raw_sha256": "9877770deca7430312c9e1075363dfaad74142fdab2f66fa8b66cc33d5fbe2ac",
+        "values": {
+          "maximum_resident_set_size": 26132480,
+          "instructions_retired": 24729655106,
+          "cycles_elapsed": 5548289171,
+          "peak_memory_footprint": 22152128
+        }
+      },
+      "case": "deltablue",
+      "size": 24,
+      "engine": "candidate",
+      "repetition": 9,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-9.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-pr52/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/v8-pr53-vs-candidate/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1775995291,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-9.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-9.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-9.time-l.txt",
+        "raw_sha256": "6036a73658f648849671f49b3c37eaf8daf46e4efb62852e5ce4646b5b0b686c",
+        "values": {
+          "maximum_resident_set_size": 28655616,
+          "instructions_retired": 24693262048,
+          "cycles_elapsed": 5511388170,
+          "peak_memory_footprint": 24642496
+        }
+      },
+      "case": "deltablue",
+      "size": 24,
+      "engine": "baseline",
+      "repetition": 9,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-10.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-candidate/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/v8-pr53-vs-candidate/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1768132917,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-10.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-10.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-10.time-l.txt",
+        "raw_sha256": "030cf3cc835241351481b0996fc5af33ed8345d36832789e1d27d8487cc7da57",
+        "values": {
+          "maximum_resident_set_size": 26099712,
+          "instructions_retired": 24724923650,
+          "cycles_elapsed": 5525850619,
+          "peak_memory_footprint": 22119360
+        }
+      },
+      "case": "deltablue",
+      "size": 24,
+      "engine": "candidate",
+      "repetition": 10,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-10.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-pr52/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/v8-pr53-vs-candidate/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1762149083,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-10.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-10.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-10.time-l.txt",
+        "raw_sha256": "8e40a885254e6ec76ca2dc4a91836e3b0ec481acff8eceba2edb00c802596675",
+        "values": {
+          "maximum_resident_set_size": 28524544,
+          "instructions_retired": 24693362322,
+          "cycles_elapsed": 5499489042,
+          "peak_memory_footprint": 24511424
+        }
+      },
+      "case": "deltablue",
+      "size": 24,
+      "engine": "baseline",
+      "repetition": 10,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-11.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-pr52/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/v8-pr53-vs-candidate/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1779665750,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-11.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-11.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-baseline-11.time-l.txt",
+        "raw_sha256": "fb291851c1d81b6d02cda8e40ccdd8a6d2f801d73e790f60a7237473ca5c8246",
+        "values": {
+          "maximum_resident_set_size": 28622848,
+          "instructions_retired": 24695124626,
+          "cycles_elapsed": 5507252673,
+          "peak_memory_footprint": 24609728
+        }
+      },
+      "case": "deltablue",
+      "size": 24,
+      "engine": "baseline",
+      "repetition": 11,
+      "semantic_status": "ok",
+      "status": "ok"
+    },
+    {
+      "command": [
+        "/usr/bin/time",
+        "-l",
+        "-o",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-11.time-l.txt",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/build-candidate/release/qjs",
+        "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/v8-pr53-vs-candidate/generated/final/deltablue.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 1825180417,
+      "stdout": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-11.stdout",
+      "stderr": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-11.stderr",
+      "hardware_counters": {
+        "scope": "whole process including startup and teardown",
+        "raw_path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/deltablue-pr52-ab/raw/deltablue-candidate-11.time-l.txt",
+        "raw_sha256": "d929e11457c37ee4510c82c8a13a6d25d20453aa25e31cac81e4f70cd121d967",
+        "values": {
+          "maximum_resident_set_size": 26099712,
+          "instructions_retired": 24738767644,
+          "cycles_elapsed": 5566516642,
+          "peak_memory_footprint": 22135808
+        }
+      },
+      "case": "deltablue",
+      "size": 24,
+      "engine": "candidate",
+      "repetition": 11,
+      "semantic_status": "ok",
+      "status": "ok"
+    }
+  ]
+}
