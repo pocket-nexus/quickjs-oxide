@@ -6,9 +6,10 @@ observability baseline, not a CPU/call-stack sampler or a claim of
 feature/performance parity with QuickJS.
 
 Historical measurement reports are retained locally; each applies to its
-recorded source and build. [Architecture](architecture.md) describes #52;
+recorded source and build. [Architecture](architecture.md) describes the
+current engine;
 [primitive VM results](primitive-vm.md) are historical. Future instrumentation
-and optimization work is proposed in the [roadmap](performance/roadmap.md).
+and optimization work is tracked in the [roadmap](performance/roadmap.md).
 
 ## Build and run
 
@@ -51,7 +52,8 @@ Trace serialization happens after Context and Runtime teardown.
 | Data | Included | Unavailable / interpretation |
 | --- | --- | --- |
 | Heap population | Object, shape, variable-reference, Context and bytecode node counts; lifecycle states; pending jobs | Logical node counts are not allocation counts or byte totals |
-| Owned storage | Arena slots/free indices/zero queue, object property slots, dense array elements, ordinary ArrayBuffer bytes | `used_bytes` measures initialized inline storage and `capacity_bytes` its reserved capacity; nested allocations and allocator headers are excluded |
+| Owned storage | Separate shared, captured-cell, shape and leaf arena slots/free indices; zero queue, object property slots, dense array elements, ordinary ArrayBuffer bytes | `used_bytes` measures initialized inline storage and `capacity_bytes` its reserved capacity; allocator headers are excluded. Shape entry and lookup backing are reported separately with stated lower bounds |
+| Collection scratch | `collection_scratch_peak`: largest observed trial/reachability and worklist/anchor capacity during collection | A peak observation, not an additional live-owned allocation; do not add it to persistent storage categories |
 | Bytecode | Published `ExecCode` words, deduplicated by shared storage identity | Rc headers, PC boundary mapping, constants and debug data are excluded; the compiler's temporary `Instruction` array is not retained by published functions |
 | Execution boundaries | `exec_boundaries`: deduplicated u32 boundary slices, including the terminal sentinel | Separate from bytecode word bytes; not source/debug metadata or total executable size |
 | Static property keys | `bytecode_property_keys`: linked-name count and deduplicated constant-indexed Atom slice bytes, including unused slots | Rc headers and the separate owning references in `auxiliary_atoms` are excluded; no table is allocated for functions without static names |
@@ -60,12 +62,13 @@ Trace serialization happens after Context and Runtime teardown.
 | Allocation events | Actual arena Vec backing-storage allocation, growth and release; stable storage identity; sequence; old/new capacity bytes | `coverage=partial`, `scope=arena-slots-backing-storage`; successful safe Vec capacity transitions only. An `R` does not prove a libc `realloc` call, nor physical relocation |
 | Lifecycle | Runtime create, Context create, Context drop, Runtime drop; every raw sample and each phase minimum | Monotonic wall nanoseconds. Excludes process startup and the construction of the host-services value. The sum of independent minima may not correspond to one iteration |
 
-The arena's inline bytes include its record storage. Logical-only node
+Each arena's inline bytes include its record storage. Logical-only node
 categories must not be converted to extra inline bytes and added again.
 ArrayBuffer views/aliases do not count their backing bytes again; each ordinary
 ArrayBuffer owning Vec is counted once. Other object payloads, shape lookup
-maps, BigInts, strings, code metadata and host allocations are outside byte
-coverage. **The sum of reported categories is not total runtime memory.**
+maps beyond the reported lower bound, BigInts, strings, code metadata and host
+allocations are outside byte coverage. **The sum of reported categories is not
+total runtime memory.**
 Missing values are `null`, never zero. Total allocator requested/usable bytes,
 allocation failures, peak/RSS and cumulative process allocation are explicitly
 unavailable. `-T` is not a logical-object trace or a function execution trace.
@@ -169,13 +172,17 @@ Without the `profiling` feature, compiler and interpreter hooks are compiled out
 | `cached_field_read_sites` / `dense_array_read_sites` | 发布成字段缓存或 dense 数组读 opcode 的静态数。 |
 | `generic_read_sites` | 普通 local／argument 读站点的静态数。 |
 | `dispatch[].visits` / `generic_visits` | 已接入 emitter 的普通/专用入口 visits，以及其中标为直接 generic 的次数；不是所有 opcode dispatch 总数，部分 stack 比较入口也记录 visits。 |
-| `sites[].attempts`, `hits`, `misses` | 接入的专用入口记录 outcome，主要 miss 为粗粒度 `guard`；`error` 表示异常结束，不表示可重放的 guard miss。不同 handler 的记录时机不同，不推断完整错误覆盖。 |
+| `sites[].attempts`, `hits`, `misses` | 接入的专用入口记录 outcome。M1/M2 数值区域报告其当前准入拒绝点，例如容量、输入 Number、receiver 类型、自有元素或写权限；其他 handler 的 miss 仍可能只有粗粒度 `guard`。`error` 表示异常结束，不表示可重放的 guard miss。不同 handler 的记录时机不同，不推断完整错误覆盖。 |
+| `compiler_rejections[]` | 编译期间可识别候选的静态拒绝数，按操作族和首要原因汇总；包括未执行函数，不能当作热度。 |
+| `rejections[]` | 实际进入过的函数中，未选候选原 generic 入口的执行字 `pc`、编译 `source_pc`、有限 lowered 窗口及 `visits`。同一窗口只报告首要拒绝原因；`visits` 是 generic 入口执行次数，不是专用操作 attempt。 |
 | `callsites[]` | 普通调用入口观察到的 callee 身份分布；不覆盖所有 call／construct 路径。 |
 
 静态 inventory 上限为 4,096 函数，站点 map 各有 16,384 的上限；检查
-`omitted_*` 字段后再解释覆盖。callee distinct 身份只精确记录前四种，超过后
+`omitted_*` 字段后再解释覆盖。数值拒绝候选另限每函数 4,096 个，
+`omitted.numeric_rejection_sites` 报告未进入表的数量；这些遗漏不能算作零次访问。
+callee distinct 身份只精确记录前四种，超过后
 `distinct_overflow` 表示下界；身份变化不是类型/shape 变化。#52 没有生产适应
-计数，也没有覆盖所有拒绝原因的分类，缺项不表示零成本。
+计数。M1/M2 的拒绝点分类也不是全部解释器入口的错误分类；缺项不表示零成本。
 
 这些数据可用来排序站点和检查未命中成本，不能从某个符号或站点的自时间推出机制收益上界。
 要裁决优化，还需固定源码、工具链和负载，做 A/A、交错 A/B，并分别记录固定工作量指令数、
@@ -218,8 +225,8 @@ outside it. No complete QuickJS `std`/`os` module implementation is required.
 
 执行站点的 `pc` 则是 `ExecCode` 字偏移。定位同一源码需通过已发布边界映射，
 不能将两种 PC 直接相等比较。effect 描述是通用语义的保守上界，不代表每次
-Number 操作都调用 JS。后续完整的发布字 dump 与原因诊断见路线，不能由
-当前 lowering dump 冒充。
+Number 操作都调用 JS。拒绝窗口把编译索引与已发布 generic 入口配对，
+但只包含有限指令片段，不能替代完整发布字 dump 或证明附近其他指令的动态热度。
 
 `owned_instructions` and `owned_max_operand_depth` are compatibility fields
 with **partial coverage in #52**. Their emitters are selected call installation

@@ -7,12 +7,11 @@ impl Heap {
     /// [`Heap::release_shape`].  Atom references are owned by the caller until
     /// this succeeds, then by the shape until returned as cleanup.
     pub fn allocate_shape(&mut self, shape: Shape) -> Result<ShapeId, HeapError> {
-        let (index, generation) = self.reserve(HeapNodeKind::Shape)?;
-        let id = ShapeId { index, generation };
+        let id = self.shapes.reserve()?;
         let edges = shape_edges(&shape);
 
         if let Err(error) = self.retain_edges_transactionally(&edges) {
-            self.abort_initializing(index)?;
+            self.shapes.abort_initializing(id)?;
             return Err(error);
         }
 
@@ -21,7 +20,7 @@ impl Heap {
             // It creates no GC edge and ignores mutations of ordinary newborns.
             self.object_mut(prototype)?.used_as_prototype = true;
         }
-        self.publish(index, NodeData::Shape(shape))?;
+        self.shapes.publish(id, shape)?;
         Ok(id)
     }
 
@@ -1320,6 +1319,9 @@ impl Heap {
         let exec = crate::engine::code::exec::ExecCode::encode_with_locals(
             &bytecode.code,
             &bytecode.local_definitions,
+            &bytecode.argument_definitions,
+            &bytecode.numeric_regions,
+            &bytecode.constants,
         )
         .map_err(|_| HeapError::Invariant("execution encoding rejected authenticated bytecode"))?;
         let bytecode = FunctionBytecodeData {
@@ -1364,27 +1366,27 @@ impl Heap {
         if let Err(error) = validate_var_ref_payload(&var_ref) {
             return Err((error, var_ref));
         }
-        let (index, generation) = match self.reserve(HeapNodeKind::VarRef) {
-            Ok(slot) => slot,
+        let id = match self.var_refs.reserve() {
+            Ok(id) => id,
             Err(error) => return Err((error, var_ref)),
         };
-        self.publish(index, NodeData::VarRef(var_ref))
+        self.var_refs
+            .publish(id, var_ref)
             .expect("fresh VarRef reservation must publish exactly once");
-        Ok(VarRefId { index, generation })
+        Ok(id)
     }
 
     pub fn allocate_var_ref(&mut self, var_ref: VarRefData) -> Result<VarRefId, HeapError> {
         validate_var_ref_payload(&var_ref)?;
-        let (index, generation) = self.reserve(HeapNodeKind::VarRef)?;
-        let id = VarRefId { index, generation };
+        let id = self.var_refs.reserve()?;
         let edges = var_ref_edges(&var_ref);
 
         if let Err(error) = self.retain_edges_transactionally(&edges) {
-            self.abort_initializing(index)?;
+            self.var_refs.abort_initializing(id)?;
             return Err(error);
         }
 
-        self.publish(index, NodeData::VarRef(var_ref))?;
+        self.var_refs.publish(id, var_ref)?;
         Ok(id)
     }
 }

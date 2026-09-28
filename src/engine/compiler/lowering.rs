@@ -39,7 +39,7 @@ use crate::engine::code::function::metadata::ParameterArgumentCell;
 use crate::engine::code::function::metadata::ParameterBodyStorage;
 use crate::engine::code::function::metadata::ParameterEnvironmentLayout;
 use crate::engine::code::function::metadata::ParameterPatternCopy;
-use crate::engine::compiler::flow::verify_lowered_max_stack;
+use crate::engine::compiler::flow::{plan_numeric_regions, verify_lowered_max_stack};
 use crate::engine::compiler::optimize::{
     apply_quickjs_late_throw_sites, fold_quickjs_constant_branches,
 };
@@ -492,6 +492,33 @@ pub(super) fn lower_unlinked_tree(
             })
             .transpose()?;
         let code = lowered_ops.code;
+        let dynamic_bindings = !function.eval_environments.is_empty()
+            || code.iter().any(|op| {
+                matches!(
+                    op,
+                    Instruction::Arguments(_)
+                        | Instruction::Eval { .. }
+                        | Instruction::ApplyEval { .. }
+                        | Instruction::VariableEnvironment
+                        | Instruction::HasEvalVariable { .. }
+                        | Instruction::GetEvalVariable { .. }
+                        | Instruction::PutEvalVariable { .. }
+                        | Instruction::DeleteEvalVariable { .. }
+                        | Instruction::DefineEvalVariable { .. }
+                        | Instruction::HasDynamicBinding { .. }
+                        | Instruction::GetDynamicBinding { .. }
+                        | Instruction::PutDynamicBinding { .. }
+                        | Instruction::DeleteDynamicBinding { .. }
+                )
+            });
+        let numeric_regions = plan_numeric_regions(
+            &code,
+            &function.constants,
+            &local_definitions,
+            &captured_locals[function_id],
+            function.parameters.len(),
+            dynamic_bindings,
+        );
         let constant_count = function.constants.len();
         let constants = function
             .constants
@@ -637,6 +664,7 @@ pub(super) fn lower_unlinked_tree(
             local_definitions,
             function.closure_variables,
         )
+        .with_numeric_regions(numeric_regions)
         .with_parameter_environment(parameter_environment)
         .with_eval_environments(function.eval_environments)
         .with_name(func_name);

@@ -47,6 +47,273 @@ fn leaf_arena_keeps_leaf_slots_compact_and_out_of_the_shared_arena() {
     assert_eq!(heap.leaf_free.len(), 2);
 }
 
+#[test]
+fn captured_cells_use_compact_storage_and_distinct_arena_identity() {
+    let mut heap = Heap::new();
+    let shape = empty_shape(&mut heap);
+    let object = leaf(&mut heap, shape);
+    let first = heap
+        .allocate_var_ref(VarRefData::local(RawValue::Int(1)))
+        .unwrap();
+    let second = heap
+        .allocate_var_ref(VarRefData::local(RawValue::Int(2)))
+        .unwrap();
+
+    assert!(size_of::<auxiliary_arena::AuxiliarySlot<VarRefData>>() < size_of::<ArenaSlot>());
+    assert_eq!(object.debug_index(), first.index);
+    assert_eq!(object.debug_generation(), first.generation);
+    assert_eq!(
+        heap.slots.len(),
+        1,
+        "shared storage contains only the object"
+    );
+    assert_eq!(heap.var_refs.slots.len(), 2);
+    assert!(heap.live_node(RawId::VarRef(second)).is_err());
+    assert!(matches!(
+        heap.var_ref(second).unwrap().value,
+        RawValue::Int(2)
+    ));
+
+    let cleanup = heap.release_var_ref(first).unwrap();
+    assert_eq!(cleanup.finalized_var_refs, 1);
+    let reused = heap
+        .allocate_var_ref(VarRefData::local(RawValue::Int(3)))
+        .unwrap();
+    assert_eq!(reused.index, first.index);
+    assert_ne!(reused.generation, first.generation);
+    assert!(matches!(heap.var_ref(first), Err(HeapError::Stale { .. })));
+    assert_eq!(heap.object(object).unwrap().shape, shape);
+    assert!(matches!(
+        heap.var_ref(second).unwrap().value,
+        RawValue::Int(2)
+    ));
+
+    heap.release_var_ref(second).unwrap();
+    heap.release_var_ref(reused).unwrap();
+    heap.release_object(object).unwrap();
+    heap.release_shape(shape).unwrap();
+    assert_eq!(heap.counts().live, 0);
+}
+
+#[test]
+fn captured_cell_zero_queue_and_saturated_generation_reclaim() {
+    let mut heap = Heap::new();
+    let first = heap
+        .allocate_var_ref(VarRefData::local(RawValue::Int(1)))
+        .unwrap();
+    let second = heap
+        .allocate_var_ref(VarRefData::local(RawValue::Int(2)))
+        .unwrap();
+    heap.release_raw_no_drain(RawId::VarRef(first)).unwrap();
+    assert!(matches!(
+        heap.var_refs.slots[0].state,
+        AuxiliaryState::ZeroQueued(_)
+    ));
+    let cleanup = heap.release_var_ref(second).unwrap();
+    assert_eq!(cleanup.finalized_var_refs, 2);
+    assert!(heap.zero_queue.is_empty());
+
+    let third = heap
+        .allocate_var_ref(VarRefData::local(RawValue::Int(3)))
+        .unwrap();
+    heap.var_refs.slots[third.index as usize].generation = u32::MAX;
+    let saturated = VarRefId {
+        index: third.index,
+        generation: u32::MAX,
+    };
+    heap.set_strong_count_for_test(RawId::VarRef(saturated), u32::MAX);
+    heap.retain_raw_fast(RawId::VarRef(saturated));
+    heap.release_raw_no_drain(RawId::VarRef(saturated)).unwrap();
+    assert_eq!(heap.var_ref_strong_count(saturated), Ok(u32::MAX));
+    heap.set_strong_count_for_test(RawId::VarRef(saturated), 1);
+    heap.release_var_ref(saturated).unwrap();
+    assert!(matches!(
+        heap.var_refs.slots[third.index as usize].state,
+        AuxiliaryState::Retired
+    ));
+    assert!(matches!(
+        heap.var_ref(saturated),
+        Err(HeapError::Stale { .. })
+    ));
+}
+
+#[test]
+fn captured_cell_reservation_aborts_after_edge_retain_failure() {
+    let mut heap = Heap::new();
+    let missing = ObjectId {
+        index: 77,
+        generation: 1,
+    };
+    assert!(
+        heap.allocate_var_ref(VarRefData::local(RawValue::Object(missing)))
+            .is_err()
+    );
+    assert_eq!(heap.counts().var_ref_nodes, 0);
+    assert!(matches!(
+        heap.var_refs.slots[0].state,
+        AuxiliaryState::Vacant
+    ));
+    assert_eq!(heap.var_refs.free, vec![0]);
+    let cell = heap
+        .allocate_var_ref(VarRefData::local(RawValue::Int(4)))
+        .unwrap();
+    assert_eq!(cell.index, 0);
+    heap.release_var_ref(cell).unwrap();
+}
+
+#[test]
+fn auxiliary_lifecycle_rejects_a_stale_generation_without_changing_the_slot() {
+    let mut arena = auxiliary_arena::AuxiliaryArena::<VarRefData>::new(3);
+    let cell = arena.reserve().unwrap();
+    let stale = VarRefId {
+        index: cell.index,
+        generation: cell.generation + 1,
+    };
+    assert!(arena.abort_initializing(stale).is_err());
+    assert!(
+        arena
+            .publish(stale, VarRefData::local(RawValue::Int(1)))
+            .is_err()
+    );
+    assert!(matches!(
+        arena.slots[cell.index as usize].state,
+        AuxiliaryState::Initializing { .. }
+    ));
+
+    arena
+        .publish(cell, VarRefData::local(RawValue::Int(2)))
+        .unwrap();
+    assert!(matches!(
+        arena.live(cell).unwrap().data.value,
+        RawValue::Int(2)
+    ));
+    assert!(arena.release_no_drain(cell).unwrap());
+    arena.detach_zero_queued(cell).unwrap();
+    assert!(arena.reclaim_vacant(stale).is_err());
+    arena.reclaim_vacant(cell).unwrap();
+    assert!(matches!(arena.live(cell), Err(HeapError::Stale { .. })));
+}
+
+#[test]
+fn captured_cell_replacement_preserves_owned_transfer_and_retained_update() {
+    let mut heap = Heap::new();
+    let shape = empty_shape(&mut heap);
+    let old = leaf(&mut heap, shape);
+    let transferred = leaf(&mut heap, shape);
+    let retained = leaf(&mut heap, shape);
+    let cell = heap
+        .allocate_var_ref_owned(VarRefData::local(RawValue::Object(old)))
+        .unwrap();
+    assert_eq!(heap.object_strong_count(old), Ok(1));
+
+    let previous = heap
+        .replace_var_ref_value_owned(cell, RawValue::Object(transferred))
+        .unwrap();
+    assert!(matches!(previous, RawValue::Object(id) if id == old));
+    assert_eq!(heap.object_strong_count(transferred), Ok(1));
+    assert_eq!(heap.release_object(old).unwrap().finalized_objects, 1);
+
+    let cleanup = heap
+        .replace_var_ref_value(cell, RawValue::Object(retained))
+        .unwrap();
+    assert_eq!(cleanup.finalized_objects, 1);
+    assert_eq!(heap.object_strong_count(retained), Ok(2));
+    heap.release_object(retained).unwrap();
+    let cleanup = heap.release_var_ref(cell).unwrap();
+    assert_eq!(cleanup.finalized_var_refs, 1);
+    assert_eq!(cleanup.finalized_objects, 1);
+    heap.release_shape(shape).unwrap();
+    assert_eq!(heap.counts().live, 0);
+}
+
+#[test]
+fn rejected_owned_cell_replacement_preserves_both_owners() {
+    let mut heap = Heap::new();
+    let shape = empty_shape(&mut heap);
+    let incoming = leaf(&mut heap, shape);
+    let cell = heap
+        .allocate_var_ref_owned(VarRefData::captured(
+            RawValue::Uninitialized,
+            true,
+            true,
+            ClosureVariableKind::PrivateField,
+        ))
+        .unwrap();
+
+    let (error, returned) = heap
+        .replace_var_ref_value_owned(cell, RawValue::Object(incoming))
+        .unwrap_err();
+    assert!(matches!(error, HeapError::Invariant(_)));
+    assert!(matches!(returned, RawValue::Object(id) if id == incoming));
+    assert!(matches!(
+        heap.var_ref(cell).unwrap().value,
+        RawValue::Uninitialized
+    ));
+    assert_eq!(heap.object_strong_count(incoming), Ok(1));
+
+    heap.release_object(incoming).unwrap();
+    heap.release_var_ref(cell).unwrap();
+    heap.release_shape(shape).unwrap();
+    assert_eq!(heap.counts().live, 0);
+}
+
+#[test]
+fn shapes_use_compact_storage_and_reused_generation_is_distinct() {
+    let mut heap = Heap::new();
+    let first = empty_shape(&mut heap);
+    let object = leaf(&mut heap, first);
+    assert!(size_of::<auxiliary_arena::AuxiliarySlot<Shape>>() < size_of::<ArenaSlot>());
+    assert_eq!(first.index, object.index);
+    assert_eq!(first.generation, object.generation);
+    assert_eq!(heap.slots.len(), 1);
+    assert_eq!(heap.shapes.slots.len(), 1);
+    assert!(heap.live_node(RawId::Shape(first)).is_err());
+
+    heap.release_shape(first).unwrap();
+    let cleanup = heap.release_object(object).unwrap();
+    assert_eq!(cleanup.finalized_shapes, 1);
+    assert_eq!(cleanup.finalized_shape_ids, vec![first]);
+    let second = empty_shape(&mut heap);
+    assert_eq!(second.index, first.index);
+    assert_ne!(second.generation, first.generation);
+    assert!(matches!(heap.shape(first), Err(HeapError::Stale { .. })));
+    assert!(heap.shape(second).is_ok());
+    heap.release_shape(second).unwrap();
+}
+
+#[test]
+fn shape_reservation_aborts_and_saturated_generation_retires() {
+    let mut heap = Heap::new();
+    let missing = ObjectId {
+        index: 77,
+        generation: 1,
+    };
+    assert!(
+        heap.allocate_shape(Shape::new(Some(missing), []).unwrap())
+            .is_err()
+    );
+    assert_eq!(heap.counts().shape_nodes, 0);
+    assert!(matches!(heap.shapes.slots[0].state, AuxiliaryState::Vacant));
+    assert_eq!(heap.shapes.free, vec![0]);
+
+    let shape = empty_shape(&mut heap);
+    heap.shapes.slots[shape.index as usize].generation = u32::MAX;
+    let saturated = ShapeId {
+        index: shape.index,
+        generation: u32::MAX,
+    };
+    heap.set_strong_count_for_test(RawId::Shape(saturated), u32::MAX);
+    heap.retain_raw_fast(RawId::Shape(saturated));
+    heap.release_raw_no_drain(RawId::Shape(saturated)).unwrap();
+    assert_eq!(heap.shape_strong_count(saturated), Ok(u32::MAX));
+    heap.set_strong_count_for_test(RawId::Shape(saturated), 1);
+    heap.release_shape(saturated).unwrap();
+    assert!(matches!(
+        heap.shapes.slots[shape.index as usize].state,
+        AuxiliaryState::Retired
+    ));
+}
+
 fn empty_shape(heap: &mut Heap) -> ShapeId {
     heap.allocate_shape(Shape::new(None, []).unwrap()).unwrap()
 }
@@ -54,30 +321,41 @@ fn empty_shape(heap: &mut Heap) -> ShapeId {
 #[test]
 fn small_edge_transactions_preflight_duplicates_and_late_failure() {
     let mut heap = Heap::new();
-    let first = empty_shape(&mut heap);
-    let second = empty_shape(&mut heap);
-    let first = RawId::Shape(first);
-    let second = RawId::Shape(second);
+    let first_shape = empty_shape(&mut heap);
+    let second_shape = empty_shape(&mut heap);
+    let first = RawId::Shape(first_shape);
+    let second = RawId::Shape(second_shape);
     heap.retain_edges_transactionally(&[]).unwrap();
     heap.retain_edges_transactionally(&[first]).unwrap();
-    assert_eq!(heap.live_node(first).unwrap().strong.get(), 2);
+    assert_eq!(heap.shapes.live(first_shape).unwrap().strong.get(), 2);
     heap.retain_edges_transactionally(&[first, first]).unwrap();
-    assert_eq!(heap.live_node(first).unwrap().strong.get(), 4);
-    heap.live_node_mut(second).unwrap().strong.set(u32::MAX);
+    assert_eq!(heap.shapes.live(first_shape).unwrap().strong.get(), 4);
+    heap.shapes
+        .live_mut(second_shape)
+        .unwrap()
+        .strong
+        .set(u32::MAX);
     assert!(heap.retain_edges_transactionally(&[first, second]).is_err());
     assert_eq!(
-        heap.live_node(first).unwrap().strong.get(),
+        heap.shapes.live(first_shape).unwrap().strong.get(),
         4,
         "later edge failure must not retain the first"
     );
-    heap.live_node_mut(first).unwrap().strong.set(u32::MAX - 1);
+    heap.shapes
+        .live_mut(first_shape)
+        .unwrap()
+        .strong
+        .set(u32::MAX - 1);
     assert!(heap.retain_edges_transactionally(&[first, first]).is_err());
-    assert_eq!(heap.live_node(first).unwrap().strong.get(), u32::MAX - 1);
-    heap.live_node_mut(first).unwrap().strong.set(1);
-    heap.live_node_mut(second).unwrap().strong.set(1);
+    assert_eq!(
+        heap.shapes.live(first_shape).unwrap().strong.get(),
+        u32::MAX - 1
+    );
+    heap.shapes.live_mut(first_shape).unwrap().strong.set(1);
+    heap.shapes.live_mut(second_shape).unwrap().strong.set(1);
     heap.retain_edges_transactionally(&[first, second]).unwrap();
-    assert_eq!(heap.live_node(first).unwrap().strong.get(), 2);
-    assert_eq!(heap.live_node(second).unwrap().strong.get(), 2);
+    assert_eq!(heap.shapes.live(first_shape).unwrap().strong.get(), 2);
+    assert_eq!(heap.shapes.live(second_shape).unwrap().strong.get(), 2);
 }
 
 #[derive(Default)]
@@ -183,6 +461,7 @@ fn bytecode(
 ) -> FunctionBytecodeDraft {
     FunctionBytecodeDraft {
         code: code.clone(),
+        numeric_regions: Box::new([]),
         constants: constants.into(),
         property_key_atoms: None,
         realm,

@@ -22,6 +22,38 @@ mod tests {
         assert!(pow(-1.0, f64::NEG_INFINITY).is_nan());
         assert_eq!(pow(2.0, 10.0), 1024.0);
     }
+
+    #[test]
+    fn final_only_product_compaction_matches_two_number_operations() {
+        let values = [
+            0.0,
+            -0.0,
+            1.0,
+            -1.0,
+            2.0,
+            f64::from(i32::MAX),
+            f64::from(i32::MIN),
+            2_147_483_648.0,
+            f64::MIN_POSITIVE,
+            f64::from_bits(1),
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+        ];
+        for old in values {
+            for element in values {
+                for scale in values {
+                    let old = Number::compact(old);
+                    let element = Number::compact(element);
+                    let scale = Number::compact(scale);
+                    let generic = old.add(element.mul(scale));
+                    let candidate =
+                        Number::compact(old.float() + (element.float() * scale.float()));
+                    assert_eq!(generic.float().to_bits(), candidate.float().to_bits());
+                }
+            }
+        }
+    }
 }
 
 /// Numeric representation only: no Value, conversion, Runtime or operand stack.

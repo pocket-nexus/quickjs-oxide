@@ -206,6 +206,9 @@ pub(crate) enum Opcode {
     /// A published GetLocal + PushI32(1) + Add span. On a guard miss the
     /// same word acts as GetLocal and the following generic words run.
     NumberLocalInc,
+    /// Planned numeric Array read, multiplication, addition and direct local
+    /// commit. The original words remain the generic continuation.
+    NumericArrayAccumulate,
     NumberArgInc,
     /// Field reads with a direct location-cache probe in the execution loop.
     GetFieldCached,
@@ -237,6 +240,12 @@ pub(crate) enum Opcode {
     FieldAccSetDrop,
     CompareBranchLocalLt,
     CompareBranchArgLt,
+    NumericArrayStoreProduct,
+    NumericArrayCopyElement,
+    NumericArrayAddPreInc,
+    NumericArrayStoreAndLocal,
+    NumericArrayUpdateElement,
+    NumericArrayCompareBranch,
 }
 
 const OPCODES: &[Opcode] = &[
@@ -439,6 +448,7 @@ const OPCODES: &[Opcode] = &[
     Opcode::ReturnDerived,
     Opcode::Throw,
     Opcode::NumberLocalInc,
+    Opcode::NumericArrayAccumulate,
     Opcode::NumberArgInc,
     Opcode::GetFieldCached,
     Opcode::GetField2Cached,
@@ -467,6 +477,12 @@ const OPCODES: &[Opcode] = &[
     Opcode::FieldAccSetDrop,
     Opcode::CompareBranchLocalLt,
     Opcode::CompareBranchArgLt,
+    Opcode::NumericArrayStoreProduct,
+    Opcode::NumericArrayCopyElement,
+    Opcode::NumericArrayAddPreInc,
+    Opcode::NumericArrayStoreAndLocal,
+    Opcode::NumericArrayUpdateElement,
+    Opcode::NumericArrayCompareBranch,
 ];
 
 impl Opcode {
@@ -907,6 +923,13 @@ impl Opcode {
             Self::DensePostUpdateLocal
             | Self::DensePostUpdateLocalCheck
             | Self::DensePostUpdateArg => 3,
+            Self::NumericArrayAccumulate
+            | Self::NumericArrayStoreProduct
+            | Self::NumericArrayCopyElement
+            | Self::NumericArrayAddPreInc
+            | Self::NumericArrayStoreAndLocal
+            | Self::NumericArrayUpdateElement
+            | Self::NumericArrayCompareBranch => 3,
         }
     }
 

@@ -4,35 +4,21 @@ impl Heap {
     /// Read one captured-variable cell. All functions holding the same
     /// `VarRefId` observe this shared value.
     pub fn var_ref(&self, id: VarRefId) -> Result<&VarRefData, HeapError> {
-        match self.live_node(RawId::VarRef(id))?.data {
-            NodeData::VarRef(ref var_ref) => Ok(var_ref),
-            NodeData::Object(_)
-            | NodeData::Shape(_)
-            | NodeData::Context(_)
-            | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
-                "typed var-ref lookup reached another node payload",
-            )),
-        }
+        Ok(&self.var_refs.live(id)?.data)
     }
 
     /// Trusted shared read for a live `VarRefId` held by an owning root.
     #[inline]
     #[cfg(test)]
     pub(in crate::engine::heap) fn var_ref_fast(&self, id: VarRefId) -> &VarRefData {
-        match &self.live_node_fast(RawId::VarRef(id)).data {
-            NodeData::VarRef(var_ref) => var_ref,
-            _ => unreachable!("trusted var-ref handle reached another node payload"),
-        }
+        &self.var_refs.live_fast(id).data
     }
 
     /// Trusted mutable read for a live `VarRefId` held by an owning root.
     #[inline]
     #[cfg(test)]
     pub(in crate::engine::heap) fn var_ref_fast_mut(&mut self, id: VarRefId) -> &mut VarRefData {
-        match &mut self.live_node_fast_mut(RawId::VarRef(id)).data {
-            NodeData::VarRef(var_ref) => var_ref,
-            _ => unreachable!("trusted var-ref handle reached another node payload"),
-        }
+        &mut self.var_refs.live_fast_mut(id).data
     }
 
     /// Read immutable executable data without promoting any raw cpool edges.
@@ -42,10 +28,7 @@ impl Heap {
     ) -> Result<&FunctionBytecodeData, HeapError> {
         match self.live_node(RawId::FunctionBytecode(id))?.data {
             NodeData::FunctionBytecode(ref bytecode) => Ok(bytecode),
-            NodeData::Object(_)
-            | NodeData::Shape(_)
-            | NodeData::VarRef(_)
-            | NodeData::Context(_) => Err(HeapError::Invariant(
+            NodeData::Object(_) | NodeData::Context(_) => Err(HeapError::Invariant(
                 "typed bytecode lookup reached another node payload",
             )),
         }
@@ -93,18 +76,15 @@ impl Heap {
         id: VarRefId,
         replacement: RawValue,
     ) -> Result<RawValue, (HeapError, RawValue)> {
-        let validation = self.var_ref(id).and_then(|current| {
-            validate_var_ref_value(
-                current.kind,
-                current.is_lexical,
-                current.is_const,
-                &replacement,
-            )
-        });
-        if let Err(error) = validation {
+        let cell = match self.var_ref_mut(id) {
+            Ok(cell) => cell,
+            Err(error) => return Err((error, replacement)),
+        };
+        if let Err(error) =
+            validate_var_ref_value(cell.kind, cell.is_lexical, cell.is_const, &replacement)
+        {
             return Err((error, replacement));
         }
-        let cell = self.var_ref_mut(id).expect("validated live VarRef");
         Ok(std::mem::replace(&mut cell.value, replacement))
     }
 

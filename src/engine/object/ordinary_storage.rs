@@ -7,6 +7,7 @@ use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::atom::{Atom, AtomIdx};
 use crate::engine::heap::runtime::RuntimeState;
 use crate::engine::heap::{ObjectId, ObjectKind, ObjectPayload, PropertySlot, RawValue};
+use crate::engine::numeric_region_miss::NumericRegionMiss as Miss;
 use crate::engine::object::shape::PropertyFlags;
 use crate::engine::object::{ObjectRef, PropertyKey};
 use crate::engine::value::JsValue;
@@ -1217,25 +1218,81 @@ impl Runtime {
     /// accessors fall back to canonical [[Get]].
     /// The heap borrow ends before the Copy result leaves.
     pub(crate) fn peek_dense_number(&self, base: &JsValue, index: u32) -> Option<Number> {
+        self.peek_dense_number_result(base, index).ok()
+    }
+
+    /// A miss classification is produced during the same borrow that probes
+    /// the element; diagnostic callers do not repeat a property lookup.
+    pub(crate) fn peek_dense_number_result(
+        &self,
+        base: &JsValue,
+        index: u32,
+    ) -> Result<Number, Miss> {
         let JsValue::Object(id) = base else {
-            return None;
+            return Err(Miss::ReceiverNotObject);
         };
-        let state = self.0.state.try_borrow().ok()?;
-        let data = state.heap.object(*id).ok()?;
+        let state = self
+            .0
+            .state
+            .try_borrow()
+            .map_err(|_| Miss::HeapBorrowUnavailable)?;
+        let data = state
+            .heap
+            .object(*id)
+            .map_err(|_| Miss::ReceiverUnavailable)?;
         if !matches!(data.kind, ObjectKind::Array) {
-            return None;
+            return Err(Miss::ReceiverNotArray);
         }
         match &data.payload {
-            ObjectPayload::Array { dense: Some(dense) } => match dense.get(index as usize)? {
-                RawValue::Int(value) => Some(Number::Int(*value)),
-                RawValue::Float(value) => Some(Number::Float(*value)),
-                _ => None,
+            ObjectPayload::Array { dense: Some(dense) } => match dense.get(index as usize) {
+                Some(RawValue::Int(value)) => Ok(Number::Int(*value)),
+                Some(RawValue::Float(value)) => Ok(Number::Float(*value)),
+                Some(_) => Err(Miss::OwnElementNotNumber),
+                None => Err(Miss::MissingOwnElement),
             },
             ObjectPayload::Array { dense: None } => {
                 materialized_array_own_number(&state, data, index)
+                    .ok_or(Miss::UnsupportedMaterializedOwnElement)
             }
-            _ => None,
+            _ => Err(Miss::ArrayStorageUnavailable),
         }
+    }
+
+    /// Update one existing writable own Array Number under a single mutable
+    /// state borrow. Old and new values own no edges, so this cannot release
+    /// an owner, change a descriptor or length, or run guest code.
+    pub(crate) fn try_add_array_own_number(
+        &self,
+        base: &JsValue,
+        index: u32,
+        delta: Number,
+    ) -> Result<(), Miss> {
+        let JsValue::Object(id) = base else {
+            return Err(Miss::ReceiverNotObject);
+        };
+        let Ok(mut state) = self.0.state.try_borrow_mut() else {
+            return Err(Miss::HeapBorrowUnavailable);
+        };
+        let atom = Atom::from_immediate_integer(index).map(|atom| AtomIdx::from_raw(atom.raw()));
+        state.heap.try_add_array_own_number(*id, index, atom, delta)
+    }
+
+    pub(crate) fn try_replace_array_own_number(
+        &self,
+        base: &JsValue,
+        index: u32,
+        value: Number,
+    ) -> Result<(), Miss> {
+        let JsValue::Object(id) = base else {
+            return Err(Miss::ReceiverNotObject);
+        };
+        let Ok(mut state) = self.0.state.try_borrow_mut() else {
+            return Err(Miss::HeapBorrowUnavailable);
+        };
+        let atom = Atom::from_immediate_integer(index).map(|atom| AtomIdx::from_raw(atom.raw()));
+        state
+            .heap
+            .try_replace_array_own_number(*id, index, atom, value)
     }
 
     /// Diagnose a *previously failed* numeric dense read. This performs an

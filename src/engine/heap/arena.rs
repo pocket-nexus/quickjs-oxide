@@ -11,6 +11,8 @@ impl Heap {
             #[cfg(feature = "profiling")]
             slots: profiling::ArenaStorage::new(1),
             free: Vec::new(),
+            var_refs: AuxiliaryArena::new(3),
+            shapes: AuxiliaryArena::new(4),
             #[cfg(not(feature = "profiling"))]
             leaf_slots: Vec::new(),
             #[cfg(feature = "profiling")]
@@ -23,6 +25,8 @@ impl Heap {
             alloc_sites: Vec::new(),
             #[cfg(debug_assertions)]
             leaf_alloc_sites: Vec::new(),
+            #[cfg(feature = "profiling")]
+            collection_scratch_peak_bytes: 0,
         }
     }
 
@@ -34,12 +38,12 @@ impl Heap {
 
     /// Strong count for diagnostics.
     pub fn shape_strong_count(&self, id: ShapeId) -> Result<u32, HeapError> {
-        self.shared_strong_count(RawId::Shape(id))
+        self.shapes.strong_count(id)
     }
 
     /// Strong count for captured-variable diagnostics.
     pub fn var_ref_strong_count(&self, id: VarRefId) -> Result<u32, HeapError> {
-        self.shared_strong_count(RawId::VarRef(id))
+        self.var_refs.strong_count(id)
     }
 
     /// Strong count for context diagnostics.
@@ -96,6 +100,42 @@ impl Heap {
                         counts.vacant = counts.vacant.saturating_add(1);
                     }
                 }
+            }
+        }
+        for slot in &self.var_refs.slots {
+            match &slot.state {
+                AuxiliaryState::Initializing { .. } => {
+                    counts.initializing = counts.initializing.saturating_add(1);
+                    counts.var_ref_nodes = counts.var_ref_nodes.saturating_add(1);
+                }
+                AuxiliaryState::Live(_) => {
+                    counts.live = counts.live.saturating_add(1);
+                    counts.var_ref_nodes = counts.var_ref_nodes.saturating_add(1);
+                }
+                AuxiliaryState::ZeroQueued(_) => {
+                    counts.zero_queued = counts.zero_queued.saturating_add(1);
+                    counts.var_ref_nodes = counts.var_ref_nodes.saturating_add(1);
+                }
+                AuxiliaryState::Vacant => counts.vacant = counts.vacant.saturating_add(1),
+                AuxiliaryState::Retired => counts.retired = counts.retired.saturating_add(1),
+            }
+        }
+        for slot in &self.shapes.slots {
+            match &slot.state {
+                AuxiliaryState::Initializing { .. } => {
+                    counts.initializing = counts.initializing.saturating_add(1);
+                    counts.shape_nodes = counts.shape_nodes.saturating_add(1);
+                }
+                AuxiliaryState::Live(_) => {
+                    counts.live = counts.live.saturating_add(1);
+                    counts.shape_nodes = counts.shape_nodes.saturating_add(1);
+                }
+                AuxiliaryState::ZeroQueued(_) => {
+                    counts.zero_queued = counts.zero_queued.saturating_add(1);
+                    counts.shape_nodes = counts.shape_nodes.saturating_add(1);
+                }
+                AuxiliaryState::Vacant => counts.vacant = counts.vacant.saturating_add(1),
+                AuxiliaryState::Retired => counts.retired = counts.retired.saturating_add(1),
             }
         }
         counts
@@ -434,10 +474,7 @@ impl Heap {
     ) -> Result<&mut ObjectData, HeapError> {
         match &mut self.live_node_mut(RawId::Object(id))?.data {
             NodeData::Object(object) => Ok(object),
-            NodeData::Shape(_)
-            | NodeData::VarRef(_)
-            | NodeData::Context(_)
-            | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
+            NodeData::Context(_) | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
                 "typed object lookup reached another node payload",
             )),
         }
@@ -447,15 +484,7 @@ impl Heap {
         &mut self,
         id: VarRefId,
     ) -> Result<&mut VarRefData, HeapError> {
-        match &mut self.live_node_mut(RawId::VarRef(id))?.data {
-            NodeData::VarRef(var_ref) => Ok(var_ref),
-            NodeData::Object(_)
-            | NodeData::Shape(_)
-            | NodeData::Context(_)
-            | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
-                "typed var-ref lookup reached another node payload",
-            )),
-        }
+        Ok(&mut self.var_refs.live_mut(id)?.data)
     }
 
     /// Strong count for a shared-arena handle. Leaf callers use
@@ -475,6 +504,12 @@ impl Heap {
         if id.is_leaf() {
             return Ok(self.leaf_slot(id)?.strong.get());
         }
+        if let RawId::VarRef(cell) = id {
+            return self.var_refs.strong_count(cell);
+        }
+        if let RawId::Shape(shape) = id {
+            return self.shapes.strong_count(shape);
+        }
         self.shared_strong_count(id)
     }
 
@@ -485,10 +520,24 @@ impl Heap {
             self.live_leaf_fast_mut(id).strong.set(count);
             return;
         }
+        if let RawId::VarRef(cell) = id {
+            self.var_refs.live_fast_mut(cell).strong.set(count);
+            return;
+        }
+        if let RawId::Shape(shape) = id {
+            self.shapes.live_fast_mut(shape).strong.set(count);
+            return;
+        }
         self.live_node_fast_mut(id).strong.set(count);
     }
 
     pub(in crate::engine::heap) fn is_live(&self, id: RawId) -> bool {
+        if let RawId::VarRef(cell) = id {
+            return self.var_refs.is_live(cell);
+        }
+        if let RawId::Shape(shape) = id {
+            return self.shapes.is_live(shape);
+        }
         if id.is_leaf() {
             return self
                 .validate_leaf_identity(id)

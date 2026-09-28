@@ -29,7 +29,9 @@ use crate::engine::code::function::metadata::{
 #[cfg(test)]
 use crate::engine::code::function::metadata::{EvalBinding, EvalScope, ParameterArgumentCell};
 
+mod auxiliary_arena;
 mod buffers;
+use auxiliary_arena::{AuxiliaryArena, AuxiliaryState};
 mod edges;
 mod gc;
 use edges::Edges;
@@ -179,17 +181,17 @@ impl RawId {
     /// True for handles served by the dedicated leaf arena.
     ///
     /// Leaves own no outgoing edges and can never join a cycle, so they live
-    /// outside the object/shape arena and its weak-link machinery.
+    /// outside the non-leaf arenas and their cycle-collection machinery.
     pub(in crate::engine::heap) const fn is_leaf(self) -> bool {
         matches!(self, Self::String(_) | Self::BigInt(_))
     }
 }
 
-// Realm payloads are cold and boxed so every arena slot stays compact.
+// Objects stay inline in the shared arena. Boxed realm and bytecode payloads
+// do not force an extra allocation onto ordinary object creation.
+#[allow(clippy::large_enum_variant)]
 enum NodeData {
     Object(ObjectData),
-    Shape(Shape),
-    VarRef(VarRefData),
     Context(Box<ContextData>),
     FunctionBytecode(Box<FunctionBytecodeData>),
 }
@@ -198,8 +200,6 @@ impl NodeData {
     const fn kind(&self) -> HeapNodeKind {
         match self {
             Self::Object(_) => HeapNodeKind::Object,
-            Self::Shape(_) => HeapNodeKind::Shape,
-            Self::VarRef(_) => HeapNodeKind::VarRef,
             Self::Context(_) => HeapNodeKind::Context,
             Self::FunctionBytecode(_) => HeapNodeKind::FunctionBytecode,
         }
@@ -208,8 +208,6 @@ impl NodeData {
     fn edges(&self) -> Edges {
         match self {
             Self::Object(object) => object_edges(object),
-            Self::Shape(shape) => shape_edges(shape).into(),
-            Self::VarRef(var_ref) => var_ref_edges(var_ref),
             Self::Context(context) => context_edges(context).into(),
             Self::FunctionBytecode(bytecode) => function_bytecode_edges(bytecode).into(),
         }
@@ -280,8 +278,8 @@ impl LeafValue {
 /// One string/BigInt arena slot.
 ///
 /// Leaves own no outgoing heap edges and never carry weak links, so the slot
-/// holds only its generation, strong count and payload. This keeps a live
-/// string slot at 32 bytes instead of the 440-byte object/shape slot.
+/// holds only its generation, strong count and payload. Measure its exact size
+/// for the build in question instead of relying on an older shared-slot size.
 struct LeafSlot {
     generation: u32,
     strong: Cell<u32>,
@@ -300,7 +298,7 @@ impl LeafSlot {
     }
 }
 
-/// Runtime-local object and shape arena.
+/// Runtime-local storage for shared nodes, captured cells, shapes and leaves.
 ///
 /// A `Heap` is deliberately not internally synchronized.  The enclosing
 /// runtime chooses its single-threaded ownership boundary, as QuickJS does.
@@ -311,6 +309,8 @@ pub struct Heap {
     #[cfg(feature = "profiling")]
     slots: profiling::ArenaStorage<ArenaSlot>,
     free: Vec<u32>,
+    var_refs: AuxiliaryArena<VarRefData>,
+    shapes: AuxiliaryArena<Shape>,
     #[cfg(not(feature = "profiling"))]
     leaf_slots: Vec<LeafSlot>,
     #[cfg(feature = "profiling")]
@@ -325,6 +325,8 @@ pub struct Heap {
     alloc_sites: Vec<Option<gc::AllocSite>>,
     #[cfg(debug_assertions)]
     leaf_alloc_sites: Vec<Option<gc::AllocSite>>,
+    #[cfg(feature = "profiling")]
+    collection_scratch_peak_bytes: usize,
 }
 
 impl Default for Heap {

@@ -1,9 +1,10 @@
 # Workspace architecture
 
 This document describes the current implementation and its responsibility
-boundaries at PR #52 (`996663f771afdabdc69d52c94bd4d2fb392e27b1`).
-[The optimization roadmap](performance/roadmap.md) describes proposed work;
-it does not describe additional implemented capabilities.
+boundaries, including the numeric operations on PR #53.
+PR #52 (`996663f771afdabdc69d52c94bd4d2fb392e27b1`) is the earlier
+execution baseline. [The optimization roadmap](performance/roadmap.md)
+distinguishes delivered numeric operations from proposed generalizations.
 [Primitive VM results](primitive-vm.md) retain earlier measurement provenance.
 
 ## Packages and module owners
@@ -70,8 +71,12 @@ metadata validation. Grammar methods live in the corresponding parser modules;
 the existing class, destructuring and resolution algorithms remain in use.
 `compiler/relocation.rs` owns fragment insertion, prefix relocation and the
 lowered instruction offset map. `flow.rs` exposes structural block entries
-for local rewrites and delegates required normal/exception/resume stack facts
-to the existing code verifier. `optimize.rs` owns the bounded constant-branch
+for local rewrites and builds a temporary basic-block use/effect graph for the
+numeric operations. Its flat input arena and stack of producer IDs are discarded
+after selection. The graph's potential effects describe possible calls,
+allocation and throws; it does not provide general ownership-release or
+layout-invalidation proofs. Required normal/exception/resume stack facts remain with
+the code verifier. `optimize.rs` owns the bounded constant-branch
 rewrite and its ordered QuickJS late-throw source-site projection. It runs the
 projection before rewriting and preserves physical instruction slots.
 Profiling builds expose scoped compile, execution, site and call counters
@@ -84,13 +89,19 @@ word containing a 16-bit opcode header and a 16-bit short operand; wide operands
 use following 32-bit words.
 The header also encodes the verified word width, so dispatch does not recount
 extensions on every execution.
-The encoder and verifier share the opcode/operand contract. `ExecCode` stores
+The encoder and verifier share the opcode/operand contract. Temporary numeric
+plans contain compiler instruction ranges and targets. Publication resolves
+their continuations to execution-word offsets, validates entries and operands,
+and retains only execution operands; it discards the temporary graph and plan.
+`ExecCode` stores
 instruction boundaries so control-flow targets, resumed frames and
 diagnostics use execution-word offsets. The published function retains the
 word stream, constants and metadata; product builds have no second instruction
-array or fusion plan. Tests may retain compiler IR for assertions. The current
-selector recognizes bounded instruction patterns; the dataflow-based execution
-planner in the roadmap is not implemented.
+array or fusion plan. Tests may retain compiler IR for assertions. Most
+specializations still recognize bounded instruction patterns. Numeric regions select
+operations from temporary use/effect facts and limited exact shapes after lowering;
+the broader binding,
+ownership and effect planner in the roadmap remains proposed.
 
 `vm/execute.rs` is the only instruction loop. `FrameCursor` borrows the frame
 window for one short operation at a time, moves or copies owned values, and
@@ -100,12 +111,47 @@ explicit frame stack and driver handle operations that can call JavaScript,
 throw or suspend. The object, conversion and iterator algorithms retain their semantic ownership
 in their respective modules; none dispatches compiler `Instruction` values.
 
-Publication selects ordinary, cache-aware and numeric span opcodes. Ordinary
+Publication selects ordinary, cache-aware, numeric span and numeric-region opcodes. Ordinary
 local and argument reads enter directly, with no specialization probe. A
 numeric span hit skips its following generic words; a failed guard executes
 the same position's ordinary read and then those generic words. The verifier
 rejects any span with a control-flow entry into its middle. Field and array
 cache misses similarly enter the new execution flow's general handlers.
+For discarded-result `sum += array[i] * scale`, `out = array[i] * scale`,
+`array[i] += delta`, `target[i] = source[j]`, and numeric element comparison branches, selection can
+publish one operation and a validated descriptor. The original words remain
+in the same stream for generic fallback. Each selected interval excludes only
+overlapping specialization; publication validates sources, CFG-based lexical
+proofs, entry restrictions, continuations and logical stack requirements.
+Direct local/argument and numeric constant inputs are supported. The array
+update also accepts one planned array-element product as its delta, covering
+`x[i] += dt * s[i]` without a new opcode family.
+An array-first product assignment is selected only when its retained fallback
+words match that evaluation order; the scalar-first form stays generic. A
+stack-consuming add after `++index` and an array write followed by a local
+write also form short regions in the repeated `lin_solve` chain. Their
+published producer data uses opcode-specific tables, leaving the common
+descriptor at 80 inline bytes on the measured target.
+Initialized, uncaptured
+lexical `let` destinations and `const` sources can qualify when predecessor
+intersection proves initialization across reachable ordinary CFG edges.
+Unproven exception or resume entries, captured, dynamic and mapped bindings
+use ordinary encoding.
+
+At execution, Number guards and a genuine Array's own dense or materialized
+Number element admit a read. Local accumulation requires an existing Number;
+product assignment can replace an initialized direct undefined, null, Boolean
+or Number without observable release. Owned destination values fall back.
+Local operations retain a short-lived `FrameSlots` destination through
+computation and one write. An array update admits an
+existing writable own Number element, computes and writes within one mutable
+heap borrow. For an array-product delta, the source read uses its own short
+shared heap borrow before a separate mutable target update borrow. Both source
+values are read before the target is written, including when the arrays alias. A frozen target or accessor
+element misses. A comparison branches
+directly without an intermediate Boolean owner. Guard failure runs the
+original first read and generic continuation without changing state. This is
+a small set of planned operations, not a production adaptive region engine.
 The field cache retained by published code is read-only; writes use the
 general property operation without an unused write-cache allocation.
 The `quicken_same_width` helper is test-only and checks allowed opcode pairs,
@@ -119,7 +165,7 @@ this is not a frozen, portable program image.
 | --- | --- | --- |
 | Lowering / `verify_parts` | Validate reachable stack states, control flow and constant references; compute maximum stack usage | Current JS value types, object state, or a complete local-initialization/storage proof for future direct operations |
 | Publication / heap allocation | Link atoms and constants, validate function metadata, retain child/constant roots, publish iteratively and clean up failures | Cross-runtime portability of linked identities |
-| `ExecCode` encoding / verification | Check headers, operand counts, widths, boundaries, targets and selected span contracts | Every proposed binding/ownership/effect guarantee in the roadmap |
+| `ExecCode` encoding / verification | Check headers, operand counts, widths, boundaries, targets, selected span contracts and numeric-region descriptors/entries/continuations | Every proposed binding/ownership/effect guarantee beyond the selected shapes |
 | Frame installation / execution entry | Reserve frame storage, authenticate its window, check the resume word boundary | That arbitrary saved values stayed unchanged across re-entry |
 | Short execution borrow | Inspect actual binding/value/storage facts and consume scoped access | Validity across callbacks, layout mutation, suspension or observable release |
 
@@ -153,10 +199,13 @@ The roadmap makes release handling depend on the displaced owner and the
 operation's actual effects.
 
 Own numeric Array reads currently support dense and materialized data slots,
-including frozen data properties. Existing numeric writes have narrower dense
-storage guards. Read eligibility does not imply writability. Scoped one-borrow
-updates, homogeneous numeric backing and typed cell/shape arenas are proposals,
-not properties implied by the current helper names.
+including frozen data properties. Planned local operations use this read path
+with one heap access and commit to an admitted destination. Planned numeric
+array updates use one mutable heap borrow for an existing writable own Number
+element in either storage mode. Other array writes retain their existing
+guards and general path. Read eligibility does not imply writability.
+Typed cell/shape arenas now hold captured cells and shapes separately from the
+object-containing shared arena. Homogeneous numeric backing remains a proposal.
 
 ## State and semantic boundaries
 

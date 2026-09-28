@@ -8,11 +8,13 @@
 mod cost;
 pub(crate) use cost::record_call_preparation;
 
+#[cfg(feature = "profiling")]
+pub(crate) use cost::record_compiled_numeric_rejections;
 pub(crate) use cost::record_owned_call_storage;
 pub use cost::{
     CallBufferCost, CallPreparationCost, CallsiteCost, CostProfile, CostSnapshot,
     ExecutionDispatchCost, ExecutionSiteCost, ExecutionSiteKey, ExecutionStaticCost,
-    FunctionSiteKey, OwnedStorageCost, PhaseCost, SiteKey, VmPhaseCost,
+    FunctionSiteKey, NumericRejectionCost, OwnedStorageCost, PhaseCost, SiteKey, VmPhaseCost,
 };
 pub(crate) use cost::{
     CompilePhase, PhaseTimer, VmCallSample, cost_profile_active, record_compiler_storage,
@@ -229,7 +231,7 @@ pub(crate) use cost::{
 #[cfg(feature = "profiling")]
 pub(crate) use cost::{
     record_callsite_callee, record_execution_dispatch, record_execution_outcome,
-    record_execution_static,
+    record_execution_static, record_numeric_rejection_visit,
 };
 
 #[cfg(test)]
@@ -266,13 +268,43 @@ mod tests {
     }
 
     #[test]
+    fn profiling_accounts_for_cell_shape_arenas_and_collection_scratch() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        drop(context.eval("globalThis.captured = (() => { let value = 1; return () => value; })(); globalThis.object = { a: 1, b: 2 };").unwrap());
+        let snapshot = runtime.memory_snapshot();
+        assert!(
+            category(&snapshot, "var_ref_arena_slots")
+                .capacity_bytes
+                .unwrap()
+                > 0
+        );
+        assert!(
+            category(&snapshot, "shape_arena_slots")
+                .capacity_bytes
+                .unwrap()
+                > 0
+        );
+        assert!(category(&snapshot, "shape_entries").capacity_bytes.unwrap() > 0);
+        runtime.run_gc().unwrap();
+        let after = runtime.memory_snapshot();
+        assert!(
+            category(&after, "collection_scratch_peak")
+                .capacity_bytes
+                .unwrap()
+                > 0
+        );
+        drop(context);
+    }
+
+    #[test]
     fn profiling_trace_preserves_storage_lifetime_through_cloned_runtime() {
         let (runtime, trace) =
             Runtime::new_with_allocation_trace(SystemHostServices::default(), 128);
         let mut context = runtime.new_context();
         drop(
             context
-                .eval("globalThis.items = []; for (let i = 0; i < 200; i++) items.push({i});")
+                .eval("globalThis.items = []; for (let i = 0; i < 200; i++) items.push({i}); globalThis.captured = (() => { let x = 1; return () => x; })();")
                 .unwrap(),
         );
         let alias = runtime.clone();
@@ -286,6 +318,8 @@ mod tests {
                 .iter()
                 .any(|e| e.kind == AllocationEventKind::Reallocate)
         );
+        assert!(during.events.iter().any(|e| e.allocation_id == 3));
+        assert!(during.events.iter().any(|e| e.allocation_id == 4));
         drop(context);
         drop(runtime);
         assert!(!trace.snapshot().finished);

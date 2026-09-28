@@ -1,4 +1,6 @@
 use super::*;
+use crate::engine::numeric_region_miss::NumericRegionMiss as Miss;
+use crate::engine::value::number::operations::Number;
 
 /// The runtime may undo retained Atoms only before slot publication.
 pub(crate) struct SlotReplacementError {
@@ -7,6 +9,95 @@ pub(crate) struct SlotReplacementError {
 }
 
 impl Heap {
+    /// Replace an existing writable own Number without releasing an owner.
+    /// The source Number was read before this mutable target access.
+    pub(crate) fn try_replace_array_own_number(
+        &mut self,
+        id: ObjectId,
+        index: u32,
+        atom: Option<AtomIdx>,
+        value: Number,
+    ) -> Result<(), Miss> {
+        self.try_update_array_own_number(id, index, atom, value, |_, new| new)
+    }
+
+    /// The receiver has a frame owner. An existing Number-to-Number update
+    /// changes neither graph edges nor the Array layout.
+    pub(crate) fn try_add_array_own_number(
+        &mut self,
+        id: ObjectId,
+        index: u32,
+        atom: Option<AtomIdx>,
+        delta: Number,
+    ) -> Result<(), Miss> {
+        self.try_update_array_own_number(id, index, atom, delta, Number::add)
+    }
+
+    fn try_update_array_own_number(
+        &mut self,
+        id: ObjectId,
+        index: u32,
+        atom: Option<AtomIdx>,
+        input: Number,
+        operation: impl Fn(Number, Number) -> Number + Copy,
+    ) -> Result<(), Miss> {
+        fn update_cell(
+            cell: &mut RawValue,
+            input: Number,
+            operation: impl Fn(Number, Number) -> Number,
+        ) -> Result<(), Miss> {
+            let old = match cell {
+                RawValue::Int(value) => Number::Int(*value),
+                RawValue::Float(value) => Number::Float(*value),
+                _ => return Err(Miss::OwnElementNotNumber),
+            };
+            *cell = match operation(old, input) {
+                Number::Int(value) => RawValue::Int(value),
+                Number::Float(value) => RawValue::Float(value),
+            };
+            Ok(())
+        }
+        // The dense branch authenticates the object once. Materialized data
+        // needs a separate shape read before the final mutable slot access.
+        let shape_id = {
+            let data = self.object_mut(id).map_err(|_| Miss::ReceiverUnavailable)?;
+            if !matches!(data.kind, ObjectKind::Array) {
+                return Err(Miss::ReceiverNotArray);
+            }
+            match &mut data.payload {
+                ObjectPayload::Array { dense: Some(dense) } => {
+                    return update_cell(
+                        dense
+                            .get_mut(index as usize)
+                            .ok_or(Miss::MissingOwnElement)?,
+                        input,
+                        operation,
+                    );
+                }
+                ObjectPayload::Array { dense: None } => data.shape,
+                _ => return Err(Miss::ArrayStorageUnavailable),
+            }
+        };
+        let atom = atom.ok_or(Miss::IndexNotImmediate)?;
+        let shape = self
+            .shape(shape_id)
+            .map_err(|_| Miss::ArrayShapeUnavailable)?;
+        let slot = shape.find(atom).ok_or(Miss::MissingOwnElement)? as usize;
+        if !shape
+            .entries()
+            .get(slot)
+            .is_some_and(|entry| entry.flags.writable)
+        {
+            return Err(Miss::OwnElementNotWritable);
+        }
+        let data = self.object_mut(id).map_err(|_| Miss::ReceiverUnavailable)?;
+        let cell = match data.slots.get_mut(slot) {
+            Some(PropertySlot::Data(raw)) => raw,
+            _ => return Err(Miss::UnsupportedOwnElement),
+        };
+        update_cell(cell, input, operation)
+    }
+
     pub(crate) const fn property_layout_epoch(&self) -> u64 {
         self.property_layout_epoch
     }
@@ -27,10 +118,7 @@ impl Heap {
     pub fn object(&self, id: ObjectId) -> Result<&ObjectData, HeapError> {
         match self.live_node(RawId::Object(id))?.data {
             NodeData::Object(ref object) => Ok(object),
-            NodeData::Shape(_)
-            | NodeData::VarRef(_)
-            | NodeData::Context(_)
-            | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
+            NodeData::Context(_) | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
                 "typed object lookup reached another node payload",
             )),
         }
@@ -115,52 +203,29 @@ impl Heap {
 
     /// Read one live shape record.
     pub fn shape(&self, id: ShapeId) -> Result<&Shape, HeapError> {
-        match self.live_node(RawId::Shape(id))?.data {
-            NodeData::Shape(ref shape) => Ok(shape),
-            NodeData::Object(_)
-            | NodeData::VarRef(_)
-            | NodeData::Context(_)
-            | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
-                "typed shape lookup reached another node payload",
-            )),
-        }
+        Ok(&self.shapes.live(id)?.data)
     }
 
     /// Trusted shared read for a live `ShapeId` reachable from a live object.
     #[inline]
     pub(crate) fn shape_fast(&self, id: ShapeId) -> &Shape {
-        match &self.live_node_fast(RawId::Shape(id)).data {
-            NodeData::Shape(shape) => shape,
-            _ => unreachable!("trusted shape handle reached another node payload"),
-        }
+        &self.shapes.live_fast(id).data
     }
 
     pub(in crate::engine::heap) fn shape_mut(
         &mut self,
         id: ShapeId,
     ) -> Result<&mut Shape, HeapError> {
-        match self.live_node_mut(RawId::Shape(id))?.data {
-            NodeData::Shape(ref mut shape) => {
-                shape.invalidate_layout();
-                Ok(shape)
-            }
-            NodeData::Object(_)
-            | NodeData::VarRef(_)
-            | NodeData::Context(_)
-            | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
-                "typed mutable shape lookup reached another node payload",
-            )),
-        }
+        let shape = &mut self.shapes.live_mut(id)?.data;
+        shape.invalidate_layout();
+        Ok(shape)
     }
 
     /// Read one live context record.
     pub fn context(&self, id: ContextId) -> Result<&ContextData, HeapError> {
         match self.live_node(RawId::Context(id))?.data {
             NodeData::Context(ref context) => Ok(context),
-            NodeData::Object(_)
-            | NodeData::Shape(_)
-            | NodeData::VarRef(_)
-            | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
+            NodeData::Object(_) | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
                 "typed context lookup reached another node payload",
             )),
         }

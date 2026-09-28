@@ -18,6 +18,14 @@ pub(super) struct DictionaryOrder {
 }
 
 impl DictionaryOrder {
+    #[cfg(feature = "profiling")]
+    pub(super) fn storage_bytes(&self) -> (usize, usize) {
+        (
+            self.links.len() * std::mem::size_of::<Links>(),
+            self.links.capacity() * std::mem::size_of::<Links>(),
+        )
+    }
+
     pub(super) fn new(len: usize) -> Self {
         Self {
             links: (0..len)
