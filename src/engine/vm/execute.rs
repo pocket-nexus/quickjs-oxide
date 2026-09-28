@@ -447,6 +447,9 @@ pub(super) fn execute_frame(
             }
             Opcode::NumericArrayAccumulate
             | Opcode::NumericArrayStoreProduct
+            | Opcode::NumericArrayCopyElement
+            | Opcode::NumericArrayAddPreInc
+            | Opcode::NumericArrayStoreAndLocal
             | Opcode::NumericArrayUpdateElement
             | Opcode::NumericArrayCompareBranch => {
                 let region = executable
@@ -491,14 +494,23 @@ pub(super) fn execute_frame(
                             else {
                                 return Ok(Err(Miss::IndexNotNumericInteger));
                             };
-                            let delta = if let Some(product) = region.update_product {
+                            let delta = if let Some(producer) = region.producer_index {
+                                let product = executable
+                                    .exec
+                                    .product_source(producer)
+                                    .expect("verified product payload");
                                 let Some(scale) = region_number(slots, product.scale) else {
                                     return Ok(Err(Miss::ScaleNotNumber));
                                 };
-                                let Some(product_index) =
-                                    region_number(slots, product.index).and_then(array_index)
-                                else {
-                                    return Ok(Err(Miss::IndexNotNumericInteger));
+                                let product_index = if region.shared_update_index {
+                                    index
+                                } else {
+                                    let Some(product_index) =
+                                        region_number(slots, product.index).and_then(array_index)
+                                    else {
+                                        return Ok(Err(Miss::IndexNotNumericInteger));
+                                    };
+                                    product_index
                                 };
                                 let Some(product_base) =
                                     slots.direct_value(region_direct_slot(product.array))
@@ -532,6 +544,178 @@ pub(super) fn execute_frame(
                             Err(reason) => {
                                 miss_reason = Some(reason);
                                 false
+                            }
+                        }
+                    }
+                    Opcode::NumericArrayCopyElement => {
+                        let generation = frame.property_generation.checked_add(1);
+                        let result = cursor.with_slots(|slots| {
+                            if generation.is_none() {
+                                return Ok(Err(Miss::PropertyGenerationOverflow));
+                            }
+                            if !slots.has_operand_capacity(region.peak as usize) {
+                                return Ok(Err(Miss::OperandCapacity));
+                            }
+                            let Some(index) =
+                                region_number(slots, region.index).and_then(array_index)
+                            else {
+                                return Ok(Err(Miss::IndexNotNumericInteger));
+                            };
+                            let source = executable
+                                .exec
+                                .copy_source(
+                                    region.producer_index.expect("verified copy payload index"),
+                                )
+                                .expect("verified copy payload");
+                            let Some(source_index) =
+                                region_number(slots, source.index).and_then(array_index)
+                            else {
+                                return Ok(Err(Miss::IndexNotNumericInteger));
+                            };
+                            let Some(source_base) =
+                                slots.direct_value(region_direct_slot(source.array))
+                            else {
+                                return Ok(Err(Miss::ReceiverBindingUnavailable));
+                            };
+                            let value =
+                                match runtime.peek_dense_number_result(source_base, source_index) {
+                                    Ok(value) => value,
+                                    Err(reason) => return Ok(Err(reason)),
+                                };
+                            let Some(target_base) =
+                                slots.direct_value(region_direct_slot(region.array))
+                            else {
+                                return Ok(Err(Miss::ReceiverBindingUnavailable));
+                            };
+                            Ok(runtime.try_replace_array_own_number(target_base, index, value))
+                        })?;
+                        match result {
+                            Ok(()) => {
+                                frame.property_generation = generation.unwrap();
+                                true
+                            }
+                            Err(reason) => {
+                                miss_reason = Some(reason);
+                                false
+                            }
+                        }
+                    }
+                    Opcode::NumericArrayAddPreInc => {
+                        let result = cursor.with_slots(|slots| {
+                            if !slots.has_operand_capacity(region.peak as usize) {
+                                return Ok(Err(Miss::OperandCapacity));
+                            }
+                            let Some(accumulator) =
+                                slots.peek(0).ok().and_then(JsValue::as_number_repr)
+                            else {
+                                return Ok(Err(Miss::AccumulatorNotNumber));
+                            };
+                            let index_slot = match region.index {
+                                NumberSource::Direct(DirectSource::Local(slot))
+                                | NumberSource::Direct(DirectSource::CheckedLocal(slot)) => slot,
+                                _ => unreachable!("verified preincrement index"),
+                            };
+                            let Some(old_index) = slots.immediate_local(index_slot) else {
+                                return Ok(Err(Miss::IndexNotNumber));
+                            };
+                            let updated_index = old_index.add(Number::Int(1));
+                            let Some(index) = array_index(updated_index) else {
+                                return Ok(Err(Miss::IndexNotNumericInteger));
+                            };
+                            let Some(base) = slots.direct_value(region_direct_slot(region.array))
+                            else {
+                                return Ok(Err(Miss::ReceiverBindingUnavailable));
+                            };
+                            let element = match runtime.peek_dense_number_result(base, index) {
+                                Ok(value) => value,
+                                Err(reason) => return Ok(Err(reason)),
+                            };
+                            slots.commit_number_local_and_top(
+                                index_slot,
+                                updated_index,
+                                accumulator.add(element),
+                            )?;
+                            Ok(Ok(()))
+                        })?;
+                        match result {
+                            Ok(()) => true,
+                            Err(reason) => {
+                                miss_reason = Some(reason);
+                                false
+                            }
+                        }
+                    }
+                    Opcode::NumericArrayStoreAndLocal => {
+                        if !frame.active_frame.is_materialized() {
+                            miss_reason = Some(Miss::FrameNotMaterialized);
+                            false
+                        } else {
+                            let generation = frame.property_generation.checked_add(1);
+                            let result = cursor.with_slots(|slots| {
+                                if generation.is_none() {
+                                    return Ok(Err(Miss::PropertyGenerationOverflow));
+                                }
+                                if !slots.has_operand_capacity(region.peak as usize) {
+                                    return Ok(Err(Miss::OperandCapacity));
+                                }
+                                let Some(value) = slots.peek(0)?.as_number_repr() else {
+                                    return Ok(Err(Miss::DeltaNotNumber));
+                                };
+                                let Some(index) =
+                                    slots.peek(1)?.as_number_repr().and_then(array_index)
+                                else {
+                                    return Ok(Err(Miss::IndexNotNumericInteger));
+                                };
+                                let eligible = matches!(
+                                    slots.local(region.destination)?,
+                                    FrameBinding::Direct(
+                                        JsValue::Undefined
+                                            | JsValue::Null
+                                            | JsValue::Bool(_)
+                                            | JsValue::Int(_)
+                                            | JsValue::Float(_)
+                                    )
+                                );
+                                if !eligible {
+                                    return Ok(Err(Miss::DestinationOrReceiverUnavailable));
+                                }
+                                let base = slots.peek(2)?;
+                                if let Err(reason) =
+                                    runtime.try_replace_array_own_number(base, index, value)
+                                {
+                                    return Ok(Err(reason));
+                                }
+                                let old = slots.replace_local(
+                                    region.destination,
+                                    FrameBinding::Direct(number_value(value)),
+                                )?;
+                                debug_assert!(matches!(
+                                    old,
+                                    FrameBinding::Direct(
+                                        JsValue::Undefined
+                                            | JsValue::Null
+                                            | JsValue::Bool(_)
+                                            | JsValue::Int(_)
+                                            | JsValue::Float(_)
+                                    )
+                                ));
+                                let _value = slots.pop()?;
+                                let _index = slots.pop()?;
+                                Ok(Ok(slots.pop()?))
+                            })?;
+                            match result {
+                                Ok(base) => {
+                                    frame.property_generation = generation.unwrap();
+                                    cursor.publish_fault(runtime, frame.active_frame)?;
+                                    runtime
+                                        .release_jsvalue(base)
+                                        .map_err(runtime_error_to_vm_error)?;
+                                    true
+                                }
+                                Err(reason) => {
+                                    miss_reason = Some(reason);
+                                    false
+                                }
                             }
                         }
                     }
@@ -588,6 +772,9 @@ pub(super) fn execute_frame(
                     match decoded.opcode {
                         Opcode::NumericArrayAccumulate => "numeric_array_accumulate",
                         Opcode::NumericArrayStoreProduct => "numeric_array_store_product",
+                        Opcode::NumericArrayCopyElement => "numeric_array_copy_element",
+                        Opcode::NumericArrayAddPreInc => "numeric_array_add_preinc",
+                        Opcode::NumericArrayStoreAndLocal => "numeric_array_store_and_local",
                         Opcode::NumericArrayUpdateElement => "numeric_array_update_element",
                         Opcode::NumericArrayCompareBranch => "numeric_array_compare_branch",
                         _ => unreachable!(),
@@ -609,6 +796,13 @@ pub(super) fn execute_frame(
                 #[cfg(test)]
                 NUMERIC_REGION_MISSES.set(NUMERIC_REGION_MISSES.get() + 1);
                 let first = match decoded.opcode {
+                    Opcode::NumericArrayStoreAndLocal => {
+                        cursor.with_slots(|slots| {
+                            slots.peek(2)?;
+                            slots.insert_copy(runtime, 0, 3)
+                        })?;
+                        None
+                    }
                     Opcode::NumericArrayAccumulate => {
                         if region.checked {
                             read_local::<true>(&mut cursor, runtime, region.destination)?

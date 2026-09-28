@@ -4,6 +4,7 @@
 
 use super::bytecode::Instruction;
 use super::instruction::ControlEffect;
+use std::collections::VecDeque;
 
 /// Entry state at each instruction that starts a basic block. Non-entry and
 /// unreachable positions are `None`; callers treat those as unknown.
@@ -94,55 +95,76 @@ pub(crate) fn definite_initialization_entries(
             }
         }
     }
-    // Start non-entry blocks at the lattice top. Intersection can only clear
-    // bits, so loop backedges converge without assuming their first visit is
-    // uninitialized.
-    let mut inbound = vec![vec![true; local_count]; count];
-    let mut outbound = inbound.clone();
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for block in 0..count {
-            if !reachable[block] {
+    // Transfer effects are independent of predecessor state. Scan each block
+    // once, then converge only blocks whose incoming facts may have changed.
+    let words = local_count.div_ceil(64);
+    let mut sets = vec![vec![0u64; words]; count];
+    let mut clears = sets.clone();
+    for block in 0..count {
+        let end = begin.get(block + 1).copied().unwrap_or(code.len());
+        for instruction in &code[begin[block]..end] {
+            let (index, initialized) = match instruction {
+                Instruction::InitializeLocal(index) => (*index as usize, true),
+                Instruction::SetLocalUninitialized(index) => (*index as usize, false),
+                _ => continue,
+            };
+            if index >= local_count {
                 continue;
             }
-            let mut next = vec![!forced_unknown[block]; local_count];
-            for &predecessor in &normal_predecessors[block] {
-                if reachable[predecessor] {
-                    for (bit, &from) in next.iter_mut().zip(&outbound[predecessor]) {
-                        *bit &= from;
-                    }
+            let word = index / 64;
+            let bit = 1u64 << (index % 64);
+            if initialized {
+                sets[block][word] |= bit;
+                clears[block][word] &= !bit;
+            } else {
+                clears[block][word] |= bit;
+                sets[block][word] &= !bit;
+            }
+        }
+    }
+    // Start non-entry blocks at the lattice top. Intersection can only clear
+    // bits, so loop backedges converge without guessing initialization.
+    let mut inbound = vec![vec![u64::MAX; words]; count];
+    let mut outbound = inbound.clone();
+    let mut queue = VecDeque::new();
+    let mut queued = vec![false; count];
+    for (block, &is_reachable) in reachable.iter().enumerate() {
+        if is_reachable {
+            queue.push_back(block);
+            queued[block] = true;
+        }
+    }
+    while let Some(block) = queue.pop_front() {
+        queued[block] = false;
+        let mut next = vec![if forced_unknown[block] { 0 } else { u64::MAX }; words];
+        for &predecessor in &normal_predecessors[block] {
+            if reachable[predecessor] {
+                for (word, &from) in next.iter_mut().zip(&outbound[predecessor]) {
+                    *word &= from;
                 }
             }
-            if next != inbound[block] {
-                inbound[block] = next.clone();
-                changed = true;
-            }
-            let end = begin.get(block + 1).copied().unwrap_or(code.len());
-            for instruction in &code[begin[block]..end] {
-                match instruction {
-                    Instruction::InitializeLocal(index) => {
-                        if let Some(bit) = next.get_mut(*index as usize) {
-                            *bit = true;
-                        }
-                    }
-                    Instruction::SetLocalUninitialized(index) => {
-                        if let Some(bit) = next.get_mut(*index as usize) {
-                            *bit = false;
-                        }
-                    }
-                    _ => {}
+        }
+        inbound[block] = next.clone();
+        for (word, (&set, &clear)) in next.iter_mut().zip(sets[block].iter().zip(&clears[block])) {
+            *word = (*word & !clear) | set;
+        }
+        if next != outbound[block] {
+            outbound[block] = next;
+            for &successor in &successors[block] {
+                if reachable[successor] && !queued[successor] {
+                    queue.push_back(successor);
+                    queued[successor] = true;
                 }
-            }
-            if next != outbound[block] {
-                outbound[block] = next;
-                changed = true;
             }
         }
     }
     for (block, &pc) in begin.iter().enumerate() {
         if reachable[block] {
-            result[pc] = Some(inbound[block].clone());
+            result[pc] = Some(
+                (0..local_count)
+                    .map(|index| inbound[block][index / 64] & (1u64 << (index % 64)) != 0)
+                    .collect(),
+            );
         }
     }
     result

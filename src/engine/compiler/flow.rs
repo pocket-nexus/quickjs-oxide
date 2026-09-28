@@ -12,7 +12,8 @@ use crate::engine::code::function::metadata::ClosureVariableKind;
 use crate::engine::code::initialization::definite_initialization_entries;
 use crate::engine::code::instruction::{PotentialEffects, StackStateEffect};
 use crate::engine::code::region::{
-    ArrayProductSource, DirectSource, NumberSource, NumericOperation, NumericRegion, UpdateDelta,
+    ArrayProductSource, ArrayReadSource, DirectSource, NumberSource, NumericOperation,
+    NumericRegion, UpdateDelta,
 };
 use crate::engine::compiler::MAX_BYTECODE_STACK;
 use crate::engine::compiler::model::ir::IrConstant;
@@ -156,12 +157,23 @@ fn numeric_destination(
 }
 
 fn region_peak(code: &[Instruction], start: usize, end: usize, entries: &[bool]) -> Option<u16> {
+    region_peak_with_stack(code, start, end, entries, 0, 0)
+}
+
+fn region_peak_with_stack(
+    code: &[Instruction],
+    start: usize,
+    end: usize,
+    entries: &[bool],
+    input_depth: usize,
+    output_depth: usize,
+) -> Option<u16> {
     if start >= end || end >= code.len() || entries.get(start + 1..end)?.iter().any(|&entry| entry)
     {
         return None;
     }
-    let mut depth = 0usize;
-    let mut peak = 0usize;
+    let mut depth = input_depth;
+    let mut peak = input_depth;
     for instruction in &code[start..end] {
         let effect = instruction.stack_contract();
         if effect.state != StackStateEffect::Ordinary {
@@ -172,7 +184,9 @@ fn region_peak(code: &[Instruction], start: usize, end: usize, entries: &[bool])
             .checked_add(effect.pushed)?;
         peak = peak.max(depth);
     }
-    (depth == 0).then(|| u16::try_from(peak).ok()).flatten()
+    (depth == output_depth)
+        .then(|| u16::try_from(peak - input_depth).ok())
+        .flatten()
 }
 
 #[derive(Clone, Copy)]
@@ -194,9 +208,12 @@ pub(super) fn plan_numeric_regions(
     dynamic_bindings: bool,
 ) -> Vec<NumericRegion> {
     if dynamic_bindings
-        || !code
-            .iter()
-            .any(|op| matches!(op, Instruction::GetArrayEl | Instruction::GetArrayEl3))
+        || !code.iter().any(|op| {
+            matches!(
+                op,
+                Instruction::GetArrayEl | Instruction::GetArrayEl3 | Instruction::PutArrayEl
+            )
+        })
     {
         return Vec::new();
     }
@@ -257,12 +274,16 @@ pub(super) fn plan_numeric_regions(
             let region = if matches!(instruction, Instruction::Drop) {
                 numeric_region_at_drop(facts, &nodes, &inputs, &initialized, node)
                     .or_else(|| store_product_at_drop(facts, &nodes, &inputs, &initialized, node))
+                    .or_else(|| copy_element_at_drop(facts, &initialized, pc))
                     .or_else(|| update_element_at_drop(facts, &nodes, &inputs, &initialized, node))
+                    .or_else(|| store_element_and_local_at_drop(facts, &initialized, pc))
             } else if matches!(
                 instruction,
                 Instruction::IfTrue(_) | Instruction::IfFalse(_)
             ) {
                 compare_branch_at(facts, &initialized, pc)
+            } else if matches!(instruction, Instruction::Add) {
+                add_preinc_at_add(facts, &initialized, pc)
             } else {
                 None
             };
@@ -432,8 +453,10 @@ fn store_product_at_drop(
         store,
         drop,
     ];
-    let mut pcs = members.map(|id| nodes[id].pc);
-    pcs.sort_unstable();
+    // The published StoreProduct fallback replays the array read first. Keep
+    // the shared product recognizer order-flexible for other consumers, but
+    // only select this sink when its retained words have that exact order.
+    let pcs = members.map(|id| nodes[id].pc);
     let start = pcs[0];
     if pcs
         .iter()
@@ -503,6 +526,118 @@ fn array_product_source(
         },
         [*array_node, *index_node, element, scale_node, product],
     ))
+}
+
+fn copy_element_at_drop(
+    facts: RegionFacts<'_>,
+    initialized: &[bool],
+    drop: usize,
+) -> Option<NumericRegion> {
+    let start = drop.checked_sub(7)?;
+    let span = facts.code.get(start..=drop)?;
+    if !matches!(span[4], Instruction::GetArrayEl)
+        || !matches!(span[5], Instruction::Insert3)
+        || !matches!(span[6], Instruction::PutArrayEl)
+        || !matches!(span[7], Instruction::Drop)
+    {
+        return None;
+    }
+    let direct = |instruction: &Instruction| {
+        direct_source(
+            instruction,
+            facts.locals,
+            facts.captured,
+            facts.argument_count,
+            initialized,
+        )
+    };
+    let number = |instruction: &Instruction| {
+        numeric_source(instruction, facts.constants, direct(instruction))
+    };
+    let end = drop + 1;
+    Some(NumericRegion {
+        start: start.try_into().ok()?,
+        end: end.try_into().ok()?,
+        array: direct(&span[0])?,
+        index: number(&span[1])?,
+        operation: NumericOperation::CopyElement {
+            source: ArrayReadSource {
+                array: direct(&span[2])?,
+                index: number(&span[3])?,
+            },
+        },
+        peak: region_peak(facts.code, start, end, facts.entries)?,
+    })
+}
+
+fn add_preinc_at_add(
+    facts: RegionFacts<'_>,
+    initialized: &[bool],
+    add: usize,
+) -> Option<NumericRegion> {
+    let start = add.checked_sub(5)?;
+    let span = facts.code.get(start..=add)?;
+    let (index, checked) =
+        numeric_destination(&span[3], facts.locals, facts.captured, initialized)?;
+    if !matches!(span[2], Instruction::Inc)
+        || !matches!(span[4], Instruction::GetArrayEl)
+        || !matches!(span[5], Instruction::Add)
+        || !matches!(span[1], Instruction::GetLocal(value) if !checked && value == index)
+            && !matches!(span[1], Instruction::GetLocalCheck(value) if checked && value == index)
+    {
+        return None;
+    }
+    let array = direct_source(
+        &span[0],
+        facts.locals,
+        facts.captured,
+        facts.argument_count,
+        initialized,
+    )?;
+    let index = if checked {
+        NumberSource::Direct(DirectSource::CheckedLocal(index))
+    } else {
+        NumberSource::Direct(DirectSource::Local(index))
+    };
+    let end = add + 1;
+    Some(NumericRegion {
+        start: start.try_into().ok()?,
+        end: end.try_into().ok()?,
+        array,
+        index,
+        operation: NumericOperation::AddPreInc,
+        peak: region_peak_with_stack(facts.code, start, end, facts.entries, 1, 1)?,
+    })
+}
+
+fn store_element_and_local_at_drop(
+    facts: RegionFacts<'_>,
+    initialized: &[bool],
+    drop: usize,
+) -> Option<NumericRegion> {
+    let start = drop.checked_sub(3)?;
+    let span = facts.code.get(start..=drop)?;
+    if !matches!(span[0], Instruction::Insert3)
+        || !matches!(span[1], Instruction::PutArrayEl)
+        || !matches!(span[3], Instruction::Drop)
+    {
+        return None;
+    }
+    let (destination, checked) =
+        numeric_destination(&span[2], facts.locals, facts.captured, initialized)?;
+    let end = drop + 1;
+    Some(NumericRegion {
+        start: start.try_into().ok()?,
+        end: end.try_into().ok()?,
+        // This operation consumes its array and index from the operand stack.
+        array: DirectSource::Local(0),
+        index: NumberSource::Immediate(0),
+        operation: NumericOperation::StoreElementAndLocal {
+            destination,
+            checked,
+        },
+        peak: region_peak_with_stack(facts.code, start, end, facts.entries, 3, 0)?,
+    })
 }
 
 fn update_element_at_drop(
