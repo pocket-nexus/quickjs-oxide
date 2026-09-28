@@ -78,8 +78,15 @@ Rust 1.88 workspace/all-targets tests, profiling Clippy with `-D warnings`,
 formatting, source layout, and focused property tests with profiling passed.
 Focused Test262 matched 6,844/6,844 eligible variants. The pinned QuickJS
 fixture differential matched 13/13 cases, and the nine C oracle fixtures
-passed. The full Test262 replay is running locally on the final example
-source.
+passed. On the recorded C2 source before #53's later V8 extension, full
+Test262 matched the frozen vector: **80,010/80,060** runnable passes among
+102,037 variants. Its report SHA-256 is
+`dc2c103c7f952854e4f17fa5b1b7d112995c32a0c5219598a3a931bcf573e2bd`;
+the body hash is the frozen
+`971cc666767b3c4eb9b519340b5d7a77a80ff8405f6a8d800aada822d3230b19`.
+The runner used engine semantics fingerprint
+`854b46baf6576717cb60e9009c4f319248f80d6ce756adb979f0b9786c52edfa`.
+These results do not validate a later rebase onto new #53 code.
 
 The [same-binary A/A control](data/fixed-aa.json) and [C1/C2 paired run](data/fixed-ab.json)
 used two ABBA-ordered samples per binary and case, output checks, and macOS
