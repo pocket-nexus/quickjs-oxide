@@ -303,8 +303,15 @@ fn function_var_ref_object_cycle_is_collected() {
     heap.release_context(context).unwrap();
     heap.release_function_bytecode(bytecode).unwrap();
     heap.release_object(captured).unwrap();
-    heap.release_var_ref(cell).unwrap();
     heap.release_object(function).unwrap();
+
+    // The only external root now points to the cell. Trial deletion must
+    // follow it across arenas and preserve the entire closure cycle.
+    let rooted = collect_heap(&mut heap).unwrap();
+    assert_eq!(rooted.external_root_nodes, 1);
+    assert_eq!(rooted.candidate_nodes, 0);
+    assert_eq!(rooted.cleanup, HeapCleanup::default());
+    heap.release_var_ref(cell).unwrap();
 
     assert_eq!(heap.counts().live, 8);
     let stats = collect_heap(&mut heap).unwrap();

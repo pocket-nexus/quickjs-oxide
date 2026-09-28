@@ -118,10 +118,7 @@ impl Heap {
     pub fn object(&self, id: ObjectId) -> Result<&ObjectData, HeapError> {
         match self.live_node(RawId::Object(id))?.data {
             NodeData::Object(ref object) => Ok(object),
-            NodeData::Shape(_)
-            | NodeData::VarRef(_)
-            | NodeData::Context(_)
-            | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
+            NodeData::Context(_) | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
                 "typed object lookup reached another node payload",
             )),
         }
@@ -206,52 +203,29 @@ impl Heap {
 
     /// Read one live shape record.
     pub fn shape(&self, id: ShapeId) -> Result<&Shape, HeapError> {
-        match self.live_node(RawId::Shape(id))?.data {
-            NodeData::Shape(ref shape) => Ok(shape),
-            NodeData::Object(_)
-            | NodeData::VarRef(_)
-            | NodeData::Context(_)
-            | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
-                "typed shape lookup reached another node payload",
-            )),
-        }
+        Ok(&self.shapes.live(id)?.data)
     }
 
     /// Trusted shared read for a live `ShapeId` reachable from a live object.
     #[inline]
     pub(crate) fn shape_fast(&self, id: ShapeId) -> &Shape {
-        match &self.live_node_fast(RawId::Shape(id)).data {
-            NodeData::Shape(shape) => shape,
-            _ => unreachable!("trusted shape handle reached another node payload"),
-        }
+        &self.shapes.live_fast(id).data
     }
 
     pub(in crate::engine::heap) fn shape_mut(
         &mut self,
         id: ShapeId,
     ) -> Result<&mut Shape, HeapError> {
-        match self.live_node_mut(RawId::Shape(id))?.data {
-            NodeData::Shape(ref mut shape) => {
-                shape.invalidate_layout();
-                Ok(shape)
-            }
-            NodeData::Object(_)
-            | NodeData::VarRef(_)
-            | NodeData::Context(_)
-            | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
-                "typed mutable shape lookup reached another node payload",
-            )),
-        }
+        let shape = &mut self.shapes.live_mut(id)?.data;
+        shape.invalidate_layout();
+        Ok(shape)
     }
 
     /// Read one live context record.
     pub fn context(&self, id: ContextId) -> Result<&ContextData, HeapError> {
         match self.live_node(RawId::Context(id))?.data {
             NodeData::Context(ref context) => Ok(context),
-            NodeData::Object(_)
-            | NodeData::Shape(_)
-            | NodeData::VarRef(_)
-            | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
+            NodeData::Object(_) | NodeData::FunctionBytecode(_) => Err(HeapError::Invariant(
                 "typed context lookup reached another node payload",
             )),
         }

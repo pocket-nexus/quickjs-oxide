@@ -6,9 +6,10 @@ observability baseline, not a CPU/call-stack sampler or a claim of
 feature/performance parity with QuickJS.
 
 Historical measurement reports are retained locally; each applies to its
-recorded source and build. [Architecture](architecture.md) describes #52;
+recorded source and build. [Architecture](architecture.md) describes the
+current engine;
 [primitive VM results](primitive-vm.md) are historical. Future instrumentation
-and optimization work is proposed in the [roadmap](performance/roadmap.md).
+and optimization work is tracked in the [roadmap](performance/roadmap.md).
 
 ## Build and run
 
@@ -51,7 +52,8 @@ Trace serialization happens after Context and Runtime teardown.
 | Data | Included | Unavailable / interpretation |
 | --- | --- | --- |
 | Heap population | Object, shape, variable-reference, Context and bytecode node counts; lifecycle states; pending jobs | Logical node counts are not allocation counts or byte totals |
-| Owned storage | Arena slots/free indices/zero queue, object property slots, dense array elements, ordinary ArrayBuffer bytes | `used_bytes` measures initialized inline storage and `capacity_bytes` its reserved capacity; nested allocations and allocator headers are excluded |
+| Owned storage | Separate shared, captured-cell, shape and leaf arena slots/free indices; zero queue, object property slots, dense array elements, ordinary ArrayBuffer bytes | `used_bytes` measures initialized inline storage and `capacity_bytes` its reserved capacity; allocator headers are excluded. Shape entry and lookup backing are reported separately with stated lower bounds |
+| Collection scratch | `collection_scratch_peak`: largest observed trial/reachability and worklist/anchor capacity during collection | A peak observation, not an additional live-owned allocation; do not add it to persistent storage categories |
 | Bytecode | Published `ExecCode` words, deduplicated by shared storage identity | Rc headers, PC boundary mapping, constants and debug data are excluded; the compiler's temporary `Instruction` array is not retained by published functions |
 | Execution boundaries | `exec_boundaries`: deduplicated u32 boundary slices, including the terminal sentinel | Separate from bytecode word bytes; not source/debug metadata or total executable size |
 | Static property keys | `bytecode_property_keys`: linked-name count and deduplicated constant-indexed Atom slice bytes, including unused slots | Rc headers and the separate owning references in `auxiliary_atoms` are excluded; no table is allocated for functions without static names |
@@ -60,12 +62,13 @@ Trace serialization happens after Context and Runtime teardown.
 | Allocation events | Actual arena Vec backing-storage allocation, growth and release; stable storage identity; sequence; old/new capacity bytes | `coverage=partial`, `scope=arena-slots-backing-storage`; successful safe Vec capacity transitions only. An `R` does not prove a libc `realloc` call, nor physical relocation |
 | Lifecycle | Runtime create, Context create, Context drop, Runtime drop; every raw sample and each phase minimum | Monotonic wall nanoseconds. Excludes process startup and the construction of the host-services value. The sum of independent minima may not correspond to one iteration |
 
-The arena's inline bytes include its record storage. Logical-only node
+Each arena's inline bytes include its record storage. Logical-only node
 categories must not be converted to extra inline bytes and added again.
 ArrayBuffer views/aliases do not count their backing bytes again; each ordinary
 ArrayBuffer owning Vec is counted once. Other object payloads, shape lookup
-maps, BigInts, strings, code metadata and host allocations are outside byte
-coverage. **The sum of reported categories is not total runtime memory.**
+maps beyond the reported lower bound, BigInts, strings, code metadata and host
+allocations are outside byte coverage. **The sum of reported categories is not
+total runtime memory.**
 Missing values are `null`, never zero. Total allocator requested/usable bytes,
 allocation failures, peak/RSS and cumulative process allocation are explicitly
 unavailable. `-T` is not a logical-object trace or a function execution trace.

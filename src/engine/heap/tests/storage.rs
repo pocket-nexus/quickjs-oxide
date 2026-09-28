@@ -696,7 +696,8 @@ fn regexp_intrinsics_attach_transactionally_once_and_finalize_with_realm() {
 
     fixture
         .heap
-        .live_node_mut(RawId::Shape(fixture.object_shape))
+        .shapes
+        .live_mut(fixture.object_shape)
         .unwrap()
         .strong
         .set(u32::MAX);
@@ -736,7 +737,8 @@ fn regexp_intrinsics_attach_transactionally_once_and_finalize_with_realm() {
     );
     fixture
         .heap
-        .live_node_mut(RawId::Shape(fixture.object_shape))
+        .shapes
+        .live_mut(fixture.object_shape)
         .unwrap()
         .strong
         .set(object_shape_strong);
@@ -1284,21 +1286,27 @@ fn reclaimed_generation_rejects_stale_handles() {
 }
 
 #[test]
-fn forged_cross_kind_handle_reports_wrong_kind() {
+fn separate_arena_identities_can_collide_while_shared_wrong_kinds_are_rejected() {
     let mut heap = Heap::new();
     let shape = empty_shape(&mut heap);
-    let forged = ObjectId {
-        index: shape.index,
-        generation: shape.generation,
+    let object = leaf(&mut heap, shape);
+    assert_eq!(shape.index, object.index);
+    assert_eq!(shape.generation, object.generation);
+    assert!(heap.shape(shape).is_ok());
+    assert!(heap.object(object).is_ok());
+    let forged = ContextId {
+        index: object.index,
+        generation: object.generation,
     };
 
     assert!(matches!(
-        heap.object(forged),
+        heap.context(forged),
         Err(HeapError::WrongKind {
-            expected: HeapNodeKind::Object,
-            actual: HeapNodeKind::Shape,
+            expected: HeapNodeKind::Context,
+            actual: HeapNodeKind::Object,
         })
     ));
+    heap.release_object(object).unwrap();
     heap.release_shape(shape).unwrap();
 }
 

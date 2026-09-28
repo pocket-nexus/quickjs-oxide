@@ -14,3 +14,13 @@ Runtime 的共享堆与 Atom 状态也由本模块管理。高层属性访问、
 
 VM 重组继续使用现有 RC 与循环回收。活动 owning 值与长期挂起的原始
 引用边之间如何交接，见[当前架构](../../../docs/architecture.md)。
+
+对象、Context 与 FunctionBytecode 留在共享 arena；捕获变量 cell 和 Shape
+分别有独立的代际 arena，String/BigInt 使用 leaf arena。不同 arena 的数字
+index 可以相同，跨 arena 的引用与回收须使用完整 typed identity。cell 和
+shape 的槽不携带对象专用的 weak-link 状态；循环回收仍跟踪它们的边，并由
+对象、Context 和 FunctionBytecode 锚点触发不可达循环的清理。设计及测量
+见[类型化 arena](../../../docs/performance/typed-arenas.md)。
+显式 GC 成功并完成延迟 root 释放后，空 zero queue 最多保留 4,096 个 ID 槽；
+普通引用释放仍保留队列容量供复用。该策略及重复 burst 的分配代价见
+[zero-queue 收据](../../../docs/performance/receipts/zero-queue-retention-2026-09-28/README.md)。

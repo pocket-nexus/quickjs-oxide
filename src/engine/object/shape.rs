@@ -164,7 +164,39 @@ pub struct Shape {
     dictionary_order: Option<Box<DictionaryOrder>>,
 }
 
+#[cfg(feature = "profiling")]
+pub(crate) struct ShapeBackingStorage {
+    pub(crate) entries_len: usize,
+    pub(crate) entries_capacity: usize,
+    pub(crate) lookup_len: usize,
+    pub(crate) lookup_capacity: usize,
+    pub(crate) dictionary_header_bytes: usize,
+    pub(crate) dictionary_links_used_bytes: usize,
+    pub(crate) dictionary_links_capacity_bytes: usize,
+}
+
 impl Shape {
+    #[cfg(feature = "profiling")]
+    pub(crate) fn backing_storage(&self) -> ShapeBackingStorage {
+        let (dictionary_header_bytes, dictionary_links_used_bytes, dictionary_links_capacity_bytes) =
+            match &self.dictionary_order {
+                Some(order) => {
+                    let (used, capacity) = order.storage_bytes();
+                    (std::mem::size_of::<DictionaryOrder>(), used, capacity)
+                }
+                None => (0, 0, 0),
+            };
+        ShapeBackingStorage {
+            entries_len: self.entries.len(),
+            entries_capacity: self.entries.capacity(),
+            lookup_len: self.lookup.len(),
+            lookup_capacity: self.lookup.capacity(),
+            dictionary_header_bytes,
+            dictionary_links_used_bytes,
+            dictionary_links_capacity_bytes,
+        }
+    }
+
     pub(crate) const fn layout_revision(&self) -> u64 {
         self.layout_revision
     }

@@ -20,6 +20,36 @@ fn finalized_shapes_unlink_exact_weak_cache_entries() {
 }
 
 #[test]
+fn delayed_shape_cleanup_does_not_unlink_reused_slot_or_its_atoms() {
+    let runtime = Runtime::new();
+    let key = runtime
+        .intern_property_key("delayed-shape-cleanup")
+        .unwrap();
+    let atom = key.atom();
+    let entry = crate::engine::object::shape::ShapeEntry {
+        atom: AtomIdx::from_raw(atom.raw()),
+        flags: PropertyFlags::data(true, true, true),
+    };
+    let mut state = runtime.0.state.borrow_mut();
+    let old = state.get_or_create_shape(None, &[entry]).unwrap();
+    let cleanup = state.heap.release_shape(old).unwrap();
+    assert_eq!(cleanup.finalized_shape_ids, vec![old]);
+
+    let replacement = state.get_or_create_shape(None, &[entry]).unwrap();
+    assert_eq!(replacement.index, old.index);
+    assert_ne!(replacement.generation, old.generation);
+    state.apply_cleanup(cleanup).unwrap();
+    assert!(state.shape_is_canonical(replacement));
+    assert!(state.heap.shape(replacement).is_ok());
+    assert!(state.atoms.resolve(atom).is_ok());
+
+    let cleanup = state.heap.release_shape(replacement).unwrap();
+    state.apply_cleanup(cleanup).unwrap();
+    assert!(state.shape_cache.is_empty());
+    assert!(state.shape_hashes.is_empty());
+}
+
+#[test]
 fn canonical_intermediate_shape_survives_a_later_unique_append() {
     let runtime = Runtime::new();
     let x = runtime.intern_property_key("intermediate-x").unwrap();

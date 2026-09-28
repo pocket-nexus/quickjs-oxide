@@ -1,0 +1,24 @@
+{
+  "parent_commit": "7599d9890af19739b8024f05c650d3b91fffdbda",
+  "candidate_commit": "14218e49b947e1b9173d42955ea39d13eead681d",
+  "toolchain": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2",
+  "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)",
+  "host": "macOS-26.6.2-arm64-arm-64bit",
+  "probe_sha256": "a06e18fbadd9d49a74236ebb7646672938db346314870163324604cab36f02a2",
+  "runner_sha256": "3a62cfa2272c757dfb625c0d0c5b8270b87aed047306fdaf7bd616cd984c80ce",
+  "patches": {
+    "collection-capacity.patch.gz": "bcbc04b4d8696dd9c24998c100c18e8ec85ca0ce9f1045eea106f9a91bb6edfd",
+    "queue-growth-parent.patch": "d70537eeedd1379b2dac560b6f1fe9f0b911be96d007e79fa726dbf5d40498c0",
+    "queue-growth-candidate.patch": "4f2a400074494b50781624365ac2d618d7e34bd22ddae33760fadd2e8df3be5d"
+  },
+  "binaries": {
+    "build-measure-parent": "d2e6285766e1e45efcaef6a27d97c0636a2de52b61ff475c82574da8eab7efed",
+    "build-measure-candidate": "eda1a5530a0334b51173293c5cf739a253d4cdfc1a6880196c98cbd979b9e2ea",
+    "build-timing-parent": "1b43e395378a8f232dac76f7a6477b3be9d00cf7917976c462c47edc34e7bdf6",
+    "build-timing-candidate": "dc25881467f230bc8ccbb2ee140c3f58c7977fbd0898a04c31ba880d4bdf96f6"
+  },
+  "release_profile": {
+    "lto": "fat",
+    "codegen-units": 1
+  }
+}
