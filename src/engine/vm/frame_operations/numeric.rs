@@ -300,6 +300,20 @@ mod tests {
                 .unwrap()
                 .next_pc as usize
         );
+        let fault = frame.fault_pc;
+        let (progress, recovery_calls) = crate::engine::vm::frame::count_next_pc_calls(|| {
+            try_complete_primitive(&runtime, &mut execution, id, kind, fallthrough)
+        });
+        assert!(matches!(
+            progress.unwrap(),
+            Some(NumericProgress::Completed)
+        ));
+        assert_eq!(recovery_calls, 0);
+        let frame = execution.frames.current_mut(id).unwrap();
+        assert_eq!(
+            (frame.fault_pc, frame.resume_pc),
+            (fault, fallthrough.index())
+        );
     }
 
     #[test]
@@ -335,6 +349,54 @@ mod tests {
         assert_eq!(fallthrough.index(), reference.next_pc as usize);
         assert_eq!(frame.fault_pc, compare_pc as usize);
         assert_eq!(frame.resume_pc, compare_pc as usize);
+    }
+
+    #[test]
+    fn wide_compare_fallback_executes_the_remaining_branch_both_ways() {
+        use crate::engine::code::exec_opcode::Opcode;
+
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let source = "function compare(o,y){if(o.x<y)return 1;return 2} \
+                      compare({x:'1'},'2')===1 && compare({x:'3'},'2')===2";
+        let root = context.compile(source).unwrap();
+        let child = runtime.test_child_function_bytecode(&root, 0).unwrap();
+        assert!(
+            runtime
+                .test_function_exec_opcodes(&child)
+                .unwrap()
+                .contains(&Opcode::CompareBranchStack)
+        );
+        #[cfg(feature = "profiling")]
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        assert_eq!(context.eval(source).unwrap(), Value::Bool(true));
+        #[cfg(feature = "profiling")]
+        assert_eq!(
+            profile
+                .snapshot()
+                .owned_execution_events
+                .get("numeric_action_exit"),
+            Some(&2)
+        );
+    }
+
+    #[test]
+    fn primitive_and_deferred_numeric_throws_keep_the_originating_source_line() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let direct = "function fail(){\n return Symbol()-1;\n}\ntry{fail()}catch(e){e instanceof TypeError && e.stack.includes('at fail (c1-direct.js:2:')}";
+        assert_eq!(
+            context.eval_with_filename(direct, "c1-direct.js").unwrap(),
+            Value::Bool(true)
+        );
+
+        let deferred = "let calls=0,marker={};\nfunction fail(){\n return ({valueOf(){calls++;marker.stack=new Error().stack;throw marker}})-1;\n}\ntry{fail()}catch(e){e===marker && calls===1 && marker.stack.includes('at fail (c1-deferred.js:3:')}";
+        assert_eq!(
+            context
+                .eval_with_filename(deferred, "c1-deferred.js")
+                .unwrap(),
+            Value::Bool(true)
+        );
     }
 
     #[test]
@@ -417,6 +479,54 @@ mod tests {
         assert_eq!(
             execution.slots.peek(&frame.window, 0).unwrap(),
             &JsValue::Int(41)
+        );
+    }
+
+    #[test]
+    fn emitted_post_increment_preserves_pc_after_partial_output_failure() {
+        use crate::engine::code::exec_opcode::Opcode;
+
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let (mut execution, id) =
+            fixture_source(&runtime, &mut context, "(function(value){return value++})");
+        let post_inc_pc = {
+            let frame = execution.frames.current_mut(id).unwrap();
+            let exec = &frame.executable.exec;
+            (0..exec.instruction_len())
+                .filter_map(|source| exec.exec_pc(source as u32))
+                .find(|pc| exec.decode(*pc).unwrap().opcode == Opcode::PostInc)
+                .expect("fixture must publish PostInc")
+        };
+        loop {
+            let frame = execution.frames.current_mut(id).unwrap();
+            if execution
+                .slots
+                .push(&mut frame.window, JsValue::Int(0))
+                .is_err()
+            {
+                break;
+            }
+        }
+        let frame = execution.frames.current_mut(id).unwrap();
+        drop(execution.slots.pop(&mut frame.window).unwrap());
+        push(&mut execution, id, JsValue::Bool(true));
+        execution.frames.current_mut(id).unwrap().resume_pc = post_inc_pc as usize;
+        let VmAction::Numeric { kind, fallthrough } = execute_frame(&mut execution, id).unwrap()
+        else {
+            panic!("non-Number PostInc must produce a numeric action");
+        };
+        assert_eq!(kind, NumericKind::PostInc);
+        let before = {
+            let frame = execution.frames.current_mut(id).unwrap();
+            (frame.fault_pc, frame.resume_pc)
+        };
+        assert!(try_complete_primitive(&runtime, &mut execution, id, kind, fallthrough).is_err());
+        let frame = execution.frames.current_mut(id).unwrap();
+        assert_eq!((frame.fault_pc, frame.resume_pc), before);
+        assert_eq!(
+            execution.slots.peek(&frame.window, 0).unwrap(),
+            &JsValue::Int(1)
         );
     }
 
