@@ -37,6 +37,28 @@ pub(crate) struct PropertyReadCache {
 }
 
 impl PropertyReadCache {
+    /// Non-adapting own-data projection for a guard that will enter the
+    /// ordinary read on a miss. It shares that read's location history but
+    /// never changes retry state or promotes a value owner.
+    pub(crate) fn peek_own<'a>(
+        &self,
+        heap: &'a Heap,
+        domain: u64,
+        realm: ContextId,
+        receiver: ObjectId,
+    ) -> Option<&'a RawValue> {
+        match self.state.get() {
+            State::Monomorphic(location) if location.depth == 0 => {
+                Self::read_location(location, heap, domain, realm, receiver)
+            }
+            State::Polymorphic(locations) => locations
+                .into_iter()
+                .filter(|location| location.depth == 0)
+                .find_map(|location| Self::read_location(location, heap, domain, realm, receiver)),
+            _ => None,
+        }
+    }
+
     /// The caller holds the heap borrow until it has retained/copied the value.
     /// No raw borrowed handle escapes that boundary.
     pub(crate) fn read<'a>(

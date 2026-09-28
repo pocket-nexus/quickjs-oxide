@@ -246,6 +246,8 @@ pub(crate) enum Opcode {
     NumericArrayStoreAndLocal,
     NumericArrayUpdateElement,
     NumericArrayCompareBranch,
+    /// Borrow an own data field and consume its truthiness in one branch.
+    FieldTruthyBranch,
 }
 
 const OPCODES: &[Opcode] = &[
@@ -483,6 +485,7 @@ const OPCODES: &[Opcode] = &[
     Opcode::NumericArrayStoreAndLocal,
     Opcode::NumericArrayUpdateElement,
     Opcode::NumericArrayCompareBranch,
+    Opcode::FieldTruthyBranch,
 ];
 
 impl Opcode {
@@ -872,6 +875,7 @@ impl Opcode {
             | Self::ArrayFrom
             | Self::PutField
             | Self::DefineField
+            | Self::FieldTruthyBranch
             | Self::IfFalse
             | Self::IfTrue
             | Self::Goto

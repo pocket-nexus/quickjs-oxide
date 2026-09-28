@@ -55,6 +55,20 @@ def programs():
         ("missing-get", "let o=Object.create({});let s=0;", "if(o.x===undefined)s++", "s"),
     ):
         yield loop(*args)
+    # Development diagnostics for the shared-cache borrowed predicate. These
+    # are fixed synthetic mechanisms; RealWorld application bundles remain
+    # independent transfer holdouts.
+    decision = "function decide(node){if(node.next)return 1;return 0;}"
+    yield loop("field-truthy-own-object",
+               decision + "let child={};let node={next:child};let s=0;",
+               "s+=decide(node)", "s", count=200000)
+    yield loop("field-truthy-accessor",
+               decision + "let child={};let node={};let reads=0,s=0;"
+               "Object.defineProperty(node,'next',{get(){reads++;return child}});",
+               "s+=decide(node)", "s+':'+reads", count=200000)
+    yield loop("field-truthy-alternating-shapes",
+               decision + "let child={};let a={next:child},b={tag:1,next:null};let s=0;",
+               "s+=decide(i&1?a:b)", "s", count=200000)
     for kind, _, value in values:
         yield "write-same-value-" + kind, 100000, (
             f"let v={value};let o={{x:v}};for(let i=0;i<100000;i++){{o.x=v}} console.log(o.x===v);\n"

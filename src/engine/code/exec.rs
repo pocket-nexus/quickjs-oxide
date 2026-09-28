@@ -31,6 +31,7 @@ const RESERVED_MASK: u16 = 0x8000;
 #[cfg(test)]
 thread_local! {
     static SUPPRESS_NUMERIC_REGIONS: Cell<bool> = const { Cell::new(false) };
+    static SUPPRESS_FIELD_TRUTHY: Cell<bool> = const { Cell::new(false) };
 }
 
 #[cfg(test)]
@@ -42,6 +43,19 @@ pub(crate) fn without_numeric_regions<T>(run: impl FnOnce() -> T) -> T {
         }
     }
     let previous = SUPPRESS_NUMERIC_REGIONS.replace(true);
+    let _restore = Restore(previous);
+    run()
+}
+
+#[cfg(test)]
+pub(crate) fn without_field_truthy_branches<T>(run: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SUPPRESS_FIELD_TRUTHY.set(self.0);
+        }
+    }
+    let previous = SUPPRESS_FIELD_TRUTHY.replace(true);
     let _restore = Restore(previous);
     run()
 }
@@ -121,6 +135,7 @@ pub(crate) struct ExecCode {
     /// entry, but keeps the guard's logical source/debug identity.
     guarded_fallbacks: Option<Rc<[GuardedFallback]>>,
     regions: Option<Rc<[PublishedNumericRegion]>>,
+    field_truthy: Option<Rc<[FieldTruthyBranchPlan]>>,
     product_sources: Option<Rc<[ArrayProductSource]>>,
     copy_sources: Option<Rc<[ArrayReadSource]>>,
     #[cfg(feature = "profiling")]
@@ -149,6 +164,28 @@ struct ScheduledEntry {
     source: usize,
     opcode: Opcode,
     guard: bool,
+    field_plan: Option<u32>,
+}
+
+#[derive(Clone, Copy)]
+struct FieldTruthyCandidate {
+    source: usize,
+    receiver: DirectSource,
+    field_index: u32,
+    branch_offset: usize,
+    target: u32,
+    /// Whether a truthy field value selects the explicit branch target.
+    when_true: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct FieldTruthyBranchPlan {
+    pub receiver: DirectSource,
+    pub field_site: u32,
+    pub field_index: u32,
+    pub on_true: u32,
+    pub on_false: u32,
+    pub fallback: u32,
 }
 
 impl ExecCode {
@@ -159,6 +196,7 @@ impl ExecCode {
             boundaries: Rc::from([0]),
             guarded_fallbacks: None,
             regions: None,
+            field_truthy: None,
             product_sources: None,
             copy_sources: None,
             #[cfg(feature = "profiling")]
@@ -223,7 +261,24 @@ impl ExecCode {
         for (id, region) in regions.iter().enumerate() {
             region_ids[region.start as usize] = Some(id);
         }
-        let mut schedule = Vec::with_capacity(code.len() + regions.len());
+        #[cfg(test)]
+        let field_candidates = if SUPPRESS_FIELD_TRUTHY.get() {
+            Vec::new()
+        } else {
+            select_field_truthy_candidates(code, &opcodes, regions)
+        };
+        #[cfg(not(test))]
+        let field_candidates = select_field_truthy_candidates(code, &opcodes, regions);
+        let mut field_ids = if field_candidates.is_empty() {
+            Vec::new()
+        } else {
+            vec![None; code.len()]
+        };
+        for (id, candidate) in field_candidates.iter().enumerate() {
+            field_ids[candidate.source] =
+                Some(u32::try_from(id).map_err(|_| ExecCodeError::TooLong)?);
+        }
+        let mut schedule = Vec::with_capacity(code.len() + regions.len() + field_candidates.len());
         for (source, &opcode) in opcodes.iter().enumerate() {
             if let Some(id) = region_ids[source] {
                 if matches!(
@@ -236,13 +291,23 @@ impl ExecCode {
                         source,
                         opcode: region_opcode(regions[id].operation),
                         guard: true,
+                        field_plan: None,
                     });
                 }
+            }
+            if let Some(id) = field_ids.get(source).copied().flatten() {
+                schedule.push(ScheduledEntry {
+                    source,
+                    opcode: Opcode::FieldTruthyBranch,
+                    guard: true,
+                    field_plan: Some(id),
+                });
             }
             schedule.push(ScheduledEntry {
                 source,
                 opcode,
                 guard: false,
+                field_plan: None,
             });
         }
         let mut boundaries = Vec::with_capacity(code.len() + 1);
@@ -255,21 +320,22 @@ impl ExecCode {
                 boundaries.push(length);
             }
             if !entry.guard
-                && region_ids[source].is_some_and(|id| {
-                    matches!(
-                        regions[id].operation,
-                        NumericOperation::UpdateElement {
-                            delta: UpdateDelta::ArrayProduct(_)
-                        }
-                    )
-                })
+                && (field_ids.get(source).is_some_and(Option::is_some)
+                    || region_ids[source].is_some_and(|id| {
+                        matches!(
+                            regions[id].operation,
+                            NumericOperation::UpdateElement {
+                                delta: UpdateDelta::ArrayProduct(_)
+                            }
+                        )
+                    }))
             {
                 guarded_fallbacks.push(GuardedFallback {
                     source: source as u32,
                     pc: length,
                 });
             }
-            let operands = published_operands(code, source, opcode, regions, &region_ids);
+            let operands = scheduled_operands(code, *entry, regions, &region_ids);
             let count = operands.len();
             if count != usize::from(opcode.operand_count()) {
                 return Err(ExecCodeError::BadOperandCount);
@@ -288,8 +354,8 @@ impl ExecCode {
         for entry in &schedule {
             let source = entry.source;
             let opcode = entry.opcode;
-            let mut operands = published_operands(code, source, opcode, regions, &region_ids);
-            if entry.guard {
+            let mut operands = scheduled_operands(code, *entry, regions, &region_ids);
+            if entry.guard && entry.field_plan.is_none() {
                 operands[2] = EncodedOperand {
                     bits: guarded_fallbacks
                         .iter()
@@ -358,6 +424,44 @@ impl ExecCode {
                     .map(Rc::from)
             })
             .transpose()?;
+        let field_truthy = (!field_candidates.is_empty())
+            .then(|| {
+                field_candidates
+                    .iter()
+                    .map(|candidate| {
+                        let source = candidate.source;
+                        let target = *boundaries
+                            .get(candidate.target as usize)
+                            .ok_or(ExecCodeError::InvalidTarget)?;
+                        let fallthrough = *boundaries
+                            .get(source + candidate.branch_offset + 1)
+                            .ok_or(ExecCodeError::InvalidTarget)?;
+                        let fallback = guarded_fallbacks
+                            .iter()
+                            .find(|fallback| fallback.source == source as u32)
+                            .ok_or(ExecCodeError::InvalidTarget)?
+                            .pc;
+                        Ok(FieldTruthyBranchPlan {
+                            receiver: candidate.receiver,
+                            field_site: boundaries[source + 1],
+                            field_index: candidate.field_index,
+                            on_true: if candidate.when_true {
+                                target
+                            } else {
+                                fallthrough
+                            },
+                            on_false: if candidate.when_true {
+                                fallthrough
+                            } else {
+                                target
+                            },
+                            fallback,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(Rc::from)
+            })
+            .transpose()?;
         #[cfg(feature = "profiling")]
         let (rejected_numeric_sites, omitted_numeric_sites) =
             collect_rejected_numeric_sites(code, locals, arguments, regions, &opcodes, &boundaries);
@@ -371,6 +475,7 @@ impl ExecCode {
             boundaries: boundaries.into(),
             guarded_fallbacks: (!guarded_fallbacks.is_empty()).then(|| Rc::from(guarded_fallbacks)),
             regions: published_regions,
+            field_truthy,
             product_sources: (!product_sources.is_empty()).then(|| product_sources.into()),
             copy_sources: (!copy_sources.is_empty()).then(|| copy_sources.into()),
             #[cfg(feature = "profiling")]
@@ -471,6 +576,8 @@ impl ExecCode {
         let mut entries = HashSet::new();
         let mut seen_regions =
             vec![false; self.regions.as_ref().map_or(0, |regions| regions.len())];
+        let mut seen_field_truthy =
+            vec![false; self.field_truthy.as_ref().map_or(0, |plans| plans.len())];
         for source in 0..self.instruction_len() {
             let expected = self.boundaries[source];
             if pc != expected {
@@ -512,6 +619,27 @@ impl ExecCode {
                     }
                 }
             }
+            if decoded.opcode == Opcode::FieldTruthyBranch {
+                let id = decoded.operand(0) as usize;
+                let seen = seen_field_truthy
+                    .get_mut(id)
+                    .ok_or(ExecCodeError::InvalidTarget)?;
+                if *seen {
+                    return Err(ExecCodeError::InvalidTarget);
+                }
+                *seen = true;
+                let plan = self
+                    .field_truthy_branch(id as u32)
+                    .ok_or(ExecCodeError::InvalidTarget)?;
+                for target in [plan.on_true, plan.on_false] {
+                    if target == self.words.len() as u32
+                        || self.boundaries.binary_search(&target).is_err()
+                    {
+                        return Err(ExecCodeError::InvalidTarget);
+                    }
+                    entries.insert(target);
+                }
+            }
             if decoded.opcode == Opcode::Gosub {
                 entries.insert(decoded.next_pc);
             }
@@ -530,12 +658,15 @@ impl ExecCode {
         if pc != self.words.len() as u32 {
             return Err(ExecCodeError::InvalidBoundary);
         }
-        if seen_regions.iter().any(|seen| !seen) {
+        if seen_regions.iter().any(|seen| !seen) || seen_field_truthy.iter().any(|seen| !seen) {
             return Err(ExecCodeError::InvalidTarget);
         }
         for source in 0..self.instruction_len() {
             if self.opcode_at_source(source).is_some_and(is_region_opcode) {
                 self.verify_numeric_region(source, &entries)?;
+            }
+            if self.opcode_at_source(source) == Some(Opcode::FieldTruthyBranch) {
+                self.verify_field_truthy_branch(source, &entries)?;
             }
             if self.opcode_at_source(source) == Some(Opcode::FieldAccSetDrop) {
                 let first = self.decode(self.boundaries[source])?;
@@ -977,6 +1108,78 @@ impl ExecCode {
 
     pub(crate) fn numeric_region(&self, index: u32) -> Option<&PublishedNumericRegion> {
         self.regions.as_deref()?.get(index as usize)
+    }
+
+    fn verify_field_truthy_branch(
+        &self,
+        source: usize,
+        entries: &HashSet<u32>,
+    ) -> Result<(), ExecCodeError> {
+        let guard = self.decode(self.boundaries[source])?;
+        let plan = self
+            .field_truthy_branch(guard.operand(0))
+            .ok_or(ExecCodeError::InvalidTarget)?;
+        let fallback = self
+            .guarded_fallbacks()
+            .iter()
+            .find(|fallback| fallback.source == source as u32)
+            .ok_or(ExecCodeError::InvalidTarget)?;
+        let ordinary = self.decode(fallback.pc)?;
+        let field_pc = *self
+            .boundaries
+            .get(source + 1)
+            .ok_or(ExecCodeError::InvalidTarget)?;
+        let predicate_pc = *self
+            .boundaries
+            .get(source + 2)
+            .ok_or(ExecCodeError::InvalidTarget)?;
+        let predicate = self.decode(predicate_pc)?;
+        let inverted = predicate.opcode == Opcode::Not;
+        let branch_source = source + 2 + usize::from(inverted);
+        let branch_pc = *self
+            .boundaries
+            .get(branch_source)
+            .ok_or(ExecCodeError::InvalidTarget)?;
+        let complete = *self
+            .boundaries
+            .get(branch_source + 1)
+            .ok_or(ExecCodeError::InvalidTarget)?;
+        let field = self.decode(field_pc)?;
+        let branch = self.decode(branch_pc)?;
+        let expected_ordinary = match plan.receiver {
+            DirectSource::Local(_) => Opcode::BorrowedFieldLocal,
+            DirectSource::Argument(_) => Opcode::BorrowedFieldArg,
+            DirectSource::CheckedLocal(_) => return Err(ExecCodeError::InvalidTarget),
+        };
+        let (on_true, on_false) = match (branch.opcode, inverted) {
+            (Opcode::IfTrue, false) | (Opcode::IfFalse, true) => (branch.operand(0), complete),
+            (Opcode::IfFalse, false) | (Opcode::IfTrue, true) => (complete, branch.operand(0)),
+            _ => return Err(ExecCodeError::InvalidTarget),
+        };
+        if guard.opcode != Opcode::FieldTruthyBranch
+            || guard.next_pc != fallback.pc
+            || plan.fallback != fallback.pc
+            || plan.field_site != field_pc
+            || plan.on_true != on_true
+            || plan.on_false != on_false
+            || entries.contains(&field_pc)
+            || entries.contains(&predicate_pc)
+            || entries.contains(&branch_pc)
+            || ordinary.opcode != expected_ordinary
+            || ordinary.operand(0) != direct_index(plan.receiver)
+            || ordinary.operand(1) != plan.field_index
+            || ordinary.operand(2) != predicate_pc
+            || ordinary.next_pc != field_pc
+            || field.opcode != Opcode::GetFieldCached
+            || field.operand(0) != plan.field_index
+        {
+            return Err(ExecCodeError::InvalidTarget);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn field_truthy_branch(&self, index: u32) -> Option<&FieldTruthyBranchPlan> {
+        self.field_truthy.as_deref()?.get(index as usize)
     }
 
     pub(crate) fn product_source(&self, index: u32) -> Option<ArrayProductSource> {
@@ -2608,6 +2811,76 @@ fn verify_direct_operand(
         && decoded.operand(0) == direct_index(value))
 }
 
+fn select_field_truthy_candidates(
+    code: &[Instruction],
+    opcodes: &[Opcode],
+    regions: &[NumericRegion],
+) -> Vec<FieldTruthyCandidate> {
+    if !opcodes.iter().any(|opcode| {
+        matches!(
+            opcode,
+            Opcode::BorrowedFieldLocal | Opcode::BorrowedFieldArg
+        )
+    }) {
+        return Vec::new();
+    }
+    let mut entries = HashSet::new();
+    for (source, instruction) in code.iter().enumerate() {
+        for operand in instruction.operand_contract().0.into_iter().flatten() {
+            if let Operand::Target(target) = operand {
+                entries.insert(target as usize);
+            }
+        }
+        if matches!(instruction, Instruction::Gosub(_)) {
+            entries.insert(source + 1);
+        }
+    }
+    let mut selected = Vec::new();
+    let mut occupied_until = 0;
+    for source in 0..code.len().saturating_sub(3) {
+        if source < occupied_until || opcodes[source + 1] != Opcode::GetFieldCached {
+            continue;
+        }
+        let receiver = match (&code[source], opcodes[source]) {
+            (Instruction::GetLocal(slot), Opcode::BorrowedFieldLocal) => DirectSource::Local(*slot),
+            (Instruction::GetArg(slot), Opcode::BorrowedFieldArg) => DirectSource::Argument(*slot),
+            _ => continue,
+        };
+        let Instruction::GetField(field_index) = code[source + 1] else {
+            continue;
+        };
+        let inverted = matches!(code[source + 2], Instruction::Not);
+        let branch_offset = if inverted { 3 } else { 2 };
+        if source + branch_offset + 1 >= code.len()
+            || (1..=branch_offset).any(|offset| entries.contains(&(source + offset)))
+            || regions.iter().any(|region| {
+                region.start as usize <= source + branch_offset && source < region.end as usize
+            })
+            || inverted && opcodes[source + 2] != Opcode::Not
+        {
+            continue;
+        }
+        let (target, when_true) = match code[source + branch_offset] {
+            Instruction::IfTrue(target) => (target, true),
+            Instruction::IfFalse(target) => (target, false),
+            _ => continue,
+        };
+        if target as usize >= code.len() {
+            continue;
+        }
+        selected.push(FieldTruthyCandidate {
+            source,
+            receiver,
+            field_index,
+            branch_offset,
+            target,
+            when_true: when_true != inverted,
+        });
+        occupied_until = source + branch_offset + 1;
+    }
+    selected
+}
+
 fn select_opcodes(
     code: &[Instruction],
     locals: Option<&[VariableDefinition]>,
@@ -2938,6 +3211,22 @@ fn encoded_operands(contract: OperandContract) -> Vec<EncodedOperand> {
         .flatten()
         .map(encode_operand)
         .collect()
+}
+
+fn scheduled_operands(
+    code: &[Instruction],
+    entry: ScheduledEntry,
+    regions: &[NumericRegion],
+    region_ids: &[Option<usize>],
+) -> Vec<EncodedOperand> {
+    if let Some(index) = entry.field_plan {
+        return vec![EncodedOperand {
+            bits: index,
+            short: index <= u32::from(u16::MAX),
+            target: false,
+        }];
+    }
+    published_operands(code, entry.source, entry.opcode, regions, region_ids)
 }
 
 fn published_operands(
@@ -3467,6 +3756,55 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(entered.opcode_at_source(1), Some(Opcode::GetArg));
+    }
+
+    #[test]
+    fn field_truthy_guard_shares_ordinary_field_site_and_authenticates_exits() {
+        let code = ExecCode::encode(&[
+            Instruction::GetArg(0),
+            Instruction::GetField(0x1_0000),
+            Instruction::IfFalse(5),
+            Instruction::PushI32(1),
+            Instruction::Return,
+            Instruction::PushI32(0),
+            Instruction::Return,
+        ])
+        .unwrap();
+        assert_eq!(code.opcode_at_source(0), Some(Opcode::FieldTruthyBranch));
+        let guard = code.decode(0).unwrap();
+        let plan = code.field_truthy_branch(guard.operand(0)).unwrap();
+        assert_eq!(plan.fallback, guard.next_pc);
+        assert_eq!(code.source_pc(plan.fallback), Some(0));
+        assert_eq!(plan.field_site, code.exec_pc(1).unwrap());
+        assert_eq!(plan.on_true, code.exec_pc(3).unwrap());
+        assert_eq!(plan.on_false, code.exec_pc(5).unwrap());
+        let ordinary = code.decode(plan.fallback).unwrap();
+        assert_eq!(ordinary.opcode, Opcode::BorrowedFieldArg);
+        assert_eq!(ordinary.operand(1), 0x1_0000);
+        assert_eq!(ordinary.operand(2), code.exec_pc(2).unwrap());
+        assert_eq!(ordinary.next_pc, plan.field_site);
+        assert_eq!(code.opcode_at_source(1), Some(Opcode::GetFieldCached));
+        let sites = crate::engine::object::property_ic::PropertyReadCacheTable::new_exec(&code);
+        assert!(sites.site(0).is_none());
+        assert!(sites.site(plan.field_site as usize).is_some());
+        code.verify().unwrap();
+
+        let mut malformed = code.clone();
+        let mut plans = malformed.field_truthy.as_ref().unwrap().to_vec();
+        plans[0].on_false = plan.on_true;
+        malformed.field_truthy = Some(Rc::from(plans));
+        assert_eq!(malformed.verify(), Err(ExecCodeError::InvalidTarget));
+
+        let entered = ExecCode::encode(&[
+            Instruction::Goto(3),
+            Instruction::GetArg(0),
+            Instruction::GetField(0),
+            Instruction::IfTrue(5),
+            Instruction::ReturnUndefined,
+            Instruction::ReturnUndefined,
+        ])
+        .unwrap();
+        assert_eq!(entered.opcode_at_source(1), Some(Opcode::BorrowedFieldArg));
     }
 
     #[test]

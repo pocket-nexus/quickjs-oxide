@@ -298,6 +298,41 @@ impl Runtime {
             _ => None,
         }
     }
+
+    /// Decide an own data property's truthiness while the frame and heap
+    /// owners still protect it. A miss leaves the shared cache untouched so
+    /// the ordinary GetField path performs its normal lookup/adaptation once.
+    #[inline]
+    pub(crate) fn property_ic_peek_own_truthiness(
+        &self,
+        receiver: ObjectId,
+        executable: &PublishedFunctionSnapshot,
+        field_pc: usize,
+        key_index: u32,
+    ) -> Option<bool> {
+        linked_field_atom(self, executable, key_index)?;
+        let cache = executable.property_read_ic.site(field_pc)?;
+        if self.0.deferred_references.has_pending() {
+            return None;
+        }
+        let state = self.0.state.try_borrow().ok()?;
+        if state.heap.has_pending_zero_cleanup() {
+            return None;
+        }
+        let raw = cache.peek_own(&state.heap, self.domain_id(), executable.realm, receiver)?;
+        match raw {
+            RawValue::Undefined | RawValue::Null => Some(false),
+            RawValue::Bool(value) => Some(*value),
+            RawValue::Int(value) => Some(*value != 0),
+            RawValue::Float(value) => Some(*value != 0.0 && !value.is_nan()),
+            RawValue::ShortBigInt(value) => Some(*value != 0),
+            RawValue::String(id) => Some(!state.heap.string(*id).ok()?.is_empty()),
+            RawValue::BigInt(id) => Some(!state.heap.bigint(*id).ok()?.is_zero()),
+            RawValue::Object(id) => Some(!state.heap.object(*id).ok()?.is_html_dda),
+            RawValue::Symbol(_) => Some(true),
+            RawValue::Private(_) | RawValue::Uninitialized | RawValue::Exception => None,
+        }
+    }
 }
 
 impl Runtime {

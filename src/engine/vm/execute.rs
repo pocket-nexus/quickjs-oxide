@@ -26,6 +26,24 @@ thread_local! {
     static NUMERIC_REGION_HITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static NUMERIC_REGION_ATTEMPTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static NUMERIC_REGION_MISSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static FIELD_TRUTHY_HITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static FIELD_TRUTHY_MISSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn test_field_truthy_counts<T>(run: impl FnOnce() -> T) -> (T, (usize, usize)) {
+    let previous = (FIELD_TRUTHY_HITS.replace(0), FIELD_TRUTHY_MISSES.replace(0));
+    struct Restore((usize, usize));
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            FIELD_TRUTHY_HITS.set(self.0.0);
+            FIELD_TRUTHY_MISSES.set(self.0.1);
+        }
+    }
+    let _restore = Restore(previous);
+    let result = run();
+    let counts = (FIELD_TRUTHY_HITS.get(), FIELD_TRUTHY_MISSES.get());
+    (result, counts)
 }
 
 #[cfg(test)]
@@ -1289,6 +1307,53 @@ pub(super) fn execute_frame(
                 } else if let Some(action) = read_arg(&mut cursor, runtime, base_index)? {
                     return Ok(action);
                 }
+            }
+            Opcode::FieldTruthyBranch => {
+                let plan = executable
+                    .exec
+                    .field_truthy_branch(operand)
+                    .ok_or_else(|| Error::internal("published field predicate is missing"))?;
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_execution_dispatch(
+                    runtime, executable, pc, true,
+                );
+                let decision = cursor.with_slots(|slots| {
+                    let Some(JsValue::Object(receiver)) =
+                        slots.direct_value(region_direct_slot(plan.receiver))
+                    else {
+                        return Ok(None);
+                    };
+                    Ok(runtime.property_ic_peek_own_truthiness(
+                        *receiver,
+                        executable,
+                        plan.field_site as usize,
+                        plan.field_index,
+                    ))
+                })?;
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_execution_outcome(
+                    runtime,
+                    executable,
+                    pc,
+                    "field_truthy_branch",
+                    if decision.is_some() {
+                        None
+                    } else {
+                        Some("guard")
+                    },
+                );
+                #[cfg(test)]
+                if decision.is_some() {
+                    FIELD_TRUTHY_HITS.set(FIELD_TRUTHY_HITS.get() + 1);
+                } else {
+                    FIELD_TRUTHY_MISSES.set(FIELD_TRUTHY_MISSES.get() + 1);
+                }
+                cursor.advance(match decision {
+                    Some(true) => plan.on_true as usize,
+                    Some(false) => plan.on_false as usize,
+                    None => plan.fallback as usize,
+                });
+                continue;
             }
             Opcode::BorrowedFieldLocal | Opcode::BorrowedFieldArg => {
                 let base_index = published_u16(operand);
