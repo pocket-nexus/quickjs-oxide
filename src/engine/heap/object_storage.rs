@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::numeric_region_miss::NumericRegionMiss as Miss;
 use crate::engine::value::number::operations::Number;
 
 /// The runtime may undo retained Atoms only before slot publication.
@@ -16,63 +17,57 @@ impl Heap {
         index: u32,
         atom: Option<AtomIdx>,
         delta: Number,
-    ) -> Result<(), &'static str> {
-        let Ok(data) = self.object(id) else {
-            return Err("receiver_unavailable");
-        };
-        if !matches!(data.kind, ObjectKind::Array) {
-            return Err("receiver_not_array");
+    ) -> Result<(), Miss> {
+        fn add_cell(cell: &mut RawValue, delta: Number) -> Result<(), Miss> {
+            let old = match cell {
+                RawValue::Int(value) => Number::Int(*value),
+                RawValue::Float(value) => Number::Float(*value),
+                _ => return Err(Miss::OwnElementNotNumber),
+            };
+            *cell = match old.add(delta) {
+                Number::Int(value) => RawValue::Int(value),
+                Number::Float(value) => RawValue::Float(value),
+            };
+            Ok(())
         }
-        let materialized_slot = if matches!(&data.payload, ObjectPayload::Array { dense: None }) {
-            let Some(atom) = atom else {
-                return Err("index_not_immediate");
-            };
-            let Ok(shape) = self.shape(data.shape) else {
-                return Err("array_shape_unavailable");
-            };
-            let Some(slot) = shape.find(atom).map(|slot| slot as usize) else {
-                return Err("missing_own_element");
-            };
-            if !shape
-                .entries()
-                .get(slot)
-                .is_some_and(|entry| entry.flags.writable)
-            {
-                return Err("own_element_not_writable");
+        // The dense branch authenticates the object once. Materialized data
+        // needs a separate shape read before the final mutable slot access.
+        let shape_id = {
+            let data = self.object_mut(id).map_err(|_| Miss::ReceiverUnavailable)?;
+            if !matches!(data.kind, ObjectKind::Array) {
+                return Err(Miss::ReceiverNotArray);
             }
-            Some(slot)
-        } else {
-            None
-        };
-        let Ok(data) = self.object_mut(id) else {
-            return Err("receiver_unavailable");
-        };
-        let number: &mut RawValue = if let Some(slot) = materialized_slot {
-            match data.slots.get_mut(slot) {
-                Some(PropertySlot::Data(raw)) => raw,
-                _ => return Err("unsupported_own_element"),
-            }
-        } else {
             match &mut data.payload {
                 ObjectPayload::Array { dense: Some(dense) } => {
-                    match dense.get_mut(index as usize) {
-                        Some(raw) => raw,
-                        _ => return Err("missing_own_element"),
-                    }
+                    return add_cell(
+                        dense
+                            .get_mut(index as usize)
+                            .ok_or(Miss::MissingOwnElement)?,
+                        delta,
+                    );
                 }
-                _ => return Err("array_storage_unavailable"),
+                ObjectPayload::Array { dense: None } => data.shape,
+                _ => return Err(Miss::ArrayStorageUnavailable),
             }
         };
-        let old = match number {
-            RawValue::Int(value) => Number::Int(*value),
-            RawValue::Float(value) => Number::Float(*value),
-            _ => return Err("own_element_not_number"),
+        let atom = atom.ok_or(Miss::IndexNotImmediate)?;
+        let shape = self
+            .shape(shape_id)
+            .map_err(|_| Miss::ArrayShapeUnavailable)?;
+        let slot = shape.find(atom).ok_or(Miss::MissingOwnElement)? as usize;
+        if !shape
+            .entries()
+            .get(slot)
+            .is_some_and(|entry| entry.flags.writable)
+        {
+            return Err(Miss::OwnElementNotWritable);
+        }
+        let data = self.object_mut(id).map_err(|_| Miss::ReceiverUnavailable)?;
+        let cell = match data.slots.get_mut(slot) {
+            Some(PropertySlot::Data(raw)) => raw,
+            _ => return Err(Miss::UnsupportedOwnElement),
         };
-        *number = match old.add(delta) {
-            Number::Int(value) => RawValue::Int(value),
-            Number::Float(value) => RawValue::Float(value),
-        };
-        Ok(())
+        add_cell(cell, delta)
     }
 
     pub(crate) const fn property_layout_epoch(&self) -> u64 {

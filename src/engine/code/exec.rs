@@ -13,8 +13,14 @@ use super::bytecode::{
 };
 use super::exec_opcode::Opcode;
 use super::function::metadata::{ClosureVariableKind, VariableDefinition};
+use super::initialization::definite_initialization_entries;
 use super::instruction::{Operand, OperandContract, StackStateEffect};
-use super::region::{DirectSource, NumberSource, NumericOperation, NumericRegion};
+#[cfg(feature = "profiling")]
+use super::region::RejectedNumericSite;
+use super::region::{
+    DirectSource, NumberSource, NumericOperation, NumericRegion, PublishedNumericRegion,
+    UpdateDelta,
+};
 
 const OPCODE_MASK: u16 = 0x03ff;
 const COUNT_SHIFT: u16 = 10;
@@ -111,7 +117,9 @@ impl PublishedDecoded<'_> {
 pub(crate) struct ExecCode {
     words: Rc<[Cell<u32>]>,
     boundaries: Rc<[u32]>,
-    regions: Option<Rc<[NumericRegion]>>,
+    regions: Option<Rc<[PublishedNumericRegion]>>,
+    #[cfg(feature = "profiling")]
+    rejected_numeric_sites: Rc<[RejectedNumericSite]>,
     /// Compiler assertions inspect the exact prepublication IR. This field is
     /// absent from product builds and never participates in execution.
     #[cfg(test)]
@@ -132,6 +140,8 @@ impl ExecCode {
             words: Rc::from([]),
             boundaries: Rc::from([0]),
             regions: None,
+            #[cfg(feature = "profiling")]
+            rejected_numeric_sites: Rc::from([]),
             #[cfg(test)]
             test_ir: Rc::from([]),
         }
@@ -226,10 +236,29 @@ impl ExecCode {
                 words.push(bits);
             }
         }
+        let published_regions = (!regions.is_empty())
+            .then(|| {
+                regions
+                    .iter()
+                    .map(|region| publish_numeric_region(region, &boundaries))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(Rc::from)
+            })
+            .transpose()?;
+        #[cfg(feature = "profiling")]
+        let (rejected_numeric_sites, omitted_numeric_sites) =
+            collect_rejected_numeric_sites(code, locals, arguments, regions, &opcodes, &boundaries);
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_compiled_numeric_rejections(
+            &rejected_numeric_sites,
+            omitted_numeric_sites,
+        );
         let result = Self {
             words: words.into_iter().map(Cell::new).collect::<Vec<_>>().into(),
             boundaries: boundaries.into(),
-            regions: (!regions.is_empty()).then(|| regions.to_vec().into()),
+            regions: published_regions,
+            #[cfg(feature = "profiling")]
+            rejected_numeric_sites: rejected_numeric_sites.into(),
             #[cfg(test)]
             test_ir: code.to_vec().into(),
         };
@@ -813,8 +842,13 @@ impl ExecCode {
         Ok(())
     }
 
-    pub(crate) fn numeric_region(&self, index: u32) -> Option<&NumericRegion> {
+    pub(crate) fn numeric_region(&self, index: u32) -> Option<&PublishedNumericRegion> {
         self.regions.as_deref()?.get(index as usize)
+    }
+
+    #[cfg(feature = "profiling")]
+    pub(crate) fn rejected_numeric_sites(&self) -> &[RejectedNumericSite] {
+        &self.rejected_numeric_sites
     }
 
     fn verify_numeric_region(
@@ -823,17 +857,72 @@ impl ExecCode {
         entries: &HashSet<u32>,
     ) -> Result<(), ExecCodeError> {
         let first = self.decode(self.boundaries[source])?;
-        let region = self
+        let published = self
             .numeric_region(first.operand(0))
             .ok_or(ExecCodeError::InvalidTarget)?;
-        let start = region.start as usize;
-        let end = region.end as usize;
+        if published.update_product.is_some()
+            && (!matches!(first.opcode, Opcode::NumericArrayUpdateElement)
+                || !matches!(published.value, NumberSource::Immediate(0)))
+        {
+            return Err(ExecCodeError::InvalidTarget);
+        }
+        let start = source;
+        let end = start
+            + match first.opcode {
+                Opcode::NumericArrayAccumulate => 9,
+                Opcode::NumericArrayStoreProduct => 7,
+                Opcode::NumericArrayUpdateElement => {
+                    if published.update_product.is_some() {
+                        12
+                    } else {
+                        8
+                    }
+                }
+                Opcode::NumericArrayCompareBranch => 6,
+                _ => return Err(ExecCodeError::InvalidTarget),
+            };
+        let operation = match first.opcode {
+            Opcode::NumericArrayAccumulate => NumericOperation::Accumulate {
+                destination: published.destination,
+                scale: published.value,
+                checked: published.checked,
+            },
+            Opcode::NumericArrayStoreProduct => NumericOperation::StoreProduct {
+                destination: published.destination,
+                scale: published.value,
+                checked: published.checked,
+            },
+            Opcode::NumericArrayUpdateElement => NumericOperation::UpdateElement {
+                delta: match published.update_product {
+                    Some(product) => UpdateDelta::ArrayProduct(product),
+                    None => UpdateDelta::Number(published.value),
+                },
+            },
+            Opcode::NumericArrayCompareBranch => NumericOperation::CompareBranch {
+                rhs: published.value,
+                comparison: published.comparison,
+                when_true: published.when_true,
+                target: self
+                    .source_pc(first.operand(1))
+                    .ok_or(ExecCodeError::InvalidTarget)?,
+            },
+            _ => unreachable!(),
+        };
+        let region = NumericRegion {
+            start: source as u32,
+            end: end as u32,
+            array: published.array,
+            index: published.index,
+            operation,
+            peak: published.peak,
+        };
         let success = match region.operation {
             NumericOperation::CompareBranch { target, .. } => self.exec_pc(target),
             _ => self.boundaries.get(end).copied(),
         };
         if start != source
             || end >= self.instruction_len()
+            || published.fallthrough_pc != self.boundaries[end]
             || first.opcode != region_opcode(region.operation)
             || Some(first.operand(1)) != success
             || first.operand(2) != self.boundaries[start + 1]
@@ -841,14 +930,14 @@ impl ExecCode {
         {
             return Err(ExecCodeError::InvalidTarget);
         }
-        let mut expected = [Opcode::Nop; 9];
+        let mut expected = [Opcode::Nop; 12];
         let expected_len = match region.operation {
             NumericOperation::Accumulate {
                 destination: _,
                 scale,
                 checked,
             } => {
-                expected = [
+                expected[..9].copy_from_slice(&[
                     if checked {
                         Opcode::GetLocalCheck
                     } else {
@@ -866,7 +955,7 @@ impl ExecCode {
                         Opcode::SetLocal
                     },
                     Opcode::Drop,
-                ];
+                ]);
                 9
             }
             NumericOperation::StoreProduct {
@@ -889,19 +978,38 @@ impl ExecCode {
                 ]);
                 7
             }
-            NumericOperation::UpdateElement { delta } => {
-                expected[..8].copy_from_slice(&[
-                    direct_opcode(region.array),
-                    number_opcode(region.index),
-                    Opcode::GetArrayEl3,
-                    number_opcode(delta),
-                    Opcode::Add,
-                    Opcode::Insert3,
-                    Opcode::PutArrayEl,
-                    Opcode::Drop,
-                ]);
-                8
-            }
+            NumericOperation::UpdateElement { delta } => match delta {
+                UpdateDelta::Number(source) => {
+                    expected[..8].copy_from_slice(&[
+                        direct_opcode(region.array),
+                        number_opcode(region.index),
+                        Opcode::GetArrayEl3,
+                        number_opcode(source),
+                        Opcode::Add,
+                        Opcode::Insert3,
+                        Opcode::PutArrayEl,
+                        Opcode::Drop,
+                    ]);
+                    8
+                }
+                UpdateDelta::ArrayProduct(product) => {
+                    expected.copy_from_slice(&[
+                        direct_opcode(region.array),
+                        number_opcode(region.index),
+                        Opcode::GetArrayEl3,
+                        number_opcode(product.scale),
+                        direct_opcode(product.array),
+                        number_opcode(product.index),
+                        Opcode::GetArrayEl,
+                        Opcode::Mul,
+                        Opcode::Add,
+                        Opcode::Insert3,
+                        Opcode::PutArrayEl,
+                        Opcode::Drop,
+                    ]);
+                    12
+                }
+            },
             NumericOperation::CompareBranch {
                 rhs,
                 comparison,
@@ -960,11 +1068,21 @@ impl ExecCode {
                     return Err(ExecCodeError::InvalidTarget);
                 }
             }
-            NumericOperation::UpdateElement { delta } => {
-                if !verify_number_operand(self, start + 3, delta)? {
-                    return Err(ExecCodeError::InvalidTarget);
+            NumericOperation::UpdateElement { delta } => match delta {
+                UpdateDelta::Number(source) => {
+                    if !verify_number_operand(self, start + 3, source)? {
+                        return Err(ExecCodeError::InvalidTarget);
+                    }
                 }
-            }
+                UpdateDelta::ArrayProduct(product) => {
+                    if !verify_number_operand(self, start + 3, product.scale)?
+                        || !verify_direct_operand(self, start + 4, product.array)?
+                        || !verify_number_operand(self, start + 5, product.index)?
+                    {
+                        return Err(ExecCodeError::InvalidTarget);
+                    }
+                }
+            },
             NumericOperation::CompareBranch { rhs, target, .. } => {
                 if !verify_number_operand(self, start + 3, rhs)?
                     || self.decode(self.boundaries[start + 5])?.operand(0)
@@ -1012,7 +1130,7 @@ impl ExecCode {
     #[cfg(feature = "profiling")]
     pub(crate) fn region_storage_identity(&self) -> usize {
         self.regions.as_ref().map_or(0, |regions| {
-            Rc::as_ptr(regions) as *const NumericRegion as usize
+            Rc::as_ptr(regions) as *const PublishedNumericRegion as usize
         })
     }
 
@@ -1415,6 +1533,318 @@ fn region_opcode(operation: NumericOperation) -> Opcode {
     }
 }
 
+fn publish_numeric_region(
+    region: &NumericRegion,
+    boundaries: &[u32],
+) -> Result<PublishedNumericRegion, ExecCodeError> {
+    let fallthrough_pc = *boundaries
+        .get(region.end as usize)
+        .ok_or(ExecCodeError::InvalidTarget)?;
+    let (value, update_product, destination, checked, comparison, when_true) =
+        match region.operation {
+            NumericOperation::Accumulate {
+                destination,
+                scale,
+                checked,
+            }
+            | NumericOperation::StoreProduct {
+                destination,
+                scale,
+                checked,
+            } => (scale, None, destination, checked, Opcode::Nop, false),
+            NumericOperation::UpdateElement { delta } => match delta {
+                UpdateDelta::Number(source) => (source, None, 0, false, Opcode::Nop, false),
+                UpdateDelta::ArrayProduct(product) => (
+                    NumberSource::Immediate(0),
+                    Some(product),
+                    0,
+                    false,
+                    Opcode::Nop,
+                    false,
+                ),
+            },
+            NumericOperation::CompareBranch {
+                rhs,
+                comparison,
+                when_true,
+                ..
+            } => (rhs, None, 0, false, comparison, when_true),
+        };
+    Ok(PublishedNumericRegion {
+        array: region.array,
+        index: region.index,
+        value,
+        update_product,
+        destination,
+        checked,
+        comparison,
+        when_true,
+        fallthrough_pc,
+        peak: region.peak,
+    })
+}
+
+#[cfg(feature = "profiling")]
+fn collect_rejected_numeric_sites(
+    code: &[Instruction],
+    locals: Option<&[VariableDefinition]>,
+    arguments: Option<&[VariableDefinition]>,
+    regions: &[NumericRegion],
+    opcodes: &[Opcode],
+    boundaries: &[u32],
+) -> (Vec<RejectedNumericSite>, usize) {
+    const MAX_PER_FUNCTION: usize = 4_096;
+    let Some(locals) = locals else {
+        return (Vec::new(), 0);
+    };
+    let Some(arguments) = arguments else {
+        return (Vec::new(), 0);
+    };
+    let mut entries = vec![false; code.len()];
+    if let Some(entry) = entries.first_mut() {
+        *entry = true;
+    }
+    for (pc, instruction) in code.iter().enumerate() {
+        let control = instruction.control_effect();
+        if let Some(target) = control.target()
+            && let Some(entry) = entries.get_mut(target as usize)
+        {
+            *entry = true;
+        }
+        if control.ends_block()
+            && let Some(entry) = entries.get_mut(pc + 1)
+        {
+            *entry = true;
+        }
+    }
+    let initialization = if locals.iter().any(|local| local.is_lexical) {
+        definite_initialization_entries(code, locals.len())
+    } else {
+        vec![None; code.len()]
+    };
+    let direct = |instruction: Option<&Instruction>| match instruction {
+        Some(Instruction::GetLocal(index) | Instruction::GetLocalCheck(index)) => locals
+            .get(*index as usize)
+            .is_some_and(|local| local.kind == ClosureVariableKind::Normal),
+        Some(Instruction::GetArg(index)) => (*index as usize) < arguments.len(),
+        _ => false,
+    };
+    let number = |instruction: Option<&Instruction>| {
+        direct(instruction)
+            || matches!(
+                instruction,
+                Some(Instruction::PushI32(_) | Instruction::PushConst(_))
+            )
+    };
+    let mut sites = Vec::new();
+    let mut omitted = 0;
+    let store = |pc: usize| {
+        matches!(
+            code.get(pc),
+            Some(Instruction::SetLocal(_) | Instruction::SetLocalCheck(_))
+        )
+    };
+    let comparison = |pc: usize| {
+        matches!(
+            code.get(pc),
+            Some(
+                Instruction::Lt
+                    | Instruction::Lte
+                    | Instruction::Gt
+                    | Instruction::Gte
+                    | Instruction::Eq
+                    | Instruction::Neq
+                    | Instruction::StrictEq
+                    | Instruction::StrictNeq
+            )
+        )
+    };
+    for (array_pc, instruction) in code.iter().enumerate() {
+        // Recognize a bounded lowered operation skeleton, including a single
+        // computed-delta shape. Nearby unrelated arithmetic is not a site.
+        let (family, start, end, discarded, delta_shape) = match instruction {
+            Instruction::GetArrayEl3 if array_pc >= 2 => {
+                if matches!(code.get(array_pc + 4), Some(Instruction::GetArrayEl))
+                    && matches!(code.get(array_pc + 5), Some(Instruction::Mul))
+                    && matches!(code.get(array_pc + 6), Some(Instruction::Add))
+                    && matches!(code.get(array_pc + 7), Some(Instruction::Insert3))
+                    && matches!(code.get(array_pc + 8), Some(Instruction::PutArrayEl))
+                {
+                    (
+                        "update_element",
+                        array_pc - 2,
+                        array_pc + 10,
+                        matches!(code.get(array_pc + 9), Some(Instruction::Drop)),
+                        1,
+                    )
+                } else if matches!(code.get(array_pc + 3), Some(Instruction::Mul))
+                    && matches!(code.get(array_pc + 4), Some(Instruction::Add))
+                    && matches!(code.get(array_pc + 5), Some(Instruction::Insert3))
+                    && matches!(code.get(array_pc + 6), Some(Instruction::PutArrayEl))
+                {
+                    (
+                        "update_element",
+                        array_pc - 2,
+                        array_pc + 8,
+                        matches!(code.get(array_pc + 7), Some(Instruction::Drop)),
+                        2,
+                    )
+                } else if matches!(code.get(array_pc + 2), Some(Instruction::Add))
+                    && matches!(code.get(array_pc + 3), Some(Instruction::Insert3))
+                    && matches!(code.get(array_pc + 4), Some(Instruction::PutArrayEl))
+                {
+                    (
+                        "update_element",
+                        array_pc - 2,
+                        array_pc + 6,
+                        matches!(code.get(array_pc + 5), Some(Instruction::Drop)),
+                        0,
+                    )
+                } else {
+                    continue;
+                }
+            }
+            Instruction::GetArrayEl
+                if array_pc >= 3
+                    && matches!(code.get(array_pc + 2), Some(Instruction::Mul))
+                    && matches!(code.get(array_pc + 3), Some(Instruction::Add))
+                    && store(array_pc + 4) =>
+            {
+                (
+                    "accumulate",
+                    array_pc - 3,
+                    array_pc + 6,
+                    matches!(code.get(array_pc + 5), Some(Instruction::Drop)),
+                    0,
+                )
+            }
+            Instruction::GetArrayEl
+                if array_pc >= 2
+                    && matches!(code.get(array_pc + 2), Some(Instruction::Mul))
+                    && store(array_pc + 3) =>
+            {
+                (
+                    "store_product",
+                    array_pc - 2,
+                    array_pc + 5,
+                    matches!(code.get(array_pc + 4), Some(Instruction::Drop)),
+                    0,
+                )
+            }
+            Instruction::GetArrayEl
+                if array_pc >= 2
+                    && comparison(array_pc + 2)
+                    && matches!(
+                        code.get(array_pc + 3),
+                        Some(Instruction::IfTrue(_) | Instruction::IfFalse(_))
+                    ) =>
+            {
+                ("compare_branch", array_pc - 2, array_pc + 4, true, 0)
+            }
+            _ => continue,
+        };
+        if end > code.len() {
+            continue;
+        }
+        if regions
+            .iter()
+            .any(|region| (region.start as usize..region.end as usize).contains(&array_pc))
+        {
+            continue;
+        }
+        if sites.len() == MAX_PER_FUNCTION {
+            omitted += 1;
+            continue;
+        }
+        let reason = if opcodes
+            .get(start)
+            .is_some_and(|op| *op != Opcode::from_instruction(&code[start]))
+        {
+            "overlap"
+        } else if entries[start + 1..end].iter().any(|&entry| entry) {
+            "control_flow"
+        } else if !direct(code.get(start + usize::from(family == "accumulate")))
+            || !number(code.get(start + 1 + usize::from(family == "accumulate")))
+        {
+            "source"
+        } else if matches!(family, "accumulate" | "store_product") {
+            let destination = code[array_pc..end].iter().find_map(|op| match op {
+                Instruction::SetLocal(index) | Instruction::SetLocalCheck(index) => Some(*index),
+                _ => None,
+            });
+            match destination
+                .and_then(|index| locals.get(index as usize).map(|local| (index, local)))
+            {
+                None => "destination",
+                Some((_, local)) if local.kind != ClosureVariableKind::Normal || local.is_const => {
+                    "binding"
+                }
+                Some((index, local))
+                    if local.is_lexical
+                        && !numeric_site_initialized(
+                            code,
+                            &entries,
+                            &initialization,
+                            start,
+                            index,
+                        ) =>
+                {
+                    "initialization"
+                }
+                Some(_) if !number(code.get(array_pc + 1)) => "source",
+                Some(_) if !discarded => "use",
+                Some(_) => "unsupported_use",
+            }
+        } else if !number(code.get(array_pc + 1))
+            || delta_shape == 1
+                && (!direct(code.get(array_pc + 2)) || !number(code.get(array_pc + 3)))
+            || delta_shape == 2 && !number(code.get(array_pc + 2))
+        {
+            "source"
+        } else if !discarded {
+            "use"
+        } else if delta_shape != 0 {
+            "computed_delta"
+        } else {
+            "unsupported_use"
+        };
+        sites.push(RejectedNumericSite {
+            pc: boundaries[start],
+            source_pc: start as u32,
+            family,
+            reason,
+            lowered_window: format!("{:?}", &code[start..end]),
+        });
+    }
+    sites.sort_by_key(|site| site.pc);
+    sites.dedup_by_key(|site| site.pc);
+    (sites, omitted)
+}
+
+#[cfg(feature = "profiling")]
+fn numeric_site_initialized(
+    code: &[Instruction],
+    entries: &[bool],
+    initialization: &[Option<Vec<bool>>],
+    start: usize,
+    index: u16,
+) -> bool {
+    let block = (0..=start).rev().find(|&pc| entries[pc]).unwrap_or(0);
+    let mut value = initialization[block]
+        .as_deref()
+        .and_then(|state| state.get(index as usize))
+        .copied()
+        .unwrap_or(false);
+    for instruction in &code[block..start] {
+        match instruction {
+            Instruction::InitializeLocal(slot) if *slot == index => value = true,
+            Instruction::SetLocalUninitialized(slot) if *slot == index => value = false,
+            _ => {}
+        }
+    }
+    value
+}
+
 fn is_region_opcode(opcode: Opcode) -> bool {
     matches!(
         opcode,
@@ -1469,6 +1899,11 @@ fn validate_region_plans(
         }
     }
     let mut initialized = vec![false; locals.len()];
+    let initialization_entries = if locals.iter().any(|local| local.is_lexical) {
+        definite_initialization_entries(code, locals.len())
+    } else {
+        vec![None; code.len()]
+    };
     let mut scanned = 0usize;
     for region in regions {
         let start = region.start as usize;
@@ -1481,7 +1916,11 @@ fn validate_region_plans(
         }
         for pc in scanned..=start {
             if block_starts[pc] {
-                initialized.fill(false);
+                if let Some(state) = initialization_entries[pc].as_deref() {
+                    initialized.copy_from_slice(state);
+                } else {
+                    initialized.fill(false);
+                }
             }
             if pc == start {
                 break;
@@ -1543,16 +1982,35 @@ fn validate_region_plans(
                     && matches!(span[6], Instruction::Drop)
             }
             NumericOperation::UpdateElement { delta } => {
-                span.len() == 8
-                    && valid_number_source(delta, locals, arguments, &initialized)
-                    && instruction_matches_direct(&span[0], region.array)
+                let base = instruction_matches_direct(&span[0], region.array)
                     && instruction_matches_number(&span[1], region.index, constants)
-                    && matches!(span[2], Instruction::GetArrayEl3)
-                    && instruction_matches_number(&span[3], delta, constants)
-                    && matches!(span[4], Instruction::Add)
-                    && matches!(span[5], Instruction::Insert3)
-                    && matches!(span[6], Instruction::PutArrayEl)
-                    && matches!(span[7], Instruction::Drop)
+                    && matches!(span[2], Instruction::GetArrayEl3);
+                base && match delta {
+                    UpdateDelta::Number(source) => {
+                        span.len() == 8
+                            && valid_number_source(source, locals, arguments, &initialized)
+                            && instruction_matches_number(&span[3], source, constants)
+                            && matches!(span[4], Instruction::Add)
+                            && matches!(span[5], Instruction::Insert3)
+                            && matches!(span[6], Instruction::PutArrayEl)
+                            && matches!(span[7], Instruction::Drop)
+                    }
+                    UpdateDelta::ArrayProduct(product) => {
+                        span.len() == 12
+                            && valid_number_source(product.scale, locals, arguments, &initialized)
+                            && valid_direct_source(product.array, locals, arguments, &initialized)
+                            && valid_number_source(product.index, locals, arguments, &initialized)
+                            && instruction_matches_number(&span[3], product.scale, constants)
+                            && instruction_matches_direct(&span[4], product.array)
+                            && instruction_matches_number(&span[5], product.index, constants)
+                            && matches!(span[6], Instruction::GetArrayEl)
+                            && matches!(span[7], Instruction::Mul)
+                            && matches!(span[8], Instruction::Add)
+                            && matches!(span[9], Instruction::Insert3)
+                            && matches!(span[10], Instruction::PutArrayEl)
+                            && matches!(span[11], Instruction::Drop)
+                    }
+                }
             }
             NumericOperation::CompareBranch {
                 rhs,
@@ -2887,9 +3345,35 @@ mod tests {
                     Instruction::ReturnUndefined,
                 ],
                 NumericOperation::UpdateElement {
-                    delta: NumberSource::Immediate(2),
+                    delta: UpdateDelta::Number(NumberSource::Immediate(2)),
                 },
                 4,
+                Opcode::NumericArrayUpdateElement,
+            ),
+            (
+                vec![
+                    Instruction::GetArg(0),
+                    Instruction::PushI32(0),
+                    Instruction::GetArrayEl3,
+                    Instruction::GetLocal(0),
+                    Instruction::GetArg(0),
+                    Instruction::PushI32(0),
+                    Instruction::GetArrayEl,
+                    Instruction::Mul,
+                    Instruction::Add,
+                    Instruction::Insert3,
+                    Instruction::PutArrayEl,
+                    Instruction::Drop,
+                    Instruction::ReturnUndefined,
+                ],
+                NumericOperation::UpdateElement {
+                    delta: UpdateDelta::ArrayProduct(super::super::region::ArrayProductSource {
+                        array: DirectSource::Argument(0),
+                        index: NumberSource::Immediate(0),
+                        scale: NumberSource::Direct(DirectSource::Local(0)),
+                    }),
+                },
+                6,
                 Opcode::NumericArrayUpdateElement,
             ),
             (
@@ -2931,6 +3415,21 @@ mod tests {
                 ExecCode::encode_with_locals(&code, &[local], &[local], &[region], &[]).unwrap();
             assert_eq!(published.opcode_at_source(0), Some(opcode));
             published.verify().unwrap();
+            if matches!(
+                operation,
+                NumericOperation::UpdateElement {
+                    delta: UpdateDelta::ArrayProduct(_)
+                }
+            ) {
+                let mut malformed_payload = published.clone();
+                let mut descriptors = malformed_payload.regions.as_ref().unwrap().to_vec();
+                descriptors[0].value = NumberSource::Immediate(1);
+                malformed_payload.regions = Some(Rc::from(descriptors));
+                assert_eq!(
+                    malformed_payload.verify(),
+                    Err(ExecCodeError::InvalidTarget)
+                );
+            }
             let mut malformed = region;
             malformed.peak -= 1;
             assert_eq!(

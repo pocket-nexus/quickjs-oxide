@@ -230,14 +230,14 @@ pub(in crate::engine::vm) struct FrameSlots<'a> {
     pub(super) window: &'a mut FrameWindow,
 }
 
-/// An authenticated, short-lived numeric local. Required inputs must be read
+/// An authenticated, short-lived local destination. Required inputs must be read
 /// before admission so source/destination aliases preserve their old values.
-pub(in crate::engine::vm) struct AdmittedNumericLocal<'a> {
+pub(in crate::engine::vm) struct AdmittedLocalDestination<'a> {
     slot: &'a mut JsValue,
-    pub old: Number,
+    pub old_number: Option<Number>,
 }
 
-impl AdmittedNumericLocal<'_> {
+impl AdmittedLocalDestination<'_> {
     #[inline(always)]
     pub(in crate::engine::vm) fn commit(self, value: Number) {
         *self.slot = match value {
@@ -255,7 +255,26 @@ impl FrameSlots<'_> {
         &mut self,
         destination: u16,
         source: DirectSlot,
-    ) -> Option<(AdmittedNumericLocal<'_>, &JsValue)> {
+    ) -> Option<(AdmittedLocalDestination<'_>, &JsValue)> {
+        self.admit_local_with_source(destination, source, true)
+    }
+
+    /// Product assignment only replaces an initialized, owner-free scalar;
+    /// its displaced value need not participate in Number arithmetic.
+    pub(in crate::engine::vm) fn admit_scalar_local_with_source(
+        &mut self,
+        destination: u16,
+        source: DirectSlot,
+    ) -> Option<(AdmittedLocalDestination<'_>, &JsValue)> {
+        self.admit_local_with_source(destination, source, false)
+    }
+
+    fn admit_local_with_source(
+        &mut self,
+        destination: u16,
+        source: DirectSlot,
+        require_numeric: bool,
+    ) -> Option<(AdmittedLocalDestination<'_>, &JsValue)> {
         let locals = self.window.locals();
         let destination = locals.start.checked_add(usize::from(destination))?;
         if destination >= locals.end {
@@ -279,14 +298,26 @@ impl FrameSlots<'_> {
         let FrameBinding::Direct(destination) = destination_binding.as_mut()? else {
             return None;
         };
-        let old = destination.as_number_repr()?;
+        let old_number = destination.as_number_repr();
+        if require_numeric {
+            old_number?;
+        } else if !matches!(
+            destination,
+            JsValue::Undefined
+                | JsValue::Null
+                | JsValue::Bool(_)
+                | JsValue::Int(_)
+                | JsValue::Float(_)
+        ) {
+            return None;
+        }
         let FrameBinding::Direct(base) = source_binding else {
             return None;
         };
         Some((
-            AdmittedNumericLocal {
+            AdmittedLocalDestination {
                 slot: destination,
-                old,
+                old_number,
             },
             base,
         ))
@@ -675,9 +706,7 @@ impl FrameSlots<'_> {
 mod primitive_transaction_tests {
     use super::*;
     use crate::engine::code::function::metadata::{ClosureVariableKind, VariableDefinition};
-    use crate::engine::code::region::{
-        DirectSource, NumberSource, NumericOperation, NumericRegion,
-    };
+    use crate::engine::code::region::{DirectSource, NumberSource, PublishedNumericRegion};
     use crate::engine::code::runtime::PublishedFunctionSnapshot;
     use crate::engine::value::Value;
     use crate::engine::vm::stack::FrameStorage;
@@ -1007,28 +1036,23 @@ mod primitive_transaction_tests {
             let mut slots = store.borrow_frame_slots(&mut window).unwrap();
             assert!(!slots.has_operand_capacity(3));
             assert!(slots.has_operand_capacity(2));
-            let region = NumericRegion {
-                start: 0,
-                end: 9,
+            let region = PublishedNumericRegion {
                 array: DirectSource::Argument(0),
                 index: NumberSource::Immediate(0),
-                operation: NumericOperation::Accumulate {
-                    destination: 0,
-                    scale: NumberSource::Immediate(2),
-                    checked: false,
-                },
+                value: NumberSource::Immediate(2),
+                update_product: None,
+                destination: 0,
+                checked: false,
+                comparison: crate::engine::code::exec_opcode::Opcode::Nop,
+                when_true: false,
+                fallthrough_pc: 0,
                 peak: 3,
             };
             assert_eq!(
                 crate::engine::vm::execute::numeric_local_array_region(
-                    &mut slots,
-                    &runtime,
-                    &region,
-                    0,
-                    NumberSource::Immediate(2),
-                    true,
+                    &mut slots, &runtime, &region, true,
                 ),
-                Err("operand_capacity"),
+                Err(crate::engine::numeric_region_miss::NumericRegionMiss::OperandCapacity),
             );
         }
         assert_eq!(store.depth(&window), 0);

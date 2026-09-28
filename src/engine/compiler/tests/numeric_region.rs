@@ -74,6 +74,70 @@ fn m2_regions_select_and_match_generic_execution() {
 }
 
 #[test]
+fn array_product_update_selects_and_preserves_aliases_and_misses() {
+    assert!(
+        opcodes("(function(x,s,dt){for(var i=0;i<3;i++)x[i]+=dt*s[i];return x[0];})")
+            .contains(&Opcode::NumericArrayUpdateElement)
+    );
+    for (body, hits) in [
+        ("var x=[1,2];var s=[3,4];return f(x,s,2).join(',');", 2),
+        ("var x=[1,2];return f(x,x,2).join(',');", 2),
+        (
+            "var x=[1,2];return f(x,Object.freeze([3,4]),2).join(',');",
+            2,
+        ),
+        ("var x=[1,2];return f(x,[,4],2).join(',');", 1),
+        (
+            "var x=[1,2];var s=new Proxy([3,4],{get(t,k,r){return Reflect.get(t,k,r)}});return f(x,s,2).join(',');",
+            0,
+        ),
+    ] {
+        let source = format!(
+            "(function(){{function f(x,s,dt){{for(var i=0;i<2;i++)x[i]+=dt*s[i];return x;}}{body}}})()"
+        );
+        let _ = assert_same(&source, hits);
+    }
+    let side_effect = r#"(function(){
+        function f(x,s,dt){x[0]+=dt*s[0];return x[0];}
+        var x=[1], s=[{valueOf(){x[0]=100;return 3;}}];
+        return f(x,s,2);
+    })()"#;
+    assert_eq!(assert_same(side_effect, 0), Value::Int(7));
+    let strict_write = r#"(function(){
+        function f(x,s,dt){'use strict';x[0]+=dt*s[0];}
+        try { f(Object.freeze([1]),[3],2); return false; }
+        catch (e) { return e instanceof TypeError; }
+    })()"#;
+    assert_eq!(assert_same(strict_write, 0), Value::Bool(true));
+    let thrown_getter = r#"(function(){
+        var sentinel={};
+        function f(x,s,dt){x[0]+=dt*s[0];}
+        var s=[];Object.defineProperty(s,'0',{get(){throw sentinel;}});
+        try { f([1],s,2); return false; }
+        catch (e) { return e===sentinel; }
+    })()"#;
+    assert_eq!(assert_same(thrown_getter, 0), Value::Bool(true));
+}
+
+#[test]
+fn product_assignment_replaces_only_initialized_owner_free_scalars() {
+    for old in ["undefined", "null", "false", "true", "0", "-0"] {
+        let source = format!(
+            "(function(){{function f(a,i,s){{var out={old};out=a[i]*s;return out;}}return f([4],0,3);}})()"
+        );
+        assert_eq!(assert_same(&source, 1), Value::Int(12));
+    }
+    let lexical = "(function(){function f(a){let out;out=a[0]*3;return out;}return f([4]);})()";
+    assert_eq!(assert_same(lexical, 1), Value::Int(12));
+    for old in ["{}", "[]", "'owned'", "1n"] {
+        let source = format!(
+            "(function(){{function f(a,i,s){{var out={old};out=a[i]*s;return out;}}return f([4],0,3);}})()"
+        );
+        assert_eq!(assert_same(&source, 0), Value::Int(12));
+    }
+}
+
+#[test]
 fn dynamic_misses_attempt_the_selected_region() {
     let source =
         "(function(){function f(a,i,s){var sum=7;sum+=a[i]*s;return sum;}return f([,],0,3);})()";
@@ -131,6 +195,30 @@ fn m2_branch_edges_and_fallback_match_generic() {
                 0
             },
         );
+    }
+}
+
+#[test]
+fn numeric_comparison_branch_covers_all_supported_operators() {
+    for operator in ["<", "<=", ">", ">=", "==", "!=", "===", "!=="] {
+        let function =
+            format!("(function(a,i,limit){{if(a[i]{operator}limit)return 1;return 0;}})");
+        assert!(
+            opcodes(&function).contains(&Opcode::NumericArrayCompareBranch),
+            "{operator}"
+        );
+        for (array, limit, hits) in [
+            ("[4]", "4", 1),
+            ("[4]", "5", 1),
+            ("[NaN]", "4", 1),
+            ("[Infinity]", "-Infinity", 1),
+            ("[,]", "4", 0),
+        ] {
+            let source = format!(
+                "(function(){{function f(a,i,limit){{if(a[i]{operator}limit)return 1;return 0;}}return f({array},0,{limit});}})()"
+            );
+            let _ = assert_same(&source, hits);
+        }
     }
 }
 
@@ -328,6 +416,15 @@ fn initialized_lexical_sources_and_destinations_are_selected_only_after_initiali
     assert!(!opcodes(before_initialization).contains(&Opcode::NumericArrayStoreProduct));
     let source = "(function(){function f(a){let out=0;out=a[i]*2;const i=0;return out;}try{f([4]);return false;}catch(error){return error instanceof ReferenceError;}})()";
     assert_eq!(assert_same(source, 0), Value::Bool(true));
+}
+
+#[test]
+fn initialized_lexical_destination_survives_ordinary_loop_edges() {
+    let function =
+        "(function(a,s){let sum=0;for(let i=0;i<a.length;i++){sum+=a[i]*s;}return sum;})";
+    assert!(opcodes(function).contains(&Opcode::NumericArrayAccumulate));
+    let source = "(function(){function f(a,s){let sum=0;for(let i=0;i<a.length;i++){sum+=a[i]*s;}return sum;}return f([2,3,4],2);})()";
+    assert_eq!(assert_same(source, 3), Value::Int(18));
 }
 
 #[test]

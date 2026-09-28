@@ -1,7 +1,7 @@
 # Workspace architecture
 
 This document describes the current implementation and its responsibility
-boundaries, including the M1 operation and its M2 extensions on PR #53.
+boundaries, including the numeric operations on PR #53.
 PR #52 (`996663f771afdabdc69d52c94bd4d2fb392e27b1`) is the earlier
 execution baseline. [The optimization roadmap](performance/roadmap.md)
 distinguishes delivered numeric operations from proposed generalizations.
@@ -89,7 +89,11 @@ word containing a 16-bit opcode header and a 16-bit short operand; wide operands
 use following 32-bit words.
 The header also encodes the verified word width, so dispatch does not recount
 extensions on every execution.
-The encoder and verifier share the opcode/operand contract. `ExecCode` stores
+The encoder and verifier share the opcode/operand contract. Temporary numeric
+plans contain compiler instruction ranges and targets. Publication resolves
+their continuations to execution-word offsets, validates entries and operands,
+and retains only execution operands; it discards the temporary graph and plan.
+`ExecCode` stores
 instruction boundaries so control-flow targets, resumed frames and
 diagnostics use execution-word offsets. The published function retains the
 word stream, constants and metadata; product builds have no second instruction
@@ -119,16 +123,24 @@ publish one operation and a validated descriptor. The original words remain
 in the same stream for generic fallback. Each selected interval excludes only
 overlapping specialization; publication validates sources, block-local lexical
 proofs, entry restrictions, continuations and logical stack requirements.
-Direct local/argument and numeric constant inputs are supported. Initialized,
-uncaptured lexical `let` destinations and `const` sources can qualify within a
-straight-line block; uncertain, captured, dynamic and mapped bindings use
-ordinary encoding.
+Direct local/argument and numeric constant inputs are supported. The array
+update also accepts one planned array-element product as its delta, covering
+`x[i] += dt * s[i]` without a new opcode family. Initialized, uncaptured
+lexical `let` destinations and `const` sources can qualify when predecessor
+intersection proves initialization across reachable ordinary CFG edges.
+Unproven exception or resume entries, captured, dynamic and mapped bindings
+use ordinary encoding.
 
 At execution, Number guards and a genuine Array's own dense or materialized
-Number element admit a read. Local operations retain a short-lived `FrameSlots`
-destination through computation and one write. An array update admits an
+Number element admit a read. Local accumulation requires an existing Number;
+product assignment can replace an initialized direct undefined, null, Boolean
+or Number without observable release. Owned destination values fall back.
+Local operations retain a short-lived `FrameSlots` destination through
+computation and one write. An array update admits an
 existing writable own Number element, computes and writes within one mutable
-heap borrow; a frozen or accessor element misses. A comparison branches
+heap borrow. For an array-product delta, both source values are read before the
+target is written, including when the arrays alias. A frozen target or accessor
+element misses. A comparison branches
 directly without an intermediate Boolean owner. Guard failure runs the
 original first read and generic continuation without changing state. This is
 a small set of planned operations, not a production adaptive region engine.

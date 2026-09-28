@@ -8,11 +8,13 @@
 mod cost;
 pub(crate) use cost::record_call_preparation;
 
+#[cfg(feature = "profiling")]
+pub(crate) use cost::record_compiled_numeric_rejections;
 pub(crate) use cost::record_owned_call_storage;
 pub use cost::{
     CallBufferCost, CallPreparationCost, CallsiteCost, CostProfile, CostSnapshot,
     ExecutionDispatchCost, ExecutionSiteCost, ExecutionSiteKey, ExecutionStaticCost,
-    FunctionSiteKey, OwnedStorageCost, PhaseCost, SiteKey, VmPhaseCost,
+    FunctionSiteKey, NumericRejectionCost, OwnedStorageCost, PhaseCost, SiteKey, VmPhaseCost,
 };
 pub(crate) use cost::{
     CompilePhase, PhaseTimer, VmCallSample, cost_profile_active, record_compiler_storage,
@@ -229,7 +231,7 @@ pub(crate) use cost::{
 #[cfg(feature = "profiling")]
 pub(crate) use cost::{
     record_callsite_callee, record_execution_dispatch, record_execution_outcome,
-    record_execution_static,
+    record_execution_static, record_numeric_rejection_visit,
 };
 
 #[cfg(test)]

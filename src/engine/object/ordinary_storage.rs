@@ -7,6 +7,7 @@ use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::atom::{Atom, AtomIdx};
 use crate::engine::heap::runtime::RuntimeState;
 use crate::engine::heap::{ObjectId, ObjectKind, ObjectPayload, PropertySlot, RawValue};
+use crate::engine::numeric_region_miss::NumericRegionMiss as Miss;
 use crate::engine::object::shape::PropertyFlags;
 use crate::engine::object::{ObjectRef, PropertyKey};
 use crate::engine::value::JsValue;
@@ -1226,31 +1227,34 @@ impl Runtime {
         &self,
         base: &JsValue,
         index: u32,
-    ) -> Result<Number, &'static str> {
+    ) -> Result<Number, Miss> {
         let JsValue::Object(id) = base else {
-            return Err("receiver_not_object");
+            return Err(Miss::ReceiverNotObject);
         };
         let state = self
             .0
             .state
             .try_borrow()
-            .map_err(|_| "heap_borrow_unavailable")?;
-        let data = state.heap.object(*id).map_err(|_| "receiver_unavailable")?;
+            .map_err(|_| Miss::HeapBorrowUnavailable)?;
+        let data = state
+            .heap
+            .object(*id)
+            .map_err(|_| Miss::ReceiverUnavailable)?;
         if !matches!(data.kind, ObjectKind::Array) {
-            return Err("receiver_not_array");
+            return Err(Miss::ReceiverNotArray);
         }
         match &data.payload {
             ObjectPayload::Array { dense: Some(dense) } => match dense.get(index as usize) {
                 Some(RawValue::Int(value)) => Ok(Number::Int(*value)),
                 Some(RawValue::Float(value)) => Ok(Number::Float(*value)),
-                Some(_) => Err("own_element_not_number"),
-                None => Err("missing_own_element"),
+                Some(_) => Err(Miss::OwnElementNotNumber),
+                None => Err(Miss::MissingOwnElement),
             },
             ObjectPayload::Array { dense: None } => {
                 materialized_array_own_number(&state, data, index)
-                    .ok_or("unsupported_materialized_own_element")
+                    .ok_or(Miss::UnsupportedMaterializedOwnElement)
             }
-            _ => Err("array_storage_unavailable"),
+            _ => Err(Miss::ArrayStorageUnavailable),
         }
     }
 
@@ -1262,12 +1266,12 @@ impl Runtime {
         base: &JsValue,
         index: u32,
         delta: Number,
-    ) -> Result<(), &'static str> {
+    ) -> Result<(), Miss> {
         let JsValue::Object(id) = base else {
-            return Err("receiver_not_object");
+            return Err(Miss::ReceiverNotObject);
         };
         let Ok(mut state) = self.0.state.try_borrow_mut() else {
-            return Err("heap_borrow_unavailable");
+            return Err(Miss::HeapBorrowUnavailable);
         };
         let atom = Atom::from_immediate_integer(index).map(|atom| AtomIdx::from_raw(atom.raw()));
         state.heap.try_add_array_own_number(*id, index, atom, delta)

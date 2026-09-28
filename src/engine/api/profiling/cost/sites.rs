@@ -78,6 +78,15 @@ pub struct ExecutionSiteCost {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct NumericRejectionCost {
+    pub source_pc: u32,
+    pub family: &'static str,
+    pub reason: &'static str,
+    pub lowered_window: String,
+    pub visits: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CallsiteCost {
     pub calls: u64,
     pub object_callees: u64,
@@ -298,6 +307,46 @@ pub(crate) fn record_execution_static(runtime: &Runtime, executable: &PublishedF
         cost.generic_read_sites += u64::from(!specialized);
     }
     snapshot.execution_static.insert(key, cost);
+    for site in executable.exec.rejected_numeric_sites() {
+        if snapshot.numeric_rejections.len() == MAX_SITES {
+            snapshot.omitted_numeric_rejection_sites =
+                snapshot.omitted_numeric_rejection_sites.saturating_add(1);
+            continue;
+        }
+        snapshot.numeric_rejections.insert(
+            SiteKey {
+                function: key,
+                pc: site.pc as usize,
+            },
+            NumericRejectionCost {
+                source_pc: site.source_pc,
+                family: site.family,
+                reason: site.reason,
+                lowered_window: site.lowered_window.clone(),
+                visits: 0,
+            },
+        );
+    }
+}
+
+#[cfg(feature = "profiling")]
+pub(crate) fn record_numeric_rejection_visit(
+    runtime: &Runtime,
+    executable: &PublishedFunctionSnapshot,
+    pc: usize,
+) {
+    let sites = executable.exec.rejected_numeric_sites();
+    if sites
+        .binary_search_by_key(&(pc as u32), |site| site.pc)
+        .is_err()
+    {
+        return;
+    }
+    let Some(collector) = current() else { return };
+    let key = site_key(runtime, executable, pc);
+    if let Some(site) = collector.borrow_mut().numeric_rejections.get_mut(&key) {
+        site.visits = site.visits.saturating_add(1);
+    }
 }
 
 #[cfg(feature = "profiling")]

@@ -219,7 +219,7 @@ impl Heap {
                             &mut regions,
                             data.exec.region_len(),
                             data.exec.region_len(),
-                            size_of::<crate::engine::code::region::NumericRegion>(),
+                            size_of::<crate::engine::code::region::PublishedNumericRegion>(),
                         );
                     }
                     if let Some(keys) = &data.property_key_atoms

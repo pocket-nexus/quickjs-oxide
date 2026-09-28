@@ -9,8 +9,11 @@ use crate::engine::code::bytecode::{Instruction, verify_parts};
 use crate::engine::code::exec_opcode::Opcode;
 use crate::engine::code::function::UnlinkedVariableDefinition;
 use crate::engine::code::function::metadata::ClosureVariableKind;
+use crate::engine::code::initialization::definite_initialization_entries;
 use crate::engine::code::instruction::{PotentialEffects, StackStateEffect};
-use crate::engine::code::region::{DirectSource, NumberSource, NumericOperation, NumericRegion};
+use crate::engine::code::region::{
+    ArrayProductSource, DirectSource, NumberSource, NumericOperation, NumericRegion, UpdateDelta,
+};
 use crate::engine::compiler::MAX_BYTECODE_STACK;
 use crate::engine::compiler::model::ir::IrConstant;
 use crate::engine::value::PrimitiveValue;
@@ -198,6 +201,11 @@ pub(super) fn plan_numeric_regions(
         return Vec::new();
     }
     let entries = block_entries(code);
+    let initialization_entries = if locals.iter().any(|local| local.is_lexical) {
+        definite_initialization_entries(code, locals.len())
+    } else {
+        vec![None; code.len()]
+    };
     let mut initialized = vec![false; locals.len()];
     let facts = RegionFacts {
         code,
@@ -217,7 +225,11 @@ pub(super) fn plan_numeric_regions(
             stack.clear();
             nodes.clear();
             inputs.clear();
-            initialized.fill(false);
+            if let Some(state) = initialization_entries[pc].as_deref() {
+                initialized.copy_from_slice(state);
+            } else {
+                initialized.fill(false);
+            }
         }
         let effect = instruction.stack_contract();
         if effect.state != StackStateEffect::Ordinary || stack.len() < effect.popped {
@@ -245,7 +257,7 @@ pub(super) fn plan_numeric_regions(
             let region = if matches!(instruction, Instruction::Drop) {
                 numeric_region_at_drop(facts, &nodes, &inputs, &initialized, node)
                     .or_else(|| store_product_at_drop(facts, &nodes, &inputs, &initialized, node))
-                    .or_else(|| update_element_at_drop(facts, &initialized, pc))
+                    .or_else(|| update_element_at_drop(facts, &nodes, &inputs, &initialized, node))
             } else if matches!(
                 instruction,
                 Instruction::IfTrue(_) | Instruction::IfFalse(_)
@@ -400,50 +412,23 @@ fn store_product_at_drop(
     initialized: &[bool],
     drop: usize,
 ) -> Option<NumericRegion> {
-    let RegionFacts {
-        code,
-        constants,
-        locals,
-        captured,
-        argument_count,
-        entries,
-    } = facts;
+    let code = facts.code;
+    let locals = facts.locals;
+    let captured = facts.captured;
+    let entries = facts.entries;
     let single = |node: usize| inputs_of(nodes, inputs, node).first().copied();
     let store = single(drop)?;
     let (destination, checked) =
         numeric_destination(&code[nodes[store].pc], locals, captured, initialized)?;
     let product = single(store)?;
-    if !matches!(code[nodes[product].pc], Instruction::Mul) {
-        return None;
-    }
-    let [element, scale_node] = inputs_of(nodes, inputs, product) else {
-        return None;
-    };
-    if !matches!(code[nodes[*element].pc], Instruction::GetArrayEl) {
-        return None;
-    }
-    let [array_node, index_node] = inputs_of(nodes, inputs, *element) else {
-        return None;
-    };
-    let source = |node: usize| {
-        direct_source(
-            &code[nodes[node].pc],
-            locals,
-            captured,
-            argument_count,
-            initialized,
-        )
-    };
-    let number = |node: usize| numeric_source(&code[nodes[node].pc], constants, source(node));
-    let array = source(*array_node)?;
-    let index = number(*index_node)?;
-    let scale = number(*scale_node)?;
+    let (product_source, product_members) =
+        array_product_source(facts, nodes, inputs, initialized, product)?;
     let members = [
-        *array_node,
-        *index_node,
-        *element,
-        *scale_node,
-        product,
+        product_members[0],
+        product_members[1],
+        product_members[2],
+        product_members[3],
+        product_members[4],
         store,
         drop,
     ];
@@ -463,21 +448,69 @@ fn store_product_at_drop(
     Some(NumericRegion {
         start: start.try_into().ok()?,
         end: end.try_into().ok()?,
-        array,
-        index,
+        array: product_source.array,
+        index: product_source.index,
         operation: NumericOperation::StoreProduct {
             destination,
-            scale,
+            scale: product_source.scale,
             checked,
         },
         peak: region_peak(code, start, end, entries)?,
     })
 }
 
+/// A reusable producer fact: one Array element multiplied by a direct Number.
+/// Callers decide separately whether that product feeds a local or an element.
+fn array_product_source(
+    facts: RegionFacts<'_>,
+    nodes: &[UseNode],
+    inputs: &[usize],
+    initialized: &[bool],
+    product: usize,
+) -> Option<(ArrayProductSource, [usize; 5])> {
+    let code = facts.code;
+    if !matches!(code[nodes[product].pc], Instruction::Mul) {
+        return None;
+    }
+    let [left, right] = inputs_of(nodes, inputs, product) else {
+        return None;
+    };
+    let (element, scale_node) = if matches!(code[nodes[*left].pc], Instruction::GetArrayEl) {
+        (*left, *right)
+    } else if matches!(code[nodes[*right].pc], Instruction::GetArrayEl) {
+        (*right, *left)
+    } else {
+        return None;
+    };
+    let [array_node, index_node] = inputs_of(nodes, inputs, element) else {
+        return None;
+    };
+    let direct = |node: usize| {
+        direct_source(
+            &code[nodes[node].pc],
+            facts.locals,
+            facts.captured,
+            facts.argument_count,
+            initialized,
+        )
+    };
+    let number = |node: usize| numeric_source(&code[nodes[node].pc], facts.constants, direct(node));
+    Some((
+        ArrayProductSource {
+            array: direct(*array_node)?,
+            index: number(*index_node)?,
+            scale: number(scale_node)?,
+        },
+        [*array_node, *index_node, element, scale_node, product],
+    ))
+}
+
 fn update_element_at_drop(
     facts: RegionFacts<'_>,
+    nodes: &[UseNode],
+    inputs: &[usize],
     initialized: &[bool],
-    drop: usize,
+    drop_node: usize,
 ) -> Option<NumericRegion> {
     let RegionFacts {
         code,
@@ -487,22 +520,29 @@ fn update_element_at_drop(
         argument_count,
         entries,
     } = facts;
-    let start = drop.checked_sub(7)?;
-    let span = code.get(start..=drop)?;
-    if !matches!(span[2], Instruction::GetArrayEl3)
-        || !matches!(span[4], Instruction::Add)
-        || !matches!(span[5], Instruction::Insert3)
-        || !matches!(span[6], Instruction::PutArrayEl)
-        || !matches!(span[7], Instruction::Drop)
-    {
-        return None;
-    }
+    let drop = nodes[drop_node].pc;
     let direct = |instruction: &Instruction| {
         direct_source(instruction, locals, captured, argument_count, initialized)
     };
+    let (start, delta) = if let Some(start) = drop.checked_sub(7) {
+        let span = code.get(start..=drop)?;
+        if matches!(span[2], Instruction::GetArrayEl3)
+            && matches!(span[4], Instruction::Add)
+            && matches!(span[5], Instruction::Insert3)
+            && matches!(span[6], Instruction::PutArrayEl)
+            && matches!(span[7], Instruction::Drop)
+        {
+            let value = numeric_source(&span[3], constants, direct(&span[3]))?;
+            (start, UpdateDelta::Number(value))
+        } else {
+            update_array_product_at_drop(facts, nodes, inputs, initialized, drop_node)?
+        }
+    } else {
+        update_array_product_at_drop(facts, nodes, inputs, initialized, drop_node)?
+    };
+    let span = code.get(start..=drop)?;
     let array = direct(&span[0])?;
     let index = numeric_source(&span[1], constants, direct(&span[1]))?;
-    let delta = numeric_source(&span[3], constants, direct(&span[3]))?;
     let end = drop + 1;
     Some(NumericRegion {
         start: start.try_into().ok()?,
@@ -512,6 +552,40 @@ fn update_element_at_drop(
         operation: NumericOperation::UpdateElement { delta },
         peak: region_peak(code, start, end, entries)?,
     })
+}
+
+fn update_array_product_at_drop(
+    facts: RegionFacts<'_>,
+    nodes: &[UseNode],
+    inputs: &[usize],
+    initialized: &[bool],
+    drop_node: usize,
+) -> Option<(usize, UpdateDelta)> {
+    let code = facts.code;
+    let drop = nodes[drop_node].pc;
+    let start = drop.checked_sub(11)?;
+    let span = code.get(start..=drop)?;
+    if !matches!(span[2], Instruction::GetArrayEl3)
+        || !matches!(span[6], Instruction::GetArrayEl)
+        || !matches!(span[7], Instruction::Mul)
+        || !matches!(span[8], Instruction::Add)
+        || !matches!(span[9], Instruction::Insert3)
+        || !matches!(span[10], Instruction::PutArrayEl)
+        || !matches!(span[11], Instruction::Drop)
+    {
+        return None;
+    }
+    let product_node = drop_node.checked_sub(4)?;
+    if nodes[product_node].pc != start + 7 {
+        return None;
+    }
+    let (product, members) = array_product_source(facts, nodes, inputs, initialized, product_node)?;
+    if members.map(|node| nodes[node].pc) != [start + 4, start + 5, start + 6, start + 3, start + 7]
+        || members.iter().any(|&node| nodes[node].uses != 1)
+    {
+        return None;
+    }
+    Some((start, UpdateDelta::ArrayProduct(product)))
 }
 
 fn compare_branch_at(
