@@ -76,18 +76,15 @@ impl Heap {
         id: VarRefId,
         replacement: RawValue,
     ) -> Result<RawValue, (HeapError, RawValue)> {
-        let validation = self.var_ref(id).and_then(|current| {
-            validate_var_ref_value(
-                current.kind,
-                current.is_lexical,
-                current.is_const,
-                &replacement,
-            )
-        });
-        if let Err(error) = validation {
+        let cell = match self.var_ref_mut(id) {
+            Ok(cell) => cell,
+            Err(error) => return Err((error, replacement)),
+        };
+        if let Err(error) =
+            validate_var_ref_value(cell.kind, cell.is_lexical, cell.is_const, &replacement)
+        {
             return Err((error, replacement));
         }
-        let cell = self.var_ref_mut(id).expect("validated live VarRef");
         Ok(std::mem::replace(&mut cell.value, replacement))
     }
 

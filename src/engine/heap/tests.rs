@@ -227,6 +227,37 @@ fn captured_cell_replacement_preserves_owned_transfer_and_retained_update() {
 }
 
 #[test]
+fn rejected_owned_cell_replacement_preserves_both_owners() {
+    let mut heap = Heap::new();
+    let shape = empty_shape(&mut heap);
+    let incoming = leaf(&mut heap, shape);
+    let cell = heap
+        .allocate_var_ref_owned(VarRefData::captured(
+            RawValue::Uninitialized,
+            true,
+            true,
+            ClosureVariableKind::PrivateField,
+        ))
+        .unwrap();
+
+    let (error, returned) = heap
+        .replace_var_ref_value_owned(cell, RawValue::Object(incoming))
+        .unwrap_err();
+    assert!(matches!(error, HeapError::Invariant(_)));
+    assert!(matches!(returned, RawValue::Object(id) if id == incoming));
+    assert!(matches!(
+        heap.var_ref(cell).unwrap().value,
+        RawValue::Uninitialized
+    ));
+    assert_eq!(heap.object_strong_count(incoming), Ok(1));
+
+    heap.release_object(incoming).unwrap();
+    heap.release_var_ref(cell).unwrap();
+    heap.release_shape(shape).unwrap();
+    assert_eq!(heap.counts().live, 0);
+}
+
+#[test]
 fn shapes_use_compact_storage_and_reused_generation_is_distinct() {
     let mut heap = Heap::new();
     let first = empty_shape(&mut heap);
