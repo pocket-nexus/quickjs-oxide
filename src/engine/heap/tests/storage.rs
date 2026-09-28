@@ -697,7 +697,7 @@ fn regexp_intrinsics_attach_transactionally_once_and_finalize_with_realm() {
     fixture
         .heap
         .shapes
-        .live_mut(RawId::Shape(fixture.object_shape))
+        .live_mut(fixture.object_shape)
         .unwrap()
         .strong
         .set(u32::MAX);
@@ -738,7 +738,7 @@ fn regexp_intrinsics_attach_transactionally_once_and_finalize_with_realm() {
     fixture
         .heap
         .shapes
-        .live_mut(RawId::Shape(fixture.object_shape))
+        .live_mut(fixture.object_shape)
         .unwrap()
         .strong
         .set(object_shape_strong);

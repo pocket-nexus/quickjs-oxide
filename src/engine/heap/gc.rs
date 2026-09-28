@@ -221,8 +221,8 @@ impl FinalizationJobSink for DiscardFinalizationJobSink {
 impl Heap {
     fn live_nonleaf_edges(&self, id: RawId) -> Result<Edges, HeapError> {
         match id {
-            RawId::VarRef(_) => Ok(var_ref_edges(&self.var_refs.live(id)?.data)),
-            RawId::Shape(_) => Ok(shape_edges(&self.shapes.live(id)?.data).into()),
+            RawId::VarRef(cell) => Ok(var_ref_edges(&self.var_refs.live(cell)?.data)),
+            RawId::Shape(shape) => Ok(shape_edges(&self.shapes.live(shape)?.data).into()),
             RawId::Object(_) | RawId::Context(_) | RawId::FunctionBytecode(_) => {
                 Ok(self.live_node(id)?.data.edges())
             }
@@ -234,11 +234,11 @@ impl Heap {
 
     fn validate_live_nonleaf(&self, id: RawId) -> Result<(), HeapError> {
         match id {
-            RawId::VarRef(_) => {
-                self.var_refs.live(id)?;
+            RawId::VarRef(cell) => {
+                self.var_refs.live(cell)?;
             }
-            RawId::Shape(_) => {
-                self.shapes.live(id)?;
+            RawId::Shape(shape) => {
+                self.shapes.live(shape)?;
             }
             RawId::Object(_) | RawId::Context(_) | RawId::FunctionBytecode(_) => {
                 self.live_node(id)?;
@@ -1335,9 +1335,9 @@ impl Heap {
         if edge.is_leaf() {
             return self.preflight_leaf_edge_retain(edge, additional);
         }
-        if matches!(edge, RawId::VarRef(_)) {
+        if let RawId::VarRef(cell) = edge {
             self.var_refs
-                .live(edge)?
+                .live(cell)?
                 .strong
                 .get()
                 .checked_add(additional)
@@ -1346,9 +1346,9 @@ impl Heap {
                 })?;
             return Ok(());
         }
-        if matches!(edge, RawId::Shape(_)) {
+        if let RawId::Shape(shape) = edge {
             self.shapes
-                .live(edge)?
+                .live(shape)?
                 .strong
                 .get()
                 .checked_add(additional)
@@ -1384,8 +1384,8 @@ impl Heap {
         if id.is_leaf() {
             return self.retain_leaf_raw(id, additional);
         }
-        if matches!(id, RawId::VarRef(_)) {
-            let strong = &self.var_refs.live_mut(id)?.strong;
+        if let RawId::VarRef(cell) = id {
+            let strong = &self.var_refs.live_mut(cell)?.strong;
             strong.set(
                 strong
                     .get()
@@ -1396,8 +1396,8 @@ impl Heap {
             );
             return Ok(());
         }
-        if matches!(id, RawId::Shape(_)) {
-            let strong = &self.shapes.live_mut(id)?.strong;
+        if let RawId::Shape(shape) = id {
+            let strong = &self.shapes.live_mut(shape)?.strong;
             strong.set(
                 strong
                     .get()
@@ -1468,13 +1468,13 @@ impl Heap {
             self.retain_leaf_fast(id);
             return;
         }
-        if matches!(id, RawId::VarRef(_)) {
-            let strong = &self.var_refs.live_fast(id).strong;
+        if let RawId::VarRef(cell) = id {
+            let strong = &self.var_refs.live_fast(cell).strong;
             strong.set(strong.get().saturating_add(1));
             return;
         }
-        if matches!(id, RawId::Shape(_)) {
-            let strong = &self.shapes.live_fast(id).strong;
+        if let RawId::Shape(shape) = id {
+            let strong = &self.shapes.live_fast(shape).strong;
             strong.set(strong.get().saturating_add(1));
             return;
         }
@@ -1526,15 +1526,15 @@ impl Heap {
         if id.is_leaf() {
             return self.retain_leaf_shared(id);
         }
-        if matches!(id, RawId::VarRef(_)) {
-            let strong = &self.var_refs.live(id)?.strong;
+        if let RawId::VarRef(cell) = id {
+            let strong = &self.var_refs.live(cell)?.strong;
             strong.set(strong.get().checked_add(1).ok_or(HeapError::Overflow {
                 operation: "retaining a heap reference",
             })?);
             return Ok(());
         }
-        if matches!(id, RawId::Shape(_)) {
-            let strong = &self.shapes.live(id)?.strong;
+        if let RawId::Shape(shape) = id {
+            let strong = &self.shapes.live(shape)?.strong;
             strong.set(strong.get().checked_add(1).ok_or(HeapError::Overflow {
                 operation: "retaining a heap reference",
             })?);
@@ -1709,8 +1709,8 @@ impl Heap {
         if id.is_leaf() {
             return self.try_release_leaf_nonfinal(id);
         }
-        if matches!(id, RawId::VarRef(_)) {
-            let Ok(node) = self.var_refs.live(id) else {
+        if let RawId::VarRef(cell) = id {
+            let Ok(node) = self.var_refs.live(cell) else {
                 return false;
             };
             let strong = node.strong.get();
@@ -1723,8 +1723,8 @@ impl Heap {
             }
             return false;
         }
-        if matches!(id, RawId::Shape(_)) {
-            let Ok(node) = self.shapes.live(id) else {
+        if let RawId::Shape(shape) = id {
+            let Ok(node) = self.shapes.live(shape) else {
                 return false;
             };
             let strong = node.strong.get();
@@ -1809,14 +1809,14 @@ impl Heap {
         if id.is_leaf() {
             return self.release_leaf_raw_no_drain(id);
         }
-        if matches!(id, RawId::VarRef(_)) {
-            if self.var_refs.release_no_drain(id)? {
+        if let RawId::VarRef(cell) = id {
+            if self.var_refs.release_no_drain(cell)? {
                 self.zero_queue.push_back(id);
             }
             return Ok(());
         }
-        if matches!(id, RawId::Shape(_)) {
-            if self.shapes.release_no_drain(id)? {
+        if let RawId::Shape(shape) = id {
+            if self.shapes.release_no_drain(shape)? {
                 self.zero_queue.push_back(id);
             }
             return Ok(());
@@ -1983,19 +1983,16 @@ impl Heap {
                 self.reclaim_leaf_vacant(index)?;
                 continue;
             }
-            if matches!(id, RawId::VarRef(_)) {
-                let var_ref = self.var_refs.detach_zero_queued(id)?;
+            if let RawId::VarRef(cell) = id {
+                let var_ref = self.var_refs.detach_zero_queued(cell)?;
                 self.finish_var_ref(var_ref, &mut cleanup)?;
-                self.var_refs.reclaim_vacant(id.index())?;
+                self.var_refs.reclaim_vacant(cell)?;
                 continue;
             }
-            if matches!(id, RawId::Shape(_)) {
-                let shape = self.shapes.detach_zero_queued(id)?;
-                let RawId::Shape(shape_id) = id else {
-                    unreachable!("validated shape queue entry changed kind");
-                };
+            if let RawId::Shape(shape_id) = id {
+                let shape = self.shapes.detach_zero_queued(shape_id)?;
                 self.finish_shape(shape_id, shape, &mut cleanup)?;
-                self.shapes.reclaim_vacant(id.index())?;
+                self.shapes.reclaim_vacant(shape_id)?;
                 continue;
             }
             let index = self.validate_slot_identity(id)?;
