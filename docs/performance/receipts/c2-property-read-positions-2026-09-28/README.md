@@ -77,5 +77,29 @@ on this 64-bit target.
 Rust 1.88 workspace/all-targets tests, profiling Clippy with `-D warnings`,
 formatting, source layout, and focused property tests with profiling passed.
 Focused Test262 matched 6,844/6,844 eligible variants. The pinned QuickJS
-fixture differential matched 13/13 cases. The full Test262 replay and paired
-timing runs are being completed on the fixed binaries.
+fixture differential matched 13/13 cases, and the nine C oracle fixtures
+passed. The full Test262 replay is running locally on the final example
+source.
+
+The [same-binary A/A control](data/fixed-aa.json) and [C1/C2 paired run](data/fixed-ab.json)
+used two ABBA-ordered samples per binary and case, output checks, and macOS
+`/usr/bin/time -l` retired-instruction counters. They include process startup
+and compilation. Counts for covered reads are lower in C2, while inline
+controls are close to parity:
+
+| Case | C2 / C1 retired instructions | C1 / C2 whole-process median ms |
+| --- | ---: | ---: |
+| Missing static field | 0.9961 | 5730 / 5507 |
+| String length, inline | 1.0009 | 3723 / 2793 |
+| Computed object, call loop | 0.9953 | 4247 / 4192 |
+| Computed object, one frame | 0.9933 | 2460 / 2692 |
+| Warm own field, inline | 1.0015 | 2626 / 2407 |
+| Getter, deferred | 0.9984 | 58 / 58 |
+
+The A/A retired-instruction ratios were 0.9999 for the missing static field,
+1.0005 for the computed one-frame read, and 0.9998 for the warmed field.
+Their corresponding wall-time ratios ranged from 0.86 to 1.21 despite
+comparing the same binary. The covered instruction reductions support less
+machine work, but generated-code changes elsewhere and the large host timing
+noise prevent an isolated cost or runtime speedup claim. Compile-once
+execution samples are being collected separately.
