@@ -1,0 +1,2695 @@
+{
+  "schema": "oxide-compile-matrix-v1",
+  "created_utc": "2026-09-28T07:25:50Z",
+  "metric": "compile",
+  "goal": "script",
+  "repeat": 30,
+  "timeout_seconds": 120,
+  "order": "serial, alternating per repetition",
+  "instrumentation": "off (no profiling flags)",
+  "machine": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "cpu": "Apple M1",
+    "logical_cpus": 8,
+    "python": "3.14.7",
+    "cpu_affinity": null,
+    "scaling_governors": {},
+    "load_average": [
+      30.51318359375,
+      37.46923828125,
+      24.3017578125
+    ],
+    "macos": {
+      "physical_memory_bytes": 17179869184,
+      "power_settings": {
+        "command": [
+          "pmset",
+          "-g",
+          "custom"
+        ],
+        "exit_code": 0,
+        "stdout": "Battery Power:\n Sleep On Power Button 1\n lowpowermode         0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         20\n womp                 0\n networkoversleep     0\n sleep                1\n lessbright           1\n tcpkeepalive         1\n disksleep            10\nAC Power:\n Sleep On Power Button 1\n lowpowermode         0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         0\n womp                 1\n networkoversleep     0\n sleep                1\n tcpkeepalive         1\n disksleep            10",
+        "stderr": ""
+      },
+      "power_source": {
+        "command": [
+          "pmset",
+          "-g",
+          "batt"
+        ],
+        "exit_code": 0,
+        "stdout": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=22741091)\t100%; charged; 0:00 remaining present: true",
+        "stderr": ""
+      },
+      "vm_stat": {
+        "command": [
+          "vm_stat"
+        ],
+        "exit_code": 0,
+        "stdout": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                    17178.\nPages active:                                 263636.\nPages inactive:                               262194.\nPages speculative:                               774.\nPages throttled:                                   0.\nPages wired down:                             167021.\nPages purgeable:                                4294.\n\"Translation faults\":                     5360959118.\nPages copy-on-write:                       319573695.\nPages zero filled:                        1965733838.\nPages reactivated:                         726861530.\nPages purged:                               38625639.\nFile-backed pages:                            120285.\nAnonymous pages:                              406319.\nPages stored in compressor:                  1413013.\nPages occupied by compressor:                 289019.\nDecompressions:                            676448883.\nCompressions:                              764380520.\nPageins:                                   108131552.\nPageouts:                                    1365693.\nSwapins:                                     5314012.\nSwapouts:                                    6913572.",
+        "stderr": ""
+      }
+    },
+    "runner_sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5",
+    "repository": {
+      "commit": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD"
+        ],
+        "exit_code": 0,
+        "stdout": "67a88fab7581ca444cd311883eb01d34bba19637",
+        "stderr": ""
+      },
+      "tree": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD^{tree}"
+        ],
+        "exit_code": 0,
+        "stdout": "feed0794a53b5919f02d6acaa9e8dd08d3e90816",
+        "stderr": ""
+      },
+      "top_level": {
+        "command": [
+          "git",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "exit_code": 0,
+        "stdout": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff",
+        "stderr": ""
+      },
+      "status": {
+        "command": [
+          "git",
+          "status",
+          "--porcelain"
+        ],
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    }
+  },
+  "corpus": "/private/tmp/quickjs-oxide-followthrough/compile-corpus",
+  "workloads": [
+    {
+      "case": "lexical-loop-500",
+      "path": "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js",
+      "bytes": 44890,
+      "sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c"
+    },
+    {
+      "case": "product-update-500",
+      "path": "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js",
+      "bytes": 28890,
+      "sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81"
+    }
+  ],
+  "engines": {
+    "same_a": {
+      "type": "oxide",
+      "path": "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+      "sha256": "39cfcc0d984c521a4964ee4287752b32b098bb64037217a14bbecc664a6c7941",
+      "version": {
+        "command": [
+          "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+          "--version"
+        ],
+        "exit_code": 0,
+        "stdout": "oxide-compile-probe 1",
+        "stderr": ""
+      },
+      "build": {
+        "command": [
+          "cargo",
+          "build",
+          "--release",
+          "--manifest-path",
+          "/private/tmp/quickjs-oxide-followthrough/compile-probe-candidate/Cargo.toml",
+          "--target-dir",
+          "/private/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target"
+        ],
+        "repository": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff",
+        "binary": "/private/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "binary_sha256": "39cfcc0d984c521a4964ee4287752b32b098bb64037217a14bbecc664a6c7941",
+        "source_sha256": "9c3ff10353b51995a90f2c62868e0b6337d3163983f3876e1f5c4f271829cfae",
+        "cargo_lock_sha256": "d1b16903f0b6008576770f59344f872080c600d52197b27ad6c13a007d3ac5b5",
+        "dependency_commit": "67a88fab7581ca444cd311883eb01d34bba19637",
+        "source_identity": {
+          "kind": "git-checkout",
+          "note": "patch covers tracked files; stage receipt must additionally hash untracked implementation files"
+        },
+        "source_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "features": [],
+        "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2\n",
+        "rustflags": null,
+        "encoded_rustflags": null
+      }
+    },
+    "same_b": {
+      "type": "oxide",
+      "path": "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+      "sha256": "39cfcc0d984c521a4964ee4287752b32b098bb64037217a14bbecc664a6c7941",
+      "version": {
+        "command": [
+          "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+          "--version"
+        ],
+        "exit_code": 0,
+        "stdout": "oxide-compile-probe 1",
+        "stderr": ""
+      },
+      "build": {
+        "command": [
+          "cargo",
+          "build",
+          "--release",
+          "--manifest-path",
+          "/private/tmp/quickjs-oxide-followthrough/compile-probe-candidate/Cargo.toml",
+          "--target-dir",
+          "/private/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target"
+        ],
+        "repository": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff",
+        "binary": "/private/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "binary_sha256": "39cfcc0d984c521a4964ee4287752b32b098bb64037217a14bbecc664a6c7941",
+        "source_sha256": "9c3ff10353b51995a90f2c62868e0b6337d3163983f3876e1f5c4f271829cfae",
+        "cargo_lock_sha256": "d1b16903f0b6008576770f59344f872080c600d52197b27ad6c13a007d3ac5b5",
+        "dependency_commit": "67a88fab7581ca444cd311883eb01d34bba19637",
+        "source_identity": {
+          "kind": "git-checkout",
+          "note": "patch covers tracked files; stage receipt must additionally hash untracked implementation files"
+        },
+        "source_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "features": [],
+        "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2\n",
+        "rustflags": null,
+        "encoded_rustflags": null
+      }
+    }
+  },
+  "node_probe_sha256": "6c218529930ad316002eaa496ccaf40af6badffe77ec5e825ac1437a4752a938",
+  "runner_sha256": "37a3a6d66cd1e1582814257418f057a031846a0697c15dc0026bd72e6a00fd19",
+  "samples": [
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 35768750,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-0.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-0.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_a",
+      "repetition": 0,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 24589459
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 32423416,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-0.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-0.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_b",
+      "repetition": 0,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 22649667
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 41159500,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-1.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-1.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_b",
+      "repetition": 1,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 27017750
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 35566667,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-1.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-1.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_a",
+      "repetition": 1,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 25753584
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 34644208,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-2.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-2.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_a",
+      "repetition": 2,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 25408583
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 35377375,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-2.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-2.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_b",
+      "repetition": 2,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 25315833
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 39011708,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-3.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-3.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_b",
+      "repetition": 3,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 27221125
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 41058417,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-3.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-3.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_a",
+      "repetition": 3,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 31109000
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 44405667,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-4.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-4.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_a",
+      "repetition": 4,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 32058167
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 38599875,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-4.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-4.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_b",
+      "repetition": 4,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 26899750
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 35879333,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-5.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-5.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_b",
+      "repetition": 5,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 25852000
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 36790209,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-5.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-5.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_a",
+      "repetition": 5,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 27361292
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 37857125,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-6.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-6.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_a",
+      "repetition": 6,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 27687875
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 33458292,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-6.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-6.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_b",
+      "repetition": 6,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 23400542
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 36354834,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-7.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-7.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_b",
+      "repetition": 7,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 26785250
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 37559042,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-7.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-7.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_a",
+      "repetition": 7,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 29003708
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 37813417,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-8.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-8.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_a",
+      "repetition": 8,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 25740125
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 35737875,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-8.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-8.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_b",
+      "repetition": 8,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 24934875
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 36732292,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-9.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-9.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_b",
+      "repetition": 9,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 24882750
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 34750834,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-9.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-9.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_a",
+      "repetition": 9,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 26368416
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 34235625,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-10.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-10.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_a",
+      "repetition": 10,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 24892041
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 34949334,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-10.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-10.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_b",
+      "repetition": 10,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 25360750
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 35555042,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-11.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-11.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_b",
+      "repetition": 11,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 25451292
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 36229625,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-11.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-11.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_a",
+      "repetition": 11,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 27742750
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 36736666,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-12.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-12.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_a",
+      "repetition": 12,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 27146334
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 38354167,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-12.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-12.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_b",
+      "repetition": 12,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 28220000
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 41887291,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-13.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-13.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_b",
+      "repetition": 13,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 30007541
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 35571458,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-13.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-13.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_a",
+      "repetition": 13,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 25382375
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 39103958,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-14.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-14.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_a",
+      "repetition": 14,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 27643125
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 37091834,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-14.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-14.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_b",
+      "repetition": 14,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 28718042
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 36225083,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-15.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-15.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_b",
+      "repetition": 15,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 26482500
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 36517875,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-15.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-15.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_a",
+      "repetition": 15,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 25545208
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 39414750,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-16.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-16.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_a",
+      "repetition": 16,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 27785667
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 37085084,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-16.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-16.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_b",
+      "repetition": 16,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 28593958
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 36092375,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-17.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-17.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_b",
+      "repetition": 17,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 25630000
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 42085458,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-17.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-17.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_a",
+      "repetition": 17,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 32177334
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 36925917,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-18.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-18.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_a",
+      "repetition": 18,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 26341541
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 40469084,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-18.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-18.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_b",
+      "repetition": 18,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 28857625
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 37201375,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-19.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-19.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_b",
+      "repetition": 19,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 28512458
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 37004875,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-19.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-19.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_a",
+      "repetition": 19,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 25912917
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 33389334,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-20.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-20.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_a",
+      "repetition": 20,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 24215542
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 33259083,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-20.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-20.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_b",
+      "repetition": 20,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 24235500
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 32687625,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-21.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-21.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_b",
+      "repetition": 21,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 24785708
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 37425667,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-21.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-21.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_a",
+      "repetition": 21,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 27503541
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 35130500,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-22.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-22.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_a",
+      "repetition": 22,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 25303416
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 33298959,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-22.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-22.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_b",
+      "repetition": 22,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 22804333
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 37059125,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-23.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-23.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_b",
+      "repetition": 23,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 24731125
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 35126541,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-23.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-23.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_a",
+      "repetition": 23,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 25042041
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 35624917,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-24.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-24.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_a",
+      "repetition": 24,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 25559250
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 34225709,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-24.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-24.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_b",
+      "repetition": 24,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 25320250
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 35650083,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-25.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-25.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_b",
+      "repetition": 25,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 25568959
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 32905625,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-25.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-25.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_a",
+      "repetition": 25,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 23540208
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 34634833,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-26.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-26.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_a",
+      "repetition": 26,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 24206750
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 38198833,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-26.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-26.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_b",
+      "repetition": 26,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 28768125
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 36368250,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-27.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-27.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_b",
+      "repetition": 27,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 27602916
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 34514000,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-27.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-27.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_a",
+      "repetition": 27,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 24838375
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 34691208,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-28.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-28.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_a",
+      "repetition": 28,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 24995250
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 38776958,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-28.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-28.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_b",
+      "repetition": 28,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 28964709
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 34891375,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-29.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_b-29.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_b",
+      "repetition": 29,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 25261875
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 36786667,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-29.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/lexical-loop-500-same_a-29.stderr",
+      "case": "lexical-loop-500",
+      "engine": "same_a",
+      "repetition": 29,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 25719458
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 24588750,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-0.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-0.stderr",
+      "case": "product-update-500",
+      "engine": "same_a",
+      "repetition": 0,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14124167
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 24197167,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-0.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-0.stderr",
+      "case": "product-update-500",
+      "engine": "same_b",
+      "repetition": 0,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 13886750
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 25015125,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-1.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-1.stderr",
+      "case": "product-update-500",
+      "engine": "same_b",
+      "repetition": 1,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14224000
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 24398916,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-1.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-1.stderr",
+      "case": "product-update-500",
+      "engine": "same_a",
+      "repetition": 1,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15636125
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 25576417,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-2.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-2.stderr",
+      "case": "product-update-500",
+      "engine": "same_a",
+      "repetition": 2,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14643417
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 22940792,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-2.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-2.stderr",
+      "case": "product-update-500",
+      "engine": "same_b",
+      "repetition": 2,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14734083
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 26933208,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-3.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-3.stderr",
+      "case": "product-update-500",
+      "engine": "same_b",
+      "repetition": 3,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 17146833
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 26420458,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-3.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-3.stderr",
+      "case": "product-update-500",
+      "engine": "same_a",
+      "repetition": 3,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 17204875
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 25304583,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-4.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-4.stderr",
+      "case": "product-update-500",
+      "engine": "same_a",
+      "repetition": 4,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 16322166
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 25902584,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-4.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-4.stderr",
+      "case": "product-update-500",
+      "engine": "same_b",
+      "repetition": 4,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15854792
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 22586500,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-5.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-5.stderr",
+      "case": "product-update-500",
+      "engine": "same_b",
+      "repetition": 5,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14467334
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 27091334,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-5.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-5.stderr",
+      "case": "product-update-500",
+      "engine": "same_a",
+      "repetition": 5,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14676667
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 25215375,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-6.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-6.stderr",
+      "case": "product-update-500",
+      "engine": "same_a",
+      "repetition": 6,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 13445166
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 25869041,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-6.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-6.stderr",
+      "case": "product-update-500",
+      "engine": "same_b",
+      "repetition": 6,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 16040625
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 114747667,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-7.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-7.stderr",
+      "case": "product-update-500",
+      "engine": "same_b",
+      "repetition": 7,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 101972625
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 28596500,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-7.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-7.stderr",
+      "case": "product-update-500",
+      "engine": "same_a",
+      "repetition": 7,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 17052208
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 25029958,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-8.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-8.stderr",
+      "case": "product-update-500",
+      "engine": "same_a",
+      "repetition": 8,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 13920625
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 25695416,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-8.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-8.stderr",
+      "case": "product-update-500",
+      "engine": "same_b",
+      "repetition": 8,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 16739542
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 25591375,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-9.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-9.stderr",
+      "case": "product-update-500",
+      "engine": "same_b",
+      "repetition": 9,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14185458
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 23605584,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-9.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-9.stderr",
+      "case": "product-update-500",
+      "engine": "same_a",
+      "repetition": 9,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14824375
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 27822083,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-10.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-10.stderr",
+      "case": "product-update-500",
+      "engine": "same_a",
+      "repetition": 10,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 17510625
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 25246667,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-10.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-10.stderr",
+      "case": "product-update-500",
+      "engine": "same_b",
+      "repetition": 10,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14210875
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 24435458,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-11.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-11.stderr",
+      "case": "product-update-500",
+      "engine": "same_b",
+      "repetition": 11,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15140750
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 27461250,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-11.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-11.stderr",
+      "case": "product-update-500",
+      "engine": "same_a",
+      "repetition": 11,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14044292
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 24157375,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-12.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-12.stderr",
+      "case": "product-update-500",
+      "engine": "same_a",
+      "repetition": 12,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14877375
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 26424584,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-12.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-12.stderr",
+      "case": "product-update-500",
+      "engine": "same_b",
+      "repetition": 12,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15197708
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 24942083,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-13.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-13.stderr",
+      "case": "product-update-500",
+      "engine": "same_b",
+      "repetition": 13,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 13585000
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 24923667,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-13.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-13.stderr",
+      "case": "product-update-500",
+      "engine": "same_a",
+      "repetition": 13,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15231083
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 26189167,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-14.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-14.stderr",
+      "case": "product-update-500",
+      "engine": "same_a",
+      "repetition": 14,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14147875
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 23471541,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-14.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-14.stderr",
+      "case": "product-update-500",
+      "engine": "same_b",
+      "repetition": 14,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14185708
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 25714958,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-15.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-15.stderr",
+      "case": "product-update-500",
+      "engine": "same_b",
+      "repetition": 15,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15613208
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 24917625,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-15.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-15.stderr",
+      "case": "product-update-500",
+      "engine": "same_a",
+      "repetition": 15,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14527958
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 28703833,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-16.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-16.stderr",
+      "case": "product-update-500",
+      "engine": "same_a",
+      "repetition": 16,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 19389833
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 25079667,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-16.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-16.stderr",
+      "case": "product-update-500",
+      "engine": "same_b",
+      "repetition": 16,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14167000
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 28222250,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-17.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-17.stderr",
+      "case": "product-update-500",
+      "engine": "same_b",
+      "repetition": 17,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15544000
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 24018167,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-17.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-17.stderr",
+      "case": "product-update-500",
+      "engine": "same_a",
+      "repetition": 17,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14670750
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 24814500,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-18.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-18.stderr",
+      "case": "product-update-500",
+      "engine": "same_a",
+      "repetition": 18,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15468416
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 41125875,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-18.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-18.stderr",
+      "case": "product-update-500",
+      "engine": "same_b",
+      "repetition": 18,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 22547250
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 24205250,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-19.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-19.stderr",
+      "case": "product-update-500",
+      "engine": "same_b",
+      "repetition": 19,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 12904875
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 24468125,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-19.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-19.stderr",
+      "case": "product-update-500",
+      "engine": "same_a",
+      "repetition": 19,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14503416
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 25484083,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-20.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-20.stderr",
+      "case": "product-update-500",
+      "engine": "same_a",
+      "repetition": 20,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15124791
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 25585958,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-20.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-20.stderr",
+      "case": "product-update-500",
+      "engine": "same_b",
+      "repetition": 20,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15995875
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 25832708,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-21.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-21.stderr",
+      "case": "product-update-500",
+      "engine": "same_b",
+      "repetition": 21,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14519333
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 23014875,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-21.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-21.stderr",
+      "case": "product-update-500",
+      "engine": "same_a",
+      "repetition": 21,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14273542
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 28699916,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-22.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-22.stderr",
+      "case": "product-update-500",
+      "engine": "same_a",
+      "repetition": 22,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 18415917
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 27862792,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-22.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-22.stderr",
+      "case": "product-update-500",
+      "engine": "same_b",
+      "repetition": 22,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 16873417
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 25007125,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-23.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-23.stderr",
+      "case": "product-update-500",
+      "engine": "same_b",
+      "repetition": 23,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 16543750
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 25358875,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-23.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-23.stderr",
+      "case": "product-update-500",
+      "engine": "same_a",
+      "repetition": 23,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 16243667
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 24137250,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-24.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-24.stderr",
+      "case": "product-update-500",
+      "engine": "same_a",
+      "repetition": 24,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 12955958
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 24805583,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-24.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-24.stderr",
+      "case": "product-update-500",
+      "engine": "same_b",
+      "repetition": 24,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 13920542
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 25566875,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-25.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-25.stderr",
+      "case": "product-update-500",
+      "engine": "same_b",
+      "repetition": 25,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15687791
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 27082542,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-25.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-25.stderr",
+      "case": "product-update-500",
+      "engine": "same_a",
+      "repetition": 25,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 17268625
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 25423792,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-26.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-26.stderr",
+      "case": "product-update-500",
+      "engine": "same_a",
+      "repetition": 26,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15022667
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 23651083,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-26.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-26.stderr",
+      "case": "product-update-500",
+      "engine": "same_b",
+      "repetition": 26,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 12703625
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 24504792,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-27.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-27.stderr",
+      "case": "product-update-500",
+      "engine": "same_b",
+      "repetition": 27,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14395333
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 25081833,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-27.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-27.stderr",
+      "case": "product-update-500",
+      "engine": "same_a",
+      "repetition": 27,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14617917
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 25648667,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-28.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-28.stderr",
+      "case": "product-update-500",
+      "engine": "same_a",
+      "repetition": 28,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 17135500
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 24671750,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-28.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-28.stderr",
+      "case": "product-update-500",
+      "engine": "same_b",
+      "repetition": 28,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14497333
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 23806666,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-29.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_b-29.stderr",
+      "case": "product-update-500",
+      "engine": "same_b",
+      "repetition": 29,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14009000
+      }
+    },
+    {
+      "command": [
+        "/tmp/quickjs-oxide-followthrough/compile-probe-candidate/target/release/oxide-compile-probe",
+        "/private/tmp/quickjs-oxide-followthrough/compile-corpus/product-update-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 26073209,
+      "stdout": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-29.stdout",
+      "stderr": "/private/tmp/quickjs-oxide-followthrough/compile-aa/raw/product-update-500-same_a-29.stderr",
+      "case": "product-update-500",
+      "engine": "same_a",
+      "repetition": 29,
+      "workload_sha256": "1a2e2a82b88539337dd4d9c52a6adc2288208ab47b718099025bfa753a5e4c81",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14794458
+      }
+    }
+  ],
+  "summary": [
+    {
+      "case": "lexical-loop-500",
+      "engine": "same_a",
+      "samples": 30,
+      "successful": 30,
+      "failures": [],
+      "eligible": true,
+      "bytes": 44890,
+      "metrics": {
+        "ns": {
+          "raw": [
+            24589459,
+            25753584,
+            25408583,
+            31109000,
+            32058167,
+            27361292,
+            27687875,
+            29003708,
+            25740125,
+            26368416,
+            24892041,
+            27742750,
+            27146334,
+            25382375,
+            27643125,
+            25545208,
+            27785667,
+            32177334,
+            26341541,
+            25912917,
+            24215542,
+            27503541,
+            25303416,
+            25042041,
+            25559250,
+            23540208,
+            24206750,
+            24838375,
+            24995250,
+            25719458
+          ],
+          "minimum": 23540208,
+          "median": 25746854.5,
+          "maximum": 32177334,
+          "stdev": 2189791.4909967333
+        },
+        "mb_per_second": 1.7435139504128554
+      }
+    },
+    {
+      "case": "lexical-loop-500",
+      "engine": "same_b",
+      "samples": 30,
+      "successful": 30,
+      "failures": [],
+      "eligible": true,
+      "bytes": 44890,
+      "metrics": {
+        "ns": {
+          "raw": [
+            22649667,
+            27017750,
+            25315833,
+            27221125,
+            26899750,
+            25852000,
+            23400542,
+            26785250,
+            24934875,
+            24882750,
+            25360750,
+            25451292,
+            28220000,
+            30007541,
+            28718042,
+            26482500,
+            28593958,
+            25630000,
+            28857625,
+            28512458,
+            24235500,
+            24785708,
+            22804333,
+            24731125,
+            25320250,
+            25568959,
+            28768125,
+            27602916,
+            28964709,
+            25261875
+          ],
+          "minimum": 22649667,
+          "median": 25741000.0,
+          "maximum": 30007541,
+          "stdev": 1943086.2968447653
+        },
+        "mb_per_second": 1.7439104929878404
+      }
+    },
+    {
+      "case": "product-update-500",
+      "engine": "same_a",
+      "samples": 30,
+      "successful": 30,
+      "failures": [],
+      "eligible": true,
+      "bytes": 28890,
+      "metrics": {
+        "ns": {
+          "raw": [
+            14124167,
+            15636125,
+            14643417,
+            17204875,
+            16322166,
+            14676667,
+            13445166,
+            17052208,
+            13920625,
+            14824375,
+            17510625,
+            14044292,
+            14877375,
+            15231083,
+            14147875,
+            14527958,
+            19389833,
+            14670750,
+            15468416,
+            14503416,
+            15124791,
+            14273542,
+            18415917,
+            16243667,
+            12955958,
+            17268625,
+            15022667,
+            14617917,
+            17135500,
+            14794458
+          ],
+          "minimum": 12955958,
+          "median": 14850875.0,
+          "maximum": 19389833,
+          "stdev": 1518729.8456290131
+        },
+        "mb_per_second": 1.945339921048423
+      }
+    },
+    {
+      "case": "product-update-500",
+      "engine": "same_b",
+      "samples": 30,
+      "successful": 30,
+      "failures": [],
+      "eligible": true,
+      "bytes": 28890,
+      "metrics": {
+        "ns": {
+          "raw": [
+            13886750,
+            14224000,
+            14734083,
+            17146833,
+            15854792,
+            14467334,
+            16040625,
+            101972625,
+            16739542,
+            14185458,
+            14210875,
+            15140750,
+            15197708,
+            13585000,
+            14185708,
+            15613208,
+            14167000,
+            15544000,
+            22547250,
+            12904875,
+            15995875,
+            14519333,
+            16873417,
+            16543750,
+            13920542,
+            15687791,
+            12703625,
+            14395333,
+            14497333,
+            14009000
+          ],
+          "minimum": 12703625,
+          "median": 14626708.0,
+          "maximum": 101972625,
+          "stdev": 15951646.135726739
+        },
+        "mb_per_second": 1.97515394441456
+      }
+    }
+  ],
+  "ratios": [
+    {
+      "case": "lexical-loop-500",
+      "engine": "same_b",
+      "reference": "same_a",
+      "ratio": 1.0002274387164445
+    },
+    {
+      "case": "product-update-500",
+      "engine": "same_b",
+      "reference": "same_a",
+      "ratio": 1.015325868267829
+    }
+  ]
+}

@@ -3,7 +3,8 @@
 以 PR #52 `996663f771afdabdc69d52c94bd4d2fb392e27b1` 为新起点：
 发布后使用单一 `ExecCode` 字流，`vm/execute.rs` 是唯一指令循环。
 PR #53 已实现 M1 数值累加及 M2 的直接目的地、数组更新和比较分支，
-并发布执行字 continuation 与一个在 V8 v7 中实际执行的数组乘积更新来源；
+并发布执行字 continuation、在 V8 v7 中实际执行的数组乘积更新来源，
+以及 `lin_solve` 中的数组复制、前增索引累加和数组/局部写入链；
 C1 已连通原语数值运算的 decoded fallthrough 传递。其他工作流仍是设计提案。当前实现由
 [架构文档](../architecture.md)描述。
 
@@ -28,6 +29,7 @@ C1 已连通原语数值运算的 decoded fallthrough 传递。其他工作流�
 
 | 日期 | 收据 | 内容 |
 | --- | --- | --- |
+| 2026-09-28 | [数值区域后续验证](receipts/numeric-region-followthrough-2026-09-28/README.md) | 选择/发布契约、`lin_solve` 覆盖、命中与回退成本、Navier–Stokes 整体测量 |
 | 2026-09-28 | [执行字计划与覆盖](receipts/execution-ready-plans-2026-09-28/README.md) | 运行时直接消费发布事实、V8 执行站点选择、dense 单次认证与三版对照 |
 | 2026-09-28 | [M2 数值操作扩展](receipts/m2-numeric-operations-2026-09-28/README.md) | 直接目的地、数组更新、比较分支及当前 #53/#52 独立对照 |
 | 2026-09-28 | [C1 continuation 位置](receipts/c1-continuation-positions-2026-09-28/README.md) | 原语数值完成的已解码 fallthrough、语义验证及 #53 对照 |

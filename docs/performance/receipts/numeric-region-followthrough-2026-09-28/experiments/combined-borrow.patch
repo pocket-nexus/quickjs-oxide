@@ -1,0 +1,109 @@
+--- a/src/engine/object/ordinary_storage.rs
++++ b/src/engine/object/ordinary_storage.rs
+@@ -1258,6 +1258,57 @@
+         }
+     }
+ 
++    /// Read the product source and update its target under one state borrow.
++    /// The source Number is copied before the target is mutated, including for aliases.
++    pub(crate) fn try_add_array_product_own_numbers(
++        &self,
++        target: &JsValue,
++        index: u32,
++        source: &JsValue,
++        source_index: u32,
++        scale: Number,
++    ) -> Result<(), Miss> {
++        let JsValue::Object(source_id) = source else {
++            return Err(Miss::ReceiverNotObject);
++        };
++        let mut state = self
++            .0
++            .state
++            .try_borrow_mut()
++            .map_err(|_| Miss::HeapBorrowUnavailable)?;
++        let element = {
++            let data = state
++                .heap
++                .object(*source_id)
++                .map_err(|_| Miss::ReceiverUnavailable)?;
++            if !matches!(data.kind, ObjectKind::Array) {
++                return Err(Miss::ReceiverNotArray);
++            }
++            match &data.payload {
++                ObjectPayload::Array { dense: Some(dense) } => {
++                    match dense.get(source_index as usize) {
++                        Some(RawValue::Int(value)) => Number::Int(*value),
++                        Some(RawValue::Float(value)) => Number::Float(*value),
++                        Some(_) => return Err(Miss::OwnElementNotNumber),
++                        None => return Err(Miss::MissingOwnElement),
++                    }
++                }
++                ObjectPayload::Array { dense: None } => {
++                    materialized_array_own_number(&state, data, source_index)
++                        .ok_or(Miss::UnsupportedMaterializedOwnElement)?
++                }
++                _ => return Err(Miss::ArrayStorageUnavailable),
++            }
++        };
++        let JsValue::Object(target_id) = target else {
++            return Err(Miss::ReceiverNotObject);
++        };
++        let atom = Atom::from_immediate_integer(index).map(|atom| AtomIdx::from_raw(atom.raw()));
++        state
++            .heap
++            .try_add_array_own_number(*target_id, index, atom, element.mul(scale))
++    }
++
+     /// Update one existing writable own Array Number under a single mutable
+     /// state borrow. Old and new values own no edges, so this cannot release
+     /// an owner, change a descriptor or length, or run guest code.
+--- a/src/engine/vm/execute.rs
++++ b/src/engine/vm/execute.rs
+@@ -494,7 +494,11 @@
+                             else {
+                                 return Ok(Err(Miss::IndexNotNumericInteger));
+                             };
+-                            let delta = if let Some(producer) = region.producer_index {
++                            let Some(base) = slots.direct_value(region_direct_slot(region.array))
++                            else {
++                                return Ok(Err(Miss::ReceiverBindingUnavailable));
++                            };
++                            let result = if let Some(producer) = region.producer_index {
+                                 let product = executable
+                                     .exec
+                                     .product_source(producer)
+@@ -517,24 +521,20 @@
+                                 else {
+                                     return Ok(Err(Miss::ReceiverBindingUnavailable));
+                                 };
+-                                let element = match runtime
+-                                    .peek_dense_number_result(product_base, product_index)
+-                                {
+-                                    Ok(value) => value,
+-                                    Err(reason) => return Ok(Err(reason)),
+-                                };
+-                                element.mul(scale)
++                                runtime.try_add_array_product_own_numbers(
++                                    base,
++                                    index,
++                                    product_base,
++                                    product_index,
++                                    scale,
++                                )
+                             } else {
+                                 let Some(delta) = region_number(slots, region.value) else {
+                                     return Ok(Err(Miss::DeltaNotNumber));
+                                 };
+-                                delta
++                                runtime.try_add_array_own_number(base, index, delta)
+                             };
+-                            let Some(base) = slots.direct_value(region_direct_slot(region.array))
+-                            else {
+-                                return Ok(Err(Miss::ReceiverBindingUnavailable));
+-                            };
+-                            Ok(runtime.try_add_array_own_number(base, index, delta))
++                            Ok(result)
+                         })?;
+                         match result {
+                             Ok(()) => {

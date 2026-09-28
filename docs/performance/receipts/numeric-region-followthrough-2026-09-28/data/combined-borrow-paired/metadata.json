@@ -1,0 +1,371 @@
+{
+  "machine": {
+    "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
+    "machine": "arm64",
+    "cpu": "Apple M1",
+    "logical_cpus": 8,
+    "python": "3.14.7",
+    "cpu_affinity": null,
+    "scaling_governors": {},
+    "load_average": [
+      7.96484375,
+      13.93115234375,
+      12.140625
+    ],
+    "macos": {
+      "physical_memory_bytes": 17179869184,
+      "power_settings": {
+        "command": [
+          "pmset",
+          "-g",
+          "custom"
+        ],
+        "exit_code": 0,
+        "stdout": "Battery Power:\n Sleep On Power Button 1\n lowpowermode         0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         20\n womp                 0\n networkoversleep     0\n sleep                1\n lessbright           1\n tcpkeepalive         1\n disksleep            10\nAC Power:\n Sleep On Power Button 1\n lowpowermode         0\n standby              1\n ttyskeepawake        1\n hibernatemode        3\n powernap             1\n hibernatefile        /var/vm/sleepimage\n displaysleep         0\n womp                 1\n networkoversleep     0\n sleep                1\n tcpkeepalive         1\n disksleep            10",
+        "stderr": ""
+      },
+      "power_source": {
+        "command": [
+          "pmset",
+          "-g",
+          "batt"
+        ],
+        "exit_code": 0,
+        "stdout": "Now drawing from 'AC Power'\n -InternalBattery-0 (id=22741091)\t100%; charged; 0:00 remaining present: true",
+        "stderr": ""
+      },
+      "vm_stat": {
+        "command": [
+          "vm_stat"
+        ],
+        "exit_code": 0,
+        "stdout": "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages free:                                     4880.\nPages active:                                 203249.\nPages inactive:                               200209.\nPages speculative:                              2064.\nPages throttled:                                   0.\nPages wired down:                             185215.\nPages purgeable:                                  18.\n\"Translation faults\":                     5347136787.\nPages copy-on-write:                       319343330.\nPages zero filled:                        1962906494.\nPages reactivated:                         720580992.\nPages purged:                               38466796.\nFile-backed pages:                            123796.\nAnonymous pages:                              281726.\nPages stored in compressor:                  1482871.\nPages occupied by compressor:                 404312.\nDecompressions:                            669774770.\nCompressions:                              757214865.\nPageins:                                   108023647.\nPageouts:                                    1360815.\nSwapins:                                     5281508.\nSwapouts:                                    6798200.",
+        "stderr": ""
+      }
+    },
+    "runner_sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5",
+    "repository": {
+      "commit": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD"
+        ],
+        "exit_code": 0,
+        "stdout": "67a88fab7581ca444cd311883eb01d34bba19637",
+        "stderr": ""
+      },
+      "tree": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD^{tree}"
+        ],
+        "exit_code": 0,
+        "stdout": "feed0794a53b5919f02d6acaa9e8dd08d3e90816",
+        "stderr": ""
+      },
+      "top_level": {
+        "command": [
+          "git",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "exit_code": 0,
+        "stdout": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff",
+        "stderr": ""
+      },
+      "status": {
+        "command": [
+          "git",
+          "status",
+          "--porcelain"
+        ],
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    }
+  },
+  "runner_sha256": "8a852679221202ae6d3dac1e02b295368a79529a3e0c32e51fd6b914e5d4b425",
+  "manifest_sha256": "91932088d3a4ff924e055a1d965e80204167d8a27e9077207cc6f60f6834c3ba",
+  "workloads": [
+    {
+      "case": "alias-hit",
+      "path": "/private/tmp/quickjs-oxide-followthrough/combined-workloads/alias-hit.js",
+      "sha256": "978796805de13a39450b3c78c97a9f35f8a267aa031e00be10be9bce1faed9fe",
+      "expected": "1\n",
+      "size": 200000
+    },
+    {
+      "case": "target-failure",
+      "path": "/private/tmp/quickjs-oxide-followthrough/combined-workloads/target-failure.js",
+      "sha256": "fdd9c1944790400c1e02515bb2cb6fcc20060941f37e997151c778588110cbaa",
+      "expected": "0\n",
+      "size": 200000
+    },
+    {
+      "case": "materialized-hit",
+      "path": "/private/tmp/quickjs-oxide-followthrough/combined-workloads/materialized-hit.js",
+      "sha256": "9d2a99d6ab73c2181d4113083c83f1b01d191dbc24864d7779a456853a6ed3a7",
+      "expected": "200000\n",
+      "size": 200000
+    },
+    {
+      "case": "source-failure",
+      "path": "/private/tmp/quickjs-oxide-followthrough/combined-workloads/source-failure.js",
+      "sha256": "c0b8e6a914dae2760c6afca386bb251f1776cad633718163550136e6cb6d91ee",
+      "expected": "200000\n",
+      "size": 200000
+    },
+    {
+      "case": "update-product-hit",
+      "path": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-hit.js",
+      "sha256": "a4820ce93f5208df49a87bb255232510dec7f150059d842f8c618b6f2e7e33d7",
+      "expected": "2000000\n",
+      "size": 2000000
+    },
+    {
+      "case": "update-product-miss",
+      "path": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff/docs/performance/receipts/execution-ready-plans-2026-09-28/workloads/update-product-miss.js",
+      "sha256": "c6a8ea31c41ad86e46d456673e33c6722dd62e39e4af28dc5d537f78e084d726",
+      "expected": "2000000\n",
+      "size": 2000000
+    }
+  ],
+  "engines": {
+    "split": {
+      "path": "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+      "sha256": "4043f951c9843d99731c773f32b9829c84d9644dd0c44f261753e482992f288e",
+      "version": {
+        "command": [
+          "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs",
+          "--version"
+        ],
+        "exit_code": 0,
+        "stdout": "quickjs-oxide 0.0.1 (QuickJS 2026-06-04 compatibility target)",
+        "stderr": ""
+      },
+      "build": {
+        "schema": "oxide-build-v2",
+        "mode": "plain",
+        "vm_configuration": "stack-vm",
+        "features": [],
+        "commit": "67a88fab7581ca444cd311883eb01d34bba19637",
+        "source": {
+          "commit": {
+            "command": [
+              "git",
+              "rev-parse",
+              "HEAD"
+            ],
+            "exit_code": 0,
+            "stdout": "67a88fab7581ca444cd311883eb01d34bba19637",
+            "stderr": ""
+          },
+          "tree": {
+            "command": [
+              "git",
+              "rev-parse",
+              "HEAD^{tree}"
+            ],
+            "exit_code": 0,
+            "stdout": "feed0794a53b5919f02d6acaa9e8dd08d3e90816",
+            "stderr": ""
+          },
+          "top_level": {
+            "command": [
+              "git",
+              "rev-parse",
+              "--show-toplevel"
+            ],
+            "exit_code": 0,
+            "stdout": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff",
+            "stderr": ""
+          },
+          "status": {
+            "command": [
+              "git",
+              "status",
+              "--porcelain"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          }
+        },
+        "binary_sha256": "4043f951c9843d99731c773f32b9829c84d9644dd0c44f261753e482992f288e",
+        "tooling": {
+          "repository": {
+            "commit": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD"
+              ],
+              "exit_code": 0,
+              "stdout": "67a88fab7581ca444cd311883eb01d34bba19637",
+              "stderr": ""
+            },
+            "tree": {
+              "command": [
+                "git",
+                "rev-parse",
+                "HEAD^{tree}"
+              ],
+              "exit_code": 0,
+              "stdout": "feed0794a53b5919f02d6acaa9e8dd08d3e90816",
+              "stderr": ""
+            },
+            "top_level": {
+              "command": [
+                "git",
+                "rev-parse",
+                "--show-toplevel"
+              ],
+              "exit_code": 0,
+              "stdout": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff",
+              "stderr": ""
+            },
+            "status": {
+              "command": [
+                "git",
+                "status",
+                "--porcelain"
+              ],
+              "exit_code": 0,
+              "stdout": "",
+              "stderr": ""
+            }
+          },
+          "snapshots": {
+            "build.py": {
+              "path": "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs.build.tooling-build.py",
+              "sha256": "fc8392a9d26290a6095742b2ab4cb45f5ab37b964c9daa51d22f7088259b1f50"
+            },
+            "run.py": {
+              "path": "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs.build.tooling-run.py",
+              "sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5"
+            }
+          }
+        },
+        "command": [
+          "cargo",
+          "build",
+          "--locked",
+          "--release",
+          "--verbose",
+          "-p",
+          "quickjs-oxide-cli",
+          "--no-default-features",
+          "--target-dir",
+          "/private/tmp/quickjs-oxide-followthrough/build-candidate",
+          "--jobs",
+          "2"
+        ],
+        "cwd": "/Users/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/6688e28b-a390-401c-b998-56860c4cbaff",
+        "exit_code": 0,
+        "stdout": {
+          "path": "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs.build.stdout.log",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        "stderr": {
+          "path": "/private/tmp/quickjs-oxide-followthrough/build-candidate/release/qjs.build.stderr.log",
+          "sha256": "8d20bfde617618120a98d0cc13be8fd007840024192afc563c15a01192c1a4f6"
+        },
+        "rustc": {
+          "command": [
+            "rustc",
+            "-vV"
+          ],
+          "exit_code": 0,
+          "stdout": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2",
+          "stderr": ""
+        },
+        "cargo": {
+          "command": [
+            "cargo",
+            "-V"
+          ],
+          "exit_code": 0,
+          "stdout": "cargo 1.96.0 (30a34c682 2026-05-25)",
+          "stderr": ""
+        },
+        "cargo_toml_sha256": "14f5e4d4f172150d6c212b61871da24a4e5b26e34e363f6de2a7f250bbe6e48d",
+        "cargo_lock_sha256": "c26c9f1999da579c0d1176c62981afa716ea998949a8dd15b1365f85b66944e3",
+        "release_profile": {
+          "manifest": {
+            "lto": "\"fat\"",
+            "codegen-units": "1"
+          },
+          "environment_overrides": {},
+          "cargo_config_sha256": {},
+          "qjs_rustc_invocation": {
+            "command": "rustc --crate-name qjs --edition=2024 apps/cli/src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C opt-level=3 -C lto=fat -C codegen-units=1 '--warn=clippy::all' --forbid=unsafe_code --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values(\"default\", \"profiling\", \"test262-host\"))' -C metadata=f318d7eac3aa0c1d -C extra-filename=-3cfe3c105f2435ac --out-dir /private/tmp/quickjs-oxide-followthrough/build-candidate/release/deps -C strip=debuginfo -L dependency=/private/tmp/quickjs-oxide-followthrough/build-candidate/release/deps --extern quickjs_oxide=/private/tmp/quickjs-oxide-followthrough/build-candidate/release/deps/libquickjs_oxide-e0446d572207f926.rlib --extern quickjs_oxide_host=/private/tmp/quickjs-oxide-followthrough/build-candidate/release/deps/libquickjs_oxide_host-78c1c28f3dc115b8.rlib",
+            "crate": "qjs",
+            "codegen": {
+              "opt-level": "3",
+              "lto": "fat",
+              "codegen-units": "1"
+            },
+            "target": null
+          },
+          "observed_rustc_compilations": 3,
+          "observed_codegen_groups": [
+            {
+              "target": null,
+              "codegen": {
+                "opt-level": "3",
+                "codegen-units": "1"
+              },
+              "crates": [
+                "quickjs_oxide",
+                "quickjs_oxide_host"
+              ]
+            },
+            {
+              "target": null,
+              "codegen": {
+                "opt-level": "3",
+                "lto": "fat",
+                "codegen-units": "1"
+              },
+              "crates": [
+                "qjs"
+              ]
+            }
+          ]
+        },
+        "target": {
+          "requested_triple": null,
+          "rustc_host": "aarch64-apple-darwin",
+          "observed_triple": null,
+          "observed_target_cpu": null,
+          "observed_target_feature": null
+        },
+        "commit_environment": "67a88fab7581ca444cd311883eb01d34bba19637"
+      }
+    },
+    "joined": {
+      "path": "/private/tmp/quickjs-oxide-followthrough/qjs-combined-borrow",
+      "sha256": "6b5bdfb2bd45fa9a4d9b282326dbe2f9249b68c26462481f958e20262766d296",
+      "version": {
+        "command": [
+          "/private/tmp/quickjs-oxide-followthrough/qjs-combined-borrow",
+          "--version"
+        ],
+        "exit_code": 0,
+        "stdout": "quickjs-oxide 0.0.1 (QuickJS 2026-06-04 compatibility target)",
+        "stderr": ""
+      },
+      "build": null
+    }
+  },
+  "repeat": 8,
+  "order_strategy": "abba-baab",
+  "timeout_seconds": 180,
+  "cpu": null,
+  "darwin_counters": true,
+  "counter_scope": "whole process including startup and teardown",
+  "metric": "whole-process wall nanoseconds; not adaptive scores"
+}
