@@ -1,0 +1,15 @@
+{
+  "metadata": {
+    "workloads": {
+      "workloads": [
+        {
+          "case": "deltablue",
+          "path": "/Users/eric/Documents/Benchmarks/quickjs-oxide/2026-09-28-typed-arenas-v8v7/v8-pr53-vs-candidate/generated/final/deltablue.js",
+          "sha256": "8c0410833c3a5795dbc913ca243bc01d2b5d45d0c25c9193f916463af3519d6b",
+          "expected": "__oxide_v8_fixed_iteration_complete__:deltablue:1:24\n",
+          "size": 24
+        }
+      ]
+    }
+  }
+}
