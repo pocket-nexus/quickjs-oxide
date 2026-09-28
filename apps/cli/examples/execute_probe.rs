@@ -6,7 +6,7 @@ use std::{env, hint::black_box, time::Instant};
 fn main() {
     let case = env::args().nth(1).expect("case name");
     if case == "--version" {
-        println!("oxide-c1-execute-probe 1");
+        println!("oxide-c2-execute-probe 1");
         return;
     }
     let (source, expected) = match case.as_str() {
@@ -37,6 +37,30 @@ fn main() {
         "m1-miss" => (
             "(function(){function f(n){var a=[,],i=0,j=0,scale=2,sum=0;for(;i<n;i++){sum+=a[j]*scale}return Number.isNaN(sum)}return f(2000000)})()",
             Value::Bool(true),
+        ),
+        "static-missing" => (
+            "(function(){function field(o){return o.missing}var o={x:7},count=0;for(var i=0;i<1000000;i++)if(field(o)===undefined)count++;return count})()",
+            Value::Int(1_000_000),
+        ),
+        "static-string" => (
+            "(function(){function field(v){return v.length}var sum=0;for(var i=0;i<1000000;i++)sum+=field('abc');return sum})()",
+            Value::Int(3_000_000),
+        ),
+        "computed-object" => (
+            "(function(){function element(o,k){return o[k]}var o={x:7},sum=0;for(var i=0;i<1000000;i++)sum+=element(o,'x');return sum})()",
+            Value::Int(7_000_000),
+        ),
+        "computed-frame" => (
+            "(function(){var o={x:7},k='x',sum=0;for(var i=0;i<1000000;i++)sum+=o[k];return sum})()",
+            Value::Int(7_000_000),
+        ),
+        "warm-field" => (
+            "(function(){function field(o){return o.x}var o={x:7},sum=0;for(var i=0;i<1000000;i++)sum+=field(o);return sum})()",
+            Value::Int(7_000_000),
+        ),
+        "getter" => (
+            "(function(){var calls=0,o={get x(){calls++;return 3}},sum=0;for(var i=0;i<10000;i++)sum+=o.x;return sum+calls})()",
+            Value::Int(40_000),
         ),
         _ => panic!("unknown case: {case}"),
     };

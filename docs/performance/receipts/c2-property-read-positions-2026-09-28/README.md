@@ -24,15 +24,58 @@ calls, suspension and interpreter-entry validation remain outside C2.
 
 ## Reproduction
 
-`manifest.json` fixes five workload sources, expected outputs and byte hashes.
-The static string and computed object/frame cases test candidate same-frame
-completion; the warmed field case tests the inline path; the getter case
-checks deferred work. Profile counts, rather than JavaScript source spelling,
-determine which path each workload actually reaches. Release comparisons use
-fresh plain and profiling builds of C1 and C2 with Rust 1.88.0, the same
-repository release profile and distinct target directories.
+`manifest.json` fixes six workload sources, expected outputs and byte hashes.
+The missing static field and computed object/frame cases exercise same-frame
+completion. String length and the warmed own field stay inline; the getter
+case checks deferred work. Profile counts, rather than JavaScript source
+spelling, determine which path each workload actually reaches. Release
+comparisons use plain and profiling builds of C1 and C2 with Rust 1.88.0,
+the same repository release profile and distinct target directories.
 
 ## Evidence
 
-Measurement and validation results will be recorded here after the final
-rebased candidate is built.
+[Build provenance](data/build-provenance.json) records hashes and compiler
+flags. The C1 binary was built at `5b0ded27`, before two receipt-only C1
+commits; `git diff --quiet 5b0ded27 ade7f11e -- src/engine apps/cli/src`
+confirmed the production Rust code is identical to C2's immediate parent.
+The C2 binary was built at `da0c872d`. Both are clean-source release builds.
+
+[Profile counts](data/profile-counts.json) from the C2 profiling binary
+establish coverage:
+
+| Case | Read actions | Carried same-frame completions | Legacy property recovery decodes |
+| --- | ---: | ---: | ---: |
+| Missing static field | 1,000,000 | 1,000,000 | 0 |
+| String length | 0 | 0 | 0 |
+| Computed object, call loop | 1,000,000 | 1,000,000 | 0 |
+| Computed object, one frame | 1,000,000 | 1,000,000 | 0 |
+| Warm own field | 0 | 0 | 0 |
+| Getter | 10,000 | 0 | 10,000 |
+
+String length was initially considered as a candidate static-action probe,
+but profiling showed it completed inline. The missing-field probe supplies
+the covered static-key case. Both remain in the fixed matrix so a future
+change to admission is visible. The getter's remaining recovery is the
+documented deferred boundary, not a C2 miss.
+
+[Generated-code accounting](data/codegen-summary.json) and
+[selected ARM64 excerpts](data/codegen-excerpts.md) show the recovered
+position is no longer requested in the covered helpers. Static
+`Frame::next_pc` calls fall from one to zero in both `read_progress` and
+`complete_read`. `ready::run` grows from 10,652 to 10,660 bytes by the
+symbol-to-next-symbol measure; `read_progress` grows from 4,564 to 4,920
+bytes, and `complete_read` shrinks from 1,652 to 1,612 bytes. The full
+`__text` section grows from 5,336,520 to 5,337,012 bytes. These are
+compiler-output observations, not isolated execution costs. In the ready
+driver excerpt the new fallthrough is passed in a register to
+`read_progress`; the displayed call site does not show an additional spill.
+`VmAction`, `Result<VmAction, Error>` and `Frame` remain 16, 16 and 56 bytes
+on this 64-bit target.
+
+## Validation and timing
+
+Rust 1.88 workspace/all-targets tests, profiling Clippy with `-D warnings`,
+formatting, source layout, and focused property tests with profiling passed.
+Focused Test262 matched 6,844/6,844 eligible variants. The pinned QuickJS
+fixture differential matched 13/13 cases. The full Test262 replay and paired
+timing runs are being completed on the fixed binaries.

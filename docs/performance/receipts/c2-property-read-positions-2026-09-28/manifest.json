@@ -4,6 +4,13 @@
     "workloads": {
       "workloads": [
         {
+          "case": "static-missing",
+          "size": 1000000,
+          "path": "docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/static-missing.js",
+          "sha256": "f70a1ac118757752528bbf7cecede8d5ca725462577020d2b6d92292d6e07fdd",
+          "expected": "1000000\n"
+        },
+        {
           "case": "static-string",
           "size": 1000000,
           "path": "docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/static-string.js",
