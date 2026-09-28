@@ -5,6 +5,7 @@ use super::{
     call::{BytecodeCallRequest, CallableExecution},
     driver::{CallStep, push_frame},
     exception::runtime_error_to_vm_error,
+    execute::FallthroughPc,
     execution::RunningExecution,
     frame::{FrameId, ReturnTarget},
 };
@@ -71,8 +72,9 @@ pub(super) fn read(
     id: FrameId,
     key_kind: ReadKey,
     keep_receiver: bool,
+    fallthrough: FallthroughPc,
 ) -> Result<CallStep, Error> {
-    read_progress(runtime, execution, id, key_kind, keep_receiver)
+    read_progress(runtime, execution, id, key_kind, keep_receiver, fallthrough)
         .map(PropertyProgress::into_call_step)
 }
 
@@ -82,11 +84,12 @@ pub(super) fn read_progress(
     id: FrameId,
     key_kind: ReadKey,
     keep_receiver: bool,
+    fallthrough: FallthroughPc,
 ) -> Result<PropertyProgress, Error> {
     let frame = execution.frames.current_mut(id)?;
     let computed = matches!(key_kind, ReadKey::Computed { .. });
     let realm = frame.executable.realm;
-    let next_pc = frame.next_pc()?;
+    let next_pc = fallthrough.index();
     let mut selected_read = None;
     if let ReadKey::Static(index) = key_kind {
         use super::stack::LinkedReadCompletion;
@@ -268,6 +271,7 @@ pub(super) fn read_progress(
             1 + usize::from(computed),
             value.unwrap_or(JsValue::Undefined),
             depth,
+            next_pc,
         )
         .map(|()| PropertyProgress::Completed),
         read => {
@@ -427,7 +431,7 @@ fn read_prepared_progress(
     depth: usize,
 ) -> Result<PropertyProgress, Error> {
     match read {
-        OrdinaryRead::Complete(value) => complete_read(
+        OrdinaryRead::Complete(value) => complete_read_recovering(
             runtime,
             execution,
             id,
@@ -467,13 +471,13 @@ fn complete_read(
     consume: usize,
     value: JsValue,
     depth: usize,
+    next_pc: usize,
 ) -> Result<(), Error> {
     if consume > 2 || (preserved_receiver.is_none() && consume == 0) {
         return Err(Error::internal("property read consumes too many operands"));
     }
     let mut value = Some(value);
     let frame = execution.frames.current_mut(id)?;
-    let next_pc = frame.next_pc()?;
     let mut transaction = execution.slots.frame_transaction(&mut frame.cold.window)?;
     let discarded = {
         let mut slots = transaction.slots();
@@ -551,6 +555,43 @@ fn complete_read(
             .map_err(runtime_error_to_vm_error)?;
     }
     Ok(())
+}
+
+// Converted and super-property replies have not yet transported the decoded
+// position. Keep reconstruction explicit at this unmigrated entry point.
+#[allow(clippy::too_many_arguments)]
+fn complete_read_recovering(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    id: FrameId,
+    preserved_receiver: Option<JsValue>,
+    retained_key: Option<JsValue>,
+    keep_receiver: bool,
+    consume: usize,
+    value: JsValue,
+    depth: usize,
+) -> Result<(), Error> {
+    // Match complete_read's admission order before touching frame metadata.
+    if consume > 2 || (preserved_receiver.is_none() && consume == 0) {
+        return Err(Error::internal("property read consumes too many operands"));
+    }
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_execution_event(
+        "property_legacy_fallthrough_recovery_decode",
+    );
+    let next_pc = execution.frames.current_mut(id)?.next_pc()?;
+    complete_read(
+        runtime,
+        execution,
+        id,
+        preserved_receiver,
+        retained_key,
+        keep_receiver,
+        consume,
+        value,
+        depth,
+        next_pc,
+    )
 }
 
 #[inline]
@@ -746,6 +787,10 @@ fn read_pending(
             runtime, execution, id, callable, receiver, arguments, false, depth,
         );
     }
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_execution_event(
+        "property_legacy_fallthrough_recovery_decode",
+    );
     frame.resume_pc = frame.next_pc()?;
     if let Some((call, receiver)) = ordinary_callback {
         let entry = call.prepare_callback(
@@ -778,6 +823,303 @@ fn read_pending(
 #[cfg(test)]
 mod read_completion_tests {
     use crate::engine::api::{Runtime, Value};
+
+    use super::*;
+    use crate::engine::{
+        code::exec_opcode::Opcode,
+        vm::{
+            call::CallableExecution,
+            execute::{VmAction, execute_frame},
+            execution::ExecutionLimits,
+            frame::{ColdFrame, FrameCold, FrameEntry, count_next_pc_calls},
+            stack::FrameStorage,
+        },
+    };
+
+    fn read_fixture(
+        runtime: &Runtime,
+        context: &mut crate::engine::api::Context,
+        source: &str,
+        opcode: Opcode,
+    ) -> (RunningExecution, FrameId) {
+        let Value::Object(function) = context.eval(source).unwrap() else {
+            panic!("fixture must evaluate to a function");
+        };
+        let callable = runtime.as_callable(&function).unwrap().unwrap();
+        let CallableExecution::Bytecode {
+            bytecode,
+            closure_slots,
+        } = runtime.bytecode_for_callable(&callable).unwrap()
+        else {
+            panic!("fixture must be bytecode");
+        };
+        let prepared = runtime
+            .prepare_bytecode_frame(&callable, Value::Undefined, Value::Undefined, &[], bytecode)
+            .unwrap();
+        let locals = prepared.locals.len();
+        let entry = FrameEntry {
+            initialize_bindings: false,
+            executable: prepared.executable,
+            property_generation: 0,
+            iterator_generation: 0,
+            caller_realm: context.realm,
+            active_frame: prepared.active_frame.token(),
+            cold: ColdFrame::new(FrameCold {
+                rare: std::cell::OnceCell::new(),
+                return_to: None,
+                entry_guard: Some(prepared.active_frame),
+                function: function.into(),
+                closure_slots,
+                reusable_captured_locals: vec![false; locals],
+                input: prepared.input.into(),
+            }),
+            storage: FrameStorage {
+                original_arguments: vec![],
+                parameters: prepared.arguments,
+                locals: prepared.locals,
+                operands: vec![],
+            },
+        };
+        let mut execution = RunningExecution::new(runtime, ExecutionLimits::default()).unwrap();
+        let id = crate::engine::vm::driver::push_frame(&mut execution, entry).unwrap();
+        let frame = execution.frames.current_mut(id).unwrap();
+        let exec = &frame.executable.exec;
+        let published = (0..exec.instruction_len())
+            .filter_map(|source| exec.exec_pc(source as u32))
+            .map(|pc| (pc, exec.decode(pc).unwrap().opcode))
+            .collect::<Vec<_>>();
+        frame.resume_pc = published
+            .iter()
+            .find(|(_, actual)| *actual == opcode)
+            .map(|(pc, _)| *pc)
+            .unwrap_or_else(|| panic!("fixture missing {opcode:?}: {published:?}"))
+            as usize;
+        (execution, id)
+    }
+
+    #[test]
+    fn property_actions_complete_at_carried_boundary_without_recovery() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        for (
+            source,
+            object_source,
+            opcode,
+            computed,
+            expected_receiver,
+            expected_key,
+            expected_depth,
+        ) in [
+            (
+                "(function(o){return o.x})",
+                "({x:7,true:5})",
+                Opcode::GetFieldCached,
+                false,
+                false,
+                false,
+                1,
+            ),
+            (
+                "(function(o,k){return o[k]})",
+                "({x:7,true:5})",
+                Opcode::GetArrayElDense,
+                true,
+                false,
+                false,
+                1,
+            ),
+            (
+                "(function(o,k){return o[k]()})",
+                "({x:7,true:5})",
+                Opcode::GetArrayEl2Dense,
+                true,
+                true,
+                false,
+                2,
+            ),
+            (
+                "(function(o,k){return o[k]++})",
+                "({x:7,true:5})",
+                Opcode::GetArrayEl3Dense,
+                true,
+                true,
+                true,
+                3,
+            ),
+        ] {
+            let Value::Object(object) = context.eval(object_source).unwrap() else {
+                panic!("object");
+            };
+            let (mut execution, id) = read_fixture(&runtime, &mut context, source, opcode);
+            let frame = execution.frames.current_mut(id).unwrap();
+            execution
+                .slots
+                .push(&mut frame.window, JsValue::Object(object.into_handle()))
+                .unwrap();
+            if computed {
+                execution
+                    .slots
+                    .push(&mut frame.window, JsValue::Bool(true))
+                    .unwrap();
+            }
+            let action = execute_frame(&mut execution, id).unwrap();
+            let (key, keep_receiver, fallthrough) = match action {
+                VmAction::GetField {
+                    index,
+                    keep_receiver,
+                    fallthrough,
+                } => (ReadKey::Static(index), keep_receiver, fallthrough),
+                VmAction::GetElement {
+                    keep_receiver,
+                    keep_key,
+                    fallthrough,
+                } => (ReadKey::Computed { keep_key }, keep_receiver, fallthrough),
+                _ => panic!("{source} produced {action:?} instead of a property action"),
+            };
+            assert_eq!(keep_receiver, expected_receiver);
+            assert_eq!(
+                matches!(key, ReadKey::Computed { keep_key: true }),
+                expected_key
+            );
+            let fault = execution.frames.current_mut(id).unwrap().fault_pc;
+            let (progress, recovery_calls) = count_next_pc_calls(|| {
+                read_progress(
+                    &runtime,
+                    &mut execution,
+                    id,
+                    key,
+                    keep_receiver,
+                    fallthrough,
+                )
+            });
+            assert!(matches!(progress.unwrap(), PropertyProgress::Completed));
+            assert_eq!(recovery_calls, 0);
+            let frame = execution.frames.current_mut(id).unwrap();
+            assert_eq!(
+                (frame.fault_pc, frame.resume_pc),
+                (fault, fallthrough.index())
+            );
+            assert_eq!(
+                execution.slots.peek(&frame.window, 0).unwrap(),
+                &JsValue::Int(if computed { 5 } else { 7 })
+            );
+            assert_eq!(execution.slots.depth(&frame.window), expected_depth);
+        }
+    }
+
+    #[test]
+    fn retained_receiver_partial_output_keeps_property_publication_order() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let Value::Object(object) = context.eval("({x:7})").unwrap() else {
+            panic!("object");
+        };
+        let (mut execution, id) = read_fixture(
+            &runtime,
+            &mut context,
+            "(function(o){return o.x()})",
+            Opcode::GetField2Cached,
+        );
+        loop {
+            let frame = execution.frames.current_mut(id).unwrap();
+            if execution
+                .slots
+                .push(&mut frame.window, JsValue::Int(0))
+                .is_err()
+            {
+                break;
+            }
+        }
+        let frame = execution.frames.current_mut(id).unwrap();
+        drop(execution.slots.pop(&mut frame.window).unwrap());
+        execution
+            .slots
+            .push(&mut frame.window, JsValue::Object(object.into_handle()))
+            .unwrap();
+        let VmAction::GetField {
+            index,
+            keep_receiver,
+            fallthrough,
+        } = execute_frame(&mut execution, id).unwrap()
+        else {
+            panic!("fixture must produce a retained field action");
+        };
+        assert!(keep_receiver);
+        let fault = execution.frames.current_mut(id).unwrap().fault_pc;
+        let (result, recovery_calls) = count_next_pc_calls(|| {
+            read_progress(
+                &runtime,
+                &mut execution,
+                id,
+                ReadKey::Static(index),
+                keep_receiver,
+                fallthrough,
+            )
+        });
+        assert!(result.is_err());
+        assert_eq!(recovery_calls, 0);
+        let frame = execution.frames.current_mut(id).unwrap();
+        assert_eq!(
+            (frame.fault_pc, frame.resume_pc),
+            (fault, fallthrough.index())
+        );
+        assert!(matches!(
+            execution.slots.peek(&frame.window, 0),
+            Ok(JsValue::Object(_))
+        ));
+    }
+
+    #[cfg(feature = "profiling")]
+    #[test]
+    fn computed_read_profiles_carried_completion_and_warm_field_hit_stays_inline() {
+        use crate::engine::api::profiling::CostProfile;
+
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let profile = CostProfile::start();
+        assert_eq!(
+            context
+                .eval("function read(o,k){return o[k]}; read({x:7},'x')")
+                .unwrap(),
+            Value::Int(7)
+        );
+        let events = profile.snapshot().owned_execution_events;
+        assert!(
+            events
+                .get("property_read_action_exit")
+                .copied()
+                .unwrap_or(0)
+                > 0
+        );
+        assert!(
+            events
+                .get("property_read_completed_with_carried_fallthrough")
+                .copied()
+                .unwrap_or(0)
+                > 0
+        );
+        assert_eq!(
+            events
+                .get("property_legacy_fallthrough_recovery_decode")
+                .copied()
+                .unwrap_or(0),
+            0
+        );
+
+        let _ = context
+            .eval("var cached={x:9}; function getCached(){return cached.x}; getCached()")
+            .unwrap();
+        let warm_profile = CostProfile::start();
+        assert_eq!(context.eval("getCached()").unwrap(), Value::Int(9));
+        let warm_events = warm_profile.snapshot().owned_execution_events;
+        assert_eq!(
+            warm_events
+                .get("property_read_action_exit")
+                .copied()
+                .unwrap_or(0),
+            0
+        );
+    }
 
     #[test]
     fn linked_owning_read_transaction_preserves_method_receiver_and_selected_errors() {

@@ -135,14 +135,25 @@ pub(super) fn run(
             VmAction::GetField {
                 index,
                 keep_receiver,
+                fallthrough,
             } => {
+                #[cfg(feature = "profiling")]
+                record_event("property_read_action_exit");
                 let progress = crate::engine::vm::property_driver::read_progress(
                     runtime,
                     execution,
                     id,
                     crate::engine::vm::property_driver::ReadKey::Static(index),
                     keep_receiver,
+                    fallthrough,
                 )?;
+                #[cfg(feature = "profiling")]
+                if matches!(
+                    progress,
+                    crate::engine::vm::property_driver::PropertyProgress::Completed
+                ) {
+                    record_event("property_read_completed_with_carried_fallthrough");
+                }
                 if let Some(boundary) = property_boundary(progress) {
                     return Ok(boundary);
                 }
@@ -150,7 +161,10 @@ pub(super) fn run(
             VmAction::GetElement {
                 keep_receiver,
                 keep_key,
+                fallthrough,
             } => {
+                #[cfg(feature = "profiling")]
+                record_event("property_read_action_exit");
                 let frame = execution.frames.current_mut(id)?;
                 if !matches!(
                     execution.slots.peek(&frame.window, 1)?,
@@ -167,7 +181,15 @@ pub(super) fn run(
                     id,
                     crate::engine::vm::property_driver::ReadKey::Computed { keep_key },
                     keep_receiver,
+                    fallthrough,
                 )?;
+                #[cfg(feature = "profiling")]
+                if matches!(
+                    progress,
+                    crate::engine::vm::property_driver::PropertyProgress::Completed
+                ) {
+                    record_event("property_read_completed_with_carried_fallthrough");
+                }
                 if let Some(boundary) = property_boundary(progress) {
                     return Ok(boundary);
                 }

@@ -198,10 +198,12 @@ pub(super) enum VmAction {
     GetField {
         index: u32,
         keep_receiver: bool,
+        fallthrough: FallthroughPc,
     },
     GetElement {
         keep_receiver: bool,
         keep_key: bool,
+        fallthrough: FallthroughPc,
     },
     InitializeDerived(u16),
     LexicalUninitialized(u16),
@@ -1639,6 +1641,7 @@ pub(super) fn execute_frame(
                     return Ok(VmAction::GetField {
                         index: operand,
                         keep_receiver,
+                        fallthrough: FallthroughPc::from_decoded(decoded),
                     });
                 }
             }
@@ -1664,6 +1667,7 @@ pub(super) fn execute_frame(
                     return Ok(VmAction::GetElement {
                         keep_receiver,
                         keep_key,
+                        fallthrough: FallthroughPc::from_decoded(decoded),
                     });
                 }
             }
@@ -2045,10 +2049,12 @@ fn deferred_action(decoded: PublishedDecoded<'_>, strict: bool) -> Result<Option
         Opcode::GetField | Opcode::GetField2 => VmAction::GetField {
             index: a,
             keep_receiver: opcode == Opcode::GetField2,
+            fallthrough: FallthroughPc::from_decoded(decoded),
         },
         Opcode::GetArrayEl | Opcode::GetArrayEl2 | Opcode::GetArrayEl3 => VmAction::GetElement {
             keep_receiver: opcode != Opcode::GetArrayEl,
             keep_key: opcode == Opcode::GetArrayEl3,
+            fallthrough: FallthroughPc::from_decoded(decoded),
         },
         Opcode::PutField => VmAction::SetProperty(Some(a)),
         Opcode::PutArrayEl => VmAction::SetProperty(None),
