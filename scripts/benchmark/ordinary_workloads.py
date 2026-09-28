@@ -78,7 +78,7 @@ def programs():
                pair + "let reads=0,a=[0,4],s=0;"
                "Object.defineProperty(a,'2',{get(){reads++;return 7}});",
                "s+=pair(a)", "s+':'+reads", count=200000)
-    assignment = "function advance(input){let node=input;node=node.next;return node.id}"
+    assignment = "function advance(input){var node=input;node=node.next;return node.id}"
     yield loop("field-local-own-chain",
                assignment + "let tail={id:3},head={next:tail},s=0;",
                "s+=advance(head)", "s", count=200000)
