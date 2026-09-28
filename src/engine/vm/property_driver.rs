@@ -1122,6 +1122,25 @@ mod read_completion_tests {
     }
 
     #[test]
+    fn direct_and_deferred_reads_keep_originating_source_location() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let direct = "function fail(){\n return null.x;\n}\ntry{fail()}catch(e){e instanceof TypeError && e.stack.includes('at fail (c2-direct.js:2:')}";
+        assert_eq!(
+            context.eval_with_filename(direct, "c2-direct.js").unwrap(),
+            Value::Bool(true)
+        );
+
+        let deferred = "let calls=0,marker={};\nfunction fail(){\n return ({get x(){calls++;marker.stack=new Error().stack;throw marker}}).x;\n}\ntry{fail()}catch(e){e===marker && calls===1 && marker.stack.includes('at fail (c2-deferred.js:3:')}";
+        assert_eq!(
+            context
+                .eval_with_filename(deferred, "c2-deferred.js")
+                .unwrap(),
+            Value::Bool(true)
+        );
+    }
+
+    #[test]
     fn linked_owning_read_transaction_preserves_method_receiver_and_selected_errors() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();

@@ -1,0 +1,44 @@
+{
+  "metadata": {
+    "suite": "c2-property-read-fallthrough",
+    "workloads": {
+      "workloads": [
+        {
+          "case": "static-string",
+          "size": 1000000,
+          "path": "docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/static-string.js",
+          "sha256": "ce9a0598dfa69c7a434431b573d8bc1928fc9f389b3fb27df9301bf5a96c7145",
+          "expected": "3000000\n"
+        },
+        {
+          "case": "computed-object",
+          "size": 1000000,
+          "path": "docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/computed-object.js",
+          "sha256": "68b06ea8783eda182b739e4f0941be4619bc6602627e67bcb07fd8e2189bc6e8",
+          "expected": "7000000\n"
+        },
+        {
+          "case": "computed-frame",
+          "size": 1000000,
+          "path": "docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/computed-frame.js",
+          "sha256": "fd22473d7a422d212b58f83dabfd39f1dfcedd5ed6551716022cf6d2b07cd072",
+          "expected": "7000000\n"
+        },
+        {
+          "case": "warm-field",
+          "size": 1000000,
+          "path": "docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/warm-field.js",
+          "sha256": "5c527a7e0b0f66890368bcf7cafba25b3d52166894d19a8ed18e03a25b0bee9a",
+          "expected": "7000000\n"
+        },
+        {
+          "case": "getter",
+          "size": 10000,
+          "path": "docs/performance/receipts/c2-property-read-positions-2026-09-28/workloads/getter.js",
+          "sha256": "9fedf3ca3826f85c01c54a6dfa437292f11f578896beea1ed19b0c1ac510bdd4",
+          "expected": "40000\n"
+        }
+      ]
+    }
+  }
+}
