@@ -223,7 +223,9 @@ impl Drop for FrameStorageGuard {
 }
 
 mod number;
+mod transfer;
 mod window;
+pub(in crate::engine::vm) use transfer::StoreProgress;
 pub(in crate::engine::vm) use window::{
     CheckedOrdinaryCallOperands, DirectSlot, FrameSlots, FrameTransaction, LinkedReadCompletion,
 };

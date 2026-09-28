@@ -18,9 +18,9 @@ pub(in crate::engine::vm) enum LinkedReadCompletion {
 
 /// Exclusive ownership of one authenticated frame window across short execution
 /// borrows. The store and window cannot be pushed, popped or replaced while this
-/// transaction exists. Allocation/release may happen between `slots()` borrows;
-/// ordinary completion carries no slot reference then. No slot reference may
-/// escape into a callback or observable release.
+/// transaction exists. Allocation or observable release may happen between
+/// `slots()` borrows; admitted non-observable releases may finish within one.
+/// No slot reference may escape into a callback or observable release.
 pub(in crate::engine::vm) struct FrameTransaction<'a> {
     store: &'a mut SlotStore,
     window: &'a mut FrameWindow,

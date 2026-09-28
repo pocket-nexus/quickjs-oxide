@@ -19,7 +19,9 @@ use crate::engine::vm::exception::runtime_error_to_vm_error;
 use crate::engine::vm::execution::RunningExecution;
 use crate::engine::vm::frame::FrameId;
 use crate::engine::vm::frames::ActiveFrameToken;
-use crate::engine::vm::stack::{DirectSlot, FrameSlots, FrameTransaction, copy_value};
+use crate::engine::vm::stack::{
+    DirectSlot, FrameSlots, FrameTransaction, StoreProgress, copy_value,
+};
 
 #[cfg(test)]
 thread_local! {
@@ -70,7 +72,7 @@ pub(crate) fn test_numeric_region_hits<T>(run: impl FnOnce() -> T) -> (T, usize)
 
 /// Short-lived access to one frame's slots and execution word cursor. The
 /// transaction owns the frame window; `with_slots` ends its borrow before a
-/// caller can publish a PC, invoke JavaScript, or release an owner.
+/// caller can publish a PC, invoke JavaScript, or perform observable cleanup.
 struct FrameCursor<'a> {
     transaction: FrameTransaction<'a>,
     published_fault: &'a mut usize,
@@ -1529,6 +1531,17 @@ pub(super) fn execute_frame(
                     cursor.advance(next);
                     continue;
                 }
+                let progress = cursor.with_slots(|slots| {
+                    if keep {
+                        slots.set_direct(runtime, DirectSlot::Local(index))
+                    } else {
+                        slots.put_direct(runtime, DirectSlot::Local(index))
+                    }
+                })?;
+                if progress == StoreProgress::Committed {
+                    cursor.advance(next);
+                    continue;
+                }
                 if !frame.active_frame.is_materialized() {
                     return Ok(VmAction::Materialize);
                 }
@@ -1562,6 +1575,17 @@ pub(super) fn execute_frame(
                         Ok(slots.store_proven_number_operand(DirectSlot::Argument(index), keep))
                     })?
                 {
+                    cursor.advance(next);
+                    continue;
+                }
+                let progress = cursor.with_slots(|slots| {
+                    if keep {
+                        slots.set_direct(runtime, DirectSlot::Argument(index))
+                    } else {
+                        slots.put_direct(runtime, DirectSlot::Argument(index))
+                    }
+                })?;
+                if progress == StoreProgress::Committed {
                     cursor.advance(next);
                     continue;
                 }
@@ -1609,6 +1633,12 @@ pub(super) fn execute_frame(
                 {
                     return Err(Error::internal("local initializer has no valid binding"));
                 }
+                if cursor.with_slots(|slots| slots.initialize_direct_local(runtime, index))?
+                    == StoreProgress::Committed
+                {
+                    cursor.advance(next);
+                    continue;
+                }
                 if !frame.active_frame.is_materialized() {
                     return Ok(VmAction::Materialize);
                 }
@@ -1640,6 +1670,19 @@ pub(super) fn execute_frame(
                     return Ok(VmAction::ResetCaptured(index));
                 }
                 if class != BindingClass::Uninitialized {
+                    if cursor.with_slots(|slots| slots.reset_direct_local(runtime, index))?
+                        == StoreProgress::Committed
+                    {
+                        if let Some(flag) = body
+                            .owners
+                            .reusable_captured_locals
+                            .get_mut(usize::from(index))
+                        {
+                            *flag = false;
+                        }
+                        cursor.advance(next);
+                        continue;
+                    }
                     if !frame.active_frame.is_materialized() {
                         return Ok(VmAction::Materialize);
                     }
