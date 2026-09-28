@@ -21,11 +21,15 @@ def main():
     parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--probe-source", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--repeat", type=int, default=4)
+    parser.add_argument("--cases", nargs="+", choices=CASES, default=CASES)
     args = parser.parse_args()
+    if args.repeat < 1:
+        parser.error("--repeat must be positive")
     engines = {"baseline": args.baseline.resolve(), "candidate": args.candidate.resolve()}
     rows = []
-    for case in CASES:
-        for repetition in range(4):
+    for case in args.cases:
+        for repetition in range(args.repeat):
             order = ("baseline", "candidate") if repetition % 2 == 0 else ("candidate", "baseline")
             for name in order:
                 result = subprocess.run([str(engines[name]), case], capture_output=True, timeout=180)
@@ -40,7 +44,7 @@ def main():
                 rows.append({"case": case, "engine": name, "repetition": repetition, "execute_ns": values})
                 print(f"{case}/{name}/{repetition}: {statistics.median(values):.0f} ns", flush=True)
     summary = []
-    for case in CASES:
+    for case in args.cases:
         by_engine = {}
         for name in engines:
             values = [value for row in rows if row["case"] == case and row["engine"] == name
@@ -52,7 +56,7 @@ def main():
                         by_engine["baseline"]["median_ns"]})
     output = {"schema": "oxide-c1-execute-v1", "probe_source_sha256": digest(args.probe_source),
               "engines": {name: {"sha256": digest(path), "path": str(path)} for name, path in engines.items()},
-              "warmups_per_process": 3, "samples_per_process": 9, "processes_per_engine_case": 4,
+              "warmups_per_process": 3, "samples_per_process": 9, "processes_per_engine_case": args.repeat,
               "order": "ABBA", "rows": rows, "summary": summary}
     args.output.write_text(json.dumps(output, indent=2) + "\n")
 
