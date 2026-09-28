@@ -39,6 +39,14 @@ and 0.9923 for the computed one-frame read. The string-length and warm-field
 inline controls are 1.0010 and 1.0001. The A/A instruction ratios are near
 parity, but its missing-static wall medians differ by 18.3%. The paired wall
 medians are mixed; they do not establish a runtime speedup or regression.
+A later lower-load [compile-once A/A control](data/v8-execute-aa-quiet.json)
+and [C1/C2 paired run](data/v8-execute-ab-quiet.json) used byte-identical
+probe source (SHA-256 `3effd109dc4983d3d69cc9c91d4ae744ffca26a932e78f97b08f0f1d2d8db6d7`),
+three warmups and nine timed executions per process. The computed one-frame
+A/A ratio was 0.9913 and C2/C1 paired ratio was 0.9605. The missing-static
+A/A ratio was 0.8699 while its paired ratio was 1.0033; the warm-field
+inline control was 1.0058 in A/A and 1.0448 in A/B. These mixed controls
+limit the runtime conclusion to a targeted observation under this run.
 
 On this V8 base, seven focused property tests pass with profiling and six
 pass normally. They cover action production, carried completion, publication
