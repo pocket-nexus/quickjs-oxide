@@ -1,0 +1,110 @@
+{
+  "schema": "oxide-region-phase2-baseline-v0",
+  "source_commit": "90c85e3d94cd66066fe1c4381608d497f1dab346",
+  "source_tree": "df000a8dbe38256b54b09929f3c917e8504b9d12",
+  "build_receipt_sha256": "a0052fd598185348d178ecdc44b56b5b22c1ba6758ba36006f2fff808464e1bb",
+  "binary_sha256": "c8f6274b90511fa0e3446d87f825ec2f56402b1c1c8dbdb4f39aa2b41d9eb46a",
+  "build": {
+    "mode": "plain",
+    "vm_configuration": "stack-vm",
+    "features": [],
+    "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)\nbinary: rustc\ncommit-hash: e408947bfd200af42db322daf0fadfe7e26d3bd1\ncommit-date: 2026-03-25\nhost: x86_64-unknown-linux-gnu\nrelease: 1.94.1\nLLVM version: 21.1.8",
+    "cargo": "cargo 1.94.1 (29ea6fb6a 2026-03-24)",
+    "target": {
+      "requested_triple": null,
+      "rustc_host": "x86_64-unknown-linux-gnu",
+      "observed_triple": null,
+      "observed_target_cpu": null,
+      "observed_target_feature": null
+    },
+    "release_profile": {
+      "lto": "\"fat\"",
+      "codegen-units": "1"
+    },
+    "cargo_toml_sha256": "14f5e4d4f172150d6c212b61871da24a4e5b26e34e363f6de2a7f250bbe6e48d",
+    "cargo_lock_sha256": "c26c9f1999da579c0d1176c62981afa716ea998949a8dd15b1365f85b66944e3",
+    "tooling_sha256": {
+      "build.py": "fc8392a9d26290a6095742b2ab4cb45f5ab37b964c9daa51d22f7088259b1f50",
+      "run.py": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5"
+    }
+  },
+  "realworld": {
+    "manifest_sha256": "d0e3cd80acd9c0089fe97aa5a41ed0e61444e85e20aedcd6ea94d6457c5ae660",
+    "builder_sha256": "02aefb1a80d94a70d65045c4a559475ad5484a4351f399a22b8450c3ceabb638",
+    "adapter_sha256": {
+      "solid_entry.js": "421eee38037cbf17991e40f4005e0e1b99144bed44f9b491a008ef6c611f542a",
+      "solid_host.js": "488c7c4ce9d9c8262902387ae5d9a53f626877c0b4ac3f4c88fba90c0f543e04",
+      "vue_entry.js": "dbb6f9e232c32de5be0e9c5f1b4bf32bc544a255aaef65d81ede3cc9dfa55aae",
+      "vue_host.js": "ccbff31734554e4290b2eed999ef78fb701f527cfd5d83e6322ca55ea5a73659",
+      "react_entry.js": "0d91c06debee83c056a47b13fc70dd6220d01b1a46644122f0a8a030ca0f1bd3",
+      "react_router_host.js": "53ba84c5e64dbec51c893cbd3d285e7506eb19553be4b6fa4c21bed07330aba0",
+      "trusted_markdown.js": "e41c94db61d419e2058b8b9e7ee0be6b697016bb29791d0a323bb1476657c033"
+    },
+    "toolchain": {
+      "node": "v24.21.0",
+      "esbuild": "0.27.2",
+      "babel": "7.12.13",
+      "vue_compiler": "3.5.35",
+      "platform": "linux",
+      "arch": "x64"
+    },
+    "source_and_lock_sha256": {
+      "solid": {
+        "source": "f6e77ecd652bf32f0dc9238f291313fd1af7e98b",
+        "lockfile_sha256": "b1a0ea0bccf4f0666e036b62ac64b09690b618dace227cbbbe21f1068176788b"
+      },
+      "react": {
+        "source": "969709a379b13935b4e1caae0ad8cad548e5879a",
+        "lockfile_sha256": "5db727cd19b167f540213b378797dc58ac6a4d220abcb42485f8fcaca172887d"
+      },
+      "vue": {
+        "source": "f7e48c8178602ce25d43293bc6f8ca51d84ae222",
+        "lockfile_sha256": "60b484c79991349db72f85a5966e4596fd04c4b07a045df37c2449fc622ad8f3"
+      }
+    },
+    "generated_bundle_sha256": {
+      "solid": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7",
+      "vue": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6",
+      "react": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed"
+    },
+    "expected_output_sha256": "b5f20b4ead762b5dfd3a097b7f1e474e33c7b47f0b94750eb5943c00505972ec"
+  },
+  "aa_control": {
+    "order": "ABBA",
+    "repeats_per_engine": 2,
+    "scope": "whole process; diagnostic drift control, not an effect estimate",
+    "results_sha256": "b98718616dae863eb16595bef53bf4d875389027404e5677887871d1c6b9cb8f",
+    "wall_ns": {
+      "realworld-solid": {
+        "baseline": [
+          196773358,
+          194200897
+        ],
+        "control": [
+          192892578,
+          191289298
+        ]
+      },
+      "realworld-vue": {
+        "baseline": [
+          862830041,
+          856786577
+        ],
+        "control": [
+          861668657,
+          853354736
+        ]
+      },
+      "realworld-react": {
+        "baseline": [
+          332827684,
+          331648192
+        ],
+        "control": [
+          336686620,
+          338883590
+        ]
+      }
+    }
+  }
+}

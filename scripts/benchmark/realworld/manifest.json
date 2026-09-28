@@ -1,0 +1,34 @@
+{
+  "schema": "oxide-realworld-phase2-v1",
+  "baseline": "90c85e3d94cd66066fe1c4381608d497f1dab346",
+  "spec": "https://github.com/realworld-apps/realworld",
+  "classification": "holdout",
+  "apps": {
+    "vue": {
+      "repository": "https://github.com/realworld-apps/vue-realworld-example-app.git",
+      "commit": "f7e48c8178602ce25d43293bc6f8ca51d84ae222",
+      "lockfile": "bun.lock",
+      "license": "MIT"
+    },
+    "react": {
+      "repository": "https://github.com/yurisldk/realworld-react-fsd.git",
+      "commit": "969709a379b13935b4e1caae0ad8cad548e5879a",
+      "lockfile": "yarn.lock",
+      "license": "MIT"
+    },
+    "solid": {
+      "repository": "https://github.com/solidjs/solid-realworld.git",
+      "commit": "f6e77ecd652bf32f0dc9238f291313fd1af7e98b",
+      "lockfile": "package-lock.json",
+      "license": "MIT (package.json)"
+    }
+  },
+  "scenario": {
+    "dataset_seed": 53,
+    "articles": 60,
+    "phases": ["home", "tag", "page", "article", "favorite", "comment", "profile"],
+    "network": "in-memory deterministic RealWorld API",
+    "schedule": "drain microtasks after each phase; fresh process per sample",
+    "timing": "whole-process and separate execute-only; no cross-framework ranking"
+  }
+}
