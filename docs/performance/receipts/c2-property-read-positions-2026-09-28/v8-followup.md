@@ -44,6 +44,11 @@ On this V8 base, seven focused property tests pass with profiling and six
 pass normally. They cover action production, carried completion, publication
 order under partial failure, fault source locations and deferred getter
 identity. The pinned QuickJS fixture differential matched 13/13 cases, and
-nine C oracle fixtures passed. The pre-V8 full Test262 result remains in the
-[original receipt](README.md); a cumulative full replay on the rebased
-C1+C2 head is tracked separately.
+nine C oracle fixtures passed. The cumulative C1+C2 source at `80aef1f8c1b18381903fdfc7a1eecc9272fffa40`
+passed the fixed-timeout full Test262 vector on this V8 base: **80,010 of
+80,060 runnable** among 102,037 total variants. The TSV and JSONL SHA-256
+hashes are `c5a335ea8b7db8ba47f401f9ed2b8c6168f25de62b31b575248c37dfbc6ea7b3`
+and `707556fb5d6722c626095ad6c90d3b87668e1c83c9346deeaf0757c21861ad23`;
+the runner engine semantics fingerprint is
+`ed81c0f210d0b98745bfc52a843f9ae14f95336e88d264f5c37a8dc7f4d397f4`.
+The pre-V8 full result remains tied to the [original receipt](README.md).
