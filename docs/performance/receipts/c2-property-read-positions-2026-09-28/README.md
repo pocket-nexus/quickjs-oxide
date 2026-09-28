@@ -1,5 +1,7 @@
 # C2: decoded fallthrough for same-frame property reads
 
+The [V8-base follow-up](v8-followup.md) records fresh C1/C2 builds after #53's VM extension.
+
 C2 is stacked on the C1 numeric continuation change. `execute_frame` attaches
 the decoded fallthrough to static-key and computed-key property read actions,
 including cache and dense-array guard misses. The ready driver passes it to
