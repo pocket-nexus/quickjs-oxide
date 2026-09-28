@@ -1,0 +1,57 @@
+{
+  "schema": "oxide-c1-m2-builds-v1",
+  "builds": [
+    {
+      "name": "baseline-plain",
+      "commit": "38e9eb86e2c2db8fb2e607c9f3ff611407941b4b",
+      "binary_sha256": "cbd05a5cc0f333af91b89741665f0dc96cf239550ca78daf35333ba88d13d762",
+      "build_receipt_sha256": "4c9b10e769566436e1d67576ec6dd19be6dddc1bd3f173d800d74d8d150a3a14",
+      "rustc": "rustc 1.88.0 (6b00bc388 2025-06-23)",
+      "cargo": "cargo 1.88.0 (873a06493 2025-05-10)",
+      "codegen": {
+        "opt-level": "3",
+        "lto": "fat",
+        "codegen-units": "1"
+      }
+    },
+    {
+      "name": "baseline-profile",
+      "commit": "38e9eb86e2c2db8fb2e607c9f3ff611407941b4b",
+      "binary_sha256": "b192b38e2bc3e3b00a18f3fa1f68c7d0e428c194ab4dbe22adfeb3b384f3d5a8",
+      "build_receipt_sha256": "dfb9c76c67a6f3d930d2de6240bf7a87c576f1013dfc3d59b3105810ad0456cb",
+      "rustc": "rustc 1.88.0 (6b00bc388 2025-06-23)",
+      "cargo": "cargo 1.88.0 (873a06493 2025-05-10)",
+      "codegen": {
+        "opt-level": "3",
+        "lto": "fat",
+        "codegen-units": "1"
+      }
+    },
+    {
+      "name": "candidate-plain",
+      "commit": "5b0ded27ff2205426134a61333b0a02c0265022a",
+      "binary_sha256": "25891746f76e574019b299fc15af7c1c07eb506339e832284e4da3bd7b44a943",
+      "build_receipt_sha256": "4d68f244c58e4ce9e71c0156d69b9e1156dbc19d5840f4474a90b420503cbdd5",
+      "rustc": "rustc 1.88.0 (6b00bc388 2025-06-23)",
+      "cargo": "cargo 1.88.0 (873a06493 2025-05-10)",
+      "codegen": {
+        "opt-level": "3",
+        "lto": "fat",
+        "codegen-units": "1"
+      }
+    },
+    {
+      "name": "candidate-profile",
+      "commit": "5b0ded27ff2205426134a61333b0a02c0265022a",
+      "binary_sha256": "233437da75c4562c01dc282acad80c651fdc44ec88d385d4d0dc8c6660b42eb6",
+      "build_receipt_sha256": "b286b1246cbd4d325590f3d43792dec46ea9c76a692bae74e80e7fec935c7cfd",
+      "rustc": "rustc 1.88.0 (6b00bc388 2025-06-23)",
+      "cargo": "cargo 1.88.0 (873a06493 2025-05-10)",
+      "codegen": {
+        "opt-level": "3",
+        "lto": "fat",
+        "codegen-units": "1"
+      }
+    }
+  ]
+}

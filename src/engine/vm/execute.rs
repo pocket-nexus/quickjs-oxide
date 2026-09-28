@@ -164,6 +164,21 @@ pub(super) enum BindingSource {
     Argument,
 }
 
+/// The boundary after the currently decoded operation. Carrying this fact does
+/// not commit the frame to advancing past the operation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct FallthroughPc(u32);
+
+impl FallthroughPc {
+    pub(super) fn from_decoded(decoded: PublishedDecoded<'_>) -> Self {
+        Self(decoded.next_pc)
+    }
+
+    pub(super) fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum VmAction {
     Import,
@@ -242,7 +257,10 @@ pub(super) enum VmAction {
         access: super::private_access::Access,
     },
     StrictEquality(bool),
-    Numeric(super::numeric::operation::NumericKind),
+    Numeric {
+        kind: super::numeric::operation::NumericKind,
+        fallthrough: FallthroughPc,
+    },
     ForIn(bool),
     CopyData {
         target: u8,
@@ -1156,10 +1174,11 @@ pub(super) fn execute_frame(
                     if matches!(comparison, Opcode::StrictEq | Opcode::StrictNeq) {
                         return Ok(VmAction::StrictEquality(comparison == Opcode::StrictNeq));
                     }
-                    return Ok(VmAction::Numeric(
-                        super::numeric::operation::NumericKind::for_opcode(comparison)
+                    return Ok(VmAction::Numeric {
+                        kind: super::numeric::operation::NumericKind::for_opcode(comparison)
                             .ok_or_else(|| Error::internal("comparison has no operation"))?,
-                    ));
+                        fallthrough: FallthroughPc::from_decoded(decoded),
+                    });
                 }
             }
             Opcode::CompareBranchLocalLt | Opcode::CompareBranchArgLt => {
@@ -1526,10 +1545,11 @@ pub(super) fn execute_frame(
                             decoded.opcode == Opcode::StrictNeq,
                         ));
                     }
-                    return Ok(VmAction::Numeric(
-                        super::numeric::operation::NumericKind::for_opcode(decoded.opcode)
+                    return Ok(VmAction::Numeric {
+                        kind: super::numeric::operation::NumericKind::for_opcode(decoded.opcode)
                             .ok_or_else(|| Error::internal("numeric opcode has no operation"))?,
-                    ));
+                        fallthrough: FallthroughPc::from_decoded(decoded),
+                    });
                 }
             }
             Opcode::Neg
@@ -1564,10 +1584,11 @@ pub(super) fn execute_frame(
                     if decoded.opcode == Opcode::Plus {
                         return Ok(VmAction::ConvertPlus);
                     }
-                    return Ok(VmAction::Numeric(
-                        super::numeric::operation::NumericKind::for_opcode(decoded.opcode)
+                    return Ok(VmAction::Numeric {
+                        kind: super::numeric::operation::NumericKind::for_opcode(decoded.opcode)
                             .ok_or_else(|| Error::internal("numeric opcode has no operation"))?,
-                    ));
+                        fallthrough: FallthroughPc::from_decoded(decoded),
+                    });
                 }
             }
             Opcode::Not => {
@@ -2365,6 +2386,42 @@ fn binary_number_result(opcode: Opcode, left: Number, right: Number) -> JsValue 
     }
 }
 
+/// Strict equality cannot invoke JavaScript. The values remain owned until
+/// the comparison finishes, then both owners are released before stack commit.
+pub(super) fn strict_comparison(
+    runtime: &crate::engine::api::runtime::Runtime,
+    execution: &mut RunningExecution,
+    id: FrameId,
+    negate: bool,
+) -> Result<(), Error> {
+    let frame = execution.frames.current_mut(id)?;
+    #[cfg(feature = "profiling")]
+    let depth = execution.slots.depth(&frame.window);
+    let right = execution.slots.pop(&mut frame.window)?;
+    let left = execution.slots.pop(&mut frame.window)?;
+    let equal = runtime
+        .strict_equal_jsvalue(&left, &right)
+        .map_err(runtime_error_to_vm_error)?;
+    runtime
+        .release_jsvalue(left)
+        .map_err(runtime_error_to_vm_error)?;
+    runtime
+        .release_jsvalue(right)
+        .map_err(runtime_error_to_vm_error)?;
+    execution
+        .slots
+        .push(&mut frame.window, JsValue::Bool(equal != negate))?;
+    frame.resume_pc = frame
+        .executable
+        .exec
+        .decode(frame.fault_pc as u32)
+        .map_err(|_| Error::internal("comparison PC is not a verified boundary"))?
+        .next_pc as usize;
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_instruction(depth);
+    Ok(())
+}
+
 #[cfg(test)]
 mod execution_span_tests {
     use crate::engine::api::{Runtime, Value};
@@ -2496,40 +2553,4 @@ mod execution_span_tests {
             .unwrap();
         assert_eq!(result, Value::Bool(true));
     }
-}
-
-/// Strict equality cannot invoke JavaScript. The values remain owned until
-/// the comparison finishes, then both owners are released before stack commit.
-pub(super) fn strict_comparison(
-    runtime: &crate::engine::api::runtime::Runtime,
-    execution: &mut RunningExecution,
-    id: FrameId,
-    negate: bool,
-) -> Result<(), Error> {
-    let frame = execution.frames.current_mut(id)?;
-    #[cfg(feature = "profiling")]
-    let depth = execution.slots.depth(&frame.window);
-    let right = execution.slots.pop(&mut frame.window)?;
-    let left = execution.slots.pop(&mut frame.window)?;
-    let equal = runtime
-        .strict_equal_jsvalue(&left, &right)
-        .map_err(runtime_error_to_vm_error)?;
-    runtime
-        .release_jsvalue(left)
-        .map_err(runtime_error_to_vm_error)?;
-    runtime
-        .release_jsvalue(right)
-        .map_err(runtime_error_to_vm_error)?;
-    execution
-        .slots
-        .push(&mut frame.window, JsValue::Bool(equal != negate))?;
-    frame.resume_pc = frame
-        .executable
-        .exec
-        .decode(frame.fault_pc as u32)
-        .map_err(|_| Error::internal("comparison PC is not a verified boundary"))?
-        .next_pc as usize;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_instruction(depth);
-    Ok(())
 }

@@ -1,0 +1,175 @@
+{
+  "schema": "oxide-c1-m2-profile-v1",
+  "candidate_commit": "5b0ded27ff2205426134a61333b0a02c0265022a",
+  "candidate_profile_binary_sha256": "233437da75c4562c01dc282acad80c651fdc44ec88d385d4d0dc8c6660b42eb6",
+  "cases": [
+    {
+      "case": "primitive",
+      "profile_sha256": "1feba6159a8e5feac2d7d55a6fa2f0afda5d19e922ab7866007c9d87c98b4da8",
+      "events": {
+        "numeric_action_exit": 1000000,
+        "numeric_completed_with_carried_fallthrough": 1000000,
+        "numeric_primitive_declined": 0,
+        "numeric_legacy_fallthrough_recovery_decode": 0
+      },
+      "layouts": {
+        "VmAction": {
+          "size_bytes": 16,
+          "align_bytes": 8
+        },
+        "Result<VmAction, Error>": {
+          "size_bytes": 16,
+          "align_bytes": 8
+        },
+        "Frame": {
+          "size_bytes": 56,
+          "align_bytes": 8
+        }
+      }
+    },
+    {
+      "case": "number",
+      "profile_sha256": "44f490964a0ffcbdd7a3c3cfca9f04888ee227db6a9df60245ee67b4a280655b",
+      "events": {
+        "numeric_action_exit": 0,
+        "numeric_completed_with_carried_fallthrough": 0,
+        "numeric_primitive_declined": 0,
+        "numeric_legacy_fallthrough_recovery_decode": 0
+      },
+      "layouts": {
+        "VmAction": {
+          "size_bytes": 16,
+          "align_bytes": 8
+        },
+        "Result<VmAction, Error>": {
+          "size_bytes": 16,
+          "align_bytes": 8
+        },
+        "Frame": {
+          "size_bytes": 56,
+          "align_bytes": 8
+        }
+      }
+    },
+    {
+      "case": "object",
+      "profile_sha256": "8a963da8890e3f6a7a783789eddc33532909962d3ace9a9f02fc95f0d3b3667d",
+      "events": {
+        "numeric_action_exit": 100000,
+        "numeric_completed_with_carried_fallthrough": 0,
+        "numeric_primitive_declined": 100000,
+        "numeric_legacy_fallthrough_recovery_decode": 100000
+      },
+      "layouts": {
+        "VmAction": {
+          "size_bytes": 16,
+          "align_bytes": 8
+        },
+        "Result<VmAction, Error>": {
+          "size_bytes": 16,
+          "align_bytes": 8
+        },
+        "Frame": {
+          "size_bytes": 56,
+          "align_bytes": 8
+        }
+      }
+    },
+    {
+      "case": "compare",
+      "profile_sha256": "a5fb9f02ac6100b0d3eee8ff347b551b6c32492d1f0764c26f72e1fdcc28f6b4",
+      "events": {
+        "numeric_action_exit": 100000,
+        "numeric_completed_with_carried_fallthrough": 0,
+        "numeric_primitive_declined": 0,
+        "numeric_legacy_fallthrough_recovery_decode": 100000
+      },
+      "layouts": {
+        "VmAction": {
+          "size_bytes": 16,
+          "align_bytes": 8
+        },
+        "Result<VmAction, Error>": {
+          "size_bytes": 16,
+          "align_bytes": 8
+        },
+        "Frame": {
+          "size_bytes": 56,
+          "align_bytes": 8
+        }
+      }
+    },
+    {
+      "case": "m1-hit",
+      "profile_sha256": "4731e125d04d8bee5d5fb60ce31ca8161a58e6d0036c9001d5b262269b8bf4a5",
+      "events": {
+        "numeric_action_exit": 0,
+        "numeric_completed_with_carried_fallthrough": 0,
+        "numeric_primitive_declined": 0,
+        "numeric_legacy_fallthrough_recovery_decode": 0
+      },
+      "layouts": {
+        "VmAction": {
+          "size_bytes": 16,
+          "align_bytes": 8
+        },
+        "Result<VmAction, Error>": {
+          "size_bytes": 16,
+          "align_bytes": 8
+        },
+        "Frame": {
+          "size_bytes": 56,
+          "align_bytes": 8
+        }
+      }
+    },
+    {
+      "case": "m1-miss",
+      "profile_sha256": "f364ee7ee3b67b76a93a11765c3df177fd00e0e5c23c9a43fb8febd771e19c3f",
+      "events": {
+        "numeric_action_exit": 2000000,
+        "numeric_completed_with_carried_fallthrough": 2000000,
+        "numeric_primitive_declined": 0,
+        "numeric_legacy_fallthrough_recovery_decode": 0
+      },
+      "layouts": {
+        "VmAction": {
+          "size_bytes": 16,
+          "align_bytes": 8
+        },
+        "Result<VmAction, Error>": {
+          "size_bytes": 16,
+          "align_bytes": 8
+        },
+        "Frame": {
+          "size_bytes": 56,
+          "align_bytes": 8
+        }
+      }
+    },
+    {
+      "case": "primitive-frame",
+      "profile_sha256": "9daff793fa09413d273bf31c1cd9a0a6619cc861d44387ecb3e3d656c7dd9032",
+      "events": {
+        "numeric_action_exit": 1000000,
+        "numeric_completed_with_carried_fallthrough": 1000000,
+        "numeric_primitive_declined": 0,
+        "numeric_legacy_fallthrough_recovery_decode": 0
+      },
+      "layouts": {
+        "VmAction": {
+          "size_bytes": 16,
+          "align_bytes": 8
+        },
+        "Result<VmAction, Error>": {
+          "size_bytes": 16,
+          "align_bytes": 8
+        },
+        "Frame": {
+          "size_bytes": 56,
+          "align_bytes": 8
+        }
+      }
+    }
+  ]
+}

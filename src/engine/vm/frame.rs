@@ -14,6 +14,26 @@ use crate::engine::vm::CallInput;
 use crate::engine::vm::frames::{ActiveFrameGuard, ActiveFrameToken};
 use crate::engine::vm::stack::FrameStorage;
 
+#[cfg(test)]
+thread_local! {
+    static NEXT_PC_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Observe only the supplied completion interval, not interpreter decoding.
+#[cfg(test)]
+pub(super) fn count_next_pc_calls<T>(run: impl FnOnce() -> T) -> (T, usize) {
+    let previous = NEXT_PC_CALLS.replace(0);
+    struct Restore(usize);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            NEXT_PC_CALLS.set(self.0);
+        }
+    }
+    let _restore = Restore(previous);
+    let result = run();
+    (result, NEXT_PC_CALLS.get())
+}
+
 #[derive(Clone, Copy)]
 pub(super) enum ReturnValue {
     Push,
@@ -115,6 +135,8 @@ pub(super) struct Frame {
 impl Frame {
     /// The next instruction boundary in the sole published word stream.
     pub(super) fn next_pc(&self) -> Result<usize, Error> {
+        #[cfg(test)]
+        NEXT_PC_CALLS.set(NEXT_PC_CALLS.get() + 1);
         self.executable
             .exec
             .decode(self.fault_pc as u32)

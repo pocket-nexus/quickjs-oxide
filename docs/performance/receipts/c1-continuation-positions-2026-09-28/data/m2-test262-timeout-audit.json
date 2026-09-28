@@ -1,0 +1,43 @@
+{
+  "schema": "oxide-c1-test262-timeout-audit-v1",
+  "source_commit": "ade7f11e659b7acbd01701190bf5612df490062d",
+  "engine_semantics_sha256": "dd7373739b475d57c615a0ff0f28721757ca8912fc1b29726a4e72079fadf1bb",
+  "runner_binary_sha256": "a6f113cfc1dc7c6b85e72de3579576e3988d7314fa8be9e72dfeb1ecb000a1af",
+  "full_runner_timeout_ms": 30000,
+  "full_report_sha256": "2a191ee0fe838e3b18b2de2afc5e82093129532ca291045526ac5dd122a5fa14",
+  "full_report_body_sha256": "9e2ba0d32dc681cf4eaa4f50ae1af6165ee831a2aad7d88d8b7d5a8fc8a3ff30",
+  "frozen_body_sha256": "971cc666767b3c4eb9b519340b5d7a77a80ff8405f6a8d800aada822d3230b19",
+  "full_result": {
+    "total": 102037,
+    "runnable": 80060,
+    "pass": 80008,
+    "timeout": 2,
+    "existing_fail_parse": 7,
+    "existing_fail_runtime": 43
+  },
+  "body_differences": [
+    {
+      "path": "test/annexB/built-ins/RegExp/RegExp-leading-escape-BMP.js",
+      "variant": "sloppy",
+      "observed_outcome": "timeout",
+      "frozen_outcome": "pass",
+      "detail": "worker exceeded 30000 ms"
+    },
+    {
+      "path": "test/annexB/built-ins/RegExp/RegExp-leading-escape-BMP.js",
+      "variant": "strict",
+      "observed_outcome": "timeout",
+      "frozen_outcome": "pass",
+      "detail": "worker exceeded 30000 ms"
+    }
+  ],
+  "replay": {
+    "test": "test/annexB/built-ins/RegExp/RegExp-leading-escape-BMP.js",
+    "workers": 1,
+    "timeout_ms": 180000,
+    "total": 2,
+    "pass": 2,
+    "report_sha256": "c2a59ecea6ddd9989dd7c72500bc3e42db45dbeef7908ddf931ea902d39efd84",
+    "report_body_sha256": "7755a49d701c94546971b034490b1ea6af08edef4873429dfd7d9f5642f7198a"
+  }
+}

@@ -2,6 +2,7 @@
 use crate::engine::api::{Error, runtime::Runtime};
 use crate::engine::vm::{
     driver::CallStep,
+    execute::FallthroughPc,
     execution::RunningExecution,
     frame::FrameId,
     numeric::operation::{NumericKind, NumericStep},
@@ -34,6 +35,10 @@ pub(in crate::engine::vm) fn commit_output(
     let mut previous = previous;
     let result = (|| {
         let frame = execution.frames.current_mut(id)?;
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "numeric_legacy_fallthrough_recovery_decode",
+        );
         let resume_pc = frame.next_pc()?;
         {
             let mut slots = execution.slots.borrow_frame_slots(&mut frame.window)?;
@@ -61,12 +66,13 @@ pub(in crate::engine::vm) fn try_complete_primitive(
     execution: &mut RunningExecution,
     id: FrameId,
     kind: NumericKind,
+    fallthrough: FallthroughPc,
 ) -> Result<Option<NumericProgress>, Error> {
     use crate::engine::value::JsValue;
     let frame = execution.frames.current_mut(id)?;
     let realm = frame.executable.realm;
     let depth = execution.slots.depth(&frame.window);
-    let resume_pc = frame.next_pc()?;
+    let resume_pc = fallthrough.index();
     let mut transaction = execution.slots.frame_transaction(&mut frame.window)?;
     let (left, right) = {
         let mut slots = transaction.slots();
@@ -180,16 +186,28 @@ mod tests {
     use crate::engine::vm::{
         call::CallableExecution,
         conversion_driver::{PrimitiveCompletion, complete_primitives},
+        execute::{VmAction, execute_frame},
         execution::ExecutionLimits,
         frame::{ColdFrame, FrameCold, FrameEntry},
+        frames::ActiveFrameToken,
         stack::FrameStorage,
     };
 
-    fn fixture(
+    fn fixture_source(
         runtime: &Runtime,
         context: &mut crate::engine::api::Context,
+        source: &str,
     ) -> (RunningExecution, FrameId) {
-        let Value::Object(function) = context.eval("(function(a,b){return a*b})").unwrap() else {
+        fixture_source_with_activation(runtime, context, source, true)
+    }
+
+    fn fixture_source_with_activation(
+        runtime: &Runtime,
+        context: &mut crate::engine::api::Context,
+        source: &str,
+        materialized: bool,
+    ) -> (RunningExecution, FrameId) {
+        let Value::Object(function) = context.eval(source).unwrap() else {
             panic!("function");
         };
         let callable = runtime.as_callable(&function).unwrap().unwrap();
@@ -203,6 +221,12 @@ mod tests {
         let prepared = runtime
             .prepare_bytecode_frame(&callable, Value::Undefined, Value::Undefined, &[], bytecode)
             .unwrap();
+        let active_frame = if materialized {
+            prepared.active_frame.token()
+        } else {
+            ActiveFrameToken::unmaterialized()
+        };
+        let entry_guard = materialized.then_some(prepared.active_frame);
         let locals = prepared.locals.len();
         let entry = FrameEntry {
             initialize_bindings: false,
@@ -210,11 +234,11 @@ mod tests {
             property_generation: 0,
             iterator_generation: 0,
             caller_realm: context.realm,
-            active_frame: prepared.active_frame.token(),
+            active_frame,
             cold: ColdFrame::new(FrameCold {
                 rare: std::cell::OnceCell::new(),
                 return_to: None,
-                entry_guard: Some(prepared.active_frame),
+                entry_guard,
                 function: function.into(),
                 closure_slots,
                 reusable_captured_locals: vec![false; locals],
@@ -232,9 +256,399 @@ mod tests {
         (execution, id)
     }
 
+    fn fixture(
+        runtime: &Runtime,
+        context: &mut crate::engine::api::Context,
+    ) -> (RunningExecution, FrameId) {
+        fixture_source(runtime, context, "(function(a,b){return a*b})")
+    }
+
     fn push(execution: &mut RunningExecution, id: FrameId, value: JsValue) {
         let frame = execution.frames.current_mut(id).unwrap();
         execution.slots.push(&mut frame.window, value).unwrap();
+    }
+
+    fn decoded_fallthrough(execution: &mut RunningExecution, id: FrameId) -> FallthroughPc {
+        let frame = execution.frames.current_mut(id).unwrap();
+        FallthroughPc::from_decoded(
+            frame
+                .executable
+                .exec
+                .decode_published(frame.fault_pc as u32)
+                .unwrap(),
+        )
+    }
+
+    #[test]
+    fn numeric_action_carries_the_originating_decoded_boundary() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let (mut execution, id) = fixture(&runtime, &mut context);
+        let VmAction::Numeric { kind, fallthrough } = execute_frame(&mut execution, id).unwrap()
+        else {
+            panic!("non-Number multiplication must exit as a numeric action");
+        };
+        assert_eq!(kind, NumericKind::Mul);
+        let frame = execution.frames.current_mut(id).unwrap();
+        assert_eq!(frame.resume_pc, frame.fault_pc);
+        assert_eq!(
+            fallthrough.index(),
+            frame
+                .executable
+                .exec
+                .decode(frame.fault_pc as u32)
+                .unwrap()
+                .next_pc as usize
+        );
+        let fault = frame.fault_pc;
+        let (progress, recovery_calls) = crate::engine::vm::frame::count_next_pc_calls(|| {
+            try_complete_primitive(&runtime, &mut execution, id, kind, fallthrough)
+        });
+        assert!(matches!(
+            progress.unwrap(),
+            Some(NumericProgress::Completed)
+        ));
+        assert_eq!(recovery_calls, 0);
+        let frame = execution.frames.current_mut(id).unwrap();
+        assert_eq!(
+            (frame.fault_pc, frame.resume_pc),
+            (fault, fallthrough.index())
+        );
+    }
+
+    #[test]
+    fn wide_compare_fallback_carries_its_own_boundary_without_advancing() {
+        use crate::engine::code::exec_opcode::Opcode;
+
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let (mut execution, id) = fixture_source(
+            &runtime,
+            &mut context,
+            "(function(o,y){if(o.x<y)return 1;return 2})",
+        );
+        let compare_pc = {
+            let frame = execution.frames.current_mut(id).unwrap();
+            let exec = &frame.executable.exec;
+            (0..exec.instruction_len())
+                .filter_map(|source| exec.exec_pc(source as u32))
+                .find(|pc| exec.decode(*pc).unwrap().opcode == Opcode::CompareBranchStack)
+                .expect("fixture must publish a stack comparison branch")
+        };
+        push(&mut execution, id, JsValue::Undefined);
+        push(&mut execution, id, JsValue::Int(2));
+        execution.frames.current_mut(id).unwrap().resume_pc = compare_pc as usize;
+        let VmAction::Numeric { kind, fallthrough } = execute_frame(&mut execution, id).unwrap()
+        else {
+            panic!("non-Number comparison must exit as a numeric action");
+        };
+        assert_eq!(kind, NumericKind::Lt);
+        let frame = execution.frames.current_mut(id).unwrap();
+        let reference = frame.executable.exec.decode(compare_pc).unwrap();
+        assert!(reference.next_pc > compare_pc + 1);
+        assert_eq!(fallthrough.index(), reference.next_pc as usize);
+        assert_eq!(frame.fault_pc, compare_pc as usize);
+        assert_eq!(frame.resume_pc, compare_pc as usize);
+    }
+
+    #[test]
+    fn wide_compare_fallback_executes_the_remaining_branch_both_ways() {
+        use crate::engine::code::exec_opcode::Opcode;
+
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let source = "function compare(o,y){if(o.x<y)return 1;return 2} \
+                      compare({x:'1'},'2')===1 && compare({x:'3'},'2')===2";
+        let root = context.compile(source).unwrap();
+        let child = runtime.test_child_function_bytecode(&root, 0).unwrap();
+        assert!(
+            runtime
+                .test_function_exec_opcodes(&child)
+                .unwrap()
+                .contains(&Opcode::CompareBranchStack)
+        );
+        #[cfg(feature = "profiling")]
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        assert_eq!(context.eval(source).unwrap(), Value::Bool(true));
+        #[cfg(feature = "profiling")]
+        assert_eq!(
+            profile
+                .snapshot()
+                .owned_execution_events
+                .get("numeric_action_exit"),
+            Some(&2)
+        );
+    }
+
+    #[test]
+    fn primitive_and_deferred_numeric_throws_keep_the_originating_source_line() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let direct = "function fail(){\n return Symbol()-1;\n}\ntry{fail()}catch(e){e instanceof TypeError && e.stack.includes('at fail (c1-direct.js:2:')}";
+        assert_eq!(
+            context.eval_with_filename(direct, "c1-direct.js").unwrap(),
+            Value::Bool(true)
+        );
+
+        let deferred = "let calls=0,marker={};\nfunction fail(){\n return ({valueOf(){calls++;marker.stack=new Error().stack;throw marker}})-1;\n}\ntry{fail()}catch(e){e===marker && calls===1 && marker.stack.includes('at fail (c1-deferred.js:3:')}";
+        assert_eq!(
+            context
+                .eval_with_filename(deferred, "c1-deferred.js")
+                .unwrap(),
+            Value::Bool(true)
+        );
+    }
+
+    #[test]
+    fn materialization_retry_reexecutes_the_current_operation() {
+        use crate::engine::code::exec_opcode::Opcode;
+
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let (mut execution, id) = fixture_source_with_activation(
+            &runtime,
+            &mut context,
+            "(function(a){return !a})",
+            false,
+        );
+        let not_pc = {
+            let frame = execution.frames.current_mut(id).unwrap();
+            let exec = &frame.executable.exec;
+            (0..exec.instruction_len())
+                .filter_map(|source| exec.exec_pc(source as u32))
+                .find(|pc| exec.decode(*pc).unwrap().opcode == Opcode::Not)
+                .expect("fixture must publish a Not operation")
+        };
+        let object = runtime.new_object(None).unwrap();
+        push(&mut execution, id, JsValue::Object(object.into_handle()));
+        execution.frames.current_mut(id).unwrap().resume_pc = not_pc as usize;
+        assert_eq!(
+            execute_frame(&mut execution, id).unwrap(),
+            VmAction::Materialize
+        );
+        let frame = execution.frames.current_mut(id).unwrap();
+        assert_eq!(
+            (frame.fault_pc, frame.resume_pc),
+            (not_pc as usize, not_pc as usize)
+        );
+        execution.frames.materialize(&runtime).unwrap();
+        assert_eq!(
+            execute_frame(&mut execution, id).unwrap(),
+            VmAction::Complete
+        );
+        let frame = execution.frames.current_mut(id).unwrap();
+        assert_eq!(execution.slots.depth(&frame.window), 0);
+        assert_eq!(execution.pending, Some(JsValue::Bool(false)));
+    }
+
+    #[test]
+    fn direct_post_increment_preserves_pc_after_partial_output_failure() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let (mut execution, id) = fixture(&runtime, &mut context);
+        loop {
+            let frame = execution.frames.current_mut(id).unwrap();
+            if execution
+                .slots
+                .push(&mut frame.window, JsValue::Int(0))
+                .is_err()
+            {
+                break;
+            }
+        }
+        let frame = execution.frames.current_mut(id).unwrap();
+        drop(execution.slots.pop(&mut frame.window).unwrap());
+        push(&mut execution, id, JsValue::Int(41));
+        let fallthrough = decoded_fallthrough(&mut execution, id);
+        let before = {
+            let frame = execution.frames.current_mut(id).unwrap();
+            (frame.fault_pc, frame.resume_pc)
+        };
+        assert!(
+            try_complete_primitive(
+                &runtime,
+                &mut execution,
+                id,
+                NumericKind::PostInc,
+                fallthrough,
+            )
+            .is_err()
+        );
+        let frame = execution.frames.current_mut(id).unwrap();
+        assert_eq!((frame.fault_pc, frame.resume_pc), before);
+        assert_eq!(
+            execution.slots.peek(&frame.window, 0).unwrap(),
+            &JsValue::Int(41)
+        );
+    }
+
+    #[test]
+    fn emitted_post_increment_preserves_pc_after_partial_output_failure() {
+        use crate::engine::code::exec_opcode::Opcode;
+
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let (mut execution, id) =
+            fixture_source(&runtime, &mut context, "(function(value){return value++})");
+        let post_inc_pc = {
+            let frame = execution.frames.current_mut(id).unwrap();
+            let exec = &frame.executable.exec;
+            (0..exec.instruction_len())
+                .filter_map(|source| exec.exec_pc(source as u32))
+                .find(|pc| exec.decode(*pc).unwrap().opcode == Opcode::PostInc)
+                .expect("fixture must publish PostInc")
+        };
+        loop {
+            let frame = execution.frames.current_mut(id).unwrap();
+            if execution
+                .slots
+                .push(&mut frame.window, JsValue::Int(0))
+                .is_err()
+            {
+                break;
+            }
+        }
+        let frame = execution.frames.current_mut(id).unwrap();
+        drop(execution.slots.pop(&mut frame.window).unwrap());
+        push(&mut execution, id, JsValue::Bool(true));
+        execution.frames.current_mut(id).unwrap().resume_pc = post_inc_pc as usize;
+        let VmAction::Numeric { kind, fallthrough } = execute_frame(&mut execution, id).unwrap()
+        else {
+            panic!("non-Number PostInc must produce a numeric action");
+        };
+        assert_eq!(kind, NumericKind::PostInc);
+        let before = {
+            let frame = execution.frames.current_mut(id).unwrap();
+            (frame.fault_pc, frame.resume_pc)
+        };
+        assert!(try_complete_primitive(&runtime, &mut execution, id, kind, fallthrough).is_err());
+        let frame = execution.frames.current_mut(id).unwrap();
+        assert_eq!((frame.fault_pc, frame.resume_pc), before);
+        assert_eq!(
+            execution.slots.peek(&frame.window, 0).unwrap(),
+            &JsValue::Int(1)
+        );
+    }
+
+    #[test]
+    fn string_numeric_completion_uses_carried_fallthrough() {
+        use crate::engine::code::exec_opcode::Opcode;
+
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let source = "function subtract(a,b){return a-b}; subtract('123.5',2)";
+        let root = context.compile(source).unwrap();
+        let child = runtime.test_child_function_bytecode(&root, 0).unwrap();
+        assert!(
+            runtime
+                .test_function_exec_opcodes(&child)
+                .unwrap()
+                .contains(&Opcode::Sub)
+        );
+        #[cfg(feature = "profiling")]
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        assert_eq!(context.eval(source).unwrap(), Value::Float(121.5));
+        #[cfg(feature = "profiling")]
+        {
+            let events = profile.snapshot().owned_execution_events;
+            assert_eq!(events.get("numeric_action_exit"), Some(&1));
+            assert_eq!(
+                events.get("numeric_completed_with_carried_fallthrough"),
+                Some(&1)
+            );
+            assert_eq!(
+                events
+                    .get("numeric_legacy_fallthrough_recovery_decode")
+                    .copied()
+                    .unwrap_or(0),
+                0
+            );
+        }
+    }
+
+    #[test]
+    fn primitive_numeric_domains_complete_at_the_carried_boundary() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        #[cfg(feature = "profiling")]
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        assert_eq!(
+            context
+                .eval(
+                    "function subtract(a,b){return a-b}; \
+                     subtract(true,1)===0 && subtract(null,2)===-2 && subtract(7n,2n)===5n"
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+        #[cfg(feature = "profiling")]
+        {
+            let events = profile.snapshot().owned_execution_events;
+            assert_eq!(
+                events.get("numeric_completed_with_carried_fallthrough"),
+                Some(&3)
+            );
+            assert_eq!(
+                events
+                    .get("numeric_legacy_fallthrough_recovery_decode")
+                    .copied()
+                    .unwrap_or(0),
+                0
+            );
+        }
+    }
+
+    #[test]
+    fn number_only_arithmetic_needs_no_numeric_action() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        #[cfg(feature = "profiling")]
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        assert_eq!(
+            context
+                .eval("function subtract(a,b){return a-b}; subtract(123.5,2)")
+                .unwrap(),
+            Value::Float(121.5)
+        );
+        #[cfg(feature = "profiling")]
+        assert_eq!(
+            profile
+                .snapshot()
+                .owned_execution_events
+                .get("numeric_action_exit")
+                .copied()
+                .unwrap_or(0),
+            0
+        );
+    }
+
+    #[test]
+    fn object_numeric_decline_keeps_throw_identity_and_conversion_count() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        #[cfg(feature = "profiling")]
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        assert_eq!(
+            context
+                .eval(
+                    "(() => { let calls=0, marker={}; \
+                     try { ({valueOf(){calls++;throw marker}})-1 } \
+                     catch(error) { return error===marker && calls===1 } \
+                     return false })()"
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+        #[cfg(feature = "profiling")]
+        assert!(
+            profile
+                .snapshot()
+                .owned_execution_events
+                .get("numeric_primitive_declined")
+                .copied()
+                .unwrap_or(0)
+                > 0
+        );
     }
 
     #[test]
@@ -243,12 +657,18 @@ mod tests {
         let mut context = runtime.new_context();
         let (mut execution, id) = fixture(&runtime, &mut context);
         push(&mut execution, id, JsValue::Int(7));
+        let fallthrough = decoded_fallthrough(&mut execution, id);
+        let original_positions = {
+            let frame = execution.frames.current_mut(id).unwrap();
+            (frame.fault_pc, frame.resume_pc)
+        };
         assert!(
-            try_complete_primitive(&runtime, &mut execution, id, NumericKind::Mul)
+            try_complete_primitive(&runtime, &mut execution, id, NumericKind::Mul, fallthrough)
                 .unwrap()
                 .is_none()
         );
         let frame = execution.frames.current_mut(id).unwrap();
+        assert_eq!((frame.fault_pc, frame.resume_pc), original_positions);
         assert_eq!(execution.slots.depth(&frame.window), 1);
         assert!(complete(&runtime, &mut execution, id, NumericKind::Mul).is_err());
         let frame = execution.frames.current_mut(id).unwrap();
@@ -303,11 +723,14 @@ mod tests {
             .property_generation = u64::MAX;
         push(&mut execution, id, JsValue::Int(6));
         push(&mut execution, id, JsValue::Int(7));
+        let fallthrough = decoded_fallthrough(&mut execution, id);
         assert!(matches!(
-            try_complete_primitive(&runtime, &mut execution, id, NumericKind::Mul).unwrap(),
+            try_complete_primitive(&runtime, &mut execution, id, NumericKind::Mul, fallthrough)
+                .unwrap(),
             Some(NumericProgress::Completed)
         ));
         let frame = execution.frames.current_mut(id).unwrap();
+        assert_eq!(frame.resume_pc, fallthrough.index());
         assert_eq!(frame.property_generation, u64::MAX);
         assert_eq!(
             execution.slots.pop(&mut frame.window).unwrap(),

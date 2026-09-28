@@ -1,0 +1,156 @@
+{
+  "schema": "oxide-c1-profile-counts-v1",
+  "candidate_profiling_binary_sha256": "788f09f3d61e26d6411d53b7ff3a981b46744e5018c90ea50f0a6bc850193da2",
+  "cases": [
+    {
+      "case": "primitive",
+      "diagnostic_sha256": "1f2ce8451dba9383d8394ae56ba00bcbc8fee3004bafa3662544f7781bbb2252",
+      "events": {
+        "numeric_action_exit": 1000000,
+        "numeric_completed_with_carried_fallthrough": 1000000,
+        "numeric_primitive_declined": 0,
+        "numeric_legacy_fallthrough_recovery_decode": 0,
+        "numeric_completed_in_same_frame": 1000000
+      },
+      "layouts": {
+        "VmAction": {
+          "size_bytes": 16,
+          "align_bytes": 8
+        },
+        "Result<VmAction, Error>": {
+          "size_bytes": 16,
+          "align_bytes": 8
+        },
+        "Frame": {
+          "size_bytes": 56,
+          "align_bytes": 8
+        }
+      }
+    },
+    {
+      "case": "number",
+      "diagnostic_sha256": "d7e1d2eb0c9d85cce3fc1f76f07a14d899fb20f29648397b8135eca38a2d5745",
+      "events": {
+        "numeric_action_exit": 0,
+        "numeric_completed_with_carried_fallthrough": 0,
+        "numeric_primitive_declined": 0,
+        "numeric_legacy_fallthrough_recovery_decode": 0,
+        "numeric_completed_in_same_frame": 0
+      },
+      "layouts": {
+        "VmAction": {
+          "size_bytes": 16,
+          "align_bytes": 8
+        },
+        "Result<VmAction, Error>": {
+          "size_bytes": 16,
+          "align_bytes": 8
+        },
+        "Frame": {
+          "size_bytes": 56,
+          "align_bytes": 8
+        }
+      }
+    },
+    {
+      "case": "object",
+      "diagnostic_sha256": "af4ff46ae3d72e07f58f9f0d89bf8f5de4a12da5ba16d7b14c4a8ce1abd9dc63",
+      "events": {
+        "numeric_action_exit": 100000,
+        "numeric_completed_with_carried_fallthrough": 0,
+        "numeric_primitive_declined": 100000,
+        "numeric_legacy_fallthrough_recovery_decode": 100000,
+        "numeric_completed_in_same_frame": 0
+      },
+      "layouts": {
+        "VmAction": {
+          "size_bytes": 16,
+          "align_bytes": 8
+        },
+        "Result<VmAction, Error>": {
+          "size_bytes": 16,
+          "align_bytes": 8
+        },
+        "Frame": {
+          "size_bytes": 56,
+          "align_bytes": 8
+        }
+      }
+    },
+    {
+      "case": "compare",
+      "diagnostic_sha256": "76705ae4e467751bf0fdc06f3639118607c4e8a41436bc6613dac3e5b1c9d489",
+      "events": {
+        "numeric_action_exit": 100000,
+        "numeric_completed_with_carried_fallthrough": 0,
+        "numeric_primitive_declined": 0,
+        "numeric_legacy_fallthrough_recovery_decode": 100000,
+        "numeric_completed_in_same_frame": 100000
+      },
+      "layouts": {
+        "VmAction": {
+          "size_bytes": 16,
+          "align_bytes": 8
+        },
+        "Result<VmAction, Error>": {
+          "size_bytes": 16,
+          "align_bytes": 8
+        },
+        "Frame": {
+          "size_bytes": 56,
+          "align_bytes": 8
+        }
+      }
+    },
+    {
+      "case": "m1-hit",
+      "diagnostic_sha256": "1c5e1a52f7151b0c084e06f6ec346171c8af17fe2d40f74a376c33e4020789f8",
+      "events": {
+        "numeric_action_exit": 0,
+        "numeric_completed_with_carried_fallthrough": 0,
+        "numeric_primitive_declined": 0,
+        "numeric_legacy_fallthrough_recovery_decode": 0,
+        "numeric_completed_in_same_frame": 0
+      },
+      "layouts": {
+        "VmAction": {
+          "size_bytes": 16,
+          "align_bytes": 8
+        },
+        "Result<VmAction, Error>": {
+          "size_bytes": 16,
+          "align_bytes": 8
+        },
+        "Frame": {
+          "size_bytes": 56,
+          "align_bytes": 8
+        }
+      }
+    },
+    {
+      "case": "m1-miss",
+      "diagnostic_sha256": "8047a74cc4e9278d5f0cbcbe8e8fc915408139fbe0dd05f2f43042fef6209cd4",
+      "events": {
+        "numeric_action_exit": 2000000,
+        "numeric_completed_with_carried_fallthrough": 2000000,
+        "numeric_primitive_declined": 0,
+        "numeric_legacy_fallthrough_recovery_decode": 0,
+        "numeric_completed_in_same_frame": 2000000
+      },
+      "layouts": {
+        "VmAction": {
+          "size_bytes": 16,
+          "align_bytes": 8
+        },
+        "Result<VmAction, Error>": {
+          "size_bytes": 16,
+          "align_bytes": 8
+        },
+        "Frame": {
+          "size_bytes": 56,
+          "align_bytes": 8
+        }
+      }
+    }
+  ]
+}
