@@ -1,0 +1,26 @@
+{
+  "command": [
+    "cargo",
+    "build",
+    "--release",
+    "--manifest-path",
+    "/tmp/oxide-phase2-b2-compile-probe/Cargo.toml",
+    "--target-dir",
+    "/tmp/oxide-phase2-b2-compile-probe/target"
+  ],
+  "repository": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/378473c5-1638-4d3b-a285-a477e60c62bd",
+  "binary": "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+  "binary_sha256": "b000005d39f84dab94dbd0dd33920df41cb01c503767af6f8e8d2c52b14aff17",
+  "source_sha256": "9c3ff10353b51995a90f2c62868e0b6337d3163983f3876e1f5c4f271829cfae",
+  "cargo_lock_sha256": "d1b16903f0b6008576770f59344f872080c600d52197b27ad6c13a007d3ac5b5",
+  "dependency_commit": "85aa19565bba1c6a760cf737f74bf00a2c8df585",
+  "source_identity": {
+    "kind": "git-checkout",
+    "note": "patch covers tracked files; stage receipt must additionally hash untracked implementation files"
+  },
+  "source_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "features": [],
+  "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)\nbinary: rustc\ncommit-hash: e408947bfd200af42db322daf0fadfe7e26d3bd1\ncommit-date: 2026-03-25\nhost: x86_64-unknown-linux-gnu\nrelease: 1.94.1\nLLVM version: 21.1.8\n",
+  "rustflags": null,
+  "encoded_rustflags": null
+}

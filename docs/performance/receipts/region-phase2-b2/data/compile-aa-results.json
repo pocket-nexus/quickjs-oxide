@@ -1,0 +1,2219 @@
+{
+  "schema": "oxide-compile-matrix-v1",
+  "created_utc": "2026-09-28T18:46:16Z",
+  "metric": "compile",
+  "goal": "script",
+  "repeat": 24,
+  "timeout_seconds": 120,
+  "order": "serial, alternating per repetition",
+  "instrumentation": "off (no profiling flags)",
+  "machine": {
+    "platform": "Linux-7.2.7-arch1-1-x86_64-with-glibc2.44",
+    "machine": "x86_64",
+    "cpu": "AMD Ryzen 7 7840HS with Radeon 780M Graphics",
+    "logical_cpus": 16,
+    "python": "3.14.7",
+    "cpu_affinity": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15
+    ],
+    "scaling_governors": {
+      "0": "powersave",
+      "1": "powersave",
+      "2": "powersave",
+      "3": "powersave",
+      "4": "powersave",
+      "5": "powersave",
+      "6": "powersave",
+      "7": "powersave",
+      "8": "powersave",
+      "9": "powersave",
+      "10": "powersave",
+      "11": "powersave",
+      "12": "powersave",
+      "13": "powersave",
+      "14": "powersave",
+      "15": "powersave"
+    },
+    "load_average": [
+      0.42431640625,
+      0.79248046875,
+      1.005859375
+    ],
+    "macos": null,
+    "runner_sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5",
+    "repository": {
+      "commit": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD"
+        ],
+        "exit_code": 0,
+        "stdout": "d36f2804365e73daf3de22adaaa0cd73e9976382",
+        "stderr": ""
+      },
+      "tree": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD^{tree}"
+        ],
+        "exit_code": 0,
+        "stdout": "ff9f932edf1796da5f3cff7b60230cc191c674e5",
+        "stderr": ""
+      },
+      "top_level": {
+        "command": [
+          "git",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "exit_code": 0,
+        "stdout": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/378473c5-1638-4d3b-a285-a477e60c62bd",
+        "stderr": ""
+      },
+      "status": {
+        "command": [
+          "git",
+          "status",
+          "--porcelain"
+        ],
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    }
+  },
+  "corpus": "/tmp/oxide-phase2-a1-compile-corpus",
+  "workloads": [
+    {
+      "case": "field-local-500",
+      "path": "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js",
+      "bytes": 38390,
+      "sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114"
+    },
+    {
+      "case": "lexical-loop-500",
+      "path": "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js",
+      "bytes": 44890,
+      "sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c"
+    }
+  ],
+  "engines": {
+    "left": {
+      "type": "oxide",
+      "path": "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+      "sha256": "b000005d39f84dab94dbd0dd33920df41cb01c503767af6f8e8d2c52b14aff17",
+      "version": {
+        "command": [
+          "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+          "--version"
+        ],
+        "exit_code": 0,
+        "stdout": "oxide-compile-probe 1",
+        "stderr": ""
+      },
+      "build": {
+        "command": [
+          "cargo",
+          "build",
+          "--release",
+          "--manifest-path",
+          "/tmp/oxide-phase2-b2-compile-probe/Cargo.toml",
+          "--target-dir",
+          "/tmp/oxide-phase2-b2-compile-probe/target"
+        ],
+        "repository": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/378473c5-1638-4d3b-a285-a477e60c62bd",
+        "binary": "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "binary_sha256": "b000005d39f84dab94dbd0dd33920df41cb01c503767af6f8e8d2c52b14aff17",
+        "source_sha256": "9c3ff10353b51995a90f2c62868e0b6337d3163983f3876e1f5c4f271829cfae",
+        "cargo_lock_sha256": "d1b16903f0b6008576770f59344f872080c600d52197b27ad6c13a007d3ac5b5",
+        "dependency_commit": "85aa19565bba1c6a760cf737f74bf00a2c8df585",
+        "source_identity": {
+          "kind": "git-checkout",
+          "note": "patch covers tracked files; stage receipt must additionally hash untracked implementation files"
+        },
+        "source_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "features": [],
+        "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)\nbinary: rustc\ncommit-hash: e408947bfd200af42db322daf0fadfe7e26d3bd1\ncommit-date: 2026-03-25\nhost: x86_64-unknown-linux-gnu\nrelease: 1.94.1\nLLVM version: 21.1.8\n",
+        "rustflags": null,
+        "encoded_rustflags": null
+      }
+    },
+    "right": {
+      "type": "oxide",
+      "path": "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+      "sha256": "b000005d39f84dab94dbd0dd33920df41cb01c503767af6f8e8d2c52b14aff17",
+      "version": {
+        "command": [
+          "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+          "--version"
+        ],
+        "exit_code": 0,
+        "stdout": "oxide-compile-probe 1",
+        "stderr": ""
+      },
+      "build": {
+        "command": [
+          "cargo",
+          "build",
+          "--release",
+          "--manifest-path",
+          "/tmp/oxide-phase2-b2-compile-probe/Cargo.toml",
+          "--target-dir",
+          "/tmp/oxide-phase2-b2-compile-probe/target"
+        ],
+        "repository": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/378473c5-1638-4d3b-a285-a477e60c62bd",
+        "binary": "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "binary_sha256": "b000005d39f84dab94dbd0dd33920df41cb01c503767af6f8e8d2c52b14aff17",
+        "source_sha256": "9c3ff10353b51995a90f2c62868e0b6337d3163983f3876e1f5c4f271829cfae",
+        "cargo_lock_sha256": "d1b16903f0b6008576770f59344f872080c600d52197b27ad6c13a007d3ac5b5",
+        "dependency_commit": "85aa19565bba1c6a760cf737f74bf00a2c8df585",
+        "source_identity": {
+          "kind": "git-checkout",
+          "note": "patch covers tracked files; stage receipt must additionally hash untracked implementation files"
+        },
+        "source_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "features": [],
+        "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)\nbinary: rustc\ncommit-hash: e408947bfd200af42db322daf0fadfe7e26d3bd1\ncommit-date: 2026-03-25\nhost: x86_64-unknown-linux-gnu\nrelease: 1.94.1\nLLVM version: 21.1.8\n",
+        "rustflags": null,
+        "encoded_rustflags": null
+      }
+    }
+  },
+  "node_probe_sha256": "6c218529930ad316002eaa496ccaf40af6badffe77ec5e825ac1437a4752a938",
+  "runner_sha256": "37a3a6d66cd1e1582814257418f057a031846a0697c15dc0026bd72e6a00fd19",
+  "samples": [
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 9493452,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-0.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-0.stderr",
+      "case": "field-local-500",
+      "engine": "left",
+      "repetition": 0,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 5610800
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 9793035,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-0.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-0.stderr",
+      "case": "field-local-500",
+      "engine": "right",
+      "repetition": 0,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 5762484
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 9165266,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-1.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-1.stderr",
+      "case": "field-local-500",
+      "engine": "right",
+      "repetition": 1,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 5581685
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 10554666,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-1.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-1.stderr",
+      "case": "field-local-500",
+      "engine": "left",
+      "repetition": 1,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 7178003
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 9921176,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-2.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-2.stderr",
+      "case": "field-local-500",
+      "engine": "left",
+      "repetition": 2,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 5934848
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 10502056,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-2.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-2.stderr",
+      "case": "field-local-500",
+      "engine": "right",
+      "repetition": 2,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 5556948
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 10403112,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-3.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-3.stderr",
+      "case": "field-local-500",
+      "engine": "right",
+      "repetition": 3,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6724371
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 10330996,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-3.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-3.stderr",
+      "case": "field-local-500",
+      "engine": "left",
+      "repetition": 3,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6616318
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 10680391,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-4.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-4.stderr",
+      "case": "field-local-500",
+      "engine": "left",
+      "repetition": 4,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 5766692
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 8882094,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-4.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-4.stderr",
+      "case": "field-local-500",
+      "engine": "right",
+      "repetition": 4,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 5601352
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 9772336,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-5.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-5.stderr",
+      "case": "field-local-500",
+      "engine": "right",
+      "repetition": 5,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6108194
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 10512768,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-5.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-5.stderr",
+      "case": "field-local-500",
+      "engine": "left",
+      "repetition": 5,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6377769
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 10899934,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-6.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-6.stderr",
+      "case": "field-local-500",
+      "engine": "left",
+      "repetition": 6,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 7443201
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 10107816,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-6.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-6.stderr",
+      "case": "field-local-500",
+      "engine": "right",
+      "repetition": 6,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6332455
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 9964116,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-7.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-7.stderr",
+      "case": "field-local-500",
+      "engine": "right",
+      "repetition": 7,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6334278
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 9536964,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-7.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-7.stderr",
+      "case": "field-local-500",
+      "engine": "left",
+      "repetition": 7,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6095801
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 12237948,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-8.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-8.stderr",
+      "case": "field-local-500",
+      "engine": "left",
+      "repetition": 8,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6801045
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 9712254,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-8.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-8.stderr",
+      "case": "field-local-500",
+      "engine": "right",
+      "repetition": 8,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6076915
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 9563604,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-9.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-9.stderr",
+      "case": "field-local-500",
+      "engine": "right",
+      "repetition": 9,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 5855789
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 8825066,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-9.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-9.stderr",
+      "case": "field-local-500",
+      "engine": "left",
+      "repetition": 9,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 5527182
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 9307954,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-10.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-10.stderr",
+      "case": "field-local-500",
+      "engine": "left",
+      "repetition": 10,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 5756262
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 9591186,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-10.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-10.stderr",
+      "case": "field-local-500",
+      "engine": "right",
+      "repetition": 10,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6190068
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 9345784,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-11.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-11.stderr",
+      "case": "field-local-500",
+      "engine": "right",
+      "repetition": 11,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 5592244
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 10229334,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-11.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-11.stderr",
+      "case": "field-local-500",
+      "engine": "left",
+      "repetition": 11,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 5793602
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 8734397,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-12.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-12.stderr",
+      "case": "field-local-500",
+      "engine": "left",
+      "repetition": 12,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 5532612
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 8973055,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-12.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-12.stderr",
+      "case": "field-local-500",
+      "engine": "right",
+      "repetition": 12,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 5536560
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 9990587,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-13.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-13.stderr",
+      "case": "field-local-500",
+      "engine": "right",
+      "repetition": 13,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6352042
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 8662471,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-13.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-13.stderr",
+      "case": "field-local-500",
+      "engine": "left",
+      "repetition": 13,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 5535849
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 9702565,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-14.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-14.stderr",
+      "case": "field-local-500",
+      "engine": "left",
+      "repetition": 14,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6018465
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 8928561,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-14.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-14.stderr",
+      "case": "field-local-500",
+      "engine": "right",
+      "repetition": 14,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 5552550
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 8936255,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-15.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-15.stderr",
+      "case": "field-local-500",
+      "engine": "right",
+      "repetition": 15,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 5495864
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 9958025,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-15.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-15.stderr",
+      "case": "field-local-500",
+      "engine": "left",
+      "repetition": 15,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6306396
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 8793778,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-16.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-16.stderr",
+      "case": "field-local-500",
+      "engine": "left",
+      "repetition": 16,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 5640214
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 9849992,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-16.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-16.stderr",
+      "case": "field-local-500",
+      "engine": "right",
+      "repetition": 16,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 5668467
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 8662842,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-17.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-17.stderr",
+      "case": "field-local-500",
+      "engine": "right",
+      "repetition": 17,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 5490103
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 8772959,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-17.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-17.stderr",
+      "case": "field-local-500",
+      "engine": "left",
+      "repetition": 17,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 5483981
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 10028187,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-18.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-18.stderr",
+      "case": "field-local-500",
+      "engine": "left",
+      "repetition": 18,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6326774
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 8816240,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-18.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-18.stderr",
+      "case": "field-local-500",
+      "engine": "right",
+      "repetition": 18,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 5646567
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 8931507,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-19.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-19.stderr",
+      "case": "field-local-500",
+      "engine": "right",
+      "repetition": 19,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 5511724
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 9120211,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-19.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-19.stderr",
+      "case": "field-local-500",
+      "engine": "left",
+      "repetition": 19,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 5588267
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 10222061,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-20.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-20.stderr",
+      "case": "field-local-500",
+      "engine": "left",
+      "repetition": 20,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6398248
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 10733151,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-20.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-20.stderr",
+      "case": "field-local-500",
+      "engine": "right",
+      "repetition": 20,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 7432031
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 9155577,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-21.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-21.stderr",
+      "case": "field-local-500",
+      "engine": "right",
+      "repetition": 21,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 5465526
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 9886761,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-21.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-21.stderr",
+      "case": "field-local-500",
+      "engine": "left",
+      "repetition": 21,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6123011
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 10182096,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-22.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-22.stderr",
+      "case": "field-local-500",
+      "engine": "left",
+      "repetition": 22,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 5942091
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 9758320,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-22.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-22.stderr",
+      "case": "field-local-500",
+      "engine": "right",
+      "repetition": 22,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 5786419
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 9822911,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-23.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-right-23.stderr",
+      "case": "field-local-500",
+      "engine": "right",
+      "repetition": 23,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6470314
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/field-local-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 10161257,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-23.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/field-local-500-left-23.stderr",
+      "case": "field-local-500",
+      "engine": "left",
+      "repetition": 23,
+      "workload_sha256": "e2a26e77bdbdd0658e97d8486994916f2e3ac452d9cedf74c3b6b88e4a77a114",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 6551417
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 17446812,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-0.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-0.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 0,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 13832052
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 17198366,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-0.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-0.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 0,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 13541395
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 17059034,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-1.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-1.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 1,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 13769123
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18573768,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-1.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-1.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 1,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15042545
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18717649,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-2.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-2.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 2,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15077912
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 19540215,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-2.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-2.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 2,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14993574
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18474633,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-3.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-3.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 3,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14673102
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18368313,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-3.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-3.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 3,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14323675
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 17345191,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-4.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-4.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 4,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 13794651
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18045436,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-4.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-4.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 4,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 13825870
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18689015,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-5.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-5.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 5,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14157153
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18754939,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-5.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-5.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 5,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14932319
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18134604,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-6.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-6.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 6,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14429554
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 16874006,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-6.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-6.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 6,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 13807927
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 17534516,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-7.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-7.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 7,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 13751190
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18210928,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-7.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-7.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 7,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14446356
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 19455294,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-8.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-8.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 8,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15342158
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 19106950,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-8.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-8.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 8,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15348069
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18379023,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-9.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-9.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 9,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14256890
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 17486536,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-9.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-9.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 9,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 13773311
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 19800793,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-10.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-10.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 10,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15196565
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 19531999,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-10.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-10.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 10,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15456283
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 17264800,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-11.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-11.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 11,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 13728558
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 17270080,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-11.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-11.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 11,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 13734599
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 17079141,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-12.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-12.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 12,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 13731433
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 19123271,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-12.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-12.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 12,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15183631
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 20264515,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-13.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-13.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 13,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15382815
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 19271670,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-13.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-13.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 13,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15341848
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18975743,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-14.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-14.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 14,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14946996
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18838626,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-14.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-14.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 14,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 13756350
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 16911115,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-15.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-15.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 15,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 13672562
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 20072384,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-15.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-15.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 15,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15835505
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 19540935,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-16.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-16.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 16,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15842528
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 19644620,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-16.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-16.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 16,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15510194
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 17644143,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-17.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-17.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 17,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 13765817
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 16932786,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-17.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-17.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 17,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 13694573
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 20564678,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-18.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-18.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 18,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 16188128
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 17549465,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-18.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-18.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 18,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 13829387
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 19738737,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-19.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-19.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 19,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 15528769
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 19484299,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-19.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-19.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 19,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14740899
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 17416505,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-20.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-20.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 20,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 13796756
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18533994,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-20.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-20.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 20,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14191617
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 17091374,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-21.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-21.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 21,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 13778001
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 17675922,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-21.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-21.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 21,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 13971995
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 19075541,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-22.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-22.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 22,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14837100
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 19163446,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-22.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-22.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 22,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14593582
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18751833,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-23.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-right-23.stderr",
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "repetition": 23,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14570980
+      }
+    },
+    {
+      "command": [
+        "/tmp/oxide-phase2-b2-compile-probe/target/release/oxide-compile-probe",
+        "/tmp/oxide-phase2-a1-compile-corpus/lexical-loop-500.js"
+      ],
+      "exit_code": 0,
+      "timed_out": false,
+      "process_wall_ns": 18845960,
+      "stdout": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-23.stdout",
+      "stderr": "/tmp/oxide-phase2-b2-clean-compile-aa/raw/lexical-loop-500-left-23.stderr",
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "repetition": 23,
+      "workload_sha256": "86448b2d7b35d490ef09c2069985383531ac5d9333418284c4f1070542e3b39c",
+      "status": "ok",
+      "measurements": {
+        "compile_ns": 14846948
+      }
+    }
+  ],
+  "summary": [
+    {
+      "case": "field-local-500",
+      "engine": "left",
+      "samples": 24,
+      "successful": 24,
+      "failures": [],
+      "eligible": true,
+      "bytes": 38390,
+      "metrics": {
+        "ns": {
+          "raw": [
+            5610800,
+            7178003,
+            5934848,
+            6616318,
+            5766692,
+            6377769,
+            7443201,
+            6095801,
+            6801045,
+            5527182,
+            5756262,
+            5793602,
+            5532612,
+            5535849,
+            6018465,
+            6306396,
+            5640214,
+            5483981,
+            6326774,
+            5588267,
+            6398248,
+            6123011,
+            5942091,
+            6551417
+          ],
+          "minimum": 5483981,
+          "median": 5980278.0,
+          "maximum": 7443201,
+          "stdev": 536941.8405636536
+        },
+        "mb_per_second": 6.419434012933847
+      }
+    },
+    {
+      "case": "field-local-500",
+      "engine": "right",
+      "samples": 24,
+      "successful": 24,
+      "failures": [],
+      "eligible": true,
+      "bytes": 38390,
+      "metrics": {
+        "ns": {
+          "raw": [
+            5762484,
+            5581685,
+            5556948,
+            6724371,
+            5601352,
+            6108194,
+            6332455,
+            6334278,
+            6076915,
+            5855789,
+            6190068,
+            5592244,
+            5536560,
+            6352042,
+            5552550,
+            5495864,
+            5668467,
+            5490103,
+            5646567,
+            5511724,
+            7432031,
+            5465526,
+            5786419,
+            6470314
+          ],
+          "minimum": 5465526,
+          "median": 5715475.5,
+          "maximum": 7432031,
+          "stdev": 491555.4241161344
+        },
+        "mb_per_second": 6.71685146756381
+      }
+    },
+    {
+      "case": "lexical-loop-500",
+      "engine": "left",
+      "samples": 24,
+      "successful": 24,
+      "failures": [],
+      "eligible": true,
+      "bytes": 44890,
+      "metrics": {
+        "ns": {
+          "raw": [
+            13832052,
+            15042545,
+            15077912,
+            14323675,
+            13794651,
+            14932319,
+            14429554,
+            14446356,
+            15342158,
+            13773311,
+            15196565,
+            13734599,
+            13731433,
+            15341848,
+            14946996,
+            15835505,
+            15842528,
+            13694573,
+            16188128,
+            14740899,
+            13796756,
+            13971995,
+            14837100,
+            14846948
+          ],
+          "minimum": 13694573,
+          "median": 14788999.5,
+          "maximum": 16188128,
+          "stdev": 757130.7932138861
+        },
+        "mb_per_second": 3.035364224604917
+      }
+    },
+    {
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "samples": 24,
+      "successful": 24,
+      "failures": [],
+      "eligible": true,
+      "bytes": 44890,
+      "metrics": {
+        "ns": {
+          "raw": [
+            13541395,
+            13769123,
+            14993574,
+            14673102,
+            13825870,
+            14157153,
+            13807927,
+            13751190,
+            15348069,
+            14256890,
+            15456283,
+            13728558,
+            15183631,
+            15382815,
+            13756350,
+            13672562,
+            15510194,
+            13765817,
+            13829387,
+            15528769,
+            14191617,
+            13778001,
+            14593582,
+            14570980
+          ],
+          "minimum": 13541395,
+          "median": 14174385.0,
+          "maximum": 15528769,
+          "stdev": 705612.2316226051
+        },
+        "mb_per_second": 3.1669804368937347
+      }
+    }
+  ],
+  "ratios": [
+    {
+      "case": "field-local-500",
+      "engine": "right",
+      "reference": "left",
+      "ratio": 1.0463307908502102
+    },
+    {
+      "case": "lexical-loop-500",
+      "engine": "right",
+      "reference": "left",
+      "ratio": 1.0433609288868617
+    }
+  ]
+}
