@@ -3,11 +3,14 @@
 状态：M1 在 `3d98c0a8ee065e5c71607b46bd0059282c6d7e87`
 实现；PR #53 随后扩展了 M2 的直接目的地、数组更新和比较分支，
 并在 `6f1de9c5` 发布执行字 continuation、CFG lexical 初始化事实及
-V8 v7 数组乘积更新来源。C1 连通同帧原语数值运算的 fallthrough 传递；
+V8 v7 数组乘积更新来源。后续又校正乘积赋值的选择/发布契约，覆盖
+`lin_solve` 的三段数组生产到目的地链，并压缩发布描述符。C1 连通同帧
+原语数值运算的 fallthrough 传递；
 其余工作流仍是提案。PR #53 的直接基线是 PR #52
 `4287e8c6019933289f3a06e703aea15bf79c9f11`；更早的
 `996663f771afdabdc69d52c94bd4d2fb392e27b1` 是原设计起点。
-M1 的历史验证和测量见[收据](receipts/m1-numeric-region-2026-09-28/README.md)。当前实现见
+M1 的历史验证和测量见[收据](receipts/m1-numeric-region-2026-09-28/README.md)，
+后续覆盖与成本见[当前收据](receipts/numeric-region-followthrough-2026-09-28/README.md)。当前实现见
 [架构](../architecture.md)，设计约束见[原则](principles.md)，测量方法见
 [测量协议](measurement.md)。本页落实
 [Rust Design Patterns Examples 会话](https://chatgpt.com/c/6ab8fc22-1d2c-83ee-b108-5d89db1efba2)
@@ -21,9 +24,9 @@ M1 的历史验证和测量见[收据](receipts/m1-numeric-region-2026-09-28/REA
 
 | 工作流 | 交付目标 | 顺序与依赖 |
 | --- | --- | --- |
-| 执行规划 | binding、effect、ownership 与局部 dataflow 决定显式操作数、目的地和执行形态 | M1/M2 已覆盖四种有限形态；数组乘积来源共享 producer fact，继续减少精确形态匹配 |
+| 执行规划 | binding、effect、ownership 与局部 dataflow 决定显式操作数、目的地和执行形态 | 局部累加、直接目的地、数组更新、乘积赋值、比较及 `lin_solve` 中三个短区域已交付；数组乘积来源共享 producer fact，后续按实际剩余执行链扩展 |
 | 作用域执行 | 准入返回可消费的目的地访问；数组事实在相应借用内有效 | local 提交与现有 own Number 元素更新已交付；继续复用准入契约 |
-| continuation 与调用 | 携带已知 fault/fallthrough 位置，按发布的布局安装帧，按被替换 owner 选择释放边界 | 四种数值操作已使用执行字 continuation 与 scalar 替换准入；C1 覆盖同帧原语数值运算，C2 属性完成与 C3 延迟回复/调用仍独立推进 |
+| continuation 与调用 | 携带已知 fault/fallthrough 位置，按发布的布局安装帧，按被替换 owner 选择释放边界 | 数值操作使用执行字 continuation，乘积赋值支持 scalar 替换准入；C1 覆盖同帧原语数值运算，C2 属性完成与 C3 延迟回复/调用仍独立推进 |
 | 自适应操作 | 等布局 opcode family、直接 cache-site ID、有界重试、向回落传递已有 miss 事实 | 先确定操作的所有权与 continuation 契约，再接入生产适应机制 |
 | 存储 | 数值 backing 与 cell/shape 类型化 arena，保留完整身份及回收边 | 数组 backing 复用 M1/M2 操作契约；小节点 arena 可独立推进 |
 | 嵌入执行 | 有界 safepoint、activation scratch、只读 program image、明确语义的 native kernel | 扩大区域前定义中断/计费契约；冻结映像明确 linking 与自适应状态边界 |
@@ -146,15 +149,18 @@ slot 位置或堆引用；Copy Number 与仍在作用域内的 frame destination
 测试检查发布的操作，不能只从源码形状或结果相同推断已命中。
 
 M2 已在同一来源、binding、准入及发布契约上扩展数组读的直接目的地、
-已有 writable own Number 的元素更新和直接比较分支。更新把读、计算、写
-放在一次可变 heap 借用内；比较的命中路径直接选择 continuation。M2 支持
-同一基本块内已初始化、未捕获的 lexical `let` 目的地和 `const` 来源，
-其他不确定 binding 回落普通指令。每种操作有精确消耗区间、独立 opcode、
-描述符形态及对应的原词回落入口。当前更新和比较选择仍使用有限的连续形态
-识别，共用静态来源与运行时准入；不能称为任意表达式规划。新测量见
-[M2 收据](receipts/m2-numeric-operations-2026-09-28/README.md)。
-读资格与写资格分开，数组 alias 的动态事实仅在借用期有效。M3 再接适应
-family 和数值 backing。
+已有 writable own Number 的元素更新和直接比较分支。简单元素更新在一次
+可变 heap 借用内读旧值并写回；数组乘积增量先以短 shared 借用读取来源，
+再以单独的可变借用更新目标。比较的命中路径直接选择 continuation。
+已初始化、未捕获的 lexical `let` 目的地和 `const` 来源现在可由可达普通
+CFG 前驱的交集证明；不确定的异常或恢复入口及其他不确定 binding 回落普通
+指令。每种操作有精确消耗区间、独立 opcode、描述符形态及对应的原词回落入口。
+更新、比较及新短区域仍使用有限形态识别，共用静态来源与运行时准入；
+不能称为任意表达式规划。历史 M2 测量见
+[M2 收据](receipts/m2-numeric-operations-2026-09-28/README.md)，当前覆盖和成本见
+[后续收据](receipts/numeric-region-followthrough-2026-09-28/README.md)。
+读资格与写资格分开，数组 alias 的动态事实仅在借用期有效。自适应 family
+与数值 backing 仍是独立实验，不作为下一段执行链的前提。
 另行推进 continuation 的已知位置传递与 cell/shape arena，不等待完整优化器。
 扩大区域及长 kernel 前先确定精确逻辑耗尽还是块级计费、轮询上界及 root 发布点。
 
