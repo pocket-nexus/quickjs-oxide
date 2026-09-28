@@ -1,6 +1,50 @@
 use super::*;
 
 #[test]
+fn explicit_gc_caps_empty_zero_queue_but_ordinary_releases_reuse_it() {
+    let runtime = Runtime::new();
+    let baseline = runtime.heap_counts();
+    let roots: Vec<_> = (0..32).map(|_| runtime.new_object(None).unwrap()).collect();
+    let retained_capacity = {
+        let mut state = runtime.0.state.borrow_mut();
+        state.heap.zero_queue.reserve(8192);
+        state.heap.zero_queue.capacity()
+    };
+    assert!(retained_capacity > 4096);
+
+    drop(roots);
+    assert_eq!(runtime.heap_counts().object_nodes, baseline.object_nodes);
+    assert_eq!(
+        runtime.0.state.borrow().heap.zero_queue.capacity(),
+        retained_capacity
+    );
+
+    runtime.run_gc().unwrap();
+    let state = runtime.0.state.borrow();
+    assert!(state.heap.zero_queue.is_empty());
+    assert!(state.heap.zero_queue.capacity() <= 4096);
+}
+
+#[test]
+fn explicit_gc_drains_deferred_release_before_trimming_zero_queue() {
+    let runtime = Runtime::new();
+    let baseline = runtime.heap_counts();
+    let object = runtime.new_object(None).unwrap();
+    let mut state = runtime.0.state.borrow_mut();
+    state.heap.zero_queue.reserve(8192);
+    drop(object);
+    assert!(runtime.0.deferred_references.has_pending());
+    drop(state);
+
+    runtime.run_gc().unwrap();
+    assert_eq!(runtime.heap_counts().object_nodes, baseline.object_nodes);
+    assert!(!runtime.0.deferred_references.has_pending());
+    let state = runtime.0.state.borrow();
+    assert!(state.heap.zero_queue.is_empty());
+    assert!(state.heap.zero_queue.capacity() <= 4096);
+}
+
+#[test]
 fn object_property_cycle_is_collected_only_by_explicit_gc() {
     let runtime = Runtime::new();
     let object = runtime.new_object(None).unwrap();

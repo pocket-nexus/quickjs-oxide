@@ -1964,6 +1964,21 @@ impl Heap {
         self.drain_zero_queue_slow()
     }
 
+    /// An explicit collection is a deliberate point to give back backing
+    /// retained by a past release burst. Ordinary releases keep their queue
+    /// capacity for reuse, and pending destruction is never discarded.
+    pub(crate) fn trim_empty_zero_queue_after_gc(&mut self) {
+        const RETAINED_IDS: usize = 4096;
+        if self.zero_queue.is_empty() && self.zero_queue.capacity() > RETAINED_IDS {
+            self.zero_queue.shrink_to(RETAINED_IDS);
+            // VecDeque may retain more than its requested minimum on some
+            // allocators. Keep the policy an actual upper bound in that case.
+            if self.zero_queue.capacity() > RETAINED_IDS {
+                self.zero_queue = VecDeque::new();
+            }
+        }
+    }
+
     fn drain_zero_queue_slow(&mut self) -> Result<HeapCleanup, HeapError> {
         let mut cleanup = HeapCleanup::default();
         while let Some(id) = self.zero_queue.pop_front() {
