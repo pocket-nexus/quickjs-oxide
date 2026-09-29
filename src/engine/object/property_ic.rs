@@ -20,11 +20,26 @@ struct Location {
     numeric_key: bool,
 }
 
+pub(crate) enum CacheSelection<'a> {
+    Data(&'a RawValue),
+    Accessor(Option<ObjectId>),
+    CompleteAbsent,
+    Unresolved,
+}
+
+enum Located<'a> {
+    Data(Location, &'a RawValue),
+    Accessor(Location, Option<ObjectId>),
+    CompleteAbsent,
+    Unresolved,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 enum State {
     #[default]
     Cold,
     Monomorphic(Location),
+    Accessor(Location),
     Polymorphic([Location; 2]),
     Megamorphic(u16),
 }
@@ -48,6 +63,7 @@ impl PropertyReadCache {
     ) -> Option<&'a RawValue> {
         match self.state.get() {
             State::Cold => None,
+            State::Accessor(_) => None,
             State::Monomorphic(location) => {
                 Self::read_location(location, heap, domain, realm, receiver)
             }
@@ -112,6 +128,40 @@ impl PropertyReadCache {
         }
     }
 
+    #[inline]
+    fn read_accessor_location(
+        location: Location,
+        heap: &Heap,
+        domain: u64,
+        realm: ContextId,
+        receiver: ObjectId,
+    ) -> Option<Option<ObjectId>> {
+        if location.domain != domain || location.realm != realm {
+            return None;
+        }
+        let object = heap.object_fast(receiver);
+        if !ordinary_receiver(object, location.numeric_key) || object.shape != location.shape {
+            return None;
+        }
+        if heap.shape_fast(object.shape).layout_revision() != location.revision {
+            return None;
+        }
+        let mut holder = receiver;
+        if location.depth != 0 {
+            if heap.property_layout_epoch() != location.prototype_epoch {
+                return None;
+            }
+            for _ in 0..location.depth {
+                let data = heap.object_fast(holder);
+                holder = heap.shape_fast(data.shape).prototype()?;
+            }
+        }
+        match heap.object_fast(holder).slots.get(location.slot as usize)? {
+            PropertySlot::Accessor { get, .. } => Some(get.option()),
+            _ => None,
+        }
+    }
+
     /// Called once on a miss, before the canonical read. This is observational:
     /// it neither roots a value nor invokes an accessor/exotic operation.
     pub(crate) fn miss(
@@ -123,15 +173,58 @@ impl PropertyReadCache {
         receiver: Option<ObjectId>,
         atom: Atom,
     ) {
+        let _ = self.miss_selected(heap, atoms, domain, realm, receiver, atom);
+    }
+
+    /// Select data, an accessor, or complete absence during one ordinary
+    /// traversal. Adapt a data/accessor location when the site is eligible;
+    /// cooldown still returns today's result without installing metadata.
+    /// The caller must own a borrowed data/getter result before ending its
+    /// heap borrow. Exotic and lazy storage stays with the object driver.
+    pub(crate) fn miss_selected<'a>(
+        &self,
+        heap: &'a Heap,
+        atoms: &AtomTable,
+        domain: u64,
+        realm: ContextId,
+        receiver: Option<ObjectId>,
+        atom: Atom,
+    ) -> CacheSelection<'a> {
         let state = self.state.get();
-        if matches!(state, State::Megamorphic(_)) {
-            return;
+        if let (State::Accessor(location), Some(receiver)) = (state, receiver)
+            && let Some(getter) =
+                Self::read_accessor_location(location, heap, domain, realm, receiver)
+        {
+            return CacheSelection::Accessor(getter);
         }
-        let Some(location) = receiver.and_then(|r| locate(heap, atoms, domain, realm, r, atom))
-        else {
-            self.state.set(State::Megamorphic(1024));
-            event("property_ic.megamorphic");
-            return;
+        if matches!(state, State::Megamorphic(_)) {
+            // Cooldown prevents installing another location, but it does not
+            // prevent selecting today's ordinary data/getter/absence. The
+            // caller consumes that borrowed result under this same heap
+            // borrow, avoiding a second canonical lookup on data reads.
+            return match receiver.map(|r| locate(heap, atoms, domain, realm, r, atom)) {
+                Some(Located::Data(_, raw)) => CacheSelection::Data(raw),
+                Some(Located::Accessor(_, getter)) => CacheSelection::Accessor(getter),
+                Some(Located::CompleteAbsent) => CacheSelection::CompleteAbsent,
+                _ => CacheSelection::Unresolved,
+            };
+        }
+        let (location, raw) = match receiver.map(|r| locate(heap, atoms, domain, realm, r, atom)) {
+            Some(Located::Data(location, raw)) => (location, raw),
+            Some(Located::Accessor(location, getter)) => {
+                self.state.set(State::Accessor(location));
+                event("property_ic.miss");
+                return CacheSelection::Accessor(getter);
+            }
+            found => {
+                self.state.set(State::Megamorphic(1024));
+                event("property_ic.megamorphic");
+                return if matches!(found, Some(Located::CompleteAbsent)) {
+                    CacheSelection::CompleteAbsent
+                } else {
+                    CacheSelection::Unresolved
+                };
+            }
         };
         // A revision change of the same shape replaces stale knowledge instead
         // of spending another polymorphic slot on an unreachable old revision.
@@ -142,6 +235,7 @@ impl PropertyReadCache {
         };
         let next = match state {
             State::Cold => State::Monomorphic(location),
+            State::Accessor(_) => State::Monomorphic(location),
             State::Monomorphic(old) if same_key(old) => State::Monomorphic(location),
             State::Monomorphic(old) => State::Polymorphic([location, old]),
             State::Polymorphic([first, second]) if same_key(first) => {
@@ -157,6 +251,7 @@ impl PropertyReadCache {
         };
         self.state.set(next);
         event("property_ic.miss");
+        CacheSelection::Data(raw)
     }
 }
 
@@ -256,56 +351,82 @@ fn ordinary_receiver(data: &crate::engine::heap::ObjectData, numeric: bool) -> b
     }
 }
 
-fn locate(
-    heap: &Heap,
+fn locate<'a>(
+    heap: &'a Heap,
     atoms: &AtomTable,
     domain: u64,
     realm: ContextId,
     receiver: ObjectId,
     atom: Atom,
-) -> Option<Location> {
-    let initial = heap.object(receiver).ok()?;
-    let initial_shape = heap.shape(initial.shape).ok()?;
+) -> Located<'a> {
+    let Some(initial) = heap.object(receiver).ok() else {
+        return Located::Unresolved;
+    };
+    let Some(initial_shape) = heap.shape(initial.shape).ok() else {
+        return Located::Unresolved;
+    };
     let revision = initial_shape.layout_revision();
     let epoch = heap.property_layout_epoch();
     if revision == u64::MAX || epoch == u64::MAX {
-        return None;
+        return Located::Unresolved;
     }
-    let numeric = atoms.array_index(atom).ok()?.is_some()
-        || (atoms.property_key_kind(atom).ok()? == crate::engine::atom::PropertyKeyKind::String
-            && {
-                // Conservative, allocation-free superset of CanonicalNumericIndexString.
-                // TypedArray intercepts -0/NaN/Infinity and non-array-index numbers.
-                let spelling = atoms.to_js_string(atom).ok()?;
-                let first = spelling.utf16_units().next();
-                matches!(first, Some(43 | 45 | 46 | 48..=57))
-                    || spelling.utf16_units().eq("NaN".encode_utf16())
-                    || spelling.utf16_units().eq("Infinity".encode_utf16())
-            });
+    let Ok(array_index) = atoms.array_index(atom) else {
+        return Located::Unresolved;
+    };
+    let Ok(key_kind) = atoms.property_key_kind(atom) else {
+        return Located::Unresolved;
+    };
+    let numeric = array_index.is_some()
+        || (key_kind == crate::engine::atom::PropertyKeyKind::String && {
+            // Conservative, allocation-free superset of CanonicalNumericIndexString.
+            // TypedArray intercepts -0/NaN/Infinity and non-array-index numbers.
+            let Some(spelling) = atoms.to_js_string(atom).ok() else {
+                return Located::Unresolved;
+            };
+            let first = spelling.utf16_units().next();
+            matches!(first, Some(43 | 45 | 46 | 48..=57))
+                || spelling.utf16_units().eq("NaN".encode_utf16())
+                || spelling.utf16_units().eq("Infinity".encode_utf16())
+        });
     let mut holder = receiver;
     let mut depth = 0u32;
     loop {
-        let data = heap.object(holder).ok()?;
+        let Some(data) = heap.object(holder).ok() else {
+            return Located::Unresolved;
+        };
         if !ordinary_receiver(data, numeric) {
-            return None;
+            return Located::Unresolved;
         }
-        let shape = heap.shape(data.shape).ok()?;
+        let Some(shape) = heap.shape(data.shape).ok() else {
+            return Located::Unresolved;
+        };
         if let Some(slot) = shape.find(AtomIdx::from_raw(atom.raw())) {
-            return matches!(data.slots.get(slot as usize), Some(PropertySlot::Data(_))).then_some(
-                Location {
-                    domain,
-                    realm,
-                    shape: initial.shape,
-                    revision,
-                    prototype_epoch: epoch,
-                    depth,
-                    slot,
-                    numeric_key: numeric,
-                },
-            );
+            let location = Location {
+                domain,
+                realm,
+                shape: initial.shape,
+                revision,
+                prototype_epoch: epoch,
+                depth,
+                slot,
+                numeric_key: numeric,
+            };
+            return match data.slots.get(slot as usize) {
+                Some(PropertySlot::Data(raw)) => Located::Data(location, raw),
+                Some(PropertySlot::Accessor { get, .. }) => {
+                    Located::Accessor(location, get.option())
+                }
+                _ => Located::Unresolved,
+            };
         }
-        holder = shape.prototype()?;
-        depth = depth.checked_add(1)?;
+        let Some(prototype) = shape.prototype() else {
+            return Located::CompleteAbsent;
+        };
+        holder = prototype;
+        let Some(next_depth) = depth.checked_add(1) else {
+            return Located::Unresolved;
+        };
+        depth = next_depth;
     }
 }
 

@@ -444,7 +444,7 @@ impl FrameSlots<'_> {
         key_index: u32,
         keep_receiver: bool,
         native: &mut Option<crate::engine::object::LinkedNativeSelection>,
-    ) -> Result<bool, Error> {
+    ) -> Result<super::PropertyReadProgress, Error> {
         self.store.property_ic_read_current(
             self.window,
             runtime,
