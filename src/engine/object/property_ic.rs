@@ -176,10 +176,11 @@ impl PropertyReadCache {
         let _ = self.miss_selected(heap, atoms, domain, realm, receiver, atom);
     }
 
-    /// Adapt a data location and return the value found during that same
-    /// traversal. The caller must copy or retain it before ending its heap
-    /// borrow. A failed data selection leaves the general object algorithm
-    /// responsible for accessors, exotics, and complete absence.
+    /// Select data, an accessor, or complete absence during one ordinary
+    /// traversal. Adapt a data/accessor location when the site is eligible;
+    /// cooldown still returns today's result without installing metadata.
+    /// The caller must own a borrowed data/getter result before ending its
+    /// heap borrow. Exotic and lazy storage stays with the object driver.
     pub(crate) fn miss_selected<'a>(
         &self,
         heap: &'a Heap,
@@ -197,7 +198,16 @@ impl PropertyReadCache {
             return CacheSelection::Accessor(getter);
         }
         if matches!(state, State::Megamorphic(_)) {
-            return CacheSelection::Unresolved;
+            // Cooldown prevents installing another location, but it does not
+            // prevent selecting today's ordinary data/getter/absence. The
+            // caller consumes that borrowed result under this same heap
+            // borrow, avoiding a second canonical lookup on data reads.
+            return match receiver.map(|r| locate(heap, atoms, domain, realm, r, atom)) {
+                Some(Located::Data(_, raw)) => CacheSelection::Data(raw),
+                Some(Located::Accessor(_, getter)) => CacheSelection::Accessor(getter),
+                Some(Located::CompleteAbsent) => CacheSelection::CompleteAbsent,
+                _ => CacheSelection::Unresolved,
+            };
         }
         let (location, raw) = match receiver.map(|r| locate(heap, atoms, domain, realm, r, atom)) {
             Some(Located::Data(location, raw)) => (location, raw),
