@@ -1,6 +1,6 @@
 # 类型化堆存储
 
-当前堆把 Object、Context 和 FunctionBytecode 存于共享 arena，把捕获变量 cell、Shape 与 leaf 值分别存于对应的类型化存储。`VarRefId`、`ShapeId` 等 ID 携带完整代际身份。主要实现位于 `src/engine/heap/arena.rs`、`auxiliary_arena.rs`、`identity.rs`、`binding_storage.rs`、`object_storage.rs` 和 `gc.rs`。
+当前堆把 Object、Context 和 FunctionBytecode 存于共享 arena，把捕获变量 cell 与 Shape 分别存于独立的类型化 arena，把 String 与 BigInt 存于共享的 leaf arena。`VarRefId`、`ShapeId` 等 ID 携带完整代际身份。主要实现位于 `src/engine/heap/arena.rs`、`auxiliary_arena.rs`、`identity.rs`、`binding_storage.rs`、`object_storage.rs` 和 `gc.rs`。
 
 ## 捕获变量与形状
 
