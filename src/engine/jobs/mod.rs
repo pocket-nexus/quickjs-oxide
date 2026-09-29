@@ -461,6 +461,18 @@ impl Runtime {
     /// integer result and obsolete `pctx` out-parameter of
     /// `JS_ExecutePendingJob`.
     pub fn execute_pending_job(&self) -> Result<PendingJobOutcome, PendingJobError> {
+        if self.0.execution_turn_depth.get() != 0 {
+            return Err(PendingJobError {
+                context: None,
+                error: RuntimeError::ExecutionActive,
+            });
+        }
+        let _turn = self
+            .enter_execution_turn()
+            .map_err(|error| PendingJobError {
+                context: None,
+                error,
+            })?;
         let _operation = self.operation();
         let Some(job) = self.0.state.borrow_mut().pending_jobs.pop_front() else {
             return Ok(PendingJobOutcome::NoJob);

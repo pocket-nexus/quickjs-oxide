@@ -57,7 +57,9 @@ impl Runtime {
         }
         let active_frame_depth = Rc::new(Cell::new(0));
         Self(Rc::new(RuntimeInner {
+            execution_turn_depth: Cell::new(0),
             state: RefCell::new(RuntimeState {
+                kept_objects: Default::default(),
                 atoms,
                 pinned_atoms,
                 heap: {

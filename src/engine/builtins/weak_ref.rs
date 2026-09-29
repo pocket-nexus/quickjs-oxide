@@ -223,7 +223,9 @@ impl Runtime {
         let cleanup = state.heap.release_shape(shape)?;
         state.apply_cleanup(cleanup)?;
         drop(state);
-        Ok(ObjectRef::from_owned_handle(self.clone(), object))
+        let object = ObjectRef::from_owned_handle(self.clone(), object);
+        self.add_to_kept_objects(target)?;
+        Ok(object)
     }
 
     fn new_finalization_registry_object(
@@ -318,6 +320,7 @@ impl Runtime {
                 if !live {
                     return Ok(Completion::Return(JsValue::Undefined));
                 }
+                self.add_to_kept_objects(target)?;
                 let raw = match target {
                     WeakCollectionKey::Object(object) => RawValue::Object(object),
                     // The branded key atom was already validated by the heap

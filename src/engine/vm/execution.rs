@@ -168,6 +168,7 @@ impl Drop for HostBoundaryGuard {
 }
 
 struct ExecutionGuard {
+    _turn: crate::engine::heap::runtime::execution_turn::ExecutionTurn,
     registration: ExecutionRegistration,
 }
 
@@ -190,6 +191,9 @@ impl ExecutionGuard {
                 "internal callback attempted a nested root execution",
             ));
         }
+        let turn = runtime
+            .enter_execution_turn()
+            .map_err(super::exception::runtime_error_to_vm_error)?;
         let registration = ExecutionRegistration {
             domain,
             id,
@@ -203,7 +207,10 @@ impl ExecutionGuard {
             active.push(registration);
             Ok(())
         })?;
-        Ok(Self { registration })
+        Ok(Self {
+            registration,
+            _turn: turn,
+        })
     }
 }
 

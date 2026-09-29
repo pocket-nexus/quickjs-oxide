@@ -12,6 +12,8 @@ use std::fmt;
 /// Checked failures at the public runtime-domain boundary.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RuntimeError {
+    /// Pending jobs cannot interrupt a synchronous execution turn.
+    ExecutionActive,
     WrongRuntime(&'static str),
     WrongContext(&'static str),
     /// A module identity escaped a construction or resolution transaction
@@ -34,6 +36,9 @@ pub enum RuntimeError {
 impl fmt::Display for RuntimeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::ExecutionActive => {
+                formatter.write_str("pending jobs cannot interrupt synchronous execution")
+            }
             Self::WrongRuntime(kind) => write!(formatter, "{kind} belongs to another runtime"),
             Self::WrongContext(kind) => write!(formatter, "{kind} belongs to another context"),
             Self::AbortedModule => {

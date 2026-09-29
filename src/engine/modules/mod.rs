@@ -3686,6 +3686,7 @@ impl Context {
         source: &str,
         options: &CompileOptions,
     ) -> Result<ModuleBytecodeRef, RuntimeError> {
+        let _turn = self.runtime.enter_execution_turn()?;
         let compilation =
             self.runtime
                 .compile_module_in_realm(self.realm, source, &options.filename)?;
@@ -3703,6 +3704,7 @@ impl Context {
         source: &[u8],
         options: &CompileOptions,
     ) -> Result<ModuleBytecodeRef, RuntimeError> {
+        let _turn = self.runtime.enter_execution_turn()?;
         let compilation =
             self.runtime
                 .compile_module_bytes_in_realm(self.realm, source, &options.filename)?;
@@ -3743,6 +3745,7 @@ impl Context {
     /// Link and evaluate one runtime-published static module, returning the
     /// cycle root's cached evaluation Promise on every normal engine path.
     pub fn execute_module(&mut self, module: &ModuleBytecodeRef) -> Result<Value, RuntimeError> {
+        let _turn = self.runtime.enter_execution_turn()?;
         self.runtime.execute_module(self.realm, module)
     }
 
@@ -3751,6 +3754,7 @@ impl Context {
     /// observable to conformance harnesses while [`Self::execute_module`]
     /// retains the ordinary combined link/evaluate convenience.
     pub fn link_module(&mut self, module: &ModuleBytecodeRef) -> Result<(), RuntimeError> {
+        let _turn = self.runtime.enter_execution_turn()?;
         if !module.belongs_to(&self.runtime) {
             return Err(RuntimeError::WrongRuntime("module bytecode"));
         }

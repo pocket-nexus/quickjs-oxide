@@ -1069,6 +1069,7 @@ fn engine_fault(
     prefix: Option<&str>,
 ) -> WorkerResult {
     let actual_type = match &error {
+        RuntimeError::ExecutionActive => "ExecutionActive",
         RuntimeError::WrongRuntime(_) => "WrongRuntime",
         RuntimeError::WrongContext(_) => "WrongContext",
         RuntimeError::AbortedModule => "AbortedModule",

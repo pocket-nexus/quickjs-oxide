@@ -4,6 +4,7 @@
 //! each context is a separate realm and execution surface. The heap and
 //! intrinsics extend this boundary; they are not hidden in the compiler or VM.
 
+pub(crate) mod execution_turn;
 mod layout;
 use self::error::RuntimeError;
 use self::intrinsics::promise::HostPromiseRejectionTracker;
@@ -30,6 +31,7 @@ use std::sync::atomic::AtomicU64;
 pub(crate) static NEXT_RUNTIME_DOMAIN_ID: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) struct RuntimeInner {
+    pub(crate) execution_turn_depth: Cell<usize>,
     pub(crate) state: RefCell<RuntimeState>,
     /// Incremental activation count, readable without borrowing heap state.
     pub(crate) active_frame_depth: Rc<Cell<usize>>,
@@ -102,6 +104,8 @@ impl Drop for RuntimeOperation<'_> {
 }
 
 pub(crate) struct RuntimeState {
+    pub(crate) kept_objects:
+        std::collections::HashSet<crate::engine::heap::WeakCollectionKey, FxBuildHasher>,
     pub(crate) atoms: AtomTable,
     pub(crate) pinned_atoms: crate::engine::atom::pinned::PinnedAtoms,
     pub(crate) heap: Heap,
@@ -733,6 +737,8 @@ impl RuntimeState {
 impl Drop for RuntimeInner {
     fn drop(&mut self) {
         let state = self.state.get_mut();
+        let clear = state.clear_kept_objects();
+        debug_assert!(clear.is_ok(), "kept-object teardown failed: {clear:?}");
         let deferred = &self.deferred_references;
         while let Some(operation) = deferred.pop_front() {
             let result = state.apply_deferred_operation(operation);
