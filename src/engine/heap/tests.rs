@@ -14,6 +14,34 @@ fn collect_heap(heap: &mut Heap) -> Result<GcStats, HeapError> {
 const DATA_FLAGS: PropertyFlags = PropertyFlags::data(true, true, true);
 
 #[test]
+fn queued_resident_rejects_live_access_and_is_reclaimed_once() {
+    let mut heap = Heap::new();
+    let shape = empty_shape(&mut heap);
+    let object = leaf(&mut heap, shape);
+    let address = heap.object(object).unwrap() as *const ObjectData;
+    heap.queue_release_for_test(RawId::Object(object)).unwrap();
+    assert!(!heap.is_live(RawId::Object(object)));
+    assert!(heap.object(object).is_err());
+    assert!(heap.retain_object(object).is_err());
+    assert_eq!(heap.counts().zero_queued, 1);
+    let SlotState::Resident(node) = &heap.slots[object.index as usize].state else {
+        panic!()
+    };
+    let NodeData::Object(data) = &node.data else {
+        panic!()
+    };
+    assert_eq!(data as *const ObjectData, address);
+    assert_eq!(heap.drain_zero_queue().unwrap().finalized_objects, 1);
+    assert_eq!(heap.drain_zero_queue().unwrap().finalized_objects, 0);
+    let replacement = leaf(&mut heap, shape);
+    assert_eq!(replacement.index, object.index);
+    assert_ne!(replacement.generation, object.generation);
+    assert!(heap.object(object).is_err());
+    heap.release_object(replacement).unwrap();
+    heap.release_shape(shape).unwrap();
+}
+
+#[test]
 fn multiset_difference_preserves_left_order_and_occurrence_counts() {
     assert_eq!(
         multiset_difference(

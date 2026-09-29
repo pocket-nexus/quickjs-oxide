@@ -206,7 +206,7 @@ impl Heap {
         shape_dictionary_links.count = None;
         for slot in &self.slots {
             let node = match &slot.state {
-                SlotState::Live(node) | SlotState::ZeroQueued(node) => node,
+                SlotState::Resident(node) => node,
                 _ => continue,
             };
             match &node.data {

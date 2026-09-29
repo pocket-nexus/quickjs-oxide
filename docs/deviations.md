@@ -11,7 +11,7 @@ accepted as a deviation.
 ### ECMASCRIPT-WEAKREF-LIFETIME-001
 
 - Status: target approved by the maintainer on 2026-09-30; kept-object execution
-  scopes implemented, ordinary argument ownership optimization follows.
+  scopes and ordinary argument ownership transfer implemented.
 - Surface: WeakRef target liveness, FinalizationRegistry cleanup scheduling, and
   observable argument lifetimes during function calls.
 - Authority: the maintainer explicitly directed that ECMAScript govern this

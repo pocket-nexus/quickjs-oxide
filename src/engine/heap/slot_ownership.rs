@@ -40,8 +40,8 @@ impl Heap {
             return SlotReleaseReadiness::Drain;
         }
         match &self.slots[object.index as usize].state {
-            SlotState::Live(node) if node.strong.get() > 1 => SlotReleaseReadiness::Ready,
-            SlotState::Live(node) if node.strong.get() == 1 => {
+            SlotState::Resident(node) if node.strong.get() > 1 => SlotReleaseReadiness::Ready,
+            SlotState::Resident(node) if node.strong.get() == 1 => {
                 if self.zero_queue.len() == self.zero_queue.capacity() {
                     SlotReleaseReadiness::QueueCapacity
                 } else {
@@ -96,8 +96,8 @@ impl Heap {
             return Ok(SlotReleaseReadiness::Drain);
         }
         match &self.slots[index].state {
-            SlotState::Live(node) if node.strong.get() > 1 => Ok(SlotReleaseReadiness::Ready),
-            SlotState::Live(node) if node.strong.get() == 1 => {
+            SlotState::Resident(node) if node.strong.get() > 1 => Ok(SlotReleaseReadiness::Ready),
+            SlotState::Resident(node) if node.strong.get() == 1 => {
                 // release_raw_no_drain would push to this queue. Do not commit
                 // its decrement before deciding whether that push can allocate.
                 Ok(if self.zero_queue.len() == self.zero_queue.capacity() {

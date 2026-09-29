@@ -67,12 +67,12 @@ impl Heap {
                     counts.initializing = counts.initializing.saturating_add(1);
                     increment_kind_count(&mut counts, *kind);
                 }
-                SlotState::Live(node) => {
-                    counts.live = counts.live.saturating_add(1);
-                    increment_kind_count(&mut counts, node.data.kind());
-                }
-                SlotState::ZeroQueued(node) => {
-                    counts.zero_queued = counts.zero_queued.saturating_add(1);
+                SlotState::Resident(node) => {
+                    if node.strong.get() == 0 {
+                        counts.zero_queued = counts.zero_queued.saturating_add(1);
+                    } else {
+                        counts.live = counts.live.saturating_add(1);
+                    }
                     increment_kind_count(&mut counts, node.data.kind());
                 }
                 SlotState::Zombie { kind, .. } => {
@@ -290,7 +290,7 @@ impl Heap {
                 "initializing slot metadata did not match its payload",
             ));
         }
-        slot.state = SlotState::Live(Node {
+        slot.state = SlotState::Resident(Node {
             strong: Cell::new(strong),
             data,
         });
@@ -402,7 +402,8 @@ impl Heap {
 
     pub(in crate::engine::heap) fn live_index(&self, id: RawId) -> Result<usize, HeapError> {
         let index = self.validate_slot_identity(id)?;
-        if !matches!(self.slots[index].state, SlotState::Live(_)) {
+        if !matches!(&self.slots[index].state, SlotState::Resident(node) if node.strong.get() != 0)
+        {
             return Err(HeapError::Invariant(
                 "heap edge targeted a node outside Live state",
             ));
@@ -413,7 +414,7 @@ impl Heap {
     pub(in crate::engine::heap) fn live_node(&self, id: RawId) -> Result<&Node, HeapError> {
         let index = self.validate_slot_identity(id)?;
         match &self.slots[index].state {
-            SlotState::Live(node) => Ok(node),
+            SlotState::Resident(node) if node.strong.get() != 0 => Ok(node),
             _ => Err(HeapError::Stale {
                 index: id.index(),
                 generation: id.generation(),
@@ -435,21 +436,7 @@ impl Heap {
             "trusted handle failed its debug identity check"
         );
         match &self.slots[id.index() as usize].state {
-            SlotState::Live(node) => node,
-            _ => unreachable!("trusted handle reached a non-live slot"),
-        }
-    }
-
-    /// Trusted mutable accessor paired with [`Heap::live_node_fast`].
-    #[inline]
-    #[cfg(test)]
-    pub(in crate::engine::heap) fn live_node_fast_mut(&mut self, id: RawId) -> &mut Node {
-        debug_assert!(
-            self.validate_slot_identity(id).is_ok(),
-            "trusted handle failed its debug identity check"
-        );
-        match &mut self.slots[id.index() as usize].state {
-            SlotState::Live(node) => node,
+            SlotState::Resident(node) if node.strong.get() != 0 => node,
             _ => unreachable!("trusted handle reached a non-live slot"),
         }
     }
@@ -460,7 +447,7 @@ impl Heap {
     ) -> Result<&mut Node, HeapError> {
         let index = self.validate_slot_identity(id)?;
         match &mut self.slots[index].state {
-            SlotState::Live(node) => Ok(node),
+            SlotState::Resident(node) if node.strong.get() != 0 => Ok(node),
             _ => Err(HeapError::Stale {
                 index: id.index(),
                 generation: id.generation(),
@@ -528,7 +515,13 @@ impl Heap {
             self.shapes.live_fast_mut(shape).strong.set(count);
             return;
         }
-        self.live_node_fast_mut(id).strong.set(count);
+        // Fault-injection fixtures also repair intentionally zeroed resident
+        // counts. Production live access must keep rejecting such nodes.
+        let index = self.validate_slot_identity(id).unwrap();
+        let SlotState::Resident(node) = &self.slots[index].state else {
+            panic!("count fixture requires a resident node");
+        };
+        node.strong.set(count);
     }
 
     /// Consume a test fixture's edge while leaving zero cleanup pending.
@@ -550,6 +543,6 @@ impl Heap {
                 .is_ok_and(|index| self.leaf_slots[index].is_live());
         }
         self.validate_slot_identity(id)
-            .is_ok_and(|index| matches!(self.slots[index].state, SlotState::Live(_)))
+            .is_ok_and(|index| matches!(&self.slots[index].state, SlotState::Resident(node) if node.strong.get() != 0))
     }
 }

@@ -799,7 +799,7 @@ impl Heap {
         let name = record.name.clone();
         self.retain_edges_transactionally(&edges)?;
 
-        let SlotState::Live(node) = &mut self.slots[cache_index].state else {
+        let SlotState::Resident(node) = &mut self.slots[cache_index].state else {
             unreachable!("authenticated loaded-module cache disappeared before publication")
         };
         let NodeData::Context(context) = &mut node.data else {
@@ -872,7 +872,7 @@ impl Heap {
         };
         self.retain_edges_transactionally(&added_edges)?;
 
-        let SlotState::Live(node) = &mut self.slots[cache_index].state else {
+        let SlotState::Resident(node) = &mut self.slots[cache_index].state else {
             unreachable!("authenticated loaded-module cache disappeared before replacement")
         };
         let NodeData::Context(context) = &mut node.data else {
@@ -956,7 +956,7 @@ impl Heap {
             ..HeapCleanup::default()
         };
 
-        let SlotState::Live(node) = &mut self.slots[cache_index].state else {
+        let SlotState::Resident(node) = &mut self.slots[cache_index].state else {
             unreachable!("authenticated loaded-module cache disappeared before abort")
         };
         let NodeData::Context(context) = &mut node.data else {
@@ -1091,7 +1091,7 @@ impl Heap {
             ..HeapCleanup::default()
         };
 
-        let SlotState::Live(node) = &mut self.slots[cache_index].state else {
+        let SlotState::Resident(node) = &mut self.slots[cache_index].state else {
             unreachable!("authenticated loaded-module cache disappeared before batch removal")
         };
         let NodeData::Context(context) = &mut node.data else {
