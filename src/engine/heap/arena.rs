@@ -500,7 +500,7 @@ impl Heap {
     }
 
     #[cfg(test)]
-    pub(in crate::engine::heap) fn strong_count(&self, id: RawId) -> Result<u32, HeapError> {
+    pub(crate) fn strong_count(&self, id: RawId) -> Result<u32, HeapError> {
         if id.is_leaf() {
             return Ok(self.leaf_slot(id)?.strong.get());
         }
@@ -515,7 +515,7 @@ impl Heap {
 
     /// Overwrite one live node's strong count for saturation tests.
     #[cfg(test)]
-    pub(in crate::engine::heap) fn set_strong_count_for_test(&mut self, id: RawId, count: u32) {
+    pub(crate) fn set_strong_count_for_test(&mut self, id: RawId, count: u32) {
         if id.is_leaf() {
             self.live_leaf_fast_mut(id).strong.set(count);
             return;
@@ -529,6 +529,12 @@ impl Heap {
             return;
         }
         self.live_node_fast_mut(id).strong.set(count);
+    }
+
+    /// Consume a test fixture's edge while leaving zero cleanup pending.
+    #[cfg(test)]
+    pub(crate) fn queue_release_for_test(&mut self, id: RawId) -> Result<(), HeapError> {
+        self.release_raw_no_drain(id)
     }
 
     pub(in crate::engine::heap) fn is_live(&self, id: RawId) -> bool {

@@ -141,6 +141,34 @@ impl<'a> FrameCursor<'a> {
         result
     }
 
+    /// Complete a synchronous comparison while retaining the established
+    /// activation boundary. Only the value lookup is inside a slots borrow;
+    /// left and right releases run outside it, in the original order, so
+    /// deferred cleanup and final-owner release keep their normal protocol.
+    fn strict_comparison(
+        &mut self,
+        runtime: &crate::engine::api::runtime::Runtime,
+        token: ActiveFrameToken,
+    ) -> Result<bool, Error> {
+        self.publish_fault(runtime, token)?;
+        let equal = self.with_slots(|slots| {
+            runtime
+                .strict_equal_jsvalue(slots.peek(1)?, slots.peek(0)?)
+                .map_err(runtime_error_to_vm_error)
+        })?;
+        // Both slots were authenticated above. A comparison error leaves both
+        // owners in place for frame cleanup; no owner crosses a fallible lookup.
+        let right = self.move_owned()?;
+        let left = self.move_owned()?;
+        runtime
+            .release_jsvalue(left)
+            .map_err(runtime_error_to_vm_error)?;
+        runtime
+            .release_jsvalue(right)
+            .map_err(runtime_error_to_vm_error)?;
+        Ok(equal)
+    }
+
     fn publish_fault(
         &mut self,
         runtime: &crate::engine::api::runtime::Runtime,
@@ -1501,7 +1529,21 @@ pub(super) fn execute_frame(
                 })?;
                 if !completed {
                     if matches!(comparison, Opcode::StrictEq | Opcode::StrictNeq) {
-                        return Ok(VmAction::StrictEquality(comparison == Opcode::StrictNeq));
+                        if !frame.active_frame.is_materialized() {
+                            return Ok(VmAction::StrictEquality(comparison == Opcode::StrictNeq));
+                        }
+                        let decision = cursor.strict_comparison(runtime, frame.active_frame)?
+                            != (comparison == Opcode::StrictNeq);
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_owned_execution_event(
+                            "strict_comparison.local_branch",
+                        );
+                        cursor.advance(if decision == (descriptor & 0x400 != 0) {
+                            decoded.operand(1) as usize
+                        } else {
+                            next + 2
+                        });
+                        continue;
                     }
                     return Ok(VmAction::Numeric {
                         kind: super::numeric::operation::NumericKind::for_opcode(comparison)
@@ -1622,6 +1664,33 @@ pub(super) fn execute_frame(
                     }
                 } else if let Some(action) = read_arg(&mut cursor, runtime, left_index)? {
                     return Ok(action);
+                }
+            }
+            Opcode::GetVar | Opcode::GetVarUndef => {
+                let index = published_u16(operand);
+                // Check space before taking the output edge. The cell keeps its
+                // own edge through commit; errors publish this cursor's fault
+                // PC and materialize in ready::run before they are propagated.
+                if cursor.with_slots(|slots| Ok(slots.has_operand_capacity(1)))?
+                    && let Some(value) = super::environment_driver::try_read_global_cell(
+                        runtime,
+                        executable,
+                        &body.owners.closure_slots,
+                        index,
+                    )?
+                {
+                    cursor.commit_owned(runtime, value)?;
+                    #[cfg(feature = "profiling")]
+                    crate::engine::api::profiling::record_owned_execution_event(
+                        "global_cell.local_complete",
+                    );
+                } else {
+                    return Ok(VmAction::Environment(
+                        super::environment_driver::Operation::GlobalGet {
+                            index,
+                            strict: decoded.opcode == Opcode::GetVar,
+                        },
+                    ));
                 }
             }
             Opcode::GetArg => {
@@ -1911,9 +1980,21 @@ pub(super) fn execute_frame(
                 })?;
                 if !completed {
                     if matches!(decoded.opcode, Opcode::StrictEq | Opcode::StrictNeq) {
-                        return Ok(VmAction::StrictEquality(
-                            decoded.opcode == Opcode::StrictNeq,
-                        ));
+                        if !frame.active_frame.is_materialized() {
+                            return Ok(VmAction::StrictEquality(
+                                decoded.opcode == Opcode::StrictNeq,
+                            ));
+                        }
+                        let equal = cursor.strict_comparison(runtime, frame.active_frame)?;
+                        cursor.commit_push(JsValue::Bool(
+                            equal != (decoded.opcode == Opcode::StrictNeq),
+                        ))?;
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_owned_execution_event(
+                            "strict_comparison.local_value",
+                        );
+                        cursor.advance(next);
+                        continue;
                     }
                     return Ok(VmAction::Numeric {
                         kind: super::numeric::operation::NumericKind::for_opcode(decoded.opcode)
@@ -2840,6 +2921,96 @@ pub(super) fn strict_comparison(
 #[cfg(test)]
 mod execution_span_tests {
     use crate::engine::api::{Runtime, Value};
+
+    #[test]
+    fn strict_local_completion_preserves_all_value_kinds() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let result = context.eval(r#"
+            (() => {
+                function eq(a,b) { const materialize={}; return a === b; }
+                function ne(a,b) { const materialize={}; return a !== b; }
+                function branch(a,b) { const box={x:a}; if(box.x === b) return true; return false; }
+                function branchNe(a,b) { const box={x:a}; if(box.x !== b) return true; return false; }
+                let calls=0;
+                const o={valueOf(){calls++;throw 1}}, p=new Proxy(o,{get(){calls++;throw 2}});
+                const s=Symbol('s');
+                const large=123456789012345678901234567890n;
+                const rows=[
+                    [undefined,undefined,true], [null,null,true], [null,undefined,false],
+                    [true,true,true], [true,false,false], [true,1,false],
+                    [0,-0,true], [NaN,NaN,false], [Infinity,Infinity,true],
+                    [o,o,true], [o,{},false], [o,null,false], [p,p,true], [p,o,false],
+                    [s,s,true], [s,Symbol('s'),false], [s,'s',false],
+                    ['abc','a'+'bc',true], ['abc','abd',false], ['1',1,false],
+                    [1n,1n,true], [1n,2n,false], [1n,1,false],
+                    [large,large+0n,true], [large,large+1n,false], [1n,large,false],
+                    [large,1n,false], [large,o,false]
+                ];
+                for(const row of rows) {
+                    const [a,b,want]=row;
+                    if(eq(a,b)!==want || ne(a,b)===want || branch(a,b)!==want || branchNe(a,b)===want)
+                        return false;
+                }
+                return calls===0;
+            })()
+        "#).unwrap();
+        assert_eq!(result, Value::Bool(true));
+    }
+
+    #[test]
+    fn strict_local_completion_preserves_operand_effects_and_throws() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let result = context.eval(r#"
+            (() => {
+                let log='';
+                function left() { log+='l'; return {}; }
+                function right() { log+='r'; return {}; }
+                function fail() { log+='x'; throw 'stop'; }
+                function value() { const materialize={}; return left()===right(); }
+                function branch() { const materialize={}; if(left()!==right()) return true; return false; }
+                if(value() || !branch() || log!=='lrlr') return false;
+                try { left()===fail(); return false; } catch(e) { if(e!=='stop') return false; }
+                const revoked=Proxy.revocable({},{}); revoked.revoke();
+                const materialize={};
+                return log==='lrlrlx' && revoked.proxy===revoked.proxy && revoked.proxy!==null;
+            })()
+        "#).unwrap();
+        assert_eq!(result, Value::Bool(true));
+    }
+
+    #[test]
+    fn strict_local_completion_releases_temporary_heap_owners() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let _ = context
+            .eval(
+                r#"
+            function strictTemporaryOwners() {
+                const materialize={};
+                for(let i=0;i<50;i++) {
+                    if({}==={}) throw 'object identity';
+                    if(('a'.repeat(40))!==('a'.repeat(40))) throw 'string content';
+                    if((123456789012345678901234567890n+1n)!==(123456789012345678901234567890n+1n))
+                        throw 'bigint content';
+                    if(Symbol('s')===Symbol('s')) throw 'symbol identity';
+                }
+                return true;
+            }
+            strictTemporaryOwners();
+        "#,
+            )
+            .unwrap();
+        runtime.run_gc().unwrap();
+        let before = runtime.heap_counts().live;
+        assert_eq!(
+            context.eval("strictTemporaryOwners()").unwrap(),
+            Value::Bool(true)
+        );
+        runtime.run_gc().unwrap();
+        assert_eq!(runtime.heap_counts().live, before);
+    }
 
     #[test]
     fn compare_branch_guard_preserves_coercion_and_branch_result() {

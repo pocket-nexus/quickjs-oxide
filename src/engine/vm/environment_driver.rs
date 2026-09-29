@@ -634,6 +634,85 @@ pub(super) fn prepare_environment_read(
     }
 }
 
+/// Authenticate the published name and the closure-owned cell without taking
+/// another cell owner. The view is valid only while these frame owners live.
+fn global_cell_view<'a>(
+    runtime: &Runtime,
+    executable: &'a crate::engine::code::runtime::PublishedFunctionSnapshot,
+    roots: &'a super::closure::ClosureSlots,
+    index: u16,
+) -> Result<
+    (
+        &'a crate::engine::code::function::metadata::ClosureVariable,
+        crate::engine::heap::roots::VarRefView<'a>,
+    ),
+    Error,
+> {
+    use crate::engine::code::function::metadata::ClosureVariableName;
+    let descriptor = executable
+        .closure_variables
+        .get(usize::from(index))
+        .ok_or_else(|| Error::internal("global closure index is out of bounds"))?;
+    if descriptor.kind.is_private() {
+        return Err(Error::internal(
+            "global read referenced a private-name binding",
+        ));
+    }
+    let ClosureVariableName::Atom(_) = descriptor.name else {
+        return Err(Error::internal(
+            "published global closure descriptor has no name atom",
+        ));
+    };
+    let root = roots
+        .get(usize::from(index))
+        .ok_or_else(|| Error::internal("global closure slot is out of bounds"))?;
+    if !root.belongs_to(runtime) {
+        return Err(Error::internal("global closure belongs to another runtime"));
+    }
+    Ok((descriptor, root))
+}
+
+/// Complete only the initialized-cell portion of a global read. Pending cleanup
+/// and uninitialized cells retain the original environment-driver boundary.
+/// No callback, release or mutation may intervene between reading the raw cell
+/// and acquiring its checked output edge.
+pub(super) fn try_read_global_cell(
+    runtime: &Runtime,
+    executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
+    roots: &super::closure::ClosureSlots,
+    index: u16,
+) -> Result<Option<JsValue>, Error> {
+    if runtime.0.deferred_references.has_pending() {
+        return Ok(None);
+    }
+    let (_, root) = global_cell_view(runtime, executable, roots, index)?;
+    let value = {
+        let Ok(state) = runtime.0.state.try_borrow() else {
+            return Ok(None);
+        };
+        if state.heap.has_pending_zero_cleanup() {
+            return Ok(None);
+        }
+        let raw = state
+            .heap
+            .var_ref(root.id())
+            .map_err(heap_error_to_vm_error)?
+            .value
+            .clone();
+        if matches!(raw, crate::engine::heap::RawValue::Uninitialized) {
+            return Ok(None);
+        }
+        JsValue::from_raw(raw)
+            .ok_or_else(|| Error::internal("global cell held an internal value sentinel"))?
+    };
+    // Keep the exact checked retain, including overflow and near-saturation
+    // behavior. The live cell owns the raw edge until this duplicate completes.
+    runtime
+        .dup_jsvalue(&value)
+        .map(Some)
+        .map_err(runtime_error_to_vm_error)
+}
+
 fn read_global_binding(
     runtime: &Runtime,
     executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
@@ -646,26 +725,10 @@ fn read_global_binding(
         heap::RawValue,
         object::{OrdinaryRead, PropertyKey},
     };
-    let descriptor = executable
-        .closure_variables
-        .get(usize::from(index))
-        .ok_or_else(|| Error::internal("global closure index is out of bounds"))?;
-    if descriptor.kind.is_private() {
-        return Err(Error::internal(
-            "global read referenced a private-name binding",
-        ));
-    }
+    let (descriptor, root) = global_cell_view(runtime, executable, roots, index)?;
     let ClosureVariableName::Atom(atom) = descriptor.name else {
-        return Err(Error::internal(
-            "published global closure descriptor has no name atom",
-        ));
+        unreachable!("global_cell_view authenticated the published name")
     };
-    let root = roots
-        .get(usize::from(index))
-        .ok_or_else(|| Error::internal("global closure slot is out of bounds"))?;
-    if !root.belongs_to(runtime) {
-        return Err(Error::internal("global closure belongs to another runtime"));
-    }
     let value = runtime
         .raw_var_ref_value(&root)
         .map_err(runtime_error_to_vm_error)?;
@@ -730,6 +793,9 @@ pub(super) fn reply(
         _ => Err(Error::internal("environment reply has no operation")),
     }
 }
+
+#[cfg(test)]
+mod global_cell_tests;
 
 #[cfg(all(test, feature = "profiling"))]
 mod tests {

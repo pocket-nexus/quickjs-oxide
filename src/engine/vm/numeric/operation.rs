@@ -151,10 +151,6 @@ pub(in crate::engine::vm) enum NumericStep {
         hint: ToPrimitiveHint,
         resume: NumericResume,
     },
-    HtmlDda {
-        value: JsValue,
-        resume: NumericResume,
-    },
 }
 pub(in crate::engine::vm) struct NumericResume(Box<NumericResumeState>);
 impl std::ops::Deref for NumericResume {
@@ -182,12 +178,6 @@ impl Drop for NumericResumeState {
             | Phase::RightPrimitive(value)
             | Phase::EqualityLeft(value)
             | Phase::EqualityRight(value) => std::mem::replace(value, JsValue::Undefined),
-            Phase::EqualityDda(left, right) => {
-                let left = std::mem::replace(left, JsValue::Undefined);
-                let right = std::mem::replace(right, JsValue::Undefined);
-                let _ = self.runtime.release_jsvalue(left);
-                return drop_owned(&self.runtime, right);
-            }
         };
         drop_owned(&self.runtime, owned);
     }
@@ -202,7 +192,6 @@ enum Phase {
     RightNumeric(NumericValue),
     EqualityLeft(JsValue),
     EqualityRight(JsValue),
-    EqualityDda(JsValue, JsValue),
 }
 impl NumericStep {
     pub(in crate::engine::vm) fn start(
@@ -225,7 +214,7 @@ impl NumericStep {
         }
         let right = right.ok_or_else(|| Error::internal("binary numeric operator lost RHS"))?;
         if matches!(kind, NumericKind::Eq | NumericKind::Neq) {
-            return equality(runtime, kind, left, right, false);
+            return equality(runtime, kind, left, right);
         }
         primitive(
             runtime,
@@ -341,26 +330,8 @@ impl NumericResume {
                 super::release_primitive_operand(runtime, value)?;
                 Ok(complete(binary(runtime, kind, left, converted?)?))
             }
-            Phase::EqualityLeft(right) => equality(runtime, kind, value, right, false),
-            Phase::EqualityRight(left) => equality(runtime, kind, left, value, false),
-            Phase::EqualityDda(..) => {
-                Err(Error::internal("HTMLDDA check received a primitive reply"))
-            }
-        }
-    }
-    pub(in crate::engine::vm) fn html_dda(
-        mut self,
-        runtime: &Runtime,
-        value: bool,
-    ) -> Result<NumericStep, Error> {
-        let phase = std::mem::replace(&mut self.0.phase, Phase::Unary);
-        let Phase::EqualityDda(left, right) = phase else {
-            return Err(Error::internal("HTMLDDA reply lost equality owner"));
-        };
-        if value {
-            equality_complete(runtime, self.0.kind, left, right, true)
-        } else {
-            equality(runtime, self.0.kind, left, right, true)
+            Phase::EqualityLeft(right) => equality(runtime, kind, value, right),
+            Phase::EqualityRight(left) => equality(runtime, kind, left, value),
         }
     }
 }
@@ -621,12 +592,44 @@ fn equality_error(runtime: &Runtime, left: JsValue, right: JsValue, error: Error
     }
     error
 }
+/// Elide an Object temporary only when its checked retain/release pair cannot
+/// overflow, make the count immortal, or drain older cleanup. Other heap kinds
+/// keep their existing pair instead of adding a new leaf/atom count interface.
+fn nullish_html_dda(
+    runtime: &Runtime,
+    value: &JsValue,
+) -> Result<bool, crate::engine::api::runtime_error::RuntimeError> {
+    let needs_temporary = match value {
+        JsValue::Object(id) => {
+            let state = runtime.0.state.borrow();
+            runtime.0.deferred_references.has_pending()
+                || state.heap.has_pending_zero_cleanup()
+                || state.heap.object_strong_count(*id)? >= u32::MAX - 1
+        }
+        JsValue::String(_) | JsValue::BigInt(_) | JsValue::Symbol(_) => true,
+        _ => false,
+    };
+    let temporary = if needs_temporary {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "numeric_nullish_temporary_checkpoint",
+        );
+        Some(runtime.dup_jsvalue(value)?)
+    } else {
+        None
+    };
+    let equal = runtime.value_is_html_dda_jsvalue(value);
+    if let Some(temporary) = temporary {
+        runtime.release_jsvalue(temporary)?;
+    }
+    equal
+}
+
 fn equality(
     runtime: &Runtime,
     kind: NumericKind,
     mut left: JsValue,
     mut right: JsValue,
-    mut checked_dda: bool,
 ) -> Result<NumericStep, Error> {
     loop {
         match runtime.strict_equal_jsvalue(&left, &right) {
@@ -641,55 +644,39 @@ fn equality(
                 ));
             }
         }
-        if !checked_dda {
-            if matches!(right, JsValue::Null | JsValue::Undefined) {
-                let value = match runtime.dup_jsvalue(&left) {
-                    Ok(value) => value,
-                    Err(error) => {
-                        return Err(equality_error(
-                            runtime,
-                            left,
-                            right,
-                            Error::internal(error.to_string()),
-                        ));
-                    }
-                };
-                return Ok(NumericStep::HtmlDda {
-                    value,
-                    resume: NumericResume(Box::new(NumericResumeState {
-                        kind,
-                        phase: Phase::EqualityDda(left, right),
-                        runtime: runtime.clone(),
-                    })),
-                });
-            }
-            if matches!(left, JsValue::Null | JsValue::Undefined) {
-                let value = match runtime.dup_jsvalue(&right) {
-                    Ok(value) => value,
-                    Err(error) => {
-                        return Err(equality_error(
-                            runtime,
-                            left,
-                            right,
-                            Error::internal(error.to_string()),
-                        ));
-                    }
-                };
-                return Ok(NumericStep::HtmlDda {
-                    value,
-                    resume: NumericResume(Box::new(NumericResumeState {
-                        kind,
-                        phase: Phase::EqualityDda(left, right),
-                        runtime: runtime.clone(),
-                    })),
-                });
-            }
+        // Nullish equality never performs ToPrimitive, including for proxies.
+        // IsHTMLDDA is an identity-local bit, so query it synchronously while
+        // the original operands still own their full generational handles.
+        let other = if matches!(right, JsValue::Null | JsValue::Undefined) {
+            Some(&left)
+        } else if matches!(left, JsValue::Null | JsValue::Undefined) {
+            Some(&right)
+        } else {
+            None
+        };
+        if let Some(other) = other {
+            let equal = if matches!(other, JsValue::Null | JsValue::Undefined) {
+                Ok(true)
+            } else {
+                nullish_html_dda(runtime, other)
+            };
+            return match equal {
+                Ok(equal) => {
+                    #[cfg(feature = "profiling")]
+                    crate::engine::api::profiling::record_owned_execution_event(
+                        "numeric_nullish_equality_direct",
+                    );
+                    equality_complete(runtime, kind, left, right, equal)
+                }
+                Err(error) => Err(equality_error(
+                    runtime,
+                    left,
+                    right,
+                    Error::internal(error.to_string()),
+                )),
+            };
         }
-        checked_dda = false;
         match (&left, &right) {
-            (JsValue::Null, JsValue::Undefined) | (JsValue::Undefined, JsValue::Null) => {
-                return equality_complete(runtime, kind, left, right, true);
-            }
             (JsValue::Int(_) | JsValue::Float(_), JsValue::String(_)) => {
                 let number = match to_number_jsvalue(runtime, &right) {
                     Ok(number) => number,
@@ -1006,5 +993,217 @@ mod borrowed_bigint_tests {
             assert!(matches!(actual, Value::BigInt(actual) if actual == expected));
         }
         // Runtime teardown checks that successful and abrupt paths drained all edges.
+    }
+}
+
+#[cfg(test)]
+mod nullish_equality_tests {
+    use super::*;
+    use crate::engine::value::Value;
+
+    #[test]
+    fn nullish_equality_preserves_proxy_identity_and_conversion_effects() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let result = context.eval(r#"(() => {
+            let calls = 0;
+            const object = { [Symbol.toPrimitive]() { calls++; return null; } };
+            const proxy = new Proxy(object, { get() { calls++; throw 42; } });
+            const revoked = Proxy.revocable({}, {}); revoked.revoke();
+            const values = [0, 1, NaN, false, true, '', 'null', 0n,
+                            123456789012345678901234567890n, Symbol(), object, proxy, revoked.proxy];
+            for (const value of values) {
+                if (value == null || null == value || value == undefined || undefined == value)
+                    return false;
+                if (!(value != null && null != value && value != undefined && undefined != value))
+                    return false;
+            }
+            if (!(null == undefined && undefined == null) || null != undefined) return false;
+            if (calls !== 0) return false;
+            const number = { valueOf() { calls++; return 1; } };
+            if (!(number == 1) || calls !== 1) return false;
+            try { proxy == 1; return false; } catch (error) { return error === 42 && calls === 2; }
+        })()"#).unwrap();
+        assert_eq!(result, Value::Bool(true));
+    }
+
+    #[test]
+    fn nullish_equality_consumes_final_object_owner() {
+        for kind in [NumericKind::Eq, NumericKind::Neq] {
+            let runtime = Runtime::new();
+            let object = runtime.new_object(None).unwrap().into_handle();
+            let step =
+                NumericStep::start(&runtime, kind, JsValue::Object(object), Some(JsValue::Null))
+                    .unwrap();
+            assert!(
+                matches!(step, NumericStep::Complete { value: JsValue::Bool(value), previous: None }
+                if value == (kind == NumericKind::Neq))
+            );
+            assert!(runtime.0.state.borrow().heap.object(object).is_err());
+        }
+    }
+
+    #[test]
+    fn nullish_equality_keeps_pending_cleanup_before_final_operand_release() {
+        for reverse in [false, true] {
+            let runtime = Runtime::new();
+            let pending = runtime.new_object(None).unwrap();
+            let pending_id = pending.object_id();
+            let operand = runtime.new_object(None).unwrap().into_handle();
+            {
+                let _borrow = runtime.0.state.borrow();
+                drop(pending);
+            }
+            assert!(runtime.0.deferred_references.has_pending());
+            let value = JsValue::Object(operand);
+            let (left, right) = if reverse {
+                (JsValue::Null, value)
+            } else {
+                (value, JsValue::Null)
+            };
+            let step = NumericStep::start(&runtime, NumericKind::Eq, left, Some(right)).unwrap();
+            assert!(matches!(
+                step,
+                NumericStep::Complete {
+                    value: JsValue::Bool(false),
+                    previous: None
+                }
+            ));
+            assert!(!runtime.0.deferred_references.has_pending());
+            assert!(runtime.0.state.borrow().heap.object(pending_id).is_err());
+            assert!(runtime.0.state.borrow().heap.object(operand).is_err());
+            // Object arena reuse is LIFO. The original checkpoint reclaims
+            // pending first and operand second, so operand's slot is next.
+            let next = runtime.new_object(None).unwrap();
+            assert_eq!(next.object_id().debug_index(), operand.debug_index());
+            assert_ne!(next.object_id(), operand);
+        }
+    }
+
+    #[test]
+    fn nullish_equality_preserves_heap_retain_saturation_and_overflow() {
+        use crate::engine::heap::RawId;
+        for source in ["({})", "'heap string'", "123456789012345678901234567890n"] {
+            for count in [u32::MAX - 2, u32::MAX - 1, u32::MAX] {
+                let runtime = Runtime::new();
+                let mut context = runtime.new_context();
+                let value = runtime.into_jsvalue(context.eval(source).unwrap()).unwrap();
+                let id = match value {
+                    JsValue::Object(id) => RawId::Object(id),
+                    JsValue::String(id) => RawId::String(id),
+                    JsValue::BigInt(id) => RawId::BigInt(id),
+                    _ => panic!("expected heap-backed operand"),
+                };
+                runtime
+                    .0
+                    .state
+                    .borrow_mut()
+                    .heap
+                    .set_strong_count_for_test(id, count);
+                let result = nullish_html_dda(&runtime, &value);
+                let actual = runtime.0.state.borrow().heap.strong_count(id).unwrap();
+                // Restore a real owner count before assertions/drop, including
+                // error cases, so a failed assertion cannot poison teardown.
+                runtime
+                    .0
+                    .state
+                    .borrow_mut()
+                    .heap
+                    .set_strong_count_for_test(id, 1);
+                runtime.release_jsvalue(value).unwrap();
+                if count == u32::MAX {
+                    assert!(result.is_err(), "{source}: checked retain must overflow");
+                    assert_eq!(actual, count);
+                } else {
+                    assert!(!result.unwrap());
+                    assert_eq!(
+                        actual,
+                        if count == u32::MAX - 1 {
+                            u32::MAX
+                        } else {
+                            count
+                        }
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn nullish_equality_preserves_symbol_checked_count_without_immortality() {
+        for count in [u32::MAX - 2, u32::MAX - 1, u32::MAX] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let value = runtime
+                .into_jsvalue(context.eval("Symbol('nullish')").unwrap())
+                .unwrap();
+            let JsValue::Symbol(index) = value else {
+                panic!("expected symbol");
+            };
+            runtime
+                .0
+                .state
+                .borrow()
+                .atoms
+                .set_ref_count_for_test(index, count);
+            let result = nullish_html_dda(&runtime, &value);
+            let actual = {
+                let state = runtime.0.state.borrow();
+                state
+                    .atoms
+                    .resolve(state.atoms.brand(index).unwrap())
+                    .unwrap()
+                    .ref_count
+            };
+            runtime
+                .0
+                .state
+                .borrow()
+                .atoms
+                .set_ref_count_for_test(index, 1);
+            runtime.release_jsvalue(value).unwrap();
+            assert_eq!(actual, Some(count));
+            if count == u32::MAX {
+                assert!(result.is_err());
+            } else {
+                // Unlike heap nodes, MAX is not an immortal atom count:
+                // the successful temporary decrement restores MAX - 1.
+                assert!(!result.unwrap());
+            }
+        }
+    }
+
+    #[cfg(feature = "test262-host")]
+    #[test]
+    fn nullish_equality_reads_html_dda_from_exact_object_identity() {
+        let runtime = Runtime::new();
+        let object = runtime.new_object(None).unwrap();
+        runtime.set_object_is_html_dda(&object).unwrap();
+        for kind in [NumericKind::Eq, NumericKind::Neq] {
+            for reverse in [false, true] {
+                for nullish in [JsValue::Null, JsValue::Undefined] {
+                    let value = JsValue::Object(object.clone().into_handle());
+                    let (left, right) = if reverse {
+                        (nullish, value)
+                    } else {
+                        (value, nullish)
+                    };
+                    let step = NumericStep::start(&runtime, kind, left, Some(right)).unwrap();
+                    assert!(
+                        matches!(step, NumericStep::Complete { value: JsValue::Bool(value), previous: None }
+                        if value == (kind == NumericKind::Eq))
+                    );
+                }
+            }
+        }
+        assert!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object(object.object_id())
+                .is_ok()
+        );
     }
 }

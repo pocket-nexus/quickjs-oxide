@@ -1729,8 +1729,7 @@ fn advance_inner(
             | Step::IntrinsicPromiseResolve { .. }
             | Step::Construct { .. }
             | Step::ConstructProxy { .. }
-            | Step::IndirectEval { .. }
-            | Step::NumericHtmlDda { .. } => dispatch_execution::prepare,
+            | Step::IndirectEval { .. } => dispatch_execution::prepare,
             Step::RegExpSpecies { .. }
             | Step::RegExpSpeciesComplete { .. }
             | Step::Aggregate { .. }

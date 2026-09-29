@@ -1,0 +1,306 @@
+use super::*;
+use crate::engine::value::Value;
+
+#[test]
+fn instanceof_chain_keeps_full_generational_identity() {
+    let runtime = Runtime::new();
+    let stale = runtime.new_object(None).unwrap();
+    let stale_id = stale.object_id();
+    drop(stale);
+    let replacement = runtime.new_object(None).unwrap();
+    assert_eq!(
+        stale_id.debug_index(),
+        replacement.object_id().debug_index()
+    );
+    assert_ne!(
+        stale_id.debug_generation(),
+        replacement.object_id().debug_generation()
+    );
+    let candidate = runtime.new_object(Some(&replacement)).unwrap();
+    let state = runtime.0.state.borrow();
+    assert_eq!(
+        walk_ordinary_chain(&state.heap, candidate.object_id(), stale_id).unwrap(),
+        ChainWalk::Complete(false)
+    );
+    assert_eq!(
+        walk_ordinary_chain(&state.heap, candidate.object_id(), replacement.object_id()).unwrap(),
+        ChainWalk::Complete(true)
+    );
+    assert!(matches!(
+        walk_ordinary_chain(&state.heap, stale_id, replacement.object_id()),
+        Err(HeapError::Stale { .. })
+    ));
+}
+
+#[test]
+fn instanceof_chain_bounds_a_borrow_and_resumes_from_progress() {
+    let runtime = Runtime::new();
+    let expected = runtime.new_object(None).unwrap();
+    let mut objects = vec![expected];
+    for _ in 0..40 {
+        objects.push(runtime.new_object(objects.last()).unwrap());
+    }
+    let state = runtime.0.state.borrow();
+    let expected = objects[0].object_id();
+    assert_eq!(
+        walk_ordinary_chain(&state.heap, objects[40].object_id(), expected).unwrap(),
+        ChainWalk::Protocol(objects[8].object_id())
+    );
+    assert_eq!(
+        walk_ordinary_chain(&state.heap, objects[8].object_id(), expected).unwrap(),
+        ChainWalk::Complete(true)
+    );
+    // OrdinaryHasInstance excludes the candidate itself.
+    assert_eq!(
+        walk_ordinary_chain(&state.heap, expected, expected).unwrap(),
+        ChainWalk::Complete(false)
+    );
+}
+
+#[test]
+fn instanceof_chain_preserves_callbacks_and_exceptions() {
+    let cases = [
+        // A long chain crosses the batch boundary; distinct prototypes miss.
+        r#"(()=>{function C(){} function D(){} let o=C.prototype;for(let i=0;i<80;i++)o=Object.create(o);return o instanceof C && !(o instanceof D) && !(C.prototype instanceof C) && !(Object.create(null) instanceof C)})()"#,
+        // Proxy callback mutates the original candidate chain. Resume from its
+        // returned value rather than restarting from the changed candidate.
+        r#"(()=>{function C(){} let n=0,o;const p=new Proxy({}, {getPrototypeOf(){n++;Object.setPrototypeOf(o,null);return Object.create(C.prototype)}});o=Object.create(Object.create(p));return o instanceof C && n===1 && !(o instanceof C)})()"#,
+        // Matching the expected prototype must precede invoking its Proxy trap.
+        r#"(()=>{function C(){} let n=0;C.prototype=new Proxy({}, {getPrototypeOf(){n++;throw 9}});return Object.create(C.prototype) instanceof C && n===0})()"#,
+        r#"(()=>{function C(){} let n=0;const marker={};let p=new Proxy({}, {getPrototypeOf(){n++;throw marker}});try{Object.create(p) instanceof C}catch(e){return e===marker&&n===1}return false})()"#,
+        r#"(()=>{function C(){} let r=Proxy.revocable({},{});const o=Object.create(r.proxy);r.revoke();try{o instanceof C}catch(e){return e instanceof TypeError}return false})()"#,
+        // Bound delegation, custom @@hasInstance and target getter order.
+        r#"(()=>{let trace='';function C(){}const target=new Proxy(C,{get(t,k,r){if(k===Symbol.hasInstance)trace+='h';if(k==='prototype')trace+='p';return Reflect.get(t,k,r)}});let o=new C();let bound=target.bind(null);trace='';let a=o instanceof bound;if(!a||trace!=='hp')return false;Object.defineProperty(C,Symbol.hasInstance,{value(v){trace+='c';return v===o}});trace='';return o instanceof bound && trace==='hc'})()"#,
+        // Nonobject candidate must not read target.prototype; object candidate
+        // observes a getter throw before reading any candidate prototype.
+        r#"(()=>{let trace='';const marker={};const c=new Proxy(function(){},{get(t,k,r){if(k===Symbol.hasInstance)return undefined;if(k==='prototype'){trace+='p';throw marker}return Reflect.get(t,k,r)}});const o=new Proxy({}, {getPrototypeOf(){trace+='o';return null}});if(1 instanceof c)return false;try{o instanceof c}catch(e){return e===marker&&trace==='p'}return false})()"#,
+        r#"(()=>{function C(){}const a={},b=Object.create(a);try{Object.setPrototypeOf(a,b)}catch(e){return e instanceof TypeError && !(b instanceof C)}return false})()"#,
+    ];
+    for source in cases {
+        assert_eq!(
+            Runtime::new().new_context().eval(source).unwrap(),
+            Value::Bool(true),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn instanceof_chain_internal_cycle_returns_to_protocol() {
+    use crate::engine::{heap::ObjectData, object::shape::Shape};
+    let mut heap = Heap::new();
+    let empty = heap.allocate_shape(Shape::new(None, []).unwrap()).unwrap();
+    let object = heap
+        .allocate_object(ObjectData::ordinary(empty, vec![]))
+        .unwrap();
+    let expected = heap
+        .allocate_object(ObjectData::ordinary(empty, vec![]))
+        .unwrap();
+    let cyclic = heap
+        .allocate_shape(Shape::new(Some(object), []).unwrap())
+        .unwrap();
+    heap.replace_object_layout(object, cyclic, vec![].into())
+        .unwrap();
+    assert_eq!(
+        walk_ordinary_chain(&heap, object, expected).unwrap(),
+        ChainWalk::Protocol(object)
+    );
+    heap.replace_object_layout(object, empty, vec![].into())
+        .unwrap();
+    heap.release_shape(cyclic).unwrap();
+    heap.release_object(object).unwrap();
+    heap.release_object(expected).unwrap();
+    heap.release_shape(empty).unwrap();
+}
+
+#[test]
+fn instanceof_chain_pending_cleanup_uses_existing_protocol() {
+    let runtime = Runtime::new();
+    let context = runtime.new_context();
+    let expected = runtime.new_object(None).unwrap();
+    let candidate = runtime.new_object(Some(&expected)).unwrap();
+    let candidate_id = candidate.object_id();
+    let resume = InstanceResume(Box::new(InstanceResumeState {
+        pending_effect: InstanceStepPending::default(),
+        realm: context.realm,
+        candidate: JsValue::Object(candidate.into_handle()),
+        target: expected.clone(),
+        phase: Phase::Walk(expected),
+    }));
+    let discarded = runtime.new_object(None).unwrap();
+    let state = runtime.0.state.borrow();
+    drop(discarded);
+    drop(state);
+    assert!(runtime.0.deferred_references.has_pending());
+    let step = resume.walk_ordinary(&runtime, candidate_id).unwrap();
+    assert!(matches!(step, InstanceStep::Prototype { .. }));
+    assert!(runtime.0.deferred_references.has_pending());
+    assert!(matches!(
+        finish(&runtime, context.realm, step).unwrap(),
+        Completion::Return(JsValue::Bool(true))
+    ));
+    assert!(!runtime.0.deferred_references.has_pending());
+}
+
+#[test]
+fn instanceof_chain_preserves_saturated_entry_and_prototype_retains() {
+    use crate::engine::heap::RawId;
+    for position in 0..3 {
+        for count in [u32::MAX - 1, u32::MAX] {
+            let runtime = Runtime::new();
+            let context = runtime.new_context();
+            let expected = runtime.new_object(None).unwrap();
+            let middle = runtime.new_object(Some(&expected)).unwrap();
+            let candidate = runtime.new_object(Some(&middle)).unwrap();
+            let id = [
+                candidate.object_id(),
+                middle.object_id(),
+                expected.object_id(),
+            ][position];
+            let ordinary_count = runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(id)
+                .unwrap();
+            let resume = InstanceResume(Box::new(InstanceResumeState {
+                pending_effect: InstanceStepPending::default(),
+                realm: context.realm,
+                candidate: JsValue::Object(candidate.clone().into_handle()),
+                target: runtime.new_object(None).unwrap(),
+                phase: Phase::Walk(expected.clone()),
+            }));
+            runtime
+                .0
+                .state
+                .borrow_mut()
+                .heap
+                .set_strong_count_for_test(RawId::Object(id), count);
+            let result = resume
+                .walk_ordinary(&runtime, candidate.object_id())
+                .and_then(|step| finish(&runtime, context.realm, step));
+            if count == u32::MAX {
+                assert!(
+                    matches!(result, Err(RuntimeError::Heap(HeapError::Overflow { .. }))),
+                    "position {position}"
+                );
+            } else {
+                assert!(
+                    matches!(result, Ok(Completion::Return(JsValue::Bool(true)))),
+                    "position {position}"
+                );
+            }
+            assert_eq!(
+                runtime.0.state.borrow().heap.object_strong_count(id),
+                Ok(u32::MAX)
+            );
+            runtime
+                .0
+                .state
+                .borrow_mut()
+                .heap
+                .set_strong_count_for_test(RawId::Object(id), ordinary_count);
+        }
+    }
+}
+
+#[test]
+fn instanceof_chain_self_edge_preserves_two_temporary_retains() {
+    use crate::engine::{
+        heap::{ObjectData, RawId},
+        object::shape::Shape,
+    };
+    let mut heap = Heap::new();
+    let empty = heap.allocate_shape(Shape::new(None, []).unwrap()).unwrap();
+    let object = heap
+        .allocate_object(ObjectData::ordinary(empty, vec![]))
+        .unwrap();
+    let cyclic = heap
+        .allocate_shape(Shape::new(Some(object), []).unwrap())
+        .unwrap();
+    heap.replace_object_layout(object, cyclic, vec![].into())
+        .unwrap();
+    let ordinary_count = heap.object_strong_count(object).unwrap();
+    heap.set_strong_count_for_test(RawId::Object(object), u32::MAX - 2);
+    // A self-match cannot complete before candidate and result roots are retained.
+    assert_eq!(
+        walk_ordinary_chain(&heap, object, object).unwrap(),
+        ChainWalk::Protocol(object)
+    );
+    heap.retain_object(object).unwrap();
+    heap.retain_object(object).unwrap();
+    assert_eq!(heap.object_strong_count(object), Ok(u32::MAX));
+    heap.release_object(object).unwrap();
+    heap.release_object(object).unwrap();
+    assert_eq!(heap.object_strong_count(object), Ok(u32::MAX));
+    heap.set_strong_count_for_test(RawId::Object(object), ordinary_count);
+    heap.replace_object_layout(object, empty, vec![].into())
+        .unwrap();
+    heap.release_shape(cyclic).unwrap();
+    heap.release_object(object).unwrap();
+    heap.release_shape(empty).unwrap();
+}
+
+#[test]
+fn instanceof_chain_saturated_replies_transfer_without_a_new_retain() {
+    use crate::engine::heap::RawId;
+    for proxy in [false, true] {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let Value::Object(object) = context
+            .eval(if proxy { "new Proxy({}, {})" } else { "({})" })
+            .unwrap()
+        else {
+            panic!("object result")
+        };
+        let expected = runtime.new_object(None).unwrap();
+        let resume = InstanceResume(Box::new(InstanceResumeState {
+            pending_effect: InstanceStepPending::default(),
+            realm: context.realm,
+            candidate: JsValue::Object(runtime.new_object(None).unwrap().into_handle()),
+            target: runtime.new_object(None).unwrap(),
+            phase: Phase::Walk(expected),
+        }));
+        let id = object.object_id();
+        let ordinary_count = runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .object_strong_count(id)
+            .unwrap();
+        let reply = object.clone();
+        runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .set_strong_count_for_test(RawId::Object(id), u32::MAX);
+        let pending = runtime.new_object(None).unwrap();
+        let state = runtime.0.state.borrow();
+        drop(pending);
+        drop(state);
+        let step = resume
+            .prototype(&runtime, NativeConversion::Value(Some(reply)))
+            .unwrap();
+        let InstanceStep::Prototype { mut resume } = step else {
+            panic!("reply must transfer to original protocol")
+        };
+        let receiver = resume.take_prototype_object();
+        assert_eq!(receiver.object_id(), id);
+        assert_eq!(
+            runtime.0.state.borrow().heap.object_strong_count(id),
+            Ok(u32::MAX)
+        );
+        assert!(runtime.0.deferred_references.has_pending());
+        drop(receiver);
+        drop(resume);
+        runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .set_strong_count_for_test(RawId::Object(id), ordinary_count);
+    }
+}

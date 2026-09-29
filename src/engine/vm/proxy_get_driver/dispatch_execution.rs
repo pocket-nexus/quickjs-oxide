@@ -528,19 +528,6 @@ pub(super) fn prepare(
                 };
                 continue;
             }
-            Step::NumericHtmlDda { value, resume } => {
-                let value = value.take().expect("selected Step field");
-                let resume = resume.take().expect("selected Step field");
-
-                let html_dda = runtime.value_is_html_dda_jsvalue(&value);
-                runtime
-                    .release_jsvalue(value)
-                    .map_err(runtime_error_to_vm_error)?;
-                *step = resume
-                    .html_dda(runtime, html_dda.map_err(runtime_error_to_vm_error)?)?
-                    .into();
-                continue;
-            }
             _ => return Ok(Next::Continue),
         }
     }

@@ -4,7 +4,7 @@ use crate::engine::{
         Error, ErrorKind, error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError,
     },
     builtins::native::NativeFunctionId,
-    heap::{ContextId, ObjectPayload},
+    heap::{ContextId, Heap, HeapError, ObjectId, ObjectPayload},
     object::{CallableRef, ObjectRef, PropertyKey, WellKnownSymbol},
     value::{JsValue, conversion::NativeConversion},
     vm::{
@@ -267,16 +267,9 @@ impl InstanceResume {
                 let JsValue::Object(candidate) = &self.0.candidate else {
                     return Err(RuntimeError::Invariant("instanceof lost object candidate"));
                 };
-                Ok({
-                    let __pending_field_object =
-                        ObjectRef::from_borrowed_handle(runtime.clone(), *candidate)?;
-                    let __pending_field_resume = {
-                        let updated_0 = Phase::Walk(prototype);
-                        self.0.phase = updated_0;
-                        self
-                    };
-                    InstanceStep::request_prototype(__pending_field_object, __pending_field_resume)
-                })
+                let candidate = *candidate;
+                self.0.phase = Phase::Walk(prototype);
+                self.walk_ordinary(runtime, candidate)
             }
             Phase::Walk(_) => {
                 runtime.release_jsvalue(value)?;
@@ -286,14 +279,44 @@ impl InstanceResume {
             }
         }
     }
+    fn walk_ordinary(
+        self,
+        runtime: &Runtime,
+        candidate: ObjectId,
+    ) -> Result<InstanceStep, RuntimeError> {
+        let Phase::Walk(expected) = &self.0.phase else {
+            return Err(RuntimeError::Invariant(
+                "instanceof lost expected prototype",
+            ));
+        };
+        let walk = {
+            let state = runtime.0.state.borrow();
+            // Preserve existing release/drain boundaries when cleanup is pending.
+            if runtime.0.deferred_references.has_pending() || state.heap.has_pending_zero_cleanup()
+            {
+                ChainWalk::Protocol(candidate)
+            } else {
+                walk_ordinary_chain(&state.heap, candidate, expected.object_id())?
+            }
+        };
+        match walk {
+            ChainWalk::Complete(found) => Ok(InstanceStep::Complete(Completion::Return(
+                JsValue::Bool(found),
+            ))),
+            ChainWalk::Protocol(object) => Ok(InstanceStep::request_prototype(
+                ObjectRef::from_borrowed_handle(runtime.clone(), object)?,
+                self,
+            )),
+        }
+    }
     pub(crate) fn prototype(
         self,
-        _runtime: &Runtime,
+        runtime: &Runtime,
         result: NativeConversion<Option<ObjectRef>>,
     ) -> Result<InstanceStep, RuntimeError> {
         let Phase::Walk(expected) = &self.0.phase else {
             if let NativeConversion::Throw(value) = result {
-                let _ = _runtime.release_jsvalue(value);
+                let _ = runtime.release_jsvalue(value);
             }
             return Err(RuntimeError::Invariant(
                 "instanceof received unexpected prototype",
@@ -308,13 +331,55 @@ impl InstanceResume {
                 InstanceStep::Complete(Completion::Return(JsValue::Bool(true)))
             }
             NativeConversion::Value(Some(object)) => {
-                let __pending_field_object = object;
-                let __pending_field_resume = self;
-                InstanceStep::request_prototype(__pending_field_object, __pending_field_resume)
+                // A protocol reply already owns its receiver. Transfer it
+                // unchanged, including saturated roots and detached Proxy chains.
+                InstanceStep::request_prototype(object, self)
             }
         })
     }
 }
+#[derive(Debug, PartialEq, Eq)]
+enum ChainWalk {
+    Complete(bool),
+    Protocol(ObjectId),
+}
+
+fn walk_ordinary_chain(
+    heap: &Heap,
+    mut current: ObjectId,
+    expected: ObjectId,
+) -> Result<ChainWalk, HeapError> {
+    // The old entry first retained the candidate. Preserve both checked
+    // overflow and the MAX-1 -> immortal transition before omitting that root.
+    if heap.object_strong_count(current)? >= u32::MAX - 1 {
+        return Ok(ChainWalk::Protocol(current));
+    }
+    // Only the initial candidate's rooted ancestry is batched. Protocol replies
+    // keep their existing owner-transfer path. Bound even internally cyclic
+    // chains; no callbacks, mutation or owner release occurs in this borrow.
+    for _ in 0..32 {
+        let object = heap.object(current)?;
+        if matches!(object.payload, ObjectPayload::Proxy(_)) {
+            return Ok(ChainWalk::Protocol(current));
+        }
+        let Some(prototype) = heap.shape(object.shape)?.prototype() else {
+            return Ok(ChainWalk::Complete(false));
+        };
+        // get_prototype_of retained its result before comparing identity.
+        // Its current receiver also had a temporary root, so a self-edge has
+        // two concurrent temporary retains and needs one extra count of room.
+        let strong = heap.object_strong_count(prototype)?;
+        if strong >= u32::MAX - 1 || (prototype == current && strong == u32::MAX - 2) {
+            return Ok(ChainWalk::Protocol(current));
+        }
+        if prototype == expected {
+            return Ok(ChainWalk::Complete(true));
+        }
+        current = prototype;
+    }
+    Ok(ChainWalk::Protocol(current))
+}
+
 pub(crate) fn finish(
     runtime: &Runtime,
     mut realm: ContextId,
@@ -489,3 +554,6 @@ const _: () = assert!(std::mem::size_of::<InstanceStep>() <= 64);
 
 // S11 all-domain protocol bound; inline completion stays allocation-free.
 const _: () = assert!(std::mem::size_of::<InstanceStep>() <= 64);
+
+#[cfg(test)]
+mod tests;

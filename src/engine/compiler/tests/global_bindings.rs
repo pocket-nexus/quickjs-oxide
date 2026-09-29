@@ -1,6 +1,92 @@
 use super::*;
 
 #[test]
+fn global_cell_execution_observes_updates_and_property_fallback_once() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    assert_eq!(
+        context
+            .eval("var changingCell=1; function readChanging(){return changingCell} readChanging()")
+            .unwrap(),
+        Value::Int(1)
+    );
+    assert_eq!(
+        context.eval("changingCell=2; readChanging()").unwrap(),
+        Value::Int(2)
+    );
+    assert_eq!(
+        context
+            .eval("changingCell={x:3}; readChanging().x")
+            .unwrap(),
+        Value::Int(3)
+    );
+    assert_eq!(context.eval("var reads=0; Object.defineProperty(globalThis,'propertyOnly',{configurable:true,get:function(){reads++;return 17}}); function readProperty(){return propertyOnly} readProperty()+reads").unwrap(), Value::Int(18));
+    assert_eq!(
+        context
+            .eval("delete globalThis.propertyOnly; typeof propertyOnly")
+            .unwrap(),
+        Value::String(JsString::from_static("undefined"))
+    );
+    assert_eq!(context.eval("Object.defineProperty(Object.getPrototypeOf(globalThis),'propertyOnly',{configurable:true,get:function(){reads++;return 23}}); readProperty()+reads").unwrap(), Value::Int(25));
+    assert_eq!(context.eval("delete Object.getPrototypeOf(globalThis).propertyOnly; try { readProperty(); } catch(e) { e instanceof ReferenceError }").unwrap(), Value::Bool(true));
+    assert_eq!(context.eval("try { eval('typeof tdzCell; let tdzCell=1'); } catch(e) { e instanceof ReferenceError }").unwrap(), Value::Bool(true));
+    assert!(runtime.0.state.borrow().active_frames.is_empty());
+}
+
+#[test]
+fn global_cell_failed_retain_unwinds_and_allows_later_execution() {
+    use crate::engine::heap::RawId;
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    let Value::Object(object) = context
+        .eval("var saturatedCell={}; function readSaturated(){return saturatedCell} saturatedCell")
+        .unwrap()
+    else {
+        panic!("object fixture");
+    };
+    let id = object.object_id();
+    let original = runtime
+        .0
+        .state
+        .borrow()
+        .heap
+        .object_strong_count(id)
+        .unwrap();
+    runtime
+        .0
+        .state
+        .borrow_mut()
+        .heap
+        .set_strong_count_for_test(RawId::Object(id), u32::MAX);
+    let result = context.eval("readSaturated()");
+    let count = runtime
+        .0
+        .state
+        .borrow()
+        .heap
+        .object_strong_count(id)
+        .unwrap();
+    runtime
+        .0
+        .state
+        .borrow_mut()
+        .heap
+        .set_strong_count_for_test(RawId::Object(id), original);
+    assert!(
+        result
+            .unwrap_err()
+            .to_string()
+            .contains("retaining a heap reference")
+    );
+    assert_eq!(count, u32::MAX);
+    assert!(runtime.0.state.borrow().active_frames.is_empty());
+    assert_eq!(
+        context.eval("readSaturated() === saturatedCell").unwrap(),
+        Value::Bool(true)
+    );
+}
+
+#[test]
 fn detached_vm_rejects_runtime_global_execution_explicitly() {
     let error = compile_script("answer").unwrap_err();
     assert!(error.message().contains("global-environment"));

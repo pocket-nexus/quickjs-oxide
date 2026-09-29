@@ -25,7 +25,6 @@ pub(super) fn record_dispatch(step: &Step) {
         Step::TypedCollectComplete { .. } => "query_dispatch.step.typed_collect_complete",
         Step::TypedCreate { .. } => "query_dispatch.step.typed_create",
         Step::NumericComplete { .. } => "query_dispatch.step.numeric_complete",
-        Step::NumericHtmlDda { .. } => "query_dispatch.step.numeric_html_dda",
         Step::TypedSpeciesView { .. } => "query_dispatch.step.typed_species_view",
         Step::RegExpSpecies { .. } => "query_dispatch.step.reg_exp_species",
         Step::RegExpSpeciesComplete { .. } => "query_dispatch.step.reg_exp_species_complete",
