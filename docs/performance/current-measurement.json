@@ -1,6 +1,6 @@
 {
   "schema": "oxide-current-measurement-v1",
-  "measured_code_head": "4284336c",
+  "measured_code_head": "4284336ce042ea891382e35840b0ce05f4caafe8",
   "comparison_head": "90c85e3d94cd66066fe1c4381608d497f1dab346",
   "method": "plain release, balanced paired samples, fresh process and application state",
   "measurements": {
