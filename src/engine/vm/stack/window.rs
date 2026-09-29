@@ -194,6 +194,57 @@ impl SlotStore {
             };
         match selected {
             Some(OrdinaryRead::Complete(value)) => {
+                #[cfg(feature = "profiling")]
+                {
+                    use crate::engine::heap::ObjectKind;
+                    use crate::engine::heap::SlotReleaseReadiness;
+                    if let JsValue::Object(id) = base
+                        && let Ok(state) = runtime.0.state.try_borrow()
+                        && let Ok(object) = state.heap.object(*id)
+                    {
+                        let kind = match object.kind {
+                            ObjectKind::Array => "linked_read_completed.kind_array",
+                            ObjectKind::NativeFunction
+                            | ObjectKind::BoundFunction
+                            | ObjectKind::BytecodeFunction => "linked_read_completed.kind_function",
+                            ObjectKind::Map
+                            | ObjectKind::Set
+                            | ObjectKind::WeakMap
+                            | ObjectKind::WeakSet
+                            | ObjectKind::MapIterator
+                            | ObjectKind::SetIterator => "linked_read_completed.kind_collection",
+                            ObjectKind::Ordinary => "linked_read_completed.kind_ordinary",
+                            _ => "linked_read_completed.kind_other",
+                        };
+                        crate::engine::api::profiling::record_owned_execution_event(kind);
+                    }
+                    let reason = if matches!(base, JsValue::Object(_)) {
+                        match runtime.slot_value_release_readiness_jsvalue(base) {
+                            Ok(SlotReleaseReadiness::Ready) => {
+                                "linked_read_completed.receiver_ready"
+                            }
+                            Ok(SlotReleaseReadiness::QueueCapacity) => {
+                                "linked_read_completed.receiver_queue_capacity"
+                            }
+                            Ok(SlotReleaseReadiness::Drain) => {
+                                "linked_read_completed.receiver_drain"
+                            }
+                            Ok(SlotReleaseReadiness::Deferred) => {
+                                "linked_read_completed.receiver_deferred"
+                            }
+                            Ok(SlotReleaseReadiness::Borrowed) => {
+                                "linked_read_completed.receiver_borrowed"
+                            }
+                            Ok(SlotReleaseReadiness::PrimitiveStorage) => {
+                                "linked_read_completed.receiver_primitive_storage"
+                            }
+                            Err(_) => "linked_read_completed.receiver_error",
+                        }
+                    } else {
+                        "linked_read_completed.non_object_receiver"
+                    };
+                    crate::engine::api::profiling::record_owned_execution_event(reason);
+                }
                 // This owner stays outside the output window even on failure.
                 let mut value = Some(value.unwrap_or(JsValue::Undefined));
                 let result = {

@@ -340,6 +340,53 @@ pub(super) fn read_progress_selected(
     } else {
         None
     };
+    #[cfg(feature = "profiling")]
+    if matches!(key_kind, ReadKey::Static(_)) && matches!(read, OrdinaryRead::Complete(_)) {
+        use crate::engine::heap::ObjectKind;
+        use crate::engine::heap::SlotReleaseReadiness;
+        let kind = match base {
+            JsValue::Object(_) => "driver_named_complete.object",
+            JsValue::String(_) => "driver_named_complete.string",
+            JsValue::Null | JsValue::Undefined => "driver_named_complete.nullish",
+            _ => "driver_named_complete.primitive",
+        };
+        crate::engine::api::profiling::record_owned_execution_event(kind);
+        if let JsValue::Object(id) = base
+            && let Ok(state) = runtime.0.state.try_borrow()
+            && let Ok(object) = state.heap.object(*id)
+        {
+            let kind = match object.kind {
+                ObjectKind::Array => "driver_named_complete.kind_array",
+                ObjectKind::NativeFunction
+                | ObjectKind::BoundFunction
+                | ObjectKind::BytecodeFunction => "driver_named_complete.kind_function",
+                ObjectKind::Ordinary => "driver_named_complete.kind_ordinary",
+                _ => "driver_named_complete.kind_other",
+            };
+            crate::engine::api::profiling::record_owned_execution_event(kind);
+        }
+        if keep_receiver {
+            crate::engine::api::profiling::record_owned_execution_event(
+                "driver_named_complete.keep_receiver",
+            );
+        }
+        if !keep_receiver {
+            let readiness = match runtime.slot_value_release_readiness_jsvalue(base) {
+                Ok(SlotReleaseReadiness::Ready) => "driver_named_complete.release_ready",
+                Ok(SlotReleaseReadiness::QueueCapacity) => {
+                    "driver_named_complete.release_queue_capacity"
+                }
+                Ok(SlotReleaseReadiness::Drain) => "driver_named_complete.release_drain",
+                Ok(SlotReleaseReadiness::Deferred) => "driver_named_complete.release_deferred",
+                Ok(SlotReleaseReadiness::Borrowed) => "driver_named_complete.release_borrowed",
+                Ok(SlotReleaseReadiness::PrimitiveStorage) => {
+                    "driver_named_complete.release_primitive_storage"
+                }
+                Err(_) => "driver_named_complete.release_error",
+            };
+            crate::engine::api::profiling::record_owned_execution_event(readiness);
+        }
+    }
     match read {
         OrdinaryRead::Complete(value) => complete_read(
             runtime,
