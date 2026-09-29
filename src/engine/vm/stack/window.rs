@@ -108,17 +108,46 @@ impl FrameTransaction<'_> {
             has_non_scalar_argument,
         })
     }
-    pub(in crate::engine::vm) fn take_native_call_operands(
+    /// Consume native operands already checked within this transaction: the
+    /// callee by native selection, and receiver/arguments by domain validation.
+    /// No mutable slot access may intervene. Classification executes no JS and
+    /// keeps the callee in its original slot until this owning transfer.
+    pub(in crate::engine::vm) fn take_validated_native_call_operands(
         &mut self,
         runtime: &Runtime,
         logical_active_depth: usize,
         count: usize,
         method: bool,
-    ) -> Result<(Vec<JsValue>, JsValue), Error> {
+    ) -> Result<(Vec<JsValue>, JsValue, crate::engine::object::CallableRef), Error> {
         self.store
             .reserve_native_argument_depth(logical_active_depth.saturating_add(1))?;
-        self.store
-            .take_native_call_operands_current(runtime, self.window, count, method)
+        let arguments =
+            self.store
+                .take_native_arguments_current::<true>(self.window, count, method)?;
+        let JsValue::Object(function) = self.store.pop_current(self.window)? else {
+            unreachable!("native selection authenticated the callee object")
+        };
+        // The slot's original edge becomes the activation's callable owner.
+        // The callee stays continuously live until normal activation cleanup,
+        // so its former retain/release pair is unnecessary.
+        let callable = crate::engine::object::CallableRef::from_validated_object(
+            crate::engine::object::ObjectRef::from_owned_handle(runtime.clone(), function),
+        );
+        // Releasing the old duplicate also drained unrelated pending edges.
+        // Preserve that observation boundary before consuming the receiver.
+        if runtime.0.deferred_references.has_pending() {
+            drop(runtime.operation());
+        }
+        let receiver = if method {
+            self.store.pop_current(self.window)?
+        } else {
+            JsValue::Undefined
+        };
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "native_callee_owner_transferred",
+        );
+        Ok((arguments, receiver, callable))
     }
 
     pub(in crate::engine::vm) fn slots(&mut self) -> FrameSlots<'_> {
