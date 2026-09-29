@@ -14,6 +14,7 @@ fn record_selection(_result: &NamedDataSelection) {
     crate::engine::api::profiling::record_owned_execution_event(match _result {
         NamedDataSelection::Data(_) => "property_selection.data",
         NamedDataSelection::CompleteAbsent => "property_selection.absent",
+        NamedDataSelection::Accessor(_) => "property_selection.accessor",
         NamedDataSelection::ContinueLookup => "property_selection.general",
         NamedDataSelection::NeedsObservation => "property_selection.observe",
     });
@@ -245,6 +246,8 @@ impl Runtime {
                 .promote_field_in_state(state, raw, keep_receiver, native)
                 .map_or(NamedDataSelection::ContinueLookup, NamedDataSelection::Data),
             CacheSelection::CompleteAbsent => NamedDataSelection::CompleteAbsent,
+            CacheSelection::Accessor(Some(getter)) => NamedDataSelection::Accessor(getter),
+            CacheSelection::Accessor(None) => NamedDataSelection::Data(JsValue::Undefined),
             CacheSelection::Unresolved => self
                 .uncached_field_in_state(state, base, atom, keep_receiver, native)
                 .map_or(NamedDataSelection::ContinueLookup, NamedDataSelection::Data),
@@ -264,7 +267,9 @@ impl Runtime {
         match self.select_linked_data(base, executable, pc, key_index, keep_receiver, native) {
             NamedDataSelection::Data(value) => Some(value),
             NamedDataSelection::CompleteAbsent => Some(JsValue::Undefined),
-            NamedDataSelection::ContinueLookup | NamedDataSelection::NeedsObservation => None,
+            NamedDataSelection::Accessor(_)
+            | NamedDataSelection::ContinueLookup
+            | NamedDataSelection::NeedsObservation => None,
         }
     }
 
@@ -494,6 +499,36 @@ mod tests {
         assert_eq!(context.eval("readCalls").unwrap(), Value::Int(0));
         assert_eq!(context.eval("readBase.x").unwrap(), Value::Int(11));
         assert_eq!(context.eval("readCalls").unwrap(), Value::Int(1));
+        runtime.release_jsvalue(base).unwrap();
+    }
+
+    #[test]
+    fn cold_and_warm_accessor_selection_tracks_current_shape() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let (code, pc, key) = site(&runtime);
+        let base = runtime
+            .into_jsvalue(
+                context
+                    .eval("globalThis.readAccessor={get x(){return 3}};readAccessor")
+                    .unwrap(),
+            )
+            .unwrap();
+        let selected = |runtime: &Runtime| match runtime
+            .select_linked_data(&base, &code, pc, key, true, &mut None)
+        {
+            NamedDataSelection::Accessor(getter) => getter,
+            _ => panic!("expected selected accessor"),
+        };
+        let getter = selected(&runtime);
+        assert_eq!(selected(&runtime), getter);
+        let _ = context
+            .eval("Object.defineProperty(readAccessor,'x',{value:7,configurable:true})")
+            .unwrap();
+        assert!(matches!(
+            runtime.select_linked_data(&base, &code, pc, key, true, &mut None),
+            NamedDataSelection::Data(JsValue::Int(7))
+        ));
         runtime.release_jsvalue(base).unwrap();
     }
 

@@ -22,12 +22,14 @@ struct Location {
 
 pub(crate) enum CacheSelection<'a> {
     Data(&'a RawValue),
+    Accessor(Option<ObjectId>),
     CompleteAbsent,
     Unresolved,
 }
 
 enum Located<'a> {
     Data(Location, &'a RawValue),
+    Accessor(Location, Option<ObjectId>),
     CompleteAbsent,
     Unresolved,
 }
@@ -37,6 +39,7 @@ enum State {
     #[default]
     Cold,
     Monomorphic(Location),
+    Accessor(Location),
     Polymorphic([Location; 2]),
     Megamorphic(u16),
 }
@@ -60,6 +63,7 @@ impl PropertyReadCache {
     ) -> Option<&'a RawValue> {
         match self.state.get() {
             State::Cold => None,
+            State::Accessor(_) => None,
             State::Monomorphic(location) => {
                 Self::read_location(location, heap, domain, realm, receiver)
             }
@@ -124,6 +128,40 @@ impl PropertyReadCache {
         }
     }
 
+    #[inline]
+    fn read_accessor_location(
+        location: Location,
+        heap: &Heap,
+        domain: u64,
+        realm: ContextId,
+        receiver: ObjectId,
+    ) -> Option<Option<ObjectId>> {
+        if location.domain != domain || location.realm != realm {
+            return None;
+        }
+        let object = heap.object_fast(receiver);
+        if !ordinary_receiver(object, location.numeric_key) || object.shape != location.shape {
+            return None;
+        }
+        if heap.shape_fast(object.shape).layout_revision() != location.revision {
+            return None;
+        }
+        let mut holder = receiver;
+        if location.depth != 0 {
+            if heap.property_layout_epoch() != location.prototype_epoch {
+                return None;
+            }
+            for _ in 0..location.depth {
+                let data = heap.object_fast(holder);
+                holder = heap.shape_fast(data.shape).prototype()?;
+            }
+        }
+        match heap.object_fast(holder).slots.get(location.slot as usize)? {
+            PropertySlot::Accessor { get, .. } => Some(get.option()),
+            _ => None,
+        }
+    }
+
     /// Called once on a miss, before the canonical read. This is observational:
     /// it neither roots a value nor invokes an accessor/exotic operation.
     pub(crate) fn miss(
@@ -152,11 +190,22 @@ impl PropertyReadCache {
         atom: Atom,
     ) -> CacheSelection<'a> {
         let state = self.state.get();
+        if let (State::Accessor(location), Some(receiver)) = (state, receiver)
+            && let Some(getter) =
+                Self::read_accessor_location(location, heap, domain, realm, receiver)
+        {
+            return CacheSelection::Accessor(getter);
+        }
         if matches!(state, State::Megamorphic(_)) {
             return CacheSelection::Unresolved;
         }
         let (location, raw) = match receiver.map(|r| locate(heap, atoms, domain, realm, r, atom)) {
             Some(Located::Data(location, raw)) => (location, raw),
+            Some(Located::Accessor(location, getter)) => {
+                self.state.set(State::Accessor(location));
+                event("property_ic.miss");
+                return CacheSelection::Accessor(getter);
+            }
             found => {
                 self.state.set(State::Megamorphic(1024));
                 event("property_ic.megamorphic");
@@ -176,6 +225,7 @@ impl PropertyReadCache {
         };
         let next = match state {
             State::Cold => State::Monomorphic(location),
+            State::Accessor(_) => State::Monomorphic(location),
             State::Monomorphic(old) if same_key(old) => State::Monomorphic(location),
             State::Monomorphic(old) => State::Polymorphic([location, old]),
             State::Polymorphic([first, second]) if same_key(first) => {
@@ -341,20 +391,21 @@ fn locate<'a>(
             return Located::Unresolved;
         };
         if let Some(slot) = shape.find(AtomIdx::from_raw(atom.raw())) {
+            let location = Location {
+                domain,
+                realm,
+                shape: initial.shape,
+                revision,
+                prototype_epoch: epoch,
+                depth,
+                slot,
+                numeric_key: numeric,
+            };
             return match data.slots.get(slot as usize) {
-                Some(PropertySlot::Data(raw)) => Located::Data(
-                    Location {
-                        domain,
-                        realm,
-                        shape: initial.shape,
-                        revision,
-                        prototype_epoch: epoch,
-                        depth,
-                        slot,
-                        numeric_key: numeric,
-                    },
-                    raw,
-                ),
+                Some(PropertySlot::Data(raw)) => Located::Data(location, raw),
+                Some(PropertySlot::Accessor { get, .. }) => {
+                    Located::Accessor(location, get.option())
+                }
                 _ => Located::Unresolved,
             };
         }

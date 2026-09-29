@@ -273,6 +273,10 @@ impl SlotStore {
         ) {
             crate::engine::object::NamedDataSelection::Data(value) => value,
             crate::engine::object::NamedDataSelection::CompleteAbsent => JsValue::Undefined,
+            crate::engine::object::NamedDataSelection::Accessor(getter) => {
+                let _ = getter;
+                return Ok(PropertyReadProgress::ContinueLookup);
+            }
             crate::engine::object::NamedDataSelection::ContinueLookup => {
                 return Ok(PropertyReadProgress::ContinueLookup);
             }

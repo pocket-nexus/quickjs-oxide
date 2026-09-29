@@ -20,6 +20,9 @@ use crate::engine::value::number::operations::Number;
 pub(crate) enum NamedDataSelection {
     Data(JsValue),
     CompleteAbsent,
+    /// A getter selected while the receiver remains rooted in its frame slot.
+    /// The consumer must acquire owning getter/receiver edges before handoff.
+    Accessor(ObjectId),
     ContinueLookup,
     NeedsObservation,
 }
