@@ -711,6 +711,33 @@ impl FrameSlots<'_> {
             .array_immediate_read_current(self.window, runtime)
     }
 
+    /// A decline leaves both operands untouched for the property driver.
+    /// Success cannot run cleanup, and consumes the same two owners as PutField.
+    #[inline(always)]
+    pub(in crate::engine::vm) fn try_scalar_field_write(
+        &mut self,
+        runtime: &Runtime,
+        executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
+        key_index: u32,
+    ) -> Result<bool, Error> {
+        if !runtime
+            .try_linked_scalar_field_write(self.peek(1)?, self.peek(0)?, executable, key_index)
+            .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?
+        {
+            return Ok(false);
+        }
+        let _scalar = self.pop()?;
+        let base = self.pop()?;
+        runtime
+            .release_jsvalue(base)
+            .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "ordinary_scalar_field_write_in_execute",
+        );
+        Ok(true)
+    }
+
     /// Commit a scalar element write while the operands remain rooted. Both
     /// leaves prove that retiring the receiver cannot run heap cleanup; a
     /// decline leaves the three operands for the general property protocol.
