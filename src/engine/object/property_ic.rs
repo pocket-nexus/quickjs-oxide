@@ -55,15 +55,23 @@ enum State {
     Cold,
     Monomorphic(Location),
     Accessor(Location),
-    Polymorphic([Location; 2]),
+    Polymorphic(Locations),
     Megamorphic(u16),
 }
 
-/// Two guarded locations cover alternating shapes. Unsupported/overflow sites
+#[derive(Clone, Copy, Debug)]
+struct Locations {
+    entries: [Location; 4],
+    len: usize,
+}
+
+/// Four guarded locations cover small polymorphic sites. Unsupported/overflow sites
 /// periodically retry specialization, without retaining object or value owners.
 #[derive(Debug, Default)]
 pub(crate) struct PropertyReadCache {
     state: Cell<State>,
+    backoff: Cell<u16>,
+    hits: Cell<u8>,
 }
 
 impl PropertyReadCache {
@@ -80,16 +88,26 @@ impl PropertyReadCache {
             State::Cold => None,
             State::Accessor(_) => None,
             State::Monomorphic(location) => {
-                Self::read_location(location, heap, domain, realm, receiver)
-            }
-            State::Polymorphic([first, second]) => {
-                if let Some(value) = Self::read_location(first, heap, domain, realm, receiver) {
-                    Some(value)
-                } else {
-                    let value = Self::read_location(second, heap, domain, realm, receiver)?;
-                    self.state.set(State::Polymorphic([second, first]));
-                    Some(value)
+                let value = Self::read_location(location, heap, domain, realm, receiver);
+                if value.is_some() {
+                    self.hit();
                 }
+                value
+            }
+            State::Polymorphic(mut locations) => {
+                for index in 0..locations.len {
+                    if let Some(value) =
+                        Self::read_location(locations.entries[index], heap, domain, realm, receiver)
+                    {
+                        if index != 0 {
+                            locations.entries[..=index].rotate_right(1);
+                            self.state.set(State::Polymorphic(locations));
+                        }
+                        self.hit();
+                        return Some(value);
+                    }
+                }
+                None
             }
             State::Megamorphic(left) => {
                 if left <= 1 {
@@ -100,6 +118,25 @@ impl PropertyReadCache {
                 }
                 None
             }
+        }
+    }
+
+    fn cool_down(&self) {
+        let delay = self.backoff.get().max(16);
+        self.state.set(State::Megamorphic(delay));
+        self.backoff.set((delay * 2).min(256));
+        self.hits.set(0);
+    }
+
+    #[inline]
+    fn hit(&self) {
+        let previous = self.hits.get();
+        if previous < 16 {
+            let hits = previous + 1;
+            if hits == 16 {
+                self.backoff.set(16);
+            }
+            self.hits.set(hits);
         }
     }
 
@@ -234,7 +271,7 @@ impl PropertyReadCache {
                 return CacheSelection::Accessor(getter);
             }
             found => {
-                self.state.set(State::Megamorphic(1024));
+                self.cool_down();
                 event("property_ic.megamorphic");
                 return if matches!(found, Some(Located::CompleteAbsent)) {
                     CacheSelection::CompleteAbsent
@@ -254,17 +291,30 @@ impl PropertyReadCache {
             State::Cold => State::Monomorphic(location),
             State::Accessor(_) => State::Monomorphic(location),
             State::Monomorphic(old) if same_key(old) => State::Monomorphic(location),
-            State::Monomorphic(old) => State::Polymorphic([location, old]),
-            State::Polymorphic([first, second]) if same_key(first) => {
-                State::Polymorphic([location, second])
+            State::Monomorphic(old) => State::Polymorphic(Locations {
+                entries: [location, old, old, old],
+                len: 2,
+            }),
+            State::Polymorphic(mut locations) => {
+                if let Some(index) = locations.entries[..locations.len]
+                    .iter()
+                    .position(|old| same_key(*old))
+                {
+                    locations.entries[index] = location;
+                    locations.entries[..=index].rotate_right(1);
+                    State::Polymorphic(locations)
+                } else if locations.len < locations.entries.len() {
+                    locations.entries[locations.len] = location;
+                    locations.len += 1;
+                    locations.entries[..locations.len].rotate_right(1);
+                    State::Polymorphic(locations)
+                } else {
+                    self.cool_down();
+                    event("property_ic.megamorphic");
+                    return CacheSelection::Data(raw);
+                }
             }
-            State::Polymorphic([first, second]) if same_key(second) => {
-                State::Polymorphic([location, first])
-            }
-            _ => {
-                event("property_ic.megamorphic");
-                State::Megamorphic(1024)
-            }
+            State::Megamorphic(_) => unreachable!("cooldown handled before location selection"),
         };
         self.state.set(next);
         event("property_ic.miss");
@@ -708,6 +758,7 @@ mod tests {
             let key = runtime.intern_property_key(name).unwrap();
             let cache = PropertyReadCache {
                 state: Cell::new(State::Megamorphic(7)),
+                ..Default::default()
             };
             let state = runtime.0.state.borrow();
             let selected = cache.miss_selected(
@@ -768,7 +819,41 @@ mod tests {
     }
 
     #[test]
-    fn two_shapes_alternate_and_third_shape_eventually_revives() {
+    fn unstable_sites_back_off_with_a_bounded_retry_delay() {
+        let runtime = Runtime::new();
+        let context = runtime.new_context();
+        let key = runtime.intern_property_key("x").unwrap();
+        let receiver = runtime.new_object(None).unwrap();
+        let cache = PropertyReadCache::default();
+        let state = runtime.0.state.borrow();
+        for delay in [16, 32, 64, 128, 256, 256] {
+            cache.miss(
+                &state.heap,
+                &state.atoms,
+                runtime.domain_id(),
+                context.realm_id(),
+                None,
+                key.atom(),
+            );
+            assert!(matches!(cache.state.get(), State::Megamorphic(left) if left == delay));
+            for _ in 0..delay {
+                assert!(
+                    cache
+                        .read(
+                            &state.heap,
+                            runtime.domain_id(),
+                            context.realm_id(),
+                            receiver.object_id()
+                        )
+                        .is_none()
+                );
+            }
+            assert!(matches!(cache.state.get(), State::Cold));
+        }
+    }
+
+    #[test]
+    fn four_shapes_alternate_and_fifth_shape_eventually_revives() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
         let first = object(context.eval("({x:1})").unwrap());
@@ -784,9 +869,19 @@ mod tests {
             assert_eq!(number(&cache, &runtime, realm, &first), Some(1.0));
             assert_eq!(number(&cache, &runtime, realm, &second), Some(2.0));
         }
+        let fourth = object(context.eval("({w:0,z:0,y:0,x:4})").unwrap());
+        let fifth = object(context.eval("({v:0,w:0,z:0,y:0,x:5})").unwrap());
         install(&cache, &runtime, realm, &third, key.atom());
-        assert!(matches!(cache.state.get(), State::Megamorphic(_)));
-        for _ in 0..1024 {
+        install(&cache, &runtime, realm, &fourth, key.atom());
+        for _ in 0..8 {
+            assert_eq!(number(&cache, &runtime, realm, &first), Some(1.0));
+            assert_eq!(number(&cache, &runtime, realm, &second), Some(2.0));
+            assert_eq!(number(&cache, &runtime, realm, &third), Some(3.0));
+            assert_eq!(number(&cache, &runtime, realm, &fourth), Some(4.0));
+        }
+        install(&cache, &runtime, realm, &fifth, key.atom());
+        assert!(matches!(cache.state.get(), State::Megamorphic(16)));
+        for _ in 0..16 {
             assert_eq!(number(&cache, &runtime, realm, &first), None);
         }
         assert!(matches!(cache.state.get(), State::Cold));

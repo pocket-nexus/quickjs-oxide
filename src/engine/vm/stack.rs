@@ -268,25 +268,31 @@ impl SlotStore {
             None
         };
         let base = self.peek_current(window, 0)?;
-        let value = match runtime.select_linked_data(
+        let mut miss = crate::engine::object::NamedSelectionMiss::ContinueLookup;
+        // Consume the selected owned value directly. The cold miss outcome
+        // carries no value, avoiding a second large data/result transport.
+        let value = match runtime.select_linked_data_into(
             base,
             executable,
             operation.site,
             operation.key_index,
             operation.keep_receiver,
             native,
+            &mut miss,
         ) {
-            crate::engine::object::NamedDataSelection::Data(value) => value,
-            crate::engine::object::NamedDataSelection::CompleteAbsent => JsValue::Undefined,
-            crate::engine::object::NamedDataSelection::Accessor(getter) => {
-                return Ok(PropertyReadProgress::Selected(getter));
-            }
-            crate::engine::object::NamedDataSelection::ContinueLookup => {
-                return Ok(PropertyReadProgress::Driver);
-            }
-            crate::engine::object::NamedDataSelection::NeedsObservation => {
-                return Ok(PropertyReadProgress::NeedsObservation);
-            }
+            Some(value) => value,
+            None => match miss {
+                crate::engine::object::NamedSelectionMiss::CompleteAbsent => JsValue::Undefined,
+                crate::engine::object::NamedSelectionMiss::Accessor(getter) => {
+                    return Ok(PropertyReadProgress::Selected(getter));
+                }
+                crate::engine::object::NamedSelectionMiss::ContinueLookup => {
+                    return Ok(PropertyReadProgress::Driver);
+                }
+                crate::engine::object::NamedSelectionMiss::NeedsObservation => {
+                    return Ok(PropertyReadProgress::NeedsObservation);
+                }
+            },
         };
         if let Some(index) = output_index {
             self.install_operand(window, index, value);
