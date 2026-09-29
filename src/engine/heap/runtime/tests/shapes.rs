@@ -302,3 +302,84 @@ fn append_edges_are_weak_and_unlinked_on_mutation_and_collection() {
         state.apply_cleanup(cleanup).unwrap();
     }
 }
+
+#[test]
+fn repeated_append_transition_keeps_one_reverse_edge() {
+    let runtime = Runtime::new();
+    let mut state = runtime.0.state.borrow_mut();
+    let atom = state.atoms.intern_static("repeated-transition").unwrap();
+    let parent = state.get_or_create_shape(None, &[]).unwrap();
+    let entry = crate::engine::object::shape::ShapeEntry {
+        atom: AtomIdx::from_raw(atom.raw()),
+        flags: PropertyFlags::data(true, true, true),
+    };
+    let target = state.append_transition(parent, entry).unwrap();
+    let initial_capacity = state.shape_transition_parents[&target].capacity();
+    #[cfg(feature = "profiling")]
+    let profile = crate::engine::api::profiling::CostProfile::start();
+    for _ in 0..10_000 {
+        let repeated = state.append_transition(parent, entry).unwrap();
+        assert_eq!(repeated, target);
+        let cleanup = state.heap.release_shape(repeated).unwrap();
+        state.apply_cleanup(cleanup).unwrap();
+    }
+    #[cfg(feature = "profiling")]
+    assert_eq!(
+        profile
+            .snapshot()
+            .owned_execution_events
+            .get("shape_transition_duplicate_avoided")
+            .copied(),
+        Some(10_000),
+    );
+    assert_eq!(state.shape_transitions[&parent].len(), 1);
+    assert_eq!(
+        state.shape_transition_parents[&target],
+        vec![(parent, entry)]
+    );
+    assert_eq!(
+        state.shape_transition_parents[&target].capacity(),
+        initial_capacity
+    );
+    assert_eq!(state.heap.shape_strong_count(target), Ok(1));
+    state.unlink_shape_transitions(parent);
+    assert!(state.shape_transitions.is_empty());
+    assert!(state.shape_transition_parents.is_empty());
+    for shape in [target, parent] {
+        let cleanup = state.heap.release_shape(shape).unwrap();
+        state.apply_cleanup(cleanup).unwrap();
+    }
+}
+
+#[test]
+fn rebound_append_transition_survives_delayed_old_target_cleanup() {
+    let runtime = Runtime::new();
+    let mut state = runtime.0.state.borrow_mut();
+    let atom = state.atoms.intern_static("rebound-transition").unwrap();
+    let parent = state.get_or_create_shape(None, &[]).unwrap();
+    let entry = crate::engine::object::shape::ShapeEntry {
+        atom: AtomIdx::from_raw(atom.raw()),
+        flags: PropertyFlags::data(true, true, true),
+    };
+    let old = state.append_transition(parent, entry).unwrap();
+    let delayed = state.heap.release_shape(old).unwrap();
+    assert!(state.heap.shape(old).is_err());
+    // The old generation's forward/reverse entries still exist until cleanup.
+    let replacement = state.append_transition(parent, entry).unwrap();
+    assert_eq!(old.index, replacement.index);
+    assert_ne!(old.generation, replacement.generation);
+    assert!(!state.shape_transition_parents.contains_key(&old));
+    assert_eq!(
+        state.shape_transition_parents[&replacement],
+        vec![(parent, entry)]
+    );
+    state.apply_cleanup(delayed).unwrap();
+    assert_eq!(state.shape_transitions[&parent][&entry], replacement);
+    assert_eq!(state.canonical_successor(parent, entry), Some(replacement));
+    let cleanup = state.heap.release_shape(replacement).unwrap();
+    state.apply_cleanup(cleanup).unwrap();
+    assert!(state.shape_transitions.is_empty());
+    assert!(state.shape_transition_parents.is_empty());
+    let cleanup = state.heap.release_shape(parent).unwrap();
+    state.apply_cleanup(cleanup).unwrap();
+}

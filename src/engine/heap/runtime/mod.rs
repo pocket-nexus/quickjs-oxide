@@ -396,10 +396,35 @@ impl RuntimeState {
     }
 
     fn record_transition(&mut self, parent: ShapeId, entry: ShapeEntry, target: ShapeId) {
-        self.shape_transitions
+        let previous = self
+            .shape_transitions
             .entry(parent)
             .or_default()
             .insert(entry, target);
+        if let Some(previous) = previous {
+            if previous == target {
+                // Reusing the same weak edge creates no new relationship.
+                // Keep reverse storage bounded by distinct forward edges.
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "shape_transition_duplicate_avoided",
+                );
+                return;
+            }
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "shape_transition_rebound_edge",
+            );
+            // A stale target may be replaced before its delayed cleanup is
+            // applied. Detach its reverse edge now so that cleanup cannot
+            // remove the newly rebound forward edge. IDs include generation.
+            if let Some(parents) = self.shape_transition_parents.get_mut(&previous) {
+                parents.retain(|pair| *pair != (parent, entry));
+                if parents.is_empty() {
+                    self.shape_transition_parents.remove(&previous);
+                }
+            }
+        }
         self.shape_transition_parents
             .entry(target)
             .or_default()
