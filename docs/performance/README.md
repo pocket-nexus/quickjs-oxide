@@ -6,7 +6,6 @@
 
 - [架构](../architecture.md)：模块责任、发布和执行边界。
 - [现行执行路径](roadmap.md)：数值操作、普通写入、命名属性读取和 continuation。
-- [优化机制清单](optimization-inventory.md)：编译、VM、对象、值和堆中的生产优化入口。
 - [执行不变量](principles.md)：所有权、借用、位置与可观察操作。
 - [类型化存储](typed-arenas.md)：捕获变量、形状和回收。
 - [测量方法](measurement.md)：构建身份、固定工作量、profile 与资源成本。

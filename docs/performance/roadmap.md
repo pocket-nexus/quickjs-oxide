@@ -1,6 +1,6 @@
 # 现行执行路径
 
-本页描述当前源码中的执行机制。对应的主要文件是 `src/engine/compiler/flow.rs`、`src/engine/code/exec.rs`、`src/engine/vm/execute.rs`、`src/engine/vm/stack/transfer.rs`、`src/engine/object/ordinary_storage/ic.rs` 和 `src/engine/vm/property_driver.rs`。各模块中的主要专用机制见[优化机制清单](optimization-inventory.md)。
+本页描述当前源码中的执行机制。对应的主要文件是 `src/engine/compiler/flow.rs`、`src/engine/code/exec.rs`、`src/engine/vm/execute.rs`、`src/engine/vm/stack/transfer.rs`、`src/engine/object/ordinary_storage/ic.rs` 和 `src/engine/vm/property_driver.rs`。
 
 ## 编译与发布
 
