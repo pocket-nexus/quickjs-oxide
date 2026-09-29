@@ -51,29 +51,6 @@ impl CheckedOrdinaryCallOperands {
 }
 
 impl FrameTransaction<'_> {
-    #[inline]
-    pub(in crate::engine::vm) fn depth(&self) -> usize {
-        self.window.depth
-    }
-
-    pub(in crate::engine::vm) fn with_linked_own_read_selected(
-        &mut self,
-        runtime: &Runtime,
-        executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
-        index: u32,
-        native: Option<&mut Option<crate::engine::object::LinkedNativeSelection>>,
-        complete: impl FnOnce(&mut FrameSlots<'_>, &mut Option<JsValue>) -> Result<(), Error>,
-    ) -> Result<LinkedReadCompletion, Error> {
-        self.store.with_linked_own_read_selected(
-            self.window,
-            runtime,
-            executable,
-            index,
-            native,
-            complete,
-        )
-    }
-
     pub(in crate::engine::vm) fn peek(&self, offset: usize) -> Result<&JsValue, Error> {
         self.store.peek_current(self.window, offset)
     }
@@ -469,22 +446,15 @@ impl FrameSlots<'_> {
         Ok(())
     }
 
-    pub(in crate::engine::vm) fn property_ic_read<Pending>(
+    pub(in crate::engine::vm) fn property_ic_read(
         &mut self,
         runtime: &Runtime,
         executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
         operation: super::NamedReadOperation,
         native: &mut Option<crate::engine::object::LinkedNativeSelection>,
-        pending: Pending,
-    ) -> Result<super::LocalStep<Pending>, Error> {
-        self.store.property_ic_read_current(
-            self.window,
-            runtime,
-            executable,
-            operation,
-            native,
-            pending,
-        )
+    ) -> Result<super::PropertyReadProgress, Error> {
+        self.store
+            .property_ic_read_current(self.window, runtime, executable, operation, native)
     }
 
     pub(in crate::engine::vm) fn has_operand_capacity(&self, extra: usize) -> bool {

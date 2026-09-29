@@ -36,7 +36,6 @@ pub(super) enum PropertyProgress {
 pub(super) enum SelectedNamedRead {
     Read(OrdinaryRead),
     LookupError(Error),
-    ContinueGeneral,
 }
 
 impl SelectedNamedRead {
@@ -153,15 +152,10 @@ pub(super) fn read_progress_selected(
     let computed = matches!(key_kind, ReadKey::Computed { .. });
     let realm = frame.executable.realm;
     let next_pc = fallthrough.index();
-    let mut skip_own_selection = false;
     let selected_read = match selected.selected.take() {
         Some(SelectedNamedRead::Read(read)) => Some(read),
         Some(SelectedNamedRead::LookupError(error)) => {
             return throw_error(runtime, realm, error).map(PropertyProgress::Deferred);
-        }
-        Some(SelectedNamedRead::ContinueGeneral) => {
-            skip_own_selection = true;
-            None
         }
         None => None,
     };
@@ -171,7 +165,6 @@ pub(super) fn read_progress_selected(
     };
     if let ReadKey::Static(index) = key_kind
         && selected_read.read.is_none()
-        && !skip_own_selection
     {
         use super::stack::LinkedReadCompletion;
         let body = &mut *frame.cold;
@@ -1046,7 +1039,7 @@ mod read_completion_tests {
     }
 
     #[test]
-    fn declined_named_read_carries_the_general_lookup_stage() {
+    fn unresolved_named_read_uses_the_existing_driver() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
         let Value::Object(object) = context
@@ -1071,10 +1064,33 @@ mod read_completion_tests {
             execute_frame(&mut execution, id).unwrap(),
             VmAction::GetField { .. }
         ));
-        assert!(matches!(
-            execution.selected_named_read,
-            Some(SelectedNamedRead::ContinueGeneral)
-        ));
+        assert!(execution.selected_named_read.is_none());
+    }
+
+    #[test]
+    fn selected_accessors_and_general_reads_run_their_effects_once() {
+        for (source, expected) in [
+            (
+                "(function(){let n=0;let o={get x(){return ++n}};function read(o){return o.x}let a=read(o),b=read(o);return a*100+b*10+n})()",
+                122,
+            ),
+            (
+                "(function(){let n=0;let o={get x(){return ++n}};function read(o){let r=o;return r.x}let a=read(o),b=read(o);return a*100+b*10+n})()",
+                122,
+            ),
+            (
+                "(function(){let n=0;let o={x:4};function read(o){return o.x}let a=read(o);Object.defineProperty(o,'x',{get(){n++;return 7}});let b=read(o);return a*100+b*10+n})()",
+                471,
+            ),
+            (
+                "(function(){let n=0;let o=new Proxy({x:7},{get(t,k,r){n++;return Reflect.get(t,k,r)}});function read(o){return o.x}let a=read(o),b=read(o);return a*100+b*10+n})()",
+                772,
+            ),
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            assert_eq!(context.eval(source).unwrap(), Value::Int(expected));
+        }
     }
 
     #[test]

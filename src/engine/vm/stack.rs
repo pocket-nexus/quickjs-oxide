@@ -227,12 +227,11 @@ mod transfer;
 mod window;
 pub(in crate::engine::vm) use transfer::StoreProgress;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::engine::vm) enum LocalStep<Pending> {
+pub(in crate::engine::vm) enum PropertyReadProgress {
     Completed,
     NeedsObservation,
-    Driver(Pending),
-    Continue(Pending),
+    Driver,
+    Selected(crate::engine::heap::ObjectId),
 }
 
 #[derive(Clone, Copy)]
@@ -250,20 +249,19 @@ impl SlotStore {
     /// release proof have succeeded. Failure leaves the canonical operands.
     // The slot window, immutable site facts and selected native output are disjoint borrowed inputs to one transaction.
     #[allow(clippy::too_many_arguments)]
-    fn property_ic_read_current<Pending>(
+    fn property_ic_read_current(
         &mut self,
         window: &mut FrameWindow,
         runtime: &Runtime,
         executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
         operation: NamedReadOperation,
         native: &mut Option<crate::engine::object::LinkedNativeSelection>,
-        pending: Pending,
-    ) -> Result<LocalStep<Pending>, Error> {
+    ) -> Result<PropertyReadProgress, Error> {
         let output_index = if operation.keep_receiver {
             // Canonical get can have effects before an output-capacity error;
             // declining here preserves that order without promoting a root.
             let Ok(index) = self.operand_push_index(window) else {
-                return Ok(LocalStep::Driver(pending));
+                return Ok(PropertyReadProgress::Driver);
             };
             Some(index)
         } else {
@@ -281,14 +279,13 @@ impl SlotStore {
             crate::engine::object::NamedDataSelection::Data(value) => value,
             crate::engine::object::NamedDataSelection::CompleteAbsent => JsValue::Undefined,
             crate::engine::object::NamedDataSelection::Accessor(getter) => {
-                let _ = getter;
-                return Ok(PropertyReadProgress::ContinueLookup);
+                return Ok(PropertyReadProgress::Selected(getter));
             }
             crate::engine::object::NamedDataSelection::ContinueLookup => {
-                return Ok(LocalStep::Continue(pending));
+                return Ok(PropertyReadProgress::Driver);
             }
             crate::engine::object::NamedDataSelection::NeedsObservation => {
-                return Ok(LocalStep::NeedsObservation);
+                return Ok(PropertyReadProgress::NeedsObservation);
             }
         };
         if let Some(index) = output_index {
@@ -306,7 +303,7 @@ impl SlotStore {
             #[cfg(feature = "profiling")]
             record_owned_storage(Cost::Move(2));
         }
-        Ok(LocalStep::Completed)
+        Ok(PropertyReadProgress::Completed)
     }
 
     pub(in crate::engine::vm) fn new(limit: usize) -> Self {
@@ -1809,7 +1806,7 @@ mod tests {
             .heap
             .object_strong_count(value_object.object_id())
             .unwrap();
-        assert_eq!(
+        assert!(matches!(
             slots
                 .borrow_frame_slots(&mut window)
                 .unwrap()
@@ -1822,11 +1819,10 @@ mod tests {
                         keep_receiver: true,
                     },
                     &mut native,
-                    (),
                 )
                 .unwrap(),
-            super::LocalStep::Driver(())
-        );
+            super::PropertyReadProgress::Driver
+        ));
         assert_eq!(
             runtime
                 .0
@@ -1839,7 +1835,7 @@ mod tests {
         );
         assert_eq!(window.depth, 1);
         assert_eq!(to_public(&runtime, slots.peek(&window, 0).unwrap()), base);
-        assert_eq!(
+        assert!(matches!(
             slots
                 .borrow_frame_slots(&mut window)
                 .unwrap()
@@ -1852,11 +1848,10 @@ mod tests {
                         keep_receiver: false,
                     },
                     &mut native,
-                    (),
                 )
                 .unwrap(),
-            super::LocalStep::Completed
-        );
+            super::PropertyReadProgress::Completed
+        ));
         assert_eq!(window.depth, 1);
         assert_eq!(to_public(&runtime, slots.peek(&window, 0).unwrap()), value);
         slots.clear_frame(&runtime, window).unwrap();
@@ -1867,7 +1862,7 @@ mod tests {
         slots
             .push(&mut window, into_internal(&runtime, base.clone()))
             .unwrap();
-        assert_eq!(
+        assert!(matches!(
             slots
                 .borrow_frame_slots(&mut window)
                 .unwrap()
@@ -1880,11 +1875,10 @@ mod tests {
                         keep_receiver: true,
                     },
                     &mut native,
-                    (),
                 )
                 .unwrap(),
-            super::LocalStep::Completed
-        );
+            super::PropertyReadProgress::Completed
+        ));
         assert_eq!(window.depth, 2);
         assert_eq!(to_public(&runtime, slots.peek(&window, 0).unwrap()), value);
         assert_eq!(to_public(&runtime, slots.peek(&window, 1).unwrap()), base);
@@ -1901,7 +1895,7 @@ mod tests {
             panic!("object")
         };
         slots.push(&mut window, JsValue::Object(lone_id)).unwrap();
-        assert_eq!(
+        assert!(matches!(
             slots
                 .borrow_frame_slots(&mut window)
                 .unwrap()
@@ -1914,11 +1908,10 @@ mod tests {
                         keep_receiver: false,
                     },
                     &mut native,
-                    (),
                 )
                 .unwrap(),
-            super::LocalStep::NeedsObservation
-        );
+            super::PropertyReadProgress::NeedsObservation
+        ));
         assert_eq!(window.depth, 1);
         assert!(matches!(slots.peek(&window, 0), Ok(JsValue::Object(id)) if *id == lone_id));
         assert_eq!(

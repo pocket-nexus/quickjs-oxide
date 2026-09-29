@@ -20,7 +20,7 @@ use crate::engine::vm::execution::RunningExecution;
 use crate::engine::vm::frame::FrameId;
 use crate::engine::vm::frames::ActiveFrameToken;
 use crate::engine::vm::stack::{
-    DirectSlot, FrameSlots, FrameTransaction, LinkedReadCompletion, LocalStep, NamedReadOperation,
+    DirectSlot, FrameSlots, FrameTransaction, NamedReadOperation, PropertyReadProgress,
     StoreProgress, copy_value,
 };
 
@@ -108,49 +108,6 @@ impl<'a> FrameCursor<'a> {
     ) -> Result<T, Error> {
         let mut slots = self.transaction.slots();
         operation(&mut slots)
-    }
-
-    fn complete_linked_named_read(
-        &mut self,
-        runtime: &crate::engine::api::runtime::Runtime,
-        executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
-        index: u32,
-        keep_receiver: bool,
-        next: usize,
-        native: &mut Option<crate::engine::object::LinkedNativeSelection>,
-    ) -> Result<LinkedReadCompletion, Error> {
-        let _depth = self.transaction.depth();
-        let mut receiver = None;
-        let resume = &mut self.resume;
-        let result = self.transaction.with_linked_own_read_selected(
-            runtime,
-            executable,
-            index,
-            Some(native),
-            |slots, value| {
-                receiver = Some(slots.pop()?);
-                if keep_receiver {
-                    slots.push_pending(&mut receiver)?;
-                }
-                *resume = next;
-                slots.push_pending(value)
-            },
-        );
-        if let Some(value) = receiver {
-            runtime
-                .release_jsvalue(value)
-                .map_err(runtime_error_to_vm_error)?;
-        }
-        if matches!(result, Ok(LinkedReadCompletion::Completed)) {
-            #[cfg(feature = "profiling")]
-            {
-                crate::engine::api::profiling::record_owned_instruction(_depth);
-                crate::engine::api::profiling::record_owned_execution_event(
-                    "property_read_completed_directly",
-                );
-            }
-        }
-        result
     }
 
     fn move_owned(&mut self) -> Result<JsValue, Error> {
@@ -1439,24 +1396,9 @@ pub(super) fn execute_frame(
                         Some("guard")
                     },
                 );
-                let step = match selection {
+                match selection {
                     crate::engine::object::NamedDataSelection::Data(value) => {
                         cursor.commit_owned(runtime, value)?;
-                        LocalStep::Completed
-                    }
-                    crate::engine::object::NamedDataSelection::CompleteAbsent => {
-                        cursor.commit_push(JsValue::Undefined)?;
-                        LocalStep::Completed
-                    }
-                    crate::engine::object::NamedDataSelection::NeedsObservation => {
-                        LocalStep::NeedsObservation
-                    }
-                    crate::engine::object::NamedDataSelection::ContinueLookup => {
-                        LocalStep::Continue(base)
-                    }
-                };
-                match step {
-                    LocalStep::Completed => {
                         #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_owned_execution_event(
                             "local_completion.borrowed_named_read",
@@ -1464,17 +1406,61 @@ pub(super) fn execute_frame(
                         cursor.advance(decoded.operand(2) as usize);
                         continue;
                     }
-                    LocalStep::NeedsObservation | LocalStep::Driver(_) | LocalStep::Continue(_) => {
-                        if decoded.opcode == Opcode::BorrowedFieldLocal {
-                            if let Some(action) =
-                                read_local::<false>(&mut cursor, runtime, base_index)?
-                            {
+                    crate::engine::object::NamedDataSelection::CompleteAbsent => {
+                        cursor.commit_push(JsValue::Undefined)?;
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_owned_execution_event(
+                            "local_completion.borrowed_named_read",
+                        );
+                        cursor.advance(decoded.operand(2) as usize);
+                        continue;
+                    }
+                    crate::engine::object::NamedDataSelection::Accessor(getter) => {
+                        let selected = cursor.with_slots(|slots| {
+                            let receiver = slots.direct_value(base).ok_or_else(|| {
+                                Error::internal("selected borrowed receiver disappeared")
+                            })?;
+                            runtime
+                                .prepare_selected_linked_getter(receiver, getter)
+                                .map_err(runtime_error_to_vm_error)
+                        })?;
+                        let load = if decoded.opcode == Opcode::BorrowedFieldLocal {
+                            read_local::<false>(&mut cursor, runtime, base_index)
+                        } else {
+                            read_arg(&mut cursor, runtime, base_index)
+                        };
+                        match load {
+                            Ok(None) => {
+                                debug_assert!(execution.selected_named_read.is_none());
+                                execution.selected_named_read =
+                                    Some(super::property_driver::SelectedNamedRead::Read(selected));
+                                cursor.advance(next);
+                                cursor.begin();
+                                return Ok(VmAction::GetField {
+                                    index: decoded.operand(1),
+                                    keep_receiver: false,
+                                    fallthrough: FallthroughPc(decoded.operand(2)),
+                                });
+                            }
+                            Ok(Some(action)) => {
+                                selected.release(runtime);
                                 return Ok(action);
                             }
-                        } else if let Some(action) = read_arg(&mut cursor, runtime, base_index)? {
-                            return Ok(action);
+                            Err(error) => {
+                                selected.release(runtime);
+                                return Err(error);
+                            }
                         }
                     }
+                    crate::engine::object::NamedDataSelection::NeedsObservation
+                    | crate::engine::object::NamedDataSelection::ContinueLookup => {}
+                }
+                if decoded.opcode == Opcode::BorrowedFieldLocal {
+                    if let Some(action) = read_local::<false>(&mut cursor, runtime, base_index)? {
+                        return Ok(action);
+                    }
+                } else if let Some(action) = read_arg(&mut cursor, runtime, base_index)? {
+                    return Ok(action);
                 }
             }
             Opcode::CompareBranchStack => {
@@ -2016,7 +2002,6 @@ pub(super) fn execute_frame(
                             keep_receiver,
                         },
                         &mut native,
-                        pending,
                     )
                 })?;
                 #[cfg(feature = "profiling")]
@@ -2025,54 +2010,36 @@ pub(super) fn execute_frame(
                     executable,
                     pc,
                     "field_cache",
-                    if matches!(step, LocalStep::Completed) {
+                    if matches!(step, PropertyReadProgress::Completed) {
                         None
                     } else {
                         Some("guard")
                     },
                 );
                 match step {
-                    LocalStep::Completed => {
+                    PropertyReadProgress::Completed => {
                         #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_owned_execution_event(
                             "local_completion.named_read",
                         );
                     }
-                    LocalStep::NeedsObservation => return Ok(pending.action()),
-                    LocalStep::Driver(pending) => return Ok(pending.action()),
-                    LocalStep::Continue(pending) => {
-                        match cursor.complete_linked_named_read(
-                            runtime,
-                            executable,
-                            operand,
-                            keep_receiver,
-                            pending.fallthrough.index(),
-                            &mut native,
-                        )? {
-                            LinkedReadCompletion::Completed => {
-                                #[cfg(feature = "profiling")]
-                                crate::engine::api::profiling::record_owned_execution_event(
-                                    "local_completion.linked_named_read",
-                                );
+                    PropertyReadProgress::NeedsObservation | PropertyReadProgress::Driver => {
+                        return Ok(pending.action());
+                    }
+                    PropertyReadProgress::Selected(getter) => {
+                        let read = cursor.with_slots(|slots| {
+                            Ok(runtime
+                                .prepare_selected_linked_getter(slots.peek(0)?, getter)
+                                .map_err(runtime_error_to_vm_error))
+                        })?;
+                        debug_assert!(execution.selected_named_read.is_none());
+                        execution.selected_named_read = Some(match read {
+                            Ok(read) => super::property_driver::SelectedNamedRead::Read(read),
+                            Err(error) => {
+                                super::property_driver::SelectedNamedRead::LookupError(error)
                             }
-                            LinkedReadCompletion::Pending(read) => {
-                                execution.selected_named_read =
-                                    Some(super::property_driver::SelectedNamedRead::Read(read));
-                                return Ok(pending.action());
-                            }
-                            LinkedReadCompletion::LookupError(error) => {
-                                execution.selected_named_read = Some(
-                                    super::property_driver::SelectedNamedRead::LookupError(error),
-                                );
-                                return Ok(pending.action());
-                            }
-                            LinkedReadCompletion::Declined => {
-                                execution.selected_named_read = Some(
-                                    super::property_driver::SelectedNamedRead::ContinueGeneral,
-                                );
-                                return Ok(pending.action());
-                            }
-                        }
+                        });
+                        return Ok(pending.action());
                     }
                 }
             }
