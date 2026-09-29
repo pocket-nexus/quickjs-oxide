@@ -1,0 +1,18 @@
+[
+  "/usr/bin/python3",
+  "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/scripts/benchmark/fixed.py",
+  "--manifest",
+  "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/docs/performance/receipts/three-directions-2026-09-29/data/v8-manifest.json",
+  "--engine",
+  "before=/tmp/oxide-six-build-baseline/release/qjs",
+  "--engine",
+  "after=/tmp/oxide-six-build-numeric/release/qjs",
+  "--repeat",
+  "8",
+  "--order",
+  "abba-baab",
+  "--cpu",
+  "2",
+  "--output",
+  "/tmp/oxide-six-evidence/numeric"
+]

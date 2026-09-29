@@ -1,0 +1,22 @@
+{
+  "metadata": {
+    "workloads": {
+      "workloads": [
+        {
+          "case": "ordinary-property-write",
+          "size": 1,
+          "path": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js",
+          "sha256": "419c86188282c85888d175cb75b149d7a79f46e8360b23c506f8c3cc448c47f1",
+          "expected": "199999\n"
+        },
+        {
+          "case": "repeated-shape-edge",
+          "size": 1,
+          "path": "/home/eric/.cache/oxide-six-transition-evidence/repeated-shape-edge.js",
+          "sha256": "c3f07c3220b8ba68f7a3afaf56fe3f87e49cbd86b054319f9075bbb69b2ab19b",
+          "expected": "4999950000\n"
+        }
+      ]
+    }
+  }
+}

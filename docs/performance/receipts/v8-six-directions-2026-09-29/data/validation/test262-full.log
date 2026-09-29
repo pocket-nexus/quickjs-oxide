@@ -1,0 +1,43 @@
+Negative diagnostic registry passed: 2972 exact contracts / 78 rules.
+   Compiling quickjs-oxide v0.0.1 (/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954)
+   Compiling quickjs-oxide-host v0.0.1 (/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/adapters/native)
+   Compiling quickjs-oxide-test262 v0.0.1 (/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/conformance/test262)
+    Finished `release` profile [optimized] target(s) in 1m 33s
+Rust Test262 runner provenance passed: engine_semantics_sha256=957e263537c7f9741dd34c97422e0737978899b583a3918b477f33d91fb682d0 binary_sha256=36df4e8d36148899f5bddec64847757b785d5fcbaec83b14ea46250f10c633b2
+make: Entering directory '/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/target/oracle/.quickjs-2026-06-04.work.1210178.1790680669.8387/stage/quickjs-2026-06-04'
+mkdir -p .obj .obj/examples .obj/tests
+gcc -g -Wall -MMD -MF .obj/qjs.o.d -Wno-array-bounds -Wno-format-truncation -Wno-infinite-recursion -fwrapv  -D_GNU_SOURCE -DCONFIG_VERSION=\"2026-06-04\" -O2 -c -o .obj/qjs.o qjs.c
+gcc -g -Wall -MMD -MF .obj/qjsc.o.d -Wno-array-bounds -Wno-format-truncation -Wno-infinite-recursion -fwrapv  -D_GNU_SOURCE -DCONFIG_VERSION=\"2026-06-04\" -DCONFIG_CC=\"gcc\" -DCONFIG_PREFIX=\"/usr/local\" -O2 -c -o .obj/qjsc.o qjsc.c
+gcc -g -Wall -MMD -MF .obj/quickjs.o.d -Wno-array-bounds -Wno-format-truncation -Wno-infinite-recursion -fwrapv  -D_GNU_SOURCE -DCONFIG_VERSION=\"2026-06-04\" -O2 -c -o .obj/quickjs.o quickjs.c
+quickjs.c: In function 'js_default_module_normalize_name':
+quickjs.c:29835:7: warning: assignment discards 'const' qualifier from pointer target type [-Wdiscarded-qualifiers]
+29835 |     p = strrchr(base_name, '/');
+      |       ^
+gcc -g -Wall -MMD -MF .obj/dtoa.o.d -Wno-array-bounds -Wno-format-truncation -Wno-infinite-recursion -fwrapv  -D_GNU_SOURCE -DCONFIG_VERSION=\"2026-06-04\" -O2 -c -o .obj/dtoa.o dtoa.c
+gcc -g -Wall -MMD -MF .obj/libregexp.o.d -Wno-array-bounds -Wno-format-truncation -Wno-infinite-recursion -fwrapv  -D_GNU_SOURCE -DCONFIG_VERSION=\"2026-06-04\" -O2 -c -o .obj/libregexp.o libregexp.c
+gcc -g -Wall -MMD -MF .obj/libunicode.o.d -Wno-array-bounds -Wno-format-truncation -Wno-infinite-recursion -fwrapv  -D_GNU_SOURCE -DCONFIG_VERSION=\"2026-06-04\" -O2 -c -o .obj/libunicode.o libunicode.c
+gcc -g -Wall -MMD -MF .obj/cutils.o.d -Wno-array-bounds -Wno-format-truncation -Wno-infinite-recursion -fwrapv  -D_GNU_SOURCE -DCONFIG_VERSION=\"2026-06-04\" -O2 -c -o .obj/cutils.o cutils.c
+gcc -g -Wall -MMD -MF .obj/quickjs-libc.o.d -Wno-array-bounds -Wno-format-truncation -Wno-infinite-recursion -fwrapv  -D_GNU_SOURCE -DCONFIG_VERSION=\"2026-06-04\" -O2 -c -o .obj/quickjs-libc.o quickjs-libc.c
+gcc -g -o qjsc .obj/qjsc.o .obj/quickjs.o .obj/dtoa.o .obj/libregexp.o .obj/libunicode.o .obj/cutils.o .obj/quickjs-libc.o -lm -lpthread -ldl 
+./qjsc -s -c -o repl.c -m repl.js
+gcc -g -Wall -MMD -MF .obj/repl.o.d -Wno-array-bounds -Wno-format-truncation -Wno-infinite-recursion -fwrapv  -D_GNU_SOURCE -DCONFIG_VERSION=\"2026-06-04\" -O2 -c -o .obj/repl.o repl.c
+gcc -g -rdynamic -o qjs .obj/qjs.o .obj/repl.o .obj/quickjs.o .obj/dtoa.o .obj/libregexp.o .obj/libunicode.o .obj/cutils.o .obj/quickjs-libc.o -lm -lpthread -ldl 
+gcc -g -Wall -MMD -MF .obj/run-test262.o.d -Wno-array-bounds -Wno-format-truncation -Wno-infinite-recursion -fwrapv  -D_GNU_SOURCE -DCONFIG_VERSION=\"2026-06-04\" -O2 -c -o .obj/run-test262.o run-test262.c
+run-test262.c: In function 'get_basename':
+run-test262.c:332:7: warning: assignment discards 'const' qualifier from pointer target type [-Wdiscarded-qualifiers]
+  332 |     p = strrchr(filename, '/');
+      |       ^
+run-test262.c: In function 'run_test':
+run-test262.c:1794:15: warning: assignment discards 'const' qualifier from pointer target type [-Wdiscarded-qualifiers]
+ 1794 |             p = strstr(filename, "test/");
+      |               ^
+run-test262.c:1886:15: warning: assignment discards 'const' qualifier from pointer target type [-Wdiscarded-qualifiers]
+ 1886 |             p = strstr(filename, "test/");
+      |               ^
+gcc -g -o run-test262 .obj/run-test262.o .obj/quickjs.o .obj/dtoa.o .obj/libregexp.o .obj/libunicode.o .obj/cutils.o .obj/quickjs-libc.o -lm -lpthread -ldl 
+ar rcs libquickjs.a .obj/quickjs.o .obj/dtoa.o .obj/libregexp.o .obj/libunicode.o .obj/cutils.o .obj/quickjs-libc.o
+make: Leaving directory '/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/target/oracle/.quickjs-2026-06-04.work.1210178.1790680669.8387/stage/quickjs-2026-06-04'
+Test262: total=102037 pass=80010 fail=3552 unsupported=3502 skipped=18475
+execution: runnable=80060 workers=2
+report=/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/target/test262-full.tsv
+r3fj complete Test262 vector matches: 80010 pass of 80060 eligible (102037 total) variants.

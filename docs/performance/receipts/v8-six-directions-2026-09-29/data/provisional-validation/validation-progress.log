@@ -1,0 +1,16 @@
+start fmt
+finish fmt 0
+start source-layout
+finish source-layout 0
+start rust-only
+finish rust-only 0
+start workspace-tests
+finish workspace-tests 0
+start profile-tests
+finish profile-tests 0
+start clippy
+finish clippy 0
+start test262-check
+finish test262-check 0
+start test262-full
+finish test262-full 0

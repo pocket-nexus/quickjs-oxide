@@ -1,0 +1,1 @@
+rust-only gate passed: product paths and resolved Cargo dependencies contain no external QuickJS engine

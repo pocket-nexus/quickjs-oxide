@@ -1,0 +1,7 @@
+    Checking quickjs-oxide v0.0.1 (/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954)
+    Checking quickjs-oxide-host v0.0.1 (/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/adapters/native)
+    Checking quickjs-oxide-web-host v0.0.1 (/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/adapters/web)
+    Checking quickjs-oxide-web v0.0.1 (/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/apps/web)
+    Checking quickjs-oxide-cli v0.0.1 (/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/apps/cli)
+    Checking quickjs-oxide-test262 v0.0.1 (/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/conformance/test262)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 28.86s

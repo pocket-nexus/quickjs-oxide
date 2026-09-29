@@ -1,0 +1,64 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 2K of event 'cycles:u'
+# Event count (approx.): 10909649984
+#
+# Overhead  Command  Shared Object         Symbol                                                                                                                                                                                                                                
+# ........  .......  ....................  ......................................................................................................................................................................................................................................
+#
+    12.20%  qjs      qjs                   [.] quickjs_oxide::engine::vm::execute::execute_frame
+     4.80%  qjs      qjs                   [.] quickjs_oxide::engine::value::js_value::<impl quickjs_oxide::engine::api::runtime::Runtime>::dup_jsvalue
+     3.63%  qjs      qjs                   [.] quickjs_oxide::engine::value::js_value::<impl quickjs_oxide::engine::api::runtime::Runtime>::release_jsvalue
+     3.50%  qjs      libc.so.6             [.] 0x000000000018f393
+     3.25%  qjs      qjs                   [.] quickjs_oxide::engine::vm::driver::run_frames_with_state
+     2.43%  qjs      qjs                   [.] quickjs_oxide::engine::vm::driver::cold::dispatch
+     2.23%  qjs      qjs                   [.] quickjs_oxide::engine::heap::ownership::<impl quickjs_oxide::engine::heap::runtime::RuntimeState>::release_heap_reference
+     2.22%  qjs      qjs                   [.] quickjs_oxide::engine::vm::proxy_get_driver::dispatch_read::get
+     1.82%  qjs      qjs                   [.] quickjs_oxide::engine::vm::driver::ready::run
+     1.52%  qjs      qjs                   [.] quickjs_oxide::engine::vm::proxy_get_driver::drive
+     1.39%  qjs      qjs                   [.] quickjs_oxide::engine::heap::ownership::<impl quickjs_oxide::engine::api::runtime::Runtime>::retain_object_handle
+     1.39%  qjs      qjs                   [.] quickjs_oxide::engine::vm::stack::copy_reference
+     1.35%  qjs      qjs                   [.] quickjs_oxide::engine::vm::environment_driver::read_global_binding
+     1.26%  qjs      qjs                   [.] quickjs_oxide::engine::heap::ownership::<impl quickjs_oxide::engine::heap::runtime::RuntimeState>::apply_deferred_operation
+     1.22%  qjs      qjs                   [.] quickjs_oxide::engine::object::ordinary_storage::locate
+     1.09%  qjs      libc.so.6             [.] 0x000000000018f49d
+     1.05%  qjs      qjs                   [.] quickjs_oxide::engine::vm::frame::FrameStore::materialize
+     0.93%  qjs      libc.so.6             [.] cfree
+     0.93%  qjs      libc.so.6             [.] malloc
+     0.89%  qjs      qjs                   [.] quickjs_oxide::engine::heap::runtime::RuntimeState::replace_layout_with_owned_shape
+     0.88%  qjs      qjs                   [.] quickjs_oxide::engine::heap::gc::<impl quickjs_oxide::engine::heap::Heap>::retain_edges_transactionally
+     0.88%  qjs      qjs                   [.] quickjs_oxide::engine::heap::gc::<impl quickjs_oxide::engine::heap::Heap>::release_raw_no_drain
+     0.80%  qjs      qjs                   [.] quickjs_oxide::engine::heap::gc::object_layout_edges
+     0.80%  qjs      qjs                   [.] quickjs_oxide::engine::object::ordinary_storage::ic::<impl quickjs_oxide::engine::api::runtime::Runtime>::select_linked_data_into
+     0.80%  qjs      qjs                   [.] quickjs_oxide::engine::object::ordinary_storage::select_missing_prototypes
+     0.76%  qjs      qjs                   [.] quickjs_oxide::engine::heap::ownership::<impl quickjs_oxide::engine::api::runtime::Runtime>::release_or_defer
+     0.71%  qjs      qjs                   [.] quickjs_oxide::engine::vm::execute::FrameCursor::commit_push
+     0.71%  qjs      qjs                   [.] quickjs_oxide::engine::vm::environment_driver::step
+     0.67%  qjs      libc.so.6             [.] 0x000000000018f470
+     0.67%  qjs      qjs                   [.] quickjs_oxide::engine::heap::runtime::RuntimeState::canonical_successor
+     0.63%  qjs      qjs                   [.] quickjs_oxide::engine::vm::proxy_get_driver::dispatch_execution::activation
+     0.63%  qjs      libc.so.6             [.] 0x000000000018f460
+     0.63%  qjs      qjs                   [.] quickjs_oxide::engine::heap::roots::<impl quickjs_oxide::engine::api::runtime::Runtime>::raw_var_ref_value
+     0.63%  qjs      qjs                   [.] quickjs_oxide::engine::vm::proxy_get_driver::start_write_adapted
+     0.59%  qjs      qjs                   [.] quickjs_oxide::engine::vm::frame::FramePush::install
+     0.59%  qjs      qjs                   [.] quickjs_oxide::engine::vm::stack::SlotStore::push_frame_storage
+     0.59%  qjs      libc.so.6             [.] 0x000000000018f453
+     0.55%  qjs      qjs                   [.] quickjs_oxide::engine::vm::proxy_get_driver::finish_write_action
+     0.55%  qjs      qjs                   [.] quickjs_oxide::engine::vm::proxy_get_driver::invoke
+     0.55%  qjs      qjs                   [.] quickjs_oxide::engine::object::ordinary_storage::ic::<impl quickjs_oxide::engine::api::runtime::Runtime>::promote_field_in_state
+     0.54%  qjs      libc.so.6             [.] 0x000000000018f459
+     0.51%  qjs      qjs                   [.] quickjs_oxide::engine::vm::proxy_get_driver::storage::QueryStorage::acquire
+     0.51%  qjs      qjs                   [.] quickjs_oxide::engine::vm::frame::storage::CallStorage::recycle
+     0.51%  qjs      qjs                   [.] hashbrown::map::HashMap<K,V,S,A>::remove
+     0.51%  qjs      qjs                   [.] quickjs_oxide::engine::vm::call::ordinary::OrdinarySelection::authenticate
+     0.51%  qjs      qjs                   [.] quickjs_oxide::engine::vm::call::prepare::<impl quickjs_oxide::engine::api::runtime::Runtime>::prepare_owned_bytecode_frame
+     0.50%  qjs      qjs                   [.] quickjs_oxide::engine::vm::stack::call::<impl quickjs_oxide::engine::vm::stack::SlotStore>::push_ordinary_frame
+     0.50%  qjs      qjs                   [.] quickjs_oxide::engine::vm::driver::push_frame
+
+
+#
+# (Tip: List events using substring match: perf list <keyword>)
+#

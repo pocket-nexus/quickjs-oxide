@@ -1,0 +1,50 @@
+{
+  "schema": "oxide-realworld-phase2-v1",
+  "manifest_sha256": "d0e3cd80acd9c0089fe97aa5a41ed0e61444e85e20aedcd6ea94d6457c5ae660",
+  "toolchain": {
+    "node": "v24.21.0",
+    "esbuild": "0.27.2",
+    "babel": "7.12.13",
+    "vue_compiler": "3.5.35",
+    "platform": "linux",
+    "arch": "x64"
+  },
+  "builder_sha256": "02aefb1a80d94a70d65045c4a559475ad5484a4351f399a22b8450c3ceabb638",
+  "adapter_sha256": {
+    "solid_entry.js": "421eee38037cbf17991e40f4005e0e1b99144bed44f9b491a008ef6c611f542a",
+    "solid_host.js": "488c7c4ce9d9c8262902387ae5d9a53f626877c0b4ac3f4c88fba90c0f543e04",
+    "vue_entry.js": "dbb6f9e232c32de5be0e9c5f1b4bf32bc544a255aaef65d81ede3cc9dfa55aae",
+    "vue_host.js": "ccbff31734554e4290b2eed999ef78fb701f527cfd5d83e6322ca55ea5a73659",
+    "react_entry.js": "0d91c06debee83c056a47b13fc70dd6220d01b1a46644122f0a8a030ca0f1bd3",
+    "react_router_host.js": "53ba84c5e64dbec51c893cbd3d285e7506eb19553be4b6fa4c21bed07330aba0",
+    "trusted_markdown.js": "e41c94db61d419e2058b8b9e7ee0be6b697016bb29791d0a323bb1476657c033"
+  },
+  "apps": {
+    "solid": {
+      "source": "f6e77ecd652bf32f0dc9238f291313fd1af7e98b",
+      "lockfile_sha256": "b1a0ea0bccf4f0666e036b62ac64b09690b618dace227cbbbe21f1068176788b"
+    },
+    "react": {
+      "source": "969709a379b13935b4e1caae0ad8cad548e5879a",
+      "lockfile_sha256": "5db727cd19b167f540213b378797dc58ac6a4d220abcb42485f8fcaca172887d"
+    },
+    "vue": {
+      "source": "f7e48c8178602ce25d43293bc6f8ca51d84ae222",
+      "lockfile_sha256": "60b484c79991349db72f85a5966e4596fd04c4b07a045df37c2449fc622ad8f3"
+    }
+  },
+  "bundles": {
+    "solid": {
+      "file": "/tmp/oxide-phase2-app-bundles-v0/solid-realworld.js",
+      "sha256": "68b3596605bb29057afd1a0e3b148f24c23d4b7b3ba4608d35e5425477656db7"
+    },
+    "vue": {
+      "file": "/tmp/oxide-phase2-app-bundles-v0/vue-realworld.js",
+      "sha256": "b408f8a5a350407cd3a6b19e5b9527aa7c2738b1e09340f96f6bc80ced5078f6"
+    },
+    "react": {
+      "file": "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js",
+      "sha256": "10f2af7ff78744e286578c7dc2e78f0f2de64827917288c5fc73da8e80c0d1ed"
+    }
+  }
+}

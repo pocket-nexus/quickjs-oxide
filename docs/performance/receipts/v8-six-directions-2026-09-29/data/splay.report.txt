@@ -1,0 +1,71 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 2K of event 'cycles:u'
+# Event count (approx.): 10533255168
+#
+# Overhead  Command  Shared Object         Symbol                                                                                                                                    
+# ........  .......  ....................  ..........................................................................................................................................
+#
+    10.80%  qjs      qjs                   [.] quickjs_oxide::engine::vm::execute::execute_frame
+     3.31%  qjs      libc.so.6             [.] 0x000000000018f460
+     3.23%  qjs      libc.so.6             [.] 0x000000000018f393
+     2.36%  qjs      qjs                   [.] quickjs_oxide::engine::heap::gc::<impl quickjs_oxide::engine::heap::Heap>::retain_edges_transactionally
+     2.35%  qjs      qjs                   [.] quickjs_oxide::engine::value::js_value::<impl quickjs_oxide::engine::api::runtime::Runtime>::release_jsvalue
+     2.25%  qjs      qjs                   [.] quickjs_oxide::engine::object::ordinary_storage::ic::<impl quickjs_oxide::engine::api::runtime::Runtime>::select_linked_data_into
+     2.04%  qjs      qjs                   [.] quickjs_oxide::engine::vm::driver::run_frames_with_state
+     1.96%  qjs      qjs                   [.] quickjs_oxide::engine::vm::driver::ready::run
+     1.92%  qjs      qjs                   [.] quickjs_oxide::engine::heap::runtime::RuntimeState::replace_layout_with_owned_shape
+     1.65%  qjs      qjs                   [.] quickjs_oxide::engine::heap::gc::object_layout_edges
+     1.63%  qjs      qjs                   [.] quickjs_oxide::engine::heap::runtime::RuntimeState::remove_shape_cache
+     1.57%  qjs      qjs                   [.] quickjs_oxide::engine::heap::gc::<impl quickjs_oxide::engine::heap::Heap>::release_raw_no_drain
+     1.42%  qjs      qjs                   [.] quickjs_oxide::engine::vm::stack::copy_reference
+     1.36%  qjs      libc.so.6             [.] malloc
+     1.33%  qjs      qjs                   [.] quickjs_oxide::engine::heap::ownership::<impl quickjs_oxide::engine::heap::runtime::RuntimeState>::release_heap_reference
+     1.33%  qjs      qjs                   [.] quickjs_oxide::engine::heap::runtime::RuntimeState::canonical_successor
+     1.32%  qjs      qjs                   [.] quickjs_oxide::engine::heap::gc::<impl quickjs_oxide::engine::heap::Heap>::drain_zero_queue_slow
+     1.29%  qjs      qjs                   [.] quickjs_oxide::engine::object::storage::<impl quickjs_oxide::engine::api::runtime::Runtime>::store_property_slot
+     1.28%  qjs      qjs                   [.] quickjs_oxide::engine::value::js_value::<impl quickjs_oxide::engine::api::runtime::Runtime>::dup_jsvalue
+     1.06%  qjs      qjs                   [.] quickjs_oxide::engine::heap::runtime::RuntimeState::record_transition
+     1.03%  qjs      qjs                   [.] quickjs_oxide::engine::heap::runtime::RuntimeState::get_or_create_shape
+     1.03%  qjs      qjs                   [.] quickjs_oxide::engine::vm::environment_driver::step
+     1.01%  qjs      qjs                   [.] quickjs_oxide::engine::vm::stack::call::<impl quickjs_oxide::engine::vm::stack::SlotStore>::push_ordinary_frame
+     0.98%  qjs      qjs                   [.] quickjs_oxide::engine::vm::construct_driver::define_property
+     0.98%  qjs      qjs                   [.] quickjs_oxide::engine::object::property_ic::locate
+     0.98%  qjs      qjs                   [.] <quickjs_oxide::engine::heap::runtime::RuntimeInner as core::ops::drop::Drop>::drop
+     0.97%  qjs      qjs                   [.] quickjs_oxide::engine::object::properties::<impl quickjs_oxide::engine::api::runtime::Runtime>::define_raw_property
+     0.94%  qjs      qjs                   [.] quickjs_oxide::engine::vm::driver::cold::dispatch
+     0.94%  qjs      qjs                   [.] quickjs_oxide::engine::heap::gc::property_slot_edges
+     0.91%  qjs      libc.so.6             [.] cfree
+     0.86%  qjs      qjs                   [.] quickjs_oxide::engine::object::property_ic::PropertyReadCache::miss_selected
+     0.82%  qjs      qjs                   [.] quickjs_oxide::engine::vm::execute::deferred_action
+     0.81%  qjs      qjs                   [.] hashbrown::rustc_entry::<impl hashbrown::map::HashMap<K,V,S,A>>::rustc_entry
+     0.81%  qjs      qjs                   [.] quickjs_oxide::engine::object::allocation::<impl quickjs_oxide::engine::api::runtime::Runtime>::new_empty_object_with
+     0.77%  qjs      qjs                   [.] quickjs_oxide::engine::vm::proxy_get_driver::drive
+     0.72%  qjs      qjs                   [.] quickjs_oxide::engine::vm::proxy_get_driver::dispatch_write::define
+     0.68%  qjs      qjs                   [.] quickjs_oxide::engine::vm::stack::SlotStore::check_current
+     0.68%  qjs      qjs                   [.] quickjs_oxide::engine::vm::execute::FrameCursor::commit_push
+     0.66%  qjs      qjs                   [.] <quickjs_oxide::engine::heap::edges::Edges as core::iter::traits::collect::Extend<quickjs_oxide::engine::heap::RawId>>::extend
+     0.65%  qjs      qjs                   [.] <quickjs_oxide::engine::heap::edges::Edges as core::iter::traits::collect::Extend<quickjs_oxide::engine::heap::RawId>>::extend
+     0.64%  qjs      qjs                   [.] alloc::vec::Vec<T,A>::extend_trusted
+     0.64%  qjs      qjs                   [.] quickjs_oxide::engine::heap::ownership::<impl quickjs_oxide::engine::heap::runtime::RuntimeState>::apply_deferred_operation
+     0.64%  qjs      qjs                   [.] quickjs_oxide::engine::object::allocation::<impl quickjs_oxide::engine::api::runtime::Runtime>::append_fresh_array_value_jsvalue
+     0.64%  qjs      qjs                   [.] quickjs_oxide::engine::vm::proxy_get_driver::storage::<impl quickjs_oxide::engine::vm::proxy_get_driver::Query>::recycle
+     0.60%  qjs      qjs                   [.] quickjs_oxide::engine::object::properties::<impl quickjs_oxide::engine::api::runtime::Runtime>::can_define_raw_property
+     0.60%  qjs      qjs                   [.] quickjs_oxide::engine::vm::proxy_get_driver::start_write_adapted
+     0.60%  qjs      qjs                   [.] quickjs_oxide::engine::vm::frame::FrameStore::current_mut
+     0.60%  qjs      qjs                   [.] quickjs_oxide::engine::heap::ownership::<impl quickjs_oxide::engine::api::runtime::Runtime>::retain_object_handle
+     0.57%  qjs      libc.so.6             [.] 0x000000000018f49d
+     0.53%  qjs      qjs                   [.] quickjs_oxide::engine::heap::gc::object_edges
+     0.52%  qjs      qjs                   [.] quickjs_oxide::engine::vm::frame::FrameStore::materialize
+     0.51%  qjs      qjs                   [.] core::hash::BuildHasher::hash_one
+     0.51%  qjs      qjs                   [.] quickjs_oxide::engine::value::primitive::JsString::utf16_units
+     0.51%  qjs      qjs                   [.] quickjs_oxide::engine::vm::proxy_get_driver::start_public_field
+     0.50%  qjs      qjs                   [.] quickjs_oxide::engine::object::ordinary_storage::ic::<impl quickjs_oxide::engine::api::runtime::Runtime>::select_linked_miss
+
+
+#
+# (Tip: Compare performance results with: perf diff [<old file> <new file>])
+#

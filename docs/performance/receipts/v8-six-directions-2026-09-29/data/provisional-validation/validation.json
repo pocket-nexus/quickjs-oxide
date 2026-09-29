@@ -1,0 +1,93 @@
+[
+  {
+    "name": "fmt",
+    "command": [
+      "cargo",
+      "fmt",
+      "--all",
+      "--",
+      "--check"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "source-layout",
+    "command": [
+      "python3",
+      "scripts/checks/check-source-layout.py"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "rust-only",
+    "command": [
+      "bash",
+      "scripts/checks/check-rust-only.sh"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "workspace-tests",
+    "command": [
+      "cargo",
+      "test",
+      "--locked",
+      "--workspace",
+      "--all-targets",
+      "--jobs",
+      "2"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "profile-tests",
+    "command": [
+      "cargo",
+      "test",
+      "--locked",
+      "-p",
+      "quickjs-oxide",
+      "--lib",
+      "--features",
+      "profiling",
+      "--jobs",
+      "2"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "clippy",
+    "command": [
+      "cargo",
+      "clippy",
+      "--locked",
+      "--workspace",
+      "--all-targets",
+      "--all-features",
+      "--jobs",
+      "2",
+      "--",
+      "-D",
+      "warnings"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "test262-check",
+    "command": [
+      "bash",
+      "scripts/test262/test-test262.sh",
+      "--check"
+    ],
+    "exit": 0
+  },
+  {
+    "name": "test262-full",
+    "command": [
+      "bash",
+      "scripts/test262/test-test262.sh",
+      "--full"
+    ],
+    "exit": 0
+  }
+]

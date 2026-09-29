@@ -1,0 +1,60 @@
+{
+  "successful_samples": {
+    "aa": 72,
+    "numeric": 128,
+    "property": 128,
+    "shape": 128,
+    "transition": 128,
+    "stack": 128,
+    "accepted": 144,
+    "accepted-apps": 48,
+    "accepted-focused": 32,
+    "original-score": 24
+  },
+  "sample_total": 960,
+  "builds": {
+    "plain": {
+      "commit": "ee999771e2943ec31c303209f53c1107cf829eda",
+      "binary_sha256": "b955a72f48968e1806f7fac59a92634be1add5c589a13084e35687eaf85c1acc"
+    },
+    "profiling": {
+      "commit": "ee999771e2943ec31c303209f53c1107cf829eda",
+      "binary_sha256": "0f8d06970b5c0477923853a112c2035b99a64890599c27484335eaeee54e3f40"
+    }
+  },
+  "profile_equal": {
+    "navier-stokes": {
+      "heap_states": true,
+      "layouts": true
+    },
+    "splay": {
+      "heap_states": true,
+      "layouts": true
+    },
+    "regexp": {
+      "heap_states": true,
+      "layouts": true
+    },
+    "earley-boyer": {
+      "heap_states": true,
+      "layouts": true
+    },
+    "raytrace": {
+      "heap_states": true,
+      "layouts": true
+    },
+    "crypto": {
+      "heap_states": true,
+      "layouts": true
+    },
+    "deltablue": {
+      "heap_states": true,
+      "layouts": true
+    },
+    "richards": {
+      "heap_states": true,
+      "layouts": true
+    }
+  },
+  "validation_gates": 8
+}

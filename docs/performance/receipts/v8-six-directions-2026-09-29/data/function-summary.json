@@ -1,0 +1,666 @@
+{
+  "navier-stokes.cost.jsonl": {
+    "top_dispatch_sites_aggregated_by_function": [
+      {
+        "function": "lin_solve",
+        "line": 413,
+        "dispatch_visits": 8653990,
+        "generic_visits": 3969579
+      },
+      {
+        "function": "advect",
+        "line": 489,
+        "dispatch_visits": 1919079,
+        "generic_visits": 1230224
+      },
+      {
+        "function": "project",
+        "line": 524,
+        "dispatch_visits": 824852,
+        "generic_visits": 429328
+      },
+      {
+        "function": "reset",
+        "line": 646,
+        "dispatch_visits": 343410,
+        "generic_visits": 267095
+      },
+      {
+        "function": "addFields",
+        "line": 368,
+        "dispatch_visits": 202806,
+        "generic_visits": 50703
+      },
+      {
+        "function": "queryUI",
+        "line": 607,
+        "dispatch_visits": 152105,
+        "generic_visits": 118304
+      },
+      {
+        "function": "set_bnd",
+        "line": 373,
+        "dispatch_visits": 147720,
+        "generic_visits": 120884
+      },
+      {
+        "function": "lin_solve2",
+        "line": 448,
+        "dispatch_visits": 99206,
+        "generic_visits": 16773
+      },
+      {
+        "function": "addPoints",
+        "line": 340,
+        "dispatch_visits": 1921,
+        "generic_visits": 1792
+      },
+      {
+        "function": null,
+        "line": 594,
+        "dispatch_visits": 1152,
+        "generic_visits": 384
+      },
+      {
+        "function": null,
+        "line": 588,
+        "dispatch_visits": 576,
+        "generic_visits": 192
+      },
+      {
+        "function": "vel_step",
+        "line": 569,
+        "dispatch_visits": 41,
+        "generic_visits": 41
+      }
+    ],
+    "omitted": {
+      "static_functions": 0,
+      "dispatch_events": 0,
+      "outcome_events": 0,
+      "numeric_rejection_sites": 0,
+      "callsite_events": 0
+    }
+  },
+  "splay.cost.jsonl": {
+    "top_dispatch_sites_aggregated_by_function": [
+      {
+        "function": null,
+        "line": 578,
+        "dispatch_visits": 2581459,
+        "generic_visits": 1218538
+      },
+      {
+        "function": "GeneratePayloadTree",
+        "line": 334,
+        "dispatch_visits": 2278560,
+        "generic_visits": 1769520
+      },
+      {
+        "function": null,
+        "line": 445,
+        "dispatch_visits": 80792,
+        "generic_visits": 64634
+      },
+      {
+        "function": null,
+        "line": 671,
+        "dispatch_visits": 59932,
+        "generic_visits": 43932
+      },
+      {
+        "function": "SplayTearDown",
+        "line": 375,
+        "dispatch_visits": 55999,
+        "generic_visits": 16001
+      },
+      {
+        "function": null,
+        "line": 646,
+        "dispatch_visits": 48956,
+        "generic_visits": 48956
+      },
+      {
+        "function": "InsertNewNode",
+        "line": 356,
+        "dispatch_visits": 48480,
+        "generic_visits": 40400
+      },
+      {
+        "function": null,
+        "line": 509,
+        "dispatch_visits": 24237,
+        "generic_visits": 16158
+      },
+      {
+        "function": "SplaySetup",
+        "line": 369,
+        "dispatch_visits": 24002,
+        "generic_visits": 8001
+      },
+      {
+        "function": null,
+        "line": 562,
+        "dispatch_visits": 8000,
+        "generic_visits": 0
+      },
+      {
+        "function": "SplayRun",
+        "line": 397,
+        "dispatch_visits": 562,
+        "generic_visits": 241
+      },
+      {
+        "function": null,
+        "line": 478,
+        "dispatch_visits": 480,
+        "generic_visits": 400
+      }
+    ],
+    "omitted": {
+      "static_functions": 0,
+      "dispatch_events": 0,
+      "outcome_events": 0,
+      "numeric_rejection_sites": 0,
+      "callsite_events": 0
+    }
+  },
+  "regexp.cost.jsonl": {
+    "top_dispatch_sites_aggregated_by_function": [
+      {
+        "function": "runBlock0",
+        "line": 405,
+        "dispatch_visits": 515070,
+        "generic_visits": 264940
+      },
+      {
+        "function": "computeInputVariants",
+        "line": 347,
+        "dispatch_visits": 214539,
+        "generic_visits": 132040
+      },
+      {
+        "function": "runBlock1",
+        "line": 525,
+        "dispatch_visits": 47420,
+        "generic_visits": 33660
+      },
+      {
+        "function": "runBlock2",
+        "line": 601,
+        "dispatch_visits": 15190,
+        "generic_visits": 8390
+      },
+      {
+        "function": "runBlock3",
+        "line": 695,
+        "dispatch_visits": 9200,
+        "generic_visits": 5780
+      },
+      {
+        "function": "runBlock6",
+        "line": 970,
+        "dispatch_visits": 5860,
+        "generic_visits": 5420
+      },
+      {
+        "function": "runBlock4",
+        "line": 826,
+        "dispatch_visits": 2790,
+        "generic_visits": 1860
+      },
+      {
+        "function": "runBlock9",
+        "line": 1261,
+        "dispatch_visits": 1260,
+        "generic_visits": 1060
+      },
+      {
+        "function": "runBlock5",
+        "line": 892,
+        "dispatch_visits": 1170,
+        "generic_visits": 650
+      },
+      {
+        "function": "runBlock7",
+        "line": 1064,
+        "dispatch_visits": 950,
+        "generic_visits": 590
+      },
+      {
+        "function": "runBlock8",
+        "line": 1129,
+        "dispatch_visits": 830,
+        "generic_visits": 550
+      },
+      {
+        "function": "runBlock10",
+        "line": 1430,
+        "dispatch_visits": 110,
+        "generic_visits": 40
+      }
+    ],
+    "omitted": {
+      "static_functions": 0,
+      "dispatch_events": 0,
+      "outcome_events": 0,
+      "numeric_rejection_sites": 0,
+      "callsite_events": 0
+    }
+  },
+  "earley-boyer.cost.jsonl": {
+    "top_dispatch_sites_aggregated_by_function": [
+      {
+        "function": null,
+        "line": 3922,
+        "dispatch_visits": 2157779,
+        "generic_visits": 824138
+      },
+      {
+        "function": null,
+        "line": 3891,
+        "dispatch_visits": 1472316,
+        "generic_visits": 671859
+      },
+      {
+        "function": "sc_Pair",
+        "line": 821,
+        "dispatch_visits": 534504,
+        "generic_visits": 534504
+      },
+      {
+        "function": "sc_assq",
+        "line": 1307,
+        "dispatch_visits": 520360,
+        "generic_visits": 185685
+      },
+      {
+        "function": null,
+        "line": 3917,
+        "dispatch_visits": 299552,
+        "generic_visits": 94064
+      },
+      {
+        "function": null,
+        "line": 3842,
+        "dispatch_visits": 65640,
+        "generic_visits": 37986
+      },
+      {
+        "function": "sc_list",
+        "line": 1070,
+        "dispatch_visits": 49705,
+        "generic_visits": 26946
+      },
+      {
+        "function": null,
+        "line": 3847,
+        "dispatch_visits": 36963,
+        "generic_visits": 17051
+      },
+      {
+        "function": "sc_isNumber",
+        "line": 443,
+        "dispatch_visits": 36608,
+        "generic_visits": 36608
+      },
+      {
+        "function": null,
+        "line": 4559,
+        "dispatch_visits": 29664,
+        "generic_visits": 23446
+      },
+      {
+        "function": null,
+        "line": 3973,
+        "dispatch_visits": 25981,
+        "generic_visits": 21719
+      },
+      {
+        "function": "sc_append",
+        "line": 1194,
+        "dispatch_visits": 23156,
+        "generic_visits": 9924
+      }
+    ],
+    "omitted": {
+      "static_functions": 0,
+      "dispatch_events": 0,
+      "outcome_events": 0,
+      "numeric_rejection_sites": 0,
+      "callsite_events": 0
+    }
+  },
+  "raytrace.cost.jsonl": {
+    "top_dispatch_sites_aggregated_by_function": [
+      {
+        "function": null,
+        "line": 508,
+        "dispatch_visits": 156342,
+        "generic_visits": 156342
+      },
+      {
+        "function": null,
+        "line": 369,
+        "dispatch_visits": 150252,
+        "generic_visits": 150252
+      },
+      {
+        "function": null,
+        "line": 965,
+        "dispatch_visits": 129214,
+        "generic_visits": 61678
+      },
+      {
+        "function": null,
+        "line": 544,
+        "dispatch_visits": 104464,
+        "generic_visits": 26116
+      },
+      {
+        "function": null,
+        "line": 994,
+        "dispatch_visits": 82440,
+        "generic_visits": 33188
+      },
+      {
+        "function": null,
+        "line": 711,
+        "dispatch_visits": 78964,
+        "generic_visits": 60068
+      },
+      {
+        "function": null,
+        "line": 320,
+        "dispatch_visits": 66596,
+        "generic_visits": 66596
+      },
+      {
+        "function": null,
+        "line": 421,
+        "dispatch_visits": 63260,
+        "generic_visits": 44282
+      },
+      {
+        "function": null,
+        "line": 536,
+        "dispatch_visits": 58788,
+        "generic_visits": 0
+      },
+      {
+        "function": null,
+        "line": 379,
+        "dispatch_visits": 40220,
+        "generic_visits": 16088
+      },
+      {
+        "function": null,
+        "line": 763,
+        "dispatch_visits": 20232,
+        "generic_visits": 12744
+      },
+      {
+        "function": null,
+        "line": 520,
+        "dispatch_visits": 19479,
+        "generic_visits": 19479
+      }
+    ],
+    "omitted": {
+      "static_functions": 0,
+      "dispatch_events": 0,
+      "outcome_events": 0,
+      "numeric_rejection_sites": 0,
+      "callsite_events": 0
+    }
+  },
+  "crypto.cost.jsonl": {
+    "top_dispatch_sites_aggregated_by_function": [
+      {
+        "function": "am3",
+        "line": 393,
+        "dispatch_visits": 15285686,
+        "generic_visits": 12175428
+      },
+      {
+        "function": "bnpSquareTo",
+        "line": 716,
+        "dispatch_visits": 574251,
+        "generic_visits": 355014
+      },
+      {
+        "function": "montReduce",
+        "line": 868,
+        "dispatch_visits": 378723,
+        "generic_visits": 224988
+      },
+      {
+        "function": "bnpDRShiftTo",
+        "line": 615,
+        "dispatch_visits": 174867,
+        "generic_visits": 101157
+      },
+      {
+        "function": "bnpMultiplyTo",
+        "line": 700,
+        "dispatch_visits": 65244,
+        "generic_visits": 36293
+      },
+      {
+        "function": "bnpFromString",
+        "line": 488,
+        "dispatch_visits": 62671,
+        "generic_visits": 43755
+      },
+      {
+        "function": "bnCompareTo",
+        "line": 572,
+        "dispatch_visits": 17355,
+        "generic_visits": 6199
+      },
+      {
+        "function": "intAt",
+        "line": 459,
+        "dispatch_visits": 15360,
+        "generic_visits": 12288
+      },
+      {
+        "function": "bnModPow",
+        "line": 1383,
+        "dispatch_visits": 12344,
+        "generic_visits": 9298
+      },
+      {
+        "function": "bnpClamp",
+        "line": 528,
+        "dispatch_visits": 9972,
+        "generic_visits": 9972
+      },
+      {
+        "function": "ARC4init",
+        "line": 1637,
+        "dispatch_visits": 4612,
+        "generic_visits": 3330
+      },
+      {
+        "function": "bnpLShiftTo",
+        "line": 624,
+        "dispatch_visits": 4146,
+        "generic_visits": 2538
+      }
+    ],
+    "omitted": {
+      "static_functions": 0,
+      "dispatch_events": 0,
+      "outcome_events": 0,
+      "numeric_rejection_sites": 0,
+      "callsite_events": 0
+    }
+  },
+  "deltablue.cost.jsonl": {
+    "top_dispatch_sites_aggregated_by_function": [
+      {
+        "function": null,
+        "line": 1058,
+        "dispatch_visits": 61080,
+        "generic_visits": 36620
+      },
+      {
+        "function": null,
+        "line": 1023,
+        "dispatch_visits": 20627,
+        "generic_visits": 14124
+      },
+      {
+        "function": null,
+        "line": 349,
+        "dispatch_visits": 14912,
+        "generic_visits": 14912
+      },
+      {
+        "function": null,
+        "line": 696,
+        "dispatch_visits": 13717,
+        "generic_visits": 0
+      },
+      {
+        "function": null,
+        "line": 1054,
+        "dispatch_visits": 12160,
+        "generic_visits": 12160
+      },
+      {
+        "function": null,
+        "line": 689,
+        "dispatch_visits": 11707,
+        "generic_visits": 0
+      },
+      {
+        "function": null,
+        "line": 997,
+        "dispatch_visits": 9032,
+        "generic_visits": 4528
+      },
+      {
+        "function": null,
+        "line": 976,
+        "dispatch_visits": 8400,
+        "generic_visits": 6477
+      },
+      {
+        "function": null,
+        "line": 457,
+        "dispatch_visits": 5277,
+        "generic_visits": 4261
+      },
+      {
+        "function": null,
+        "line": 933,
+        "dispatch_visits": 4011,
+        "generic_visits": 3699
+      },
+      {
+        "function": "projectionTest",
+        "line": 1116,
+        "dispatch_visits": 2899,
+        "generic_visits": 2098
+      },
+      {
+        "function": null,
+        "line": 785,
+        "dispatch_visits": 2520,
+        "generic_visits": 1008
+      }
+    ],
+    "omitted": {
+      "static_functions": 0,
+      "dispatch_events": 0,
+      "outcome_events": 0,
+      "numeric_rejection_sites": 0,
+      "callsite_events": 0
+    }
+  },
+  "richards.cost.jsonl": {
+    "top_dispatch_sites_aggregated_by_function": [
+      {
+        "function": null,
+        "line": 750,
+        "dispatch_visits": 20281,
+        "generic_visits": 8544
+      },
+      {
+        "function": null,
+        "line": 609,
+        "dispatch_visits": 17798,
+        "generic_visits": 6573
+      },
+      {
+        "function": null,
+        "line": 526,
+        "dispatch_visits": 16254,
+        "generic_visits": 11610
+      },
+      {
+        "function": null,
+        "line": 473,
+        "dispatch_visits": 10672,
+        "generic_visits": 0
+      },
+      {
+        "function": null,
+        "line": 630,
+        "dispatch_visits": 9602,
+        "generic_visits": 4322
+      },
+      {
+        "function": null,
+        "line": 686,
+        "dispatch_visits": 9256,
+        "generic_visits": 4629
+      },
+      {
+        "function": null,
+        "line": 812,
+        "dispatch_visits": 9179,
+        "generic_visits": 5077
+      },
+      {
+        "function": null,
+        "line": 715,
+        "dispatch_visits": 7956,
+        "generic_visits": 3276
+      },
+      {
+        "function": null,
+        "line": 489,
+        "dispatch_visits": 6993,
+        "generic_visits": 3996
+      },
+      {
+        "function": null,
+        "line": 659,
+        "dispatch_visits": 1999,
+        "generic_visits": 0
+      },
+      {
+        "function": "TaskControlBlock",
+        "line": 545,
+        "dispatch_visits": 42,
+        "generic_visits": 36
+      },
+      {
+        "function": null,
+        "line": 828,
+        "dispatch_visits": 31,
+        "generic_visits": 12
+      }
+    ],
+    "omitted": {
+      "static_functions": 0,
+      "dispatch_events": 0,
+      "outcome_events": 0,
+      "numeric_rejection_sites": 0,
+      "callsite_events": 0
+    }
+  }
+}

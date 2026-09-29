@@ -1,0 +1,533 @@
+{
+  "schema": "oxide-v8-fixed-profile-v1",
+  "metric": "diagnostic fixed coverage; not V8 Score or adaptive timing",
+  "source": {
+    "repository": {
+      "commit": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD"
+        ],
+        "exit_code": 0,
+        "stdout": "2034d98fc8c5f8044e186267593f5d5ea5232caf",
+        "stderr": ""
+      },
+      "tree": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD^{tree}"
+        ],
+        "exit_code": 0,
+        "stdout": "4e86354f280d1a62a27e85b784bd17194694a9c7",
+        "stderr": ""
+      },
+      "top_level": {
+        "command": [
+          "git",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "exit_code": 0,
+        "stdout": "/tmp/oxide-ordinary-v8-source",
+        "stderr": ""
+      },
+      "status": {
+        "command": [
+          "git",
+          "status",
+          "--porcelain"
+        ],
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    "expected_commit": "2034d98fc8c5f8044e186267593f5d5ea5232caf",
+    "root": "/tmp/oxide-ordinary-v8-source",
+    "files": {
+      "base.js": {
+        "path": "/tmp/oxide-ordinary-v8-source/v8-v7/base.js",
+        "sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51"
+      },
+      "richards.js": {
+        "path": "/tmp/oxide-ordinary-v8-source/v8-v7/richards.js",
+        "sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11"
+      },
+      "deltablue.js": {
+        "path": "/tmp/oxide-ordinary-v8-source/v8-v7/deltablue.js",
+        "sha256": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9"
+      },
+      "crypto.js": {
+        "path": "/tmp/oxide-ordinary-v8-source/v8-v7/crypto.js",
+        "sha256": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af"
+      },
+      "raytrace.js": {
+        "path": "/tmp/oxide-ordinary-v8-source/v8-v7/raytrace.js",
+        "sha256": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb"
+      },
+      "earley-boyer.js": {
+        "path": "/tmp/oxide-ordinary-v8-source/v8-v7/earley-boyer.js",
+        "sha256": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01"
+      },
+      "regexp.js": {
+        "path": "/tmp/oxide-ordinary-v8-source/v8-v7/regexp.js",
+        "sha256": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602"
+      },
+      "splay.js": {
+        "path": "/tmp/oxide-ordinary-v8-source/v8-v7/splay.js",
+        "sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d"
+      },
+      "navier-stokes.js": {
+        "path": "/tmp/oxide-ordinary-v8-source/v8-v7/navier-stokes.js",
+        "sha256": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84"
+      },
+      "run.js": {
+        "path": "/tmp/oxide-ordinary-v8-source/v8-v7/run.js",
+        "sha256": "f13e44c0c4c70a9eb7bdab79956cab9faf59be8b9bec97f98f21548e01d9f938"
+      }
+    }
+  },
+  "engine": {
+    "path": "/home/eric/.cache/oxide-six-profile-accepted/release/qjs",
+    "sha256": "0f8d06970b5c0477923853a112c2035b99a64890599c27484335eaeee54e3f40",
+    "version": {
+      "command": [
+        "/home/eric/.cache/oxide-six-profile-accepted/release/qjs",
+        "--version"
+      ],
+      "exit_code": 0,
+      "stdout": "quickjs-oxide 0.0.1 (QuickJS 2026-06-04 compatibility target)",
+      "stderr": ""
+    },
+    "build": {
+      "schema": "oxide-build-v2",
+      "mode": "profiling",
+      "vm_configuration": "stack-vm",
+      "features": [
+        "profiling"
+      ],
+      "commit": "ee999771e2943ec31c303209f53c1107cf829eda",
+      "source": {
+        "commit": {
+          "command": [
+            "git",
+            "rev-parse",
+            "HEAD"
+          ],
+          "exit_code": 0,
+          "stdout": "ee999771e2943ec31c303209f53c1107cf829eda",
+          "stderr": ""
+        },
+        "tree": {
+          "command": [
+            "git",
+            "rev-parse",
+            "HEAD^{tree}"
+          ],
+          "exit_code": 0,
+          "stdout": "ad7b3e70fab7b4eb9131aa4aad004aedcf9f09e2",
+          "stderr": ""
+        },
+        "top_level": {
+          "command": [
+            "git",
+            "rev-parse",
+            "--show-toplevel"
+          ],
+          "exit_code": 0,
+          "stdout": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954",
+          "stderr": ""
+        },
+        "status": {
+          "command": [
+            "git",
+            "status",
+            "--porcelain"
+          ],
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": ""
+        }
+      },
+      "binary_sha256": "0f8d06970b5c0477923853a112c2035b99a64890599c27484335eaeee54e3f40",
+      "tooling": {
+        "repository": {
+          "commit": {
+            "command": [
+              "git",
+              "rev-parse",
+              "HEAD"
+            ],
+            "exit_code": 0,
+            "stdout": "ee999771e2943ec31c303209f53c1107cf829eda",
+            "stderr": ""
+          },
+          "tree": {
+            "command": [
+              "git",
+              "rev-parse",
+              "HEAD^{tree}"
+            ],
+            "exit_code": 0,
+            "stdout": "ad7b3e70fab7b4eb9131aa4aad004aedcf9f09e2",
+            "stderr": ""
+          },
+          "top_level": {
+            "command": [
+              "git",
+              "rev-parse",
+              "--show-toplevel"
+            ],
+            "exit_code": 0,
+            "stdout": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954",
+            "stderr": ""
+          },
+          "status": {
+            "command": [
+              "git",
+              "status",
+              "--porcelain"
+            ],
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": ""
+          }
+        },
+        "snapshots": {
+          "build.py": {
+            "path": "/home/eric/.cache/oxide-six-profile-accepted/release/qjs.build.tooling-build.py",
+            "sha256": "fc8392a9d26290a6095742b2ab4cb45f5ab37b964c9daa51d22f7088259b1f50"
+          },
+          "run.py": {
+            "path": "/home/eric/.cache/oxide-six-profile-accepted/release/qjs.build.tooling-run.py",
+            "sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5"
+          }
+        }
+      },
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--release",
+        "--verbose",
+        "-p",
+        "quickjs-oxide-cli",
+        "--no-default-features",
+        "--target-dir",
+        "/home/eric/.cache/oxide-six-profile-accepted",
+        "--jobs",
+        "2",
+        "--features",
+        "profiling"
+      ],
+      "cwd": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954",
+      "exit_code": 0,
+      "stdout": {
+        "path": "/home/eric/.cache/oxide-six-profile-accepted/release/qjs.build.stdout.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "stderr": {
+        "path": "/home/eric/.cache/oxide-six-profile-accepted/release/qjs.build.stderr.log",
+        "sha256": "0d08a3681037dbc9ce370c6d30d0a6818eb3f26f255e8643f3ee38c475dd2b37"
+      },
+      "rustc": {
+        "command": [
+          "rustc",
+          "-vV"
+        ],
+        "exit_code": 0,
+        "stdout": "rustc 1.88.0 (6b00bc388 2025-06-23)\nbinary: rustc\ncommit-hash: 6b00bc3880198600130e1cf62b8f8a93494488cc\ncommit-date: 2025-06-23\nhost: x86_64-unknown-linux-gnu\nrelease: 1.88.0\nLLVM version: 20.1.5",
+        "stderr": ""
+      },
+      "cargo": {
+        "command": [
+          "cargo",
+          "-V"
+        ],
+        "exit_code": 0,
+        "stdout": "cargo 1.88.0 (873a06493 2025-05-10)",
+        "stderr": ""
+      },
+      "cargo_toml_sha256": "14f5e4d4f172150d6c212b61871da24a4e5b26e34e363f6de2a7f250bbe6e48d",
+      "cargo_lock_sha256": "c26c9f1999da579c0d1176c62981afa716ea998949a8dd15b1365f85b66944e3",
+      "release_profile": {
+        "manifest": {
+          "lto": "\"fat\"",
+          "codegen-units": "1"
+        },
+        "environment_overrides": {
+          "RUSTUP_TOOLCHAIN": "1.88.0"
+        },
+        "cargo_config_sha256": {},
+        "qjs_rustc_invocation": {
+          "command": "/home/eric/.rustup/toolchains/1.88.0-x86_64-unknown-linux-gnu/bin/rustc --crate-name qjs --edition=2024 apps/cli/src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C opt-level=3 -C lto=fat -C codegen-units=1 '--warn=clippy::all' --forbid=unsafe_code --cfg 'feature=\"profiling\"' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values(\"default\", \"profiling\", \"test262-host\"))' -C metadata=b8db043046fc4a9a -C extra-filename=-a4aeeb05a79d570e --out-dir /home/eric/.cache/oxide-six-profile-accepted/release/deps -C strip=debuginfo -L dependency=/home/eric/.cache/oxide-six-profile-accepted/release/deps --extern quickjs_oxide=/home/eric/.cache/oxide-six-profile-accepted/release/deps/libquickjs_oxide-e2e2527fa99cce88.rlib --extern quickjs_oxide_host=/home/eric/.cache/oxide-six-profile-accepted/release/deps/libquickjs_oxide_host-b8890fb1febda195.rlib",
+          "crate": "qjs",
+          "codegen": {
+            "opt-level": "3",
+            "lto": "fat",
+            "codegen-units": "1"
+          },
+          "target": null
+        },
+        "observed_rustc_compilations": 9,
+        "observed_codegen_groups": [
+          {
+            "target": null,
+            "codegen": {},
+            "crates": [
+              "autocfg",
+              "build_script_build"
+            ]
+          },
+          {
+            "target": null,
+            "codegen": {
+              "opt-level": "3",
+              "codegen-units": "1"
+            },
+            "crates": [
+              "tz",
+              "num_traits",
+              "num_integer",
+              "num_bigint",
+              "quickjs_oxide",
+              "quickjs_oxide_host"
+            ]
+          },
+          {
+            "target": null,
+            "codegen": {
+              "opt-level": "3",
+              "lto": "fat",
+              "codegen-units": "1"
+            },
+            "crates": [
+              "qjs"
+            ]
+          }
+        ]
+      },
+      "target": {
+        "requested_triple": null,
+        "rustc_host": "x86_64-unknown-linux-gnu",
+        "observed_triple": null,
+        "observed_target_cpu": null,
+        "observed_target_feature": null
+      },
+      "commit_environment": "ee999771e2943ec31c303209f53c1107cf829eda"
+    }
+  },
+  "machine": {
+    "platform": "Linux-7.2.7-arch1-1-x86_64-with-glibc2.44",
+    "machine": "x86_64",
+    "cpu": "AMD Ryzen 7 7840HS with Radeon 780M Graphics",
+    "logical_cpus": 16,
+    "python": "3.14.7",
+    "cpu_affinity": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15
+    ],
+    "scaling_governors": {
+      "0": "powersave",
+      "1": "powersave",
+      "2": "powersave",
+      "3": "powersave",
+      "4": "powersave",
+      "5": "powersave",
+      "6": "powersave",
+      "7": "powersave",
+      "8": "powersave",
+      "9": "powersave",
+      "10": "powersave",
+      "11": "powersave",
+      "12": "powersave",
+      "13": "powersave",
+      "14": "powersave",
+      "15": "powersave"
+    },
+    "load_average": [
+      1.4248046875,
+      2.14990234375,
+      1.82373046875
+    ],
+    "macos": null,
+    "runner_sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5",
+    "repository": {
+      "commit": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD"
+        ],
+        "exit_code": 0,
+        "stdout": "ee999771e2943ec31c303209f53c1107cf829eda",
+        "stderr": ""
+      },
+      "tree": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD^{tree}"
+        ],
+        "exit_code": 0,
+        "stdout": "ad7b3e70fab7b4eb9131aa4aad004aedcf9f09e2",
+        "stderr": ""
+      },
+      "top_level": {
+        "command": [
+          "git",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "exit_code": 0,
+        "stdout": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954",
+        "stderr": ""
+      },
+      "status": {
+        "command": [
+          "git",
+          "status",
+          "--porcelain"
+        ],
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    }
+  },
+  "runner_sha256": "7a466baf2dc114bb5daa387fd297015a5729527e1e8327bc4f543ea6a63bcb1e",
+  "workloads": [
+    {
+      "case": "richards",
+      "path": "/tmp/oxide-six-accepted-profile/generated/richards.js",
+      "sha256": "cd82e8b3816a4596645ccc11380ea3cd158f0dc93143a22c807bcacfbc73e286",
+      "source_sha256": "d86eac4108343a54ba6e10621a77b46f82f554c3b0a46e8fb4032d5cf65a2a11",
+      "base_sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+      "driver_sha256": "3d33f3140205aadb526f74758e2f3aae4cde468c3bd6f46520a3ff07498e9a5a",
+      "suite": "Richards",
+      "benchmarks": [
+        "Richards"
+      ],
+      "iterations": 1,
+      "expected_marker": "__oxide_v8_fixed_profile_complete__:Richards:1:1:1\n"
+    },
+    {
+      "case": "deltablue",
+      "path": "/tmp/oxide-six-accepted-profile/generated/deltablue.js",
+      "sha256": "da98c0aa05bb2ef053b3ddfb836523527246b9c5dfe78123ffb96a48978821e3",
+      "source_sha256": "74b5a95f4877701073c6efef08e4ae306562747067e292925b69cbd629a511b9",
+      "base_sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+      "driver_sha256": "28e256bc50c31d0848f5dac9c800d4014230da960ac0a8ea9b727747520995f6",
+      "suite": "DeltaBlue",
+      "benchmarks": [
+        "DeltaBlue"
+      ],
+      "iterations": 1,
+      "expected_marker": "__oxide_v8_fixed_profile_complete__:DeltaBlue:1:1:1\n"
+    },
+    {
+      "case": "crypto",
+      "path": "/tmp/oxide-six-accepted-profile/generated/crypto.js",
+      "sha256": "b10ac2a2a6ae96c9b09e513d02da81858377035a21f0559ea6480dc2eefc8bb3",
+      "source_sha256": "5321d2ada9b61e01d5f281609513467cbaa7c0effb12c577ed08088d812453af",
+      "base_sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+      "driver_sha256": "e248737222519a73c1a9adc822360f8f5eaf0148afe72532fe679f52c213e6d8",
+      "suite": "Crypto",
+      "benchmarks": [
+        "Encrypt",
+        "Decrypt"
+      ],
+      "iterations": 1,
+      "expected_marker": "__oxide_v8_fixed_profile_complete__:Crypto:2:1:2\n"
+    },
+    {
+      "case": "raytrace",
+      "path": "/tmp/oxide-six-accepted-profile/generated/raytrace.js",
+      "sha256": "9d0cb603cc83efb3e13b1a075fc1533dd23f30723341580ec4d10d76289c1032",
+      "source_sha256": "d52183ca324cdb88d9ee3e78326433fe2ca28d6436f0a6c3ec013ab67cb798eb",
+      "base_sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+      "driver_sha256": "db1d379476aa302bb795c1a0ba0715852e6dead5f7a1dbb6b03cc94c080a5695",
+      "suite": "RayTrace",
+      "benchmarks": [
+        "RayTrace"
+      ],
+      "iterations": 1,
+      "expected_marker": "__oxide_v8_fixed_profile_complete__:RayTrace:1:1:1\n"
+    },
+    {
+      "case": "earley-boyer",
+      "path": "/tmp/oxide-six-accepted-profile/generated/earley-boyer.js",
+      "sha256": "c0a80079de9c4492e0981195447be3c43dc2db1ccca1881fe6b08bbd9694ddc3",
+      "source_sha256": "dbf3aeb6b3d056e8ea35b5f19aa8c8a4fb1053e41d07f096c22483b2c1c6ee01",
+      "base_sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+      "driver_sha256": "a1754569c564644dfeb20e71e131e93570527bd8f3ede19e8996618bb992433a",
+      "suite": "EarleyBoyer",
+      "benchmarks": [
+        "Earley",
+        "Boyer"
+      ],
+      "iterations": 1,
+      "expected_marker": "__oxide_v8_fixed_profile_complete__:EarleyBoyer:2:1:2\n"
+    },
+    {
+      "case": "regexp",
+      "path": "/tmp/oxide-six-accepted-profile/generated/regexp.js",
+      "sha256": "5d9c8cfec5905a6e76a5afd38f46920b6d44a035a60b394ebf3e0d9bb7681041",
+      "source_sha256": "5268b0d15931fda4e331de35fc58e5beded9a250b60764e1cc7cfc898ab53602",
+      "base_sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+      "driver_sha256": "de4b76c5a78ae6e0612ef69c1dbfe63fcea7378dbca9d11a6f47def133125c7e",
+      "suite": "RegExp",
+      "benchmarks": [
+        "RegExp"
+      ],
+      "iterations": 1,
+      "expected_marker": "__oxide_v8_fixed_profile_complete__:RegExp:1:1:1\n"
+    },
+    {
+      "case": "splay",
+      "path": "/tmp/oxide-six-accepted-profile/generated/splay.js",
+      "sha256": "df38fc866d092621ae814e2e2ab23aad7ec4c47c21bdb90d327b8e11a08f3479",
+      "source_sha256": "1f875cec579d03af40d256ceaeb6823f3ef16c883652650ca51d183472a8185d",
+      "base_sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+      "driver_sha256": "51cb308598827405444069adb54a952a808a57c426dc2daa600f5b67a4486b0d",
+      "suite": "Splay",
+      "benchmarks": [
+        "Splay"
+      ],
+      "iterations": 1,
+      "expected_marker": "__oxide_v8_fixed_profile_complete__:Splay:1:1:1\n"
+    },
+    {
+      "case": "navier-stokes",
+      "path": "/tmp/oxide-six-accepted-profile/generated/navier-stokes.js",
+      "sha256": "1f7516f3d3f70899571a04fe2bec8f49df3f49e56eca7e911b8d769e6b132c37",
+      "source_sha256": "ce241465ffeee77b5c4f7119f522aa971fe1fe92c3aed76f7514ea43e07fec84",
+      "base_sha256": "ac383759c3cbf5f3a499ade526a4e296f7925733d8c3889b6d5840ce6867ff51",
+      "driver_sha256": "e5bac9952c05fb43ad8ff32876cc582944e721bcd8255b2a20c5cd165406ea26",
+      "suite": "NavierStokes",
+      "benchmarks": [
+        "NavierStokes"
+      ],
+      "iterations": 1,
+      "expected_marker": "__oxide_v8_fixed_profile_complete__:NavierStokes:1:1:1\n"
+    }
+  ],
+  "iterations_per_benchmark": 1,
+  "timeout_seconds": 3600
+}

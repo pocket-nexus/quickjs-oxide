@@ -1,0 +1,16 @@
+{
+  "binary_sha256": "b955a72f48968e1806f7fac59a92634be1add5c589a13084e35687eaf85c1acc",
+  "binary_receipt": "builds/accepted.json",
+  "source_commit": "ee999771e2943ec31c303209f53c1107cf829eda",
+  "files": [
+    {
+      "file": "stack-accepted-commit-push.asm",
+      "sha256": "f61c43abd53008c5bf95995e9d103983fa279de3568c20c421ed6997b398e2ea"
+    },
+    {
+      "file": "stack-accepted-frame-slots-push.asm",
+      "sha256": "d21fca0bc902f0484fbf2fab25e39cb4ebf3a87b93ef2ea36719326d4c4b86aa"
+    }
+  ],
+  "observed": "operand_push_index absent; both successful push paths have no call, one Vec bounds check; capacity and occupied-slot checks remain"
+}

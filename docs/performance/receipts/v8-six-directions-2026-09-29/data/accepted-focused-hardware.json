@@ -1,0 +1,642 @@
+[
+  {
+    "case": "ordinary-property-write",
+    "engine": "before",
+    "repetition": 0,
+    "values": {
+      "instructions:u": 717796670,
+      "cycles:u": 232404376
+    },
+    "peak_rss_kib": 8824,
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-six-evidence/accepted-focused-hardware/ordinary-property-write-before-0.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-six-build-baseline/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js"
+    ],
+    "rss_command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-six-build-baseline/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js"
+    ],
+    "binary_sha256": "cac1861c3a54b0196181128187ad2628e2254f1f43778c54c406720b966fa0d6",
+    "workload_sha256": "419c86188282c85888d175cb75b149d7a79f46e8360b23c506f8c3cc448c47f1",
+    "perf_raw": "# started on Tue Sep 29 19:37:00 2026\n\n717796670,,instructions:u,53353520,100.00,,\n232404376,,cycles:u,53353520,100.00,,\n",
+    "rss_raw": "rss_kib=8824\n"
+  },
+  {
+    "case": "ordinary-property-write",
+    "engine": "after",
+    "repetition": 0,
+    "values": {
+      "instructions:u": 429870428,
+      "cycles:u": 147704644
+    },
+    "peak_rss_kib": 8680,
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-six-evidence/accepted-focused-hardware/ordinary-property-write-after-0.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/home/eric/.cache/oxide-six-build-accepted/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js"
+    ],
+    "rss_command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/home/eric/.cache/oxide-six-build-accepted/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js"
+    ],
+    "binary_sha256": "b955a72f48968e1806f7fac59a92634be1add5c589a13084e35687eaf85c1acc",
+    "workload_sha256": "419c86188282c85888d175cb75b149d7a79f46e8360b23c506f8c3cc448c47f1",
+    "perf_raw": "# started on Tue Sep 29 19:37:00 2026\n\n429870428,,instructions:u,35619657,100.00,,\n147704644,,cycles:u,35619657,100.00,,\n",
+    "rss_raw": "rss_kib=8680\n"
+  },
+  {
+    "case": "ordinary-property-write",
+    "engine": "after",
+    "repetition": 1,
+    "values": {
+      "instructions:u": 429869916,
+      "cycles:u": 145689155
+    },
+    "peak_rss_kib": 8840,
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-six-evidence/accepted-focused-hardware/ordinary-property-write-after-1.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/home/eric/.cache/oxide-six-build-accepted/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js"
+    ],
+    "rss_command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/home/eric/.cache/oxide-six-build-accepted/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js"
+    ],
+    "binary_sha256": "b955a72f48968e1806f7fac59a92634be1add5c589a13084e35687eaf85c1acc",
+    "workload_sha256": "419c86188282c85888d175cb75b149d7a79f46e8360b23c506f8c3cc448c47f1",
+    "perf_raw": "# started on Tue Sep 29 19:37:00 2026\n\n429869916,,instructions:u,32793722,100.00,,\n145689155,,cycles:u,32793722,100.00,,\n",
+    "rss_raw": "rss_kib=8840\n"
+  },
+  {
+    "case": "ordinary-property-write",
+    "engine": "before",
+    "repetition": 1,
+    "values": {
+      "instructions:u": 717796059,
+      "cycles:u": 233524873
+    },
+    "peak_rss_kib": 8752,
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-six-evidence/accepted-focused-hardware/ordinary-property-write-before-1.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-six-build-baseline/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js"
+    ],
+    "rss_command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-six-build-baseline/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js"
+    ],
+    "binary_sha256": "cac1861c3a54b0196181128187ad2628e2254f1f43778c54c406720b966fa0d6",
+    "workload_sha256": "419c86188282c85888d175cb75b149d7a79f46e8360b23c506f8c3cc448c47f1",
+    "perf_raw": "# started on Tue Sep 29 19:37:01 2026\n\n717796059,,instructions:u,52552624,100.00,,\n233524873,,cycles:u,52552624,100.00,,\n",
+    "rss_raw": "rss_kib=8752\n"
+  },
+  {
+    "case": "ordinary-property-write",
+    "engine": "after",
+    "repetition": 2,
+    "values": {
+      "instructions:u": 429869288,
+      "cycles:u": 149261860
+    },
+    "peak_rss_kib": 8764,
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-six-evidence/accepted-focused-hardware/ordinary-property-write-after-2.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/home/eric/.cache/oxide-six-build-accepted/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js"
+    ],
+    "rss_command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/home/eric/.cache/oxide-six-build-accepted/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js"
+    ],
+    "binary_sha256": "b955a72f48968e1806f7fac59a92634be1add5c589a13084e35687eaf85c1acc",
+    "workload_sha256": "419c86188282c85888d175cb75b149d7a79f46e8360b23c506f8c3cc448c47f1",
+    "perf_raw": "# started on Tue Sep 29 19:37:01 2026\n\n429869288,,instructions:u,34089951,100.00,,\n149261860,,cycles:u,34089951,100.00,,\n",
+    "rss_raw": "rss_kib=8764\n"
+  },
+  {
+    "case": "ordinary-property-write",
+    "engine": "before",
+    "repetition": 2,
+    "values": {
+      "instructions:u": 717795718,
+      "cycles:u": 229707553
+    },
+    "peak_rss_kib": 8836,
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-six-evidence/accepted-focused-hardware/ordinary-property-write-before-2.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-six-build-baseline/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js"
+    ],
+    "rss_command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-six-build-baseline/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js"
+    ],
+    "binary_sha256": "cac1861c3a54b0196181128187ad2628e2254f1f43778c54c406720b966fa0d6",
+    "workload_sha256": "419c86188282c85888d175cb75b149d7a79f46e8360b23c506f8c3cc448c47f1",
+    "perf_raw": "# started on Tue Sep 29 19:37:01 2026\n\n717795718,,instructions:u,52051217,100.00,,\n229707553,,cycles:u,52051217,100.00,,\n",
+    "rss_raw": "rss_kib=8836\n"
+  },
+  {
+    "case": "ordinary-property-write",
+    "engine": "before",
+    "repetition": 3,
+    "values": {
+      "instructions:u": 717796215,
+      "cycles:u": 234429932
+    },
+    "peak_rss_kib": 8828,
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-six-evidence/accepted-focused-hardware/ordinary-property-write-before-3.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-six-build-baseline/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js"
+    ],
+    "rss_command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-six-build-baseline/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js"
+    ],
+    "binary_sha256": "cac1861c3a54b0196181128187ad2628e2254f1f43778c54c406720b966fa0d6",
+    "workload_sha256": "419c86188282c85888d175cb75b149d7a79f46e8360b23c506f8c3cc448c47f1",
+    "perf_raw": "# started on Tue Sep 29 19:37:01 2026\n\n717796215,,instructions:u,54277854,100.00,,\n234429932,,cycles:u,54277854,100.00,,\n",
+    "rss_raw": "rss_kib=8828\n"
+  },
+  {
+    "case": "ordinary-property-write",
+    "engine": "after",
+    "repetition": 3,
+    "values": {
+      "instructions:u": 429869857,
+      "cycles:u": 147685164
+    },
+    "peak_rss_kib": 8620,
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-six-evidence/accepted-focused-hardware/ordinary-property-write-after-3.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/home/eric/.cache/oxide-six-build-accepted/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js"
+    ],
+    "rss_command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/home/eric/.cache/oxide-six-build-accepted/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js"
+    ],
+    "binary_sha256": "b955a72f48968e1806f7fac59a92634be1add5c589a13084e35687eaf85c1acc",
+    "workload_sha256": "419c86188282c85888d175cb75b149d7a79f46e8360b23c506f8c3cc448c47f1",
+    "perf_raw": "# started on Tue Sep 29 19:37:01 2026\n\n429869857,,instructions:u,33855183,100.00,,\n147685164,,cycles:u,33855183,100.00,,\n",
+    "rss_raw": "rss_kib=8620\n"
+  },
+  {
+    "case": "repeated-shape-edge",
+    "engine": "before",
+    "repetition": 0,
+    "values": {
+      "instructions:u": 2757864449,
+      "cycles:u": 1114916401
+    },
+    "peak_rss_kib": 10492,
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-six-evidence/accepted-focused-hardware/repeated-shape-edge-before-0.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-six-build-baseline/release/qjs",
+      "/home/eric/.cache/oxide-six-transition-evidence/repeated-shape-edge.js"
+    ],
+    "rss_command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-six-build-baseline/release/qjs",
+      "/home/eric/.cache/oxide-six-transition-evidence/repeated-shape-edge.js"
+    ],
+    "binary_sha256": "cac1861c3a54b0196181128187ad2628e2254f1f43778c54c406720b966fa0d6",
+    "workload_sha256": "c3f07c3220b8ba68f7a3afaf56fe3f87e49cbd86b054319f9075bbb69b2ab19b",
+    "perf_raw": "# started on Tue Sep 29 19:37:01 2026\n\n2757864449,,instructions:u,242777224,100.00,,\n1114916401,,cycles:u,242777224,100.00,,\n",
+    "rss_raw": "rss_kib=10492\n"
+  },
+  {
+    "case": "repeated-shape-edge",
+    "engine": "after",
+    "repetition": 0,
+    "values": {
+      "instructions:u": 2678119674,
+      "cycles:u": 1056289148
+    },
+    "peak_rss_kib": 8768,
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-six-evidence/accepted-focused-hardware/repeated-shape-edge-after-0.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/home/eric/.cache/oxide-six-build-accepted/release/qjs",
+      "/home/eric/.cache/oxide-six-transition-evidence/repeated-shape-edge.js"
+    ],
+    "rss_command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/home/eric/.cache/oxide-six-build-accepted/release/qjs",
+      "/home/eric/.cache/oxide-six-transition-evidence/repeated-shape-edge.js"
+    ],
+    "binary_sha256": "b955a72f48968e1806f7fac59a92634be1add5c589a13084e35687eaf85c1acc",
+    "workload_sha256": "c3f07c3220b8ba68f7a3afaf56fe3f87e49cbd86b054319f9075bbb69b2ab19b",
+    "perf_raw": "# started on Tue Sep 29 19:37:02 2026\n\n2678119674,,instructions:u,229229164,100.00,,\n1056289148,,cycles:u,229229164,100.00,,\n",
+    "rss_raw": "rss_kib=8768\n"
+  },
+  {
+    "case": "repeated-shape-edge",
+    "engine": "after",
+    "repetition": 1,
+    "values": {
+      "instructions:u": 2678120771,
+      "cycles:u": 1020010188
+    },
+    "peak_rss_kib": 8896,
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-six-evidence/accepted-focused-hardware/repeated-shape-edge-after-1.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/home/eric/.cache/oxide-six-build-accepted/release/qjs",
+      "/home/eric/.cache/oxide-six-transition-evidence/repeated-shape-edge.js"
+    ],
+    "rss_command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/home/eric/.cache/oxide-six-build-accepted/release/qjs",
+      "/home/eric/.cache/oxide-six-transition-evidence/repeated-shape-edge.js"
+    ],
+    "binary_sha256": "b955a72f48968e1806f7fac59a92634be1add5c589a13084e35687eaf85c1acc",
+    "workload_sha256": "c3f07c3220b8ba68f7a3afaf56fe3f87e49cbd86b054319f9075bbb69b2ab19b",
+    "perf_raw": "# started on Tue Sep 29 19:37:02 2026\n\n2678120771,,instructions:u,221288122,100.00,,\n1020010188,,cycles:u,221288122,100.00,,\n",
+    "rss_raw": "rss_kib=8896\n"
+  },
+  {
+    "case": "repeated-shape-edge",
+    "engine": "before",
+    "repetition": 1,
+    "values": {
+      "instructions:u": 2757864709,
+      "cycles:u": 1056209557
+    },
+    "peak_rss_kib": 10428,
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-six-evidence/accepted-focused-hardware/repeated-shape-edge-before-1.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-six-build-baseline/release/qjs",
+      "/home/eric/.cache/oxide-six-transition-evidence/repeated-shape-edge.js"
+    ],
+    "rss_command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-six-build-baseline/release/qjs",
+      "/home/eric/.cache/oxide-six-transition-evidence/repeated-shape-edge.js"
+    ],
+    "binary_sha256": "cac1861c3a54b0196181128187ad2628e2254f1f43778c54c406720b966fa0d6",
+    "workload_sha256": "c3f07c3220b8ba68f7a3afaf56fe3f87e49cbd86b054319f9075bbb69b2ab19b",
+    "perf_raw": "# started on Tue Sep 29 19:37:03 2026\n\n2757864709,,instructions:u,232007811,100.00,,\n1056209557,,cycles:u,232007811,100.00,,\n",
+    "rss_raw": "rss_kib=10428\n"
+  },
+  {
+    "case": "repeated-shape-edge",
+    "engine": "after",
+    "repetition": 2,
+    "values": {
+      "instructions:u": 2678120380,
+      "cycles:u": 1008509999
+    },
+    "peak_rss_kib": 8896,
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-six-evidence/accepted-focused-hardware/repeated-shape-edge-after-2.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/home/eric/.cache/oxide-six-build-accepted/release/qjs",
+      "/home/eric/.cache/oxide-six-transition-evidence/repeated-shape-edge.js"
+    ],
+    "rss_command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/home/eric/.cache/oxide-six-build-accepted/release/qjs",
+      "/home/eric/.cache/oxide-six-transition-evidence/repeated-shape-edge.js"
+    ],
+    "binary_sha256": "b955a72f48968e1806f7fac59a92634be1add5c589a13084e35687eaf85c1acc",
+    "workload_sha256": "c3f07c3220b8ba68f7a3afaf56fe3f87e49cbd86b054319f9075bbb69b2ab19b",
+    "perf_raw": "# started on Tue Sep 29 19:37:03 2026\n\n2678120380,,instructions:u,219221604,100.00,,\n1008509999,,cycles:u,219221604,100.00,,\n",
+    "rss_raw": "rss_kib=8896\n"
+  },
+  {
+    "case": "repeated-shape-edge",
+    "engine": "before",
+    "repetition": 2,
+    "values": {
+      "instructions:u": 2757865271,
+      "cycles:u": 1050793864
+    },
+    "peak_rss_kib": 10300,
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-six-evidence/accepted-focused-hardware/repeated-shape-edge-before-2.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-six-build-baseline/release/qjs",
+      "/home/eric/.cache/oxide-six-transition-evidence/repeated-shape-edge.js"
+    ],
+    "rss_command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-six-build-baseline/release/qjs",
+      "/home/eric/.cache/oxide-six-transition-evidence/repeated-shape-edge.js"
+    ],
+    "binary_sha256": "cac1861c3a54b0196181128187ad2628e2254f1f43778c54c406720b966fa0d6",
+    "workload_sha256": "c3f07c3220b8ba68f7a3afaf56fe3f87e49cbd86b054319f9075bbb69b2ab19b",
+    "perf_raw": "# started on Tue Sep 29 19:37:04 2026\n\n2757865271,,instructions:u,228898315,100.00,,\n1050793864,,cycles:u,228898315,100.00,,\n",
+    "rss_raw": "rss_kib=10300\n"
+  },
+  {
+    "case": "repeated-shape-edge",
+    "engine": "before",
+    "repetition": 3,
+    "values": {
+      "instructions:u": 2757865229,
+      "cycles:u": 1049855858
+    },
+    "peak_rss_kib": 10288,
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-six-evidence/accepted-focused-hardware/repeated-shape-edge-before-3.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-six-build-baseline/release/qjs",
+      "/home/eric/.cache/oxide-six-transition-evidence/repeated-shape-edge.js"
+    ],
+    "rss_command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-six-build-baseline/release/qjs",
+      "/home/eric/.cache/oxide-six-transition-evidence/repeated-shape-edge.js"
+    ],
+    "binary_sha256": "cac1861c3a54b0196181128187ad2628e2254f1f43778c54c406720b966fa0d6",
+    "workload_sha256": "c3f07c3220b8ba68f7a3afaf56fe3f87e49cbd86b054319f9075bbb69b2ab19b",
+    "perf_raw": "# started on Tue Sep 29 19:37:04 2026\n\n2757865229,,instructions:u,228545368,100.00,,\n1049855858,,cycles:u,228545368,100.00,,\n",
+    "rss_raw": "rss_kib=10288\n"
+  },
+  {
+    "case": "repeated-shape-edge",
+    "engine": "after",
+    "repetition": 3,
+    "values": {
+      "instructions:u": 2678119090,
+      "cycles:u": 1022549254
+    },
+    "peak_rss_kib": 9072,
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-six-evidence/accepted-focused-hardware/repeated-shape-edge-after-3.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/home/eric/.cache/oxide-six-build-accepted/release/qjs",
+      "/home/eric/.cache/oxide-six-transition-evidence/repeated-shape-edge.js"
+    ],
+    "rss_command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/home/eric/.cache/oxide-six-build-accepted/release/qjs",
+      "/home/eric/.cache/oxide-six-transition-evidence/repeated-shape-edge.js"
+    ],
+    "binary_sha256": "b955a72f48968e1806f7fac59a92634be1add5c589a13084e35687eaf85c1acc",
+    "workload_sha256": "c3f07c3220b8ba68f7a3afaf56fe3f87e49cbd86b054319f9075bbb69b2ab19b",
+    "perf_raw": "# started on Tue Sep 29 19:37:04 2026\n\n2678119090,,instructions:u,221466795,100.00,,\n1022549254,,cycles:u,221466795,100.00,,\n",
+    "rss_raw": "rss_kib=9072\n"
+  }
+]

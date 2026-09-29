@@ -1,0 +1,53 @@
+Negative diagnostic registry passed: 2972 exact contracts / 78 rules.
+   Compiling autocfg v1.5.1
+   Compiling tz-rs v0.7.3
+   Compiling num-traits v0.2.19
+   Compiling num-integer v0.1.46
+   Compiling num-bigint v0.5.1
+   Compiling quickjs-oxide v0.0.1 (/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954)
+   Compiling quickjs-oxide-host v0.0.1 (/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/adapters/native)
+   Compiling quickjs-oxide-test262 v0.0.1 (/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/conformance/test262)
+    Finished `release` profile [optimized] target(s) in 1m 33s
+Rust Test262 runner provenance passed: engine_semantics_sha256=3e8cd91bc01e98155f48e5d9ee9ab57cd6ecb70105efe2085013af56f78f389c binary_sha256=a75e46f8182f9f92ef914f70d0f88dd54219a6ae6857859ac764fe73bb35cba0
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+  0      0   0      0   0      0      0      0           00:01              0  7 606.9k   7  49152   0      0  15681      0   00:39   00:03   00:36  36108 28 606.9k  28 176.0k   0      0  41485      0   00:14   00:04   00:10  70096 57 606.9k  57 352.0k   0      0  62999      0   00:09   00:05   00:04  91292 89 606.9k  89 544.0k   0      0  77551      0   00:08   00:07   00:01 100.5k100 606.9k 100 606.9k   0      0  86476      0   00:07   00:07         100.5k100 606.9k 100 606.9k   0      0  86476      0   00:07   00:07         100.5k100 606.9k 100 606.9k   0      0  86475      0   00:07   00:07         100.5k
+From https://github.com/tc39/test262
+ * branch              5c8206929d81b2d3d727ca6aac56c18358c8d790 -> FETCH_HEAD
+make: Entering directory '/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/target/oracle/.quickjs-2026-06-04.work.940780.1790678627.11704/stage/quickjs-2026-06-04'
+mkdir -p .obj .obj/examples .obj/tests
+gcc -g -Wall -MMD -MF .obj/qjs.o.d -Wno-array-bounds -Wno-format-truncation -Wno-infinite-recursion -fwrapv  -D_GNU_SOURCE -DCONFIG_VERSION=\"2026-06-04\" -O2 -c -o .obj/qjs.o qjs.c
+gcc -g -Wall -MMD -MF .obj/qjsc.o.d -Wno-array-bounds -Wno-format-truncation -Wno-infinite-recursion -fwrapv  -D_GNU_SOURCE -DCONFIG_VERSION=\"2026-06-04\" -DCONFIG_CC=\"gcc\" -DCONFIG_PREFIX=\"/usr/local\" -O2 -c -o .obj/qjsc.o qjsc.c
+gcc -g -Wall -MMD -MF .obj/quickjs.o.d -Wno-array-bounds -Wno-format-truncation -Wno-infinite-recursion -fwrapv  -D_GNU_SOURCE -DCONFIG_VERSION=\"2026-06-04\" -O2 -c -o .obj/quickjs.o quickjs.c
+quickjs.c: In function 'js_default_module_normalize_name':
+quickjs.c:29835:7: warning: assignment discards 'const' qualifier from pointer target type [-Wdiscarded-qualifiers]
+29835 |     p = strrchr(base_name, '/');
+      |       ^
+gcc -g -Wall -MMD -MF .obj/dtoa.o.d -Wno-array-bounds -Wno-format-truncation -Wno-infinite-recursion -fwrapv  -D_GNU_SOURCE -DCONFIG_VERSION=\"2026-06-04\" -O2 -c -o .obj/dtoa.o dtoa.c
+gcc -g -Wall -MMD -MF .obj/libregexp.o.d -Wno-array-bounds -Wno-format-truncation -Wno-infinite-recursion -fwrapv  -D_GNU_SOURCE -DCONFIG_VERSION=\"2026-06-04\" -O2 -c -o .obj/libregexp.o libregexp.c
+gcc -g -Wall -MMD -MF .obj/libunicode.o.d -Wno-array-bounds -Wno-format-truncation -Wno-infinite-recursion -fwrapv  -D_GNU_SOURCE -DCONFIG_VERSION=\"2026-06-04\" -O2 -c -o .obj/libunicode.o libunicode.c
+gcc -g -Wall -MMD -MF .obj/cutils.o.d -Wno-array-bounds -Wno-format-truncation -Wno-infinite-recursion -fwrapv  -D_GNU_SOURCE -DCONFIG_VERSION=\"2026-06-04\" -O2 -c -o .obj/cutils.o cutils.c
+gcc -g -Wall -MMD -MF .obj/quickjs-libc.o.d -Wno-array-bounds -Wno-format-truncation -Wno-infinite-recursion -fwrapv  -D_GNU_SOURCE -DCONFIG_VERSION=\"2026-06-04\" -O2 -c -o .obj/quickjs-libc.o quickjs-libc.c
+gcc -g -o qjsc .obj/qjsc.o .obj/quickjs.o .obj/dtoa.o .obj/libregexp.o .obj/libunicode.o .obj/cutils.o .obj/quickjs-libc.o -lm -lpthread -ldl 
+./qjsc -s -c -o repl.c -m repl.js
+gcc -g -Wall -MMD -MF .obj/repl.o.d -Wno-array-bounds -Wno-format-truncation -Wno-infinite-recursion -fwrapv  -D_GNU_SOURCE -DCONFIG_VERSION=\"2026-06-04\" -O2 -c -o .obj/repl.o repl.c
+gcc -g -rdynamic -o qjs .obj/qjs.o .obj/repl.o .obj/quickjs.o .obj/dtoa.o .obj/libregexp.o .obj/libunicode.o .obj/cutils.o .obj/quickjs-libc.o -lm -lpthread -ldl 
+gcc -g -Wall -MMD -MF .obj/run-test262.o.d -Wno-array-bounds -Wno-format-truncation -Wno-infinite-recursion -fwrapv  -D_GNU_SOURCE -DCONFIG_VERSION=\"2026-06-04\" -O2 -c -o .obj/run-test262.o run-test262.c
+run-test262.c: In function 'get_basename':
+run-test262.c:332:7: warning: assignment discards 'const' qualifier from pointer target type [-Wdiscarded-qualifiers]
+  332 |     p = strrchr(filename, '/');
+      |       ^
+run-test262.c: In function 'run_test':
+run-test262.c:1794:15: warning: assignment discards 'const' qualifier from pointer target type [-Wdiscarded-qualifiers]
+ 1794 |             p = strstr(filename, "test/");
+      |               ^
+run-test262.c:1886:15: warning: assignment discards 'const' qualifier from pointer target type [-Wdiscarded-qualifiers]
+ 1886 |             p = strstr(filename, "test/");
+      |               ^
+gcc -g -o run-test262 .obj/run-test262.o .obj/quickjs.o .obj/dtoa.o .obj/libregexp.o .obj/libunicode.o .obj/cutils.o .obj/quickjs-libc.o -lm -lpthread -ldl 
+ar rcs libquickjs.a .obj/quickjs.o .obj/dtoa.o .obj/libregexp.o .obj/libunicode.o .obj/cutils.o .obj/quickjs-libc.o
+make: Leaving directory '/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/target/oracle/.quickjs-2026-06-04.work.940780.1790678627.11704/stage/quickjs-2026-06-04'
+Test262: total=102037 pass=80010 fail=3552 unsupported=3502 skipped=18475
+execution: runnable=80060 workers=2
+report=/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/da1b1b81-547e-4e77-82b9-e5254b1db954/target/test262-full.tsv
+r3fj complete Test262 vector matches: 80010 pass of 80060 eligible (102037 total) variants.

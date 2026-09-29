@@ -1,0 +1,128 @@
+[
+  {
+    "case": "richards",
+    "command": [
+      "perf",
+      "record",
+      "-e",
+      "cycles:u",
+      "-F",
+      "997",
+      "-o",
+      "/tmp/oxide-six-evidence/richards.perf",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/tmp/oxide-ordinary-perf/v8-fixed-formal/generated/final/richards.js"
+    ],
+    "exit": 0,
+    "workload_sha256": "7925040f31be22cb2487a88cce443b73bc7ae9f0e57d575af09743ed09f7e593"
+  },
+  {
+    "case": "deltablue",
+    "command": [
+      "perf",
+      "record",
+      "-e",
+      "cycles:u",
+      "-F",
+      "997",
+      "-o",
+      "/tmp/oxide-six-evidence/deltablue.perf",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/tmp/oxide-ordinary-perf/v8-fixed-formal/generated/final/deltablue.js"
+    ],
+    "exit": 0,
+    "workload_sha256": "613412ebe97ae0a87a7c5c3eadb1e6e0b6900376dc3b14c73f2cce564ac9bcdf"
+  },
+  {
+    "case": "crypto",
+    "command": [
+      "perf",
+      "record",
+      "-e",
+      "cycles:u",
+      "-F",
+      "997",
+      "-o",
+      "/tmp/oxide-six-evidence/crypto.perf",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/tmp/oxide-ordinary-perf/v8-fixed-formal/generated/final/crypto.js"
+    ],
+    "exit": 0,
+    "workload_sha256": "a5b78df12c7f677163b8ee06a5e3e4990eebe22e4ddd8a6354e21beabe7d2367"
+  },
+  {
+    "case": "raytrace",
+    "command": [
+      "perf",
+      "record",
+      "-e",
+      "cycles:u",
+      "-F",
+      "997",
+      "-o",
+      "/tmp/oxide-six-evidence/raytrace.perf",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/tmp/oxide-ordinary-perf/v8-fixed-formal/generated/final/raytrace.js"
+    ],
+    "exit": 0,
+    "workload_sha256": "3163f4f20297282de55dab21979b898363cd5dea62e027f8f945f7c27c6b8fee"
+  },
+  {
+    "case": "earley-boyer",
+    "command": [
+      "perf",
+      "record",
+      "-e",
+      "cycles:u",
+      "-F",
+      "997",
+      "-o",
+      "/tmp/oxide-six-evidence/earley-boyer.perf",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/tmp/oxide-ordinary-perf/v8-fixed-formal/generated/final/earley-boyer.js"
+    ],
+    "exit": 0,
+    "workload_sha256": "04fe426bcb8b907a041e3b47c9541b790537d0ce78f82cfc4734e3b16adf8453"
+  },
+  {
+    "case": "splay",
+    "command": [
+      "perf",
+      "record",
+      "-e",
+      "cycles:u",
+      "-F",
+      "997",
+      "-o",
+      "/tmp/oxide-six-evidence/splay.perf",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/tmp/oxide-ordinary-perf/v8-fixed-formal/generated/final/splay.js"
+    ],
+    "exit": 0,
+    "workload_sha256": "19de2183858c01c551e5fe37d128fbab631389b869cad190bba61c8854b4ec1f"
+  }
+]

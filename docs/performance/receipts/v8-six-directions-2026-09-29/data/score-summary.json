@@ -1,0 +1,92 @@
+{
+  "crypto": {
+    "median_paired_score_ratio": 1.0029761904761905,
+    "paired_score_ratios": [
+      1.0,
+      1.005952380952381
+    ],
+    "before_scores": [
+      170.0,
+      168.0
+    ],
+    "after_scores": [
+      170.0,
+      169.0
+    ]
+  },
+  "deltablue": {
+    "median_paired_score_ratio": 1.0105107749689184,
+    "paired_score_ratios": [
+      1.0118110236220472,
+      1.0092105263157896
+    ],
+    "before_scores": [
+      76.2,
+      76.0
+    ],
+    "after_scores": [
+      77.1,
+      76.7
+    ]
+  },
+  "earley-boyer": {
+    "median_paired_score_ratio": 1.0395467160037004,
+    "paired_score_ratios": [
+      1.0507246376811594,
+      1.0283687943262412
+    ],
+    "before_scores": [
+      138.0,
+      141.0
+    ],
+    "after_scores": [
+      145.0,
+      145.0
+    ]
+  },
+  "raytrace": {
+    "median_paired_score_ratio": 1.0127842966826017,
+    "paired_score_ratios": [
+      1.0084745762711864,
+      1.017094017094017
+    ],
+    "before_scores": [
+      118.0,
+      117.0
+    ],
+    "after_scores": [
+      119.0,
+      119.0
+    ]
+  },
+  "richards": {
+    "median_paired_score_ratio": 1.0491704529808619,
+    "paired_score_ratios": [
+      1.0520446096654277,
+      1.0462962962962963
+    ],
+    "before_scores": [
+      53.8,
+      54.0
+    ],
+    "after_scores": [
+      56.6,
+      56.5
+    ]
+  },
+  "splay": {
+    "median_paired_score_ratio": 1.10566874917919,
+    "paired_score_ratios": [
+      1.107361963190184,
+      1.1039755351681957
+    ],
+    "before_scores": [
+      326.0,
+      327.0
+    ],
+    "after_scores": [
+      361.0,
+      361.0
+    ]
+  }
+}

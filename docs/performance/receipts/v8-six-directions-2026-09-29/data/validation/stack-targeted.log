@@ -1,0 +1,61 @@
+   Compiling autocfg v1.5.1
+   Compiling tz-rs v0.7.3
+   Compiling num-traits v0.2.19
+   Compiling num-integer v0.1.46
+   Compiling num-bigint v0.5.1
+   Compiling quickjs-oxide v0.0.1 (/tmp/oxide-stack-push)
+   Compiling quickjs-oxide-host v0.0.1 (/tmp/oxide-stack-push/adapters/native)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 01s
+     Running unittests src/lib.rs (/home/eric/.cache/oxide-six-test-stack/debug/deps/quickjs_oxide-b7ce6ed2ab67c651)
+
+running 47 tests
+test engine::vm::stack::tests::call_domain_validation_borrows_values_without_heap_borrow_or_owner_changes ... ok
+test engine::vm::stack::number::tests::ordinary_number_write_preserves_put_set_and_declines_without_mutation ... ok
+test engine::vm::stack::call::tests::checked_ordinary_operands_preserve_method_domain_error_order ... ok
+test engine::vm::stack::tests::compact_empty_windows_share_boundaries_but_not_identity ... ok
+test engine::vm::stack::tests::call_domain_validation_rejects_foreign_and_stale_windows_without_consuming_inputs ... ok
+test engine::vm::stack::call::tests::ordinary_retain_failure_keeps_the_entire_parent_and_rolls_back_suffix ... ok
+test engine::vm::stack::call::tests::failed_named_local_retain_clears_staged_parameter_and_earlier_local ... ok
+test engine::vm::stack::call::tests::ordinary_local_initialization_uses_published_plain_fact_and_preserves_tdz ... ok
+test engine::vm::stack::call::tests::scalar_elision_preserves_arity_but_reference_originals_survive_parameter_writes ... ok
+test engine::vm::stack::call::tests::method_receiver_copy_survives_operand_release_until_input_teardown ... ok
+test engine::vm::stack::call::tests::failed_method_argument_copy_keeps_receiver_and_rolls_back_suffix ... ok
+test engine::vm::stack::tests::compact_window_boundaries_keep_adjacent_regions_and_parent_authority ... ok
+test engine::vm::stack::number::tests::direct_slot_read_is_short_borrow_of_direct_local_or_argument ... ok
+test engine::vm::stack::call::tests::checked_ordinary_operands_reject_depth_change_without_moving_owners ... ok
+test engine::vm::stack::tests::initialized_high_water_reuses_mixed_depth_three_windows_without_roots ... ok
+test engine::vm::stack::tests::failed_capacity_and_shape_checks_do_not_change_live_windows ... ok
+test engine::vm::stack::tests::duplicate_sequence_keeps_order_and_independent_object_owners ... ok
+test engine::vm::stack::tests::failed_sequence_retain_leaves_committed_prefix_for_driver_cleanup ... ok
+test engine::vm::stack::tests::direct_initialization_preserves_snapshot_padding_and_transactional_failure ... ok
+test engine::vm::stack::tests::distinct_arenas_reject_matching_numeric_window_ids ... ok
+test engine::vm::stack::tests::native_argument_transaction_preserves_order_and_surviving_owners ... ok
+test engine::vm::stack::tests::initialized_backing_preserves_take_frame_suspension_handoff_ownership ... ok
+test engine::vm::stack::tests::initialized_suffix_rolls_back_after_a_successful_object_copy ... ok
+test engine::vm::stack::tests::original_arguments_do_not_alias_writable_parameters ... ok
+test engine::vm::stack::tests::outgoing_tail_transfer_is_atomic_and_restores_the_caller_prefix ... ok
+test engine::vm::stack::tests::numeric_replacement_is_transactional_and_clears_the_dead_owner ... ok
+test engine::vm::stack::tests::frame_clear_releases_edges_interleaved_with_direct_scalars ... ok
+test engine::vm::stack::tests::ordinary_field_leaf_declines_without_consuming_stack_inputs ... ok
+test engine::vm::stack::tests::call_domain_validation_preserves_receiver_then_argument_rejection_order ... ok
+test engine::vm::stack::tests::permutations_move_owners_and_failed_insertion_preserves_the_window ... ok
+test engine::vm::stack::tests::parent_window_survives_growth_and_last_result_outlives_clear ... ok
+test engine::vm::stack::tests::validated_native_transfer_moves_callee_owner_and_keeps_deferred_drain ... ok
+test engine::vm::stack::transfer::tests::identity_alias_preserves_each_distinct_slot_owner ... ok
+test engine::vm::stack::tests::owned_property_ic_capacity_preflight_and_receiver_forms_preserve_owners ... ok
+test engine::vm::stack::transfer::tests::last_owner_declines_and_leaves_original_slots ... ok
+test engine::vm::stack::transfer::tests::put_moves_object_into_undefined_without_an_extra_owner ... ok
+test engine::vm::stack::transfer::tests::set_copies_owner_and_preserves_operand_for_parameter ... ok
+test engine::vm::stack::window::primitive_transaction_tests::linked_owning_read_separates_slot_errors_from_lookup_errors_without_consumption ... ok
+test engine::vm::stack::window::primitive_transaction_tests::primitive_transaction_pending_owners_survive_failed_commits ... ok
+test engine::vm::stack::window::primitive_transaction_tests::numeric_region_peak_capacity_rejects_before_any_operand_change ... ok
+test engine::vm::stack::window::primitive_transaction_tests::linked_owning_read_authenticates_once_and_keeps_result_after_last_base_release ... ok
+test engine::vm::stack::window::primitive_transaction_tests::linked_owning_read_pending_getter_is_selected_once_without_consuming_base ... ok
+test engine::vm::stack::window::primitive_transaction_tests::frame_transaction_keeps_owners_across_gc_and_partial_output_failure ... ok
+test engine::vm::stack::transfer::tests::initialize_accepts_tdz_and_direct_scalar_destinations ... ok
+test engine::vm::stack::tests::recovery_string_index_leaf_preserves_spelling_and_final_key_owner ... ok
+test engine::vm::stack::tests::typed_read_leaf_preserves_declined_inputs_and_release_guards ... ok
+test engine::vm::stack::tests::dense_read_leaf_preserves_declined_inputs_and_neighboring_operands ... ok
+
+test result: ok. 47 passed; 0 failed; 0 ignored; 0 measured; 1919 filtered out; finished in 0.23s
+

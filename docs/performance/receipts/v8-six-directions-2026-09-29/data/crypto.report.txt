@@ -1,0 +1,46 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 745  of event 'cycles:u'
+# Event count (approx.): 3348167686
+#
+# Overhead  Command  Shared Object         Symbol                                                                                                                                                                                                                                
+# ........  .......  ....................  ......................................................................................................................................................................................................................................
+#
+    47.33%  qjs      qjs                   [.] quickjs_oxide::engine::vm::execute::execute_frame
+     6.56%  qjs      qjs                   [.] quickjs_oxide::engine::vm::stack::window::FrameSlots::push
+     6.15%  qjs      qjs                   [.] quickjs_oxide::engine::vm::execute::FrameCursor::commit_push
+     3.01%  qjs      qjs                   [.] quickjs_oxide::engine::vm::execute::binary_number_result
+     2.46%  qjs      qjs                   [.] quickjs_oxide::engine::vm::stack::SlotStore::operand_push_index
+     2.05%  qjs      qjs                   [.] quickjs_oxide::engine::value::js_value::<impl quickjs_oxide::engine::api::runtime::Runtime>::dup_jsvalue
+     2.05%  qjs      qjs                   [.] quickjs_oxide::engine::vm::proxy_get_driver::start_write_adapted
+     1.62%  qjs      qjs                   [.] quickjs_oxide::engine::vm::stack::window::FrameSlots::direct_value
+     1.51%  qjs      qjs                   [.] quickjs_oxide::engine::value::js_value::<impl quickjs_oxide::engine::api::runtime::Runtime>::release_jsvalue
+     1.50%  qjs      qjs                   [.] quickjs_oxide::engine::object::ordinary_storage::select_set_slot
+     1.36%  qjs      qjs                   [.] quickjs_oxide::engine::vm::property_write_driver::write_progress
+     1.23%  qjs      qjs                   [.] quickjs_oxide::engine::vm::stack::SlotStore::rotate_operands_current
+     1.23%  qjs      qjs                   [.] quickjs_oxide::engine::value::conversion::<impl quickjs_oxide::engine::api::runtime::Runtime>::property_key_from_primitive_jsvalue
+     1.23%  qjs      qjs                   [.] quickjs_oxide::engine::vm::stack::call::<impl quickjs_oxide::engine::vm::stack::SlotStore>::push_ordinary_frame
+     1.09%  qjs      qjs                   [.] quickjs_oxide::engine::object::ordinary_storage::ic::<impl quickjs_oxide::engine::api::runtime::Runtime>::select_linked_data_into
+     0.96%  qjs      qjs                   [.] quickjs_oxide::engine::vm::stack::window::FrameSlots::insert_copy
+     0.96%  qjs      qjs                   [.] quickjs_oxide::engine::vm::frame::FrameStore::materialize
+     0.96%  qjs      qjs                   [.] quickjs_oxide::engine::heap::runtime::RuntimeState::replace_property_slot
+     0.82%  qjs      qjs                   [.] quickjs_oxide::engine::vm::execute::try_dense_read_binary
+     0.68%  qjs      qjs                   [.] quickjs_oxide::engine::vm::proxy_get_driver::finish_write_action
+     0.68%  qjs      qjs                   [.] quickjs_oxide::engine::vm::driver::ready::run
+     0.68%  qjs      qjs                   [.] quickjs_oxide::engine::vm::stack::copy_reference
+     0.68%  qjs      qjs                   [.] quickjs_oxide::engine::object::ordinary_storage::locate
+     0.68%  qjs      qjs                   [.] quickjs_oxide::engine::object::ordinary_storage::<impl quickjs_oxide::engine::api::runtime::Runtime>::ordinary_set_probe_inner
+     0.55%  qjs      qjs                   [.] quickjs_oxide::engine::heap::ownership::<impl quickjs_oxide::engine::heap::runtime::RuntimeState>::release_heap_reference
+     0.55%  qjs      qjs                   [.] quickjs_oxide::engine::object::ordinary_storage::ic::<impl quickjs_oxide::engine::api::runtime::Runtime>::try_dense_array_write_scalar
+     0.55%  qjs      qjs                   [.] quickjs_oxide::engine::object::ordinary_storage::materialized_array_own_number
+     0.55%  qjs      qjs                   [.] quickjs_oxide::engine::vm::stack::transfer::<impl quickjs_oxide::engine::vm::stack::window::FrameSlots>::transfer_direct
+     0.55%  qjs      qjs                   [.] quickjs_oxide::engine::object::property_ic::locate
+     0.54%  qjs      qjs                   [.] quickjs_oxide::engine::object::ordinary_storage::<impl quickjs_oxide::engine::api::runtime::Runtime>::peek_dense_number_result
+
+
+#
+# (Tip: To show IPC for sampling periods use perf record -e '{cycles,instructions}:S' and then browse context)
+#
