@@ -149,18 +149,9 @@ Rust-first API 可以更符合 Rust 习惯，但它不能代替 QuickJS 的嵌�
 
 若某个平台的 C ABI 尚未验证，只能声明该平台的 Rust API 可用，不能声明完整 QuickJS API parity。
 
-<a id="bytecode-compatibility"></a>
-## 11. 字节码、BJSON 与 `qjsc` 门禁
+## 11. 内部执行表示
 
-QuickJS 自己声明字节码与具体版本绑定、不应加载不可信输入；字节码是**版本绑定的缓存，不是接口**。因此本项目**不承诺与上游 BC5 互操作**：不读取官方 `JS_WriteObject`/`qjsc` 生成的字节码，也不要求官方基线读取本项目产物。原先的窄读取 API（`Context::read_trusted_scalar_script`/`read_trusted_ordinary_function`）、BC5 解码/编码设施、C oracle 字节码 fixtures 与 pinned-atom/opcode 门禁已在 2026-09-24 的简化中移除，历史结果见 [编译测量记录](compile-benchmark.md)。随后删除的独立 verify 阶段不等于取消编译器或 VM 的验证；当前 lowering、发布与执行契约见 [架构说明](architecture.md)。
-
-仍然有效的部分：
-
-- BJSON（`JS_WriteObject` 不带 BYTECODE 的对象序列化）与 `qjsc` CLI 打包属于后续 parity 工作，另行规划；在实现前不得声称 bytecode parity。
-- 任何恢复上游字节码互读的计划都必须重新引入独立的输入验证；不得以“仅信任字节码”为由跳过 malformed/truncated 输入的失败契约。
-- 上游升级会使旧字节码缓存失效，重新编译是这类缓存的正常生命周期操作，不构成兼容性回归。
-
-只做到“本引擎能读取自己生成的私有格式”，或让 `qjsc` 退化成打包源码，都不算 bytecode parity（该判定保持不变）。
+当前编译器把源码降低为栈指令，验证并发布为引擎内部的 `ExecCode` 字流。运行时按已发布的边界、操作数和控制流目标执行；对外使用源码编译与 `engine::api`。具体责任见[架构说明](architecture.md)。
 
 ## 12. `std`、`os` 与事件循环门禁
 
@@ -276,7 +267,7 @@ module parser/linker/evaluator 必须覆盖 static import/export、live bindings
 - Test262 通过率很高，但提交/patch/config 不固定，新增了 skip，或没有逐测试结果；
 - upstream JS tests 通过，却跳过 native module、C API、`std`/`os`、Worker、BJSON、REPL 或 `qjsc`；
 - 只提供 idiomatic Rust API，不提供 `quickjs.h`/`quickjs-libc.h` 兼容面；
-- 把自有指令格式或已删除的 BC5 读取路径包装成 bytecode parity 声明；bytecode 不属于本契约（见 §11）；
+- 把内部执行字流包装成 upstream bytecode parity 声明；内部表示见 §11；
 - RegExp、Unicode、BigInt、GC 或 Worker 由 stub、固定宽度近似、宿主库的漂移版本或外部进程代办；
 - 产品包仍含 QuickJS C 实现，或在运行时需要 oracle；
 - 为了让 CI 变绿修改上游测试含义、只比较 stdout 的一部分、吞掉异常、无限重试或扩大排除集；

@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 from dataclasses import dataclass
@@ -18,10 +19,8 @@ from textwrap import dedent
 
 ROOT = Path(__file__).resolve().parents[3]
 PROBES = Path(__file__).resolve().parent
-RECEIPT_WORKLOADS = (
-    ROOT / "docs/performance/receipts/ordinary-number-writes-2026-09-26/workloads"
-)
-RECEIPT_COUNTS = {
+ORDINARY_WRITE_WORKLOADS = PROBES / "ordinary-writes"
+ORDINARY_WRITE_COUNTS = {
     "local_move": 6_000_000,
     "argument_move": 6_000_000,
     "number_owner_fallback": 1_000_000,
@@ -63,7 +62,7 @@ def cases(smoke: bool) -> list[Case]:
 
     n = count(3_000_000, smoke)
     add(
-        "fusion_hit", 3_000_000,
+        "numeric_local_loop", 3_000_000,
         """
         function work(n) {
             var sum=0;
@@ -76,7 +75,7 @@ def cases(smoke: bool) -> list[Case]:
     )
     n = count(180_000, smoke)
     add(
-        "fusion_dynamic_miss", 180_000,
+        "numeric_coercion_loop", 180_000,
         """
         function work(n) {
             var calls=0;
@@ -89,9 +88,7 @@ def cases(smoke: bool) -> list[Case]:
         """,
         n,
     )
-    # The hot loops are deliberately identical: the one-time addition makes
-    # only the first function's fusion sidecar nonempty. A truthiness check
-    # avoids publishing the independent comparison/branch fusion for n>0.
+    # The two local-read loops have identical bodies and different setup.
     plain_loop = """
         function work(n) {
             var plain=41, sum=0;
@@ -102,8 +99,8 @@ def cases(smoke: bool) -> list[Case]:
         print(work(__COUNT__));
     """
     for name, candidate in (
-        ("fusion_flag0", "sum=sum+1;"),
-        ("fusion_no_plan", ""),
+        ("local_read_with_setup", "sum=sum+1;"),
+        ("local_read", ""),
     ):
         iterations = count(3_000_000, smoke)
         rows.append(Case(
@@ -247,15 +244,15 @@ def cases(smoke: bool) -> list[Case]:
         n,
     )
 
-    for name, full in RECEIPT_COUNTS.items():
-        source = (RECEIPT_WORKLOADS / f"{name}.js").read_text()
+    for name, full in ORDINARY_WRITE_COUNTS.items():
+        source = (ORDINARY_WRITE_WORKLOADS / f"{name}.js").read_text()
         iterations = count(full, smoke)
         if smoke:
             source, replacements = re.subn(
                 r"print\(work\(\d+", f"print(work({iterations}", source, count=1
             )
             if replacements != 1:
-                raise ValueError(f"receipt workload call not found: {name}")
+                raise ValueError(f"ordinary write workload call not found: {name}")
         expected = {
             "local_move": 2 * iterations - 2,
             "argument_move": iterations - 1,
@@ -268,11 +265,14 @@ def cases(smoke: bool) -> list[Case]:
 
 
 def node_check(node: str, path: Path, expected: str) -> None:
-    # The five receipt workloads use qjs' print; new workloads use it too.
+    # Generated workloads use qjs' print output contract.
     adapter = "globalThis.print=console.log;require(process.argv[1]);"
+    environment = os.environ.copy()
+    environment.pop("FORCE_COLOR", None)
+    environment["NO_COLOR"] = "1"
     completed = subprocess.run(
         [node, "-e", adapter, str(path.resolve())],
-        capture_output=True, check=True, timeout=20,
+        capture_output=True, check=True, timeout=20, env=environment,
     )
     if completed.stdout != expected.encode() or completed.stderr:
         raise ValueError(f"Node result differs for {path.name}: {completed!r}")
