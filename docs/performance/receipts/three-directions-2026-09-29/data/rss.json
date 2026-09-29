@@ -1,0 +1,818 @@
+[
+  {
+    "case": "realworld-react",
+    "engine": "parent",
+    "repetition": 0,
+    "peak_rss_kib": 30924,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+    ]
+  },
+  {
+    "case": "realworld-react",
+    "engine": "combined",
+    "repetition": 0,
+    "peak_rss_kib": 30816,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+    ]
+  },
+  {
+    "case": "realworld-react",
+    "engine": "combined",
+    "repetition": 1,
+    "peak_rss_kib": 30304,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+    ]
+  },
+  {
+    "case": "realworld-react",
+    "engine": "parent",
+    "repetition": 1,
+    "peak_rss_kib": 31140,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+    ]
+  },
+  {
+    "case": "realworld-react",
+    "engine": "combined",
+    "repetition": 2,
+    "peak_rss_kib": 29312,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+    ]
+  },
+  {
+    "case": "realworld-react",
+    "engine": "parent",
+    "repetition": 2,
+    "peak_rss_kib": 31092,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+    ]
+  },
+  {
+    "case": "realworld-react",
+    "engine": "parent",
+    "repetition": 3,
+    "peak_rss_kib": 31072,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+    ]
+  },
+  {
+    "case": "realworld-react",
+    "engine": "combined",
+    "repetition": 3,
+    "peak_rss_kib": 30764,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+    ]
+  },
+  {
+    "case": "crypto",
+    "engine": "parent",
+    "repetition": 0,
+    "peak_rss_kib": 11296,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/tmp/oxide-ordinary-perf/v8-fixed-formal/generated/final/crypto.js"
+    ]
+  },
+  {
+    "case": "crypto",
+    "engine": "combined",
+    "repetition": 0,
+    "peak_rss_kib": 11140,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/tmp/oxide-ordinary-perf/v8-fixed-formal/generated/final/crypto.js"
+    ]
+  },
+  {
+    "case": "crypto",
+    "engine": "combined",
+    "repetition": 1,
+    "peak_rss_kib": 11204,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/tmp/oxide-ordinary-perf/v8-fixed-formal/generated/final/crypto.js"
+    ]
+  },
+  {
+    "case": "crypto",
+    "engine": "parent",
+    "repetition": 1,
+    "peak_rss_kib": 11460,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/tmp/oxide-ordinary-perf/v8-fixed-formal/generated/final/crypto.js"
+    ]
+  },
+  {
+    "case": "crypto",
+    "engine": "combined",
+    "repetition": 2,
+    "peak_rss_kib": 11200,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/tmp/oxide-ordinary-perf/v8-fixed-formal/generated/final/crypto.js"
+    ]
+  },
+  {
+    "case": "crypto",
+    "engine": "parent",
+    "repetition": 2,
+    "peak_rss_kib": 11280,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/tmp/oxide-ordinary-perf/v8-fixed-formal/generated/final/crypto.js"
+    ]
+  },
+  {
+    "case": "crypto",
+    "engine": "parent",
+    "repetition": 3,
+    "peak_rss_kib": 11192,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/tmp/oxide-ordinary-perf/v8-fixed-formal/generated/final/crypto.js"
+    ]
+  },
+  {
+    "case": "crypto",
+    "engine": "combined",
+    "repetition": 3,
+    "peak_rss_kib": 11140,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/tmp/oxide-ordinary-perf/v8-fixed-formal/generated/final/crypto.js"
+    ]
+  },
+  {
+    "case": "materialized-array-write",
+    "engine": "parent",
+    "repetition": 0,
+    "peak_rss_kib": 9268,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/materialized_array_write.js"
+    ]
+  },
+  {
+    "case": "materialized-array-write",
+    "engine": "combined",
+    "repetition": 0,
+    "peak_rss_kib": 9272,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/materialized_array_write.js"
+    ]
+  },
+  {
+    "case": "materialized-array-write",
+    "engine": "combined",
+    "repetition": 1,
+    "peak_rss_kib": 9272,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/materialized_array_write.js"
+    ]
+  },
+  {
+    "case": "materialized-array-write",
+    "engine": "parent",
+    "repetition": 1,
+    "peak_rss_kib": 9204,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/materialized_array_write.js"
+    ]
+  },
+  {
+    "case": "materialized-array-write",
+    "engine": "combined",
+    "repetition": 2,
+    "peak_rss_kib": 9212,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/materialized_array_write.js"
+    ]
+  },
+  {
+    "case": "materialized-array-write",
+    "engine": "parent",
+    "repetition": 2,
+    "peak_rss_kib": 9260,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/materialized_array_write.js"
+    ]
+  },
+  {
+    "case": "materialized-array-write",
+    "engine": "parent",
+    "repetition": 3,
+    "peak_rss_kib": 9324,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/materialized_array_write.js"
+    ]
+  },
+  {
+    "case": "materialized-array-write",
+    "engine": "combined",
+    "repetition": 3,
+    "peak_rss_kib": 9276,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/materialized_array_write.js"
+    ]
+  },
+  {
+    "case": "native-collections",
+    "engine": "parent",
+    "repetition": 0,
+    "peak_rss_kib": 9332,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/native-collections.js"
+    ]
+  },
+  {
+    "case": "native-collections",
+    "engine": "combined",
+    "repetition": 0,
+    "peak_rss_kib": 9144,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/native-collections.js"
+    ]
+  },
+  {
+    "case": "native-collections",
+    "engine": "combined",
+    "repetition": 1,
+    "peak_rss_kib": 9148,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/native-collections.js"
+    ]
+  },
+  {
+    "case": "native-collections",
+    "engine": "parent",
+    "repetition": 1,
+    "peak_rss_kib": 9132,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/native-collections.js"
+    ]
+  },
+  {
+    "case": "native-collections",
+    "engine": "combined",
+    "repetition": 2,
+    "peak_rss_kib": 9240,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/native-collections.js"
+    ]
+  },
+  {
+    "case": "native-collections",
+    "engine": "parent",
+    "repetition": 2,
+    "peak_rss_kib": 9244,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/native-collections.js"
+    ]
+  },
+  {
+    "case": "native-collections",
+    "engine": "parent",
+    "repetition": 3,
+    "peak_rss_kib": 9396,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/native-collections.js"
+    ]
+  },
+  {
+    "case": "native-collections",
+    "engine": "combined",
+    "repetition": 3,
+    "peak_rss_kib": 9376,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/native-collections.js"
+    ]
+  },
+  {
+    "case": "ordinary-property-write",
+    "engine": "parent",
+    "repetition": 0,
+    "peak_rss_kib": 8812,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js"
+    ]
+  },
+  {
+    "case": "ordinary-property-write",
+    "engine": "combined",
+    "repetition": 0,
+    "peak_rss_kib": 8612,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js"
+    ]
+  },
+  {
+    "case": "ordinary-property-write",
+    "engine": "combined",
+    "repetition": 1,
+    "peak_rss_kib": 8948,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js"
+    ]
+  },
+  {
+    "case": "ordinary-property-write",
+    "engine": "parent",
+    "repetition": 1,
+    "peak_rss_kib": 8892,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js"
+    ]
+  },
+  {
+    "case": "ordinary-property-write",
+    "engine": "combined",
+    "repetition": 2,
+    "peak_rss_kib": 8700,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js"
+    ]
+  },
+  {
+    "case": "ordinary-property-write",
+    "engine": "parent",
+    "repetition": 2,
+    "peak_rss_kib": 8744,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js"
+    ]
+  },
+  {
+    "case": "ordinary-property-write",
+    "engine": "parent",
+    "repetition": 3,
+    "peak_rss_kib": 8812,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js"
+    ]
+  },
+  {
+    "case": "ordinary-property-write",
+    "engine": "combined",
+    "repetition": 3,
+    "peak_rss_kib": 8860,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js"
+    ]
+  },
+  {
+    "case": "string-scalar-index",
+    "engine": "parent",
+    "repetition": 0,
+    "peak_rss_kib": 9076,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/string-scalar-index.js"
+    ]
+  },
+  {
+    "case": "string-scalar-index",
+    "engine": "combined",
+    "repetition": 0,
+    "peak_rss_kib": 8892,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/string-scalar-index.js"
+    ]
+  },
+  {
+    "case": "string-scalar-index",
+    "engine": "combined",
+    "repetition": 1,
+    "peak_rss_kib": 9056,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/string-scalar-index.js"
+    ]
+  },
+  {
+    "case": "string-scalar-index",
+    "engine": "parent",
+    "repetition": 1,
+    "peak_rss_kib": 9004,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/string-scalar-index.js"
+    ]
+  },
+  {
+    "case": "string-scalar-index",
+    "engine": "combined",
+    "repetition": 2,
+    "peak_rss_kib": 8964,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/string-scalar-index.js"
+    ]
+  },
+  {
+    "case": "string-scalar-index",
+    "engine": "parent",
+    "repetition": 2,
+    "peak_rss_kib": 8984,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/string-scalar-index.js"
+    ]
+  },
+  {
+    "case": "string-scalar-index",
+    "engine": "parent",
+    "repetition": 3,
+    "peak_rss_kib": 9084,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/string-scalar-index.js"
+    ]
+  },
+  {
+    "case": "string-scalar-index",
+    "engine": "combined",
+    "repetition": 3,
+    "peak_rss_kib": 8956,
+    "command": [
+      "zsh",
+      "-fc",
+      "TIMEFMT=\"rss_kib=%M\"; time \"$@\"",
+      "oxide-rss",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/string-scalar-index.js"
+    ]
+  }
+]

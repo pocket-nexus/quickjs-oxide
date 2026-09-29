@@ -1,0 +1,12 @@
+Negative diagnostic registry passed: 2972 exact contracts / 78 rules.
+   Compiling autocfg v1.5.1
+   Compiling tz-rs v0.7.3
+   Compiling num-traits v0.2.19
+   Compiling num-integer v0.1.46
+   Compiling num-bigint v0.5.1
+   Compiling quickjs-oxide v0.0.1 (/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef)
+   Compiling quickjs-oxide-host v0.0.1 (/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/adapters/native)
+   Compiling quickjs-oxide-test262 v0.0.1 (/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/conformance/test262)
+    Finished `release` profile [optimized] target(s) in 2m 15s
+Rust Test262 runner provenance passed: engine_semantics_sha256=55bf496cd18b2aa929bae36bba10b4df9c72c204f4a229eca9f46a46dbcbe3e8 binary_sha256=776d7e7b171f7554222076c8add3d824b665ae32e7c592ba9f4a2ebcc755f54b
+error: unsafe caller Git environment: GIT_COMMITTER_NAME

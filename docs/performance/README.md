@@ -32,6 +32,7 @@ C1 已连通原语数值运算的 decoded fallthrough 传递。其他工作流�
 
 | 日期 | 收据 | 内容 |
 | --- | --- | --- |
+| 2026-09-29 | [三个 Profile 驱动方向](receipts/three-directions-2026-09-29/README.md) | 字符串同步完成、物化数组写入、native owner 转移；独立及集成时间、完整 Test262 验收 |
 | 2026-09-28 | [数值区域后续验证](receipts/numeric-region-followthrough-2026-09-28/README.md) | 选择/发布契约、`lin_solve` 覆盖、命中与回退成本、Navier–Stokes 整体测量 |
 | 2026-09-28 | [执行字计划与覆盖](receipts/execution-ready-plans-2026-09-28/README.md) | 运行时直接消费发布事实、V8 执行站点选择、dense 单次认证与三版对照 |
 | 2026-09-28 | [C2 属性读取位置](receipts/c2-property-read-positions-2026-09-28/README.md) | 静态键与原语键同帧读取的已解码 fallthrough 及 C1 对照 |

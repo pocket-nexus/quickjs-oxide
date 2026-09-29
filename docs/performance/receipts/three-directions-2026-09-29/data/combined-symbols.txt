@@ -1,0 +1,2 @@
+0000000000573b10 0000000000000130 t quickjs_oxide::engine::vm::frames::NativeClassification::classify_linked
+00000000004bebb0 00000000000011f7 t quickjs_oxide::engine::builtins::primitive::text::ScalarTextStep::start

@@ -1,0 +1,92 @@
+{
+  "metadata": {
+    "workloads": {
+      "workloads": [
+        {
+          "case": "materialized-array-reference-write",
+          "size": 1,
+          "path": "workloads/materialized_array_reference_write.js",
+          "sha256": "385c2776c68e073defe81c10d9394f83a9927bb48c5a8328b7a7d404a9bdf43a",
+          "expected": "3:3:false\n"
+        },
+        {
+          "case": "materialized-array-setter",
+          "size": 1,
+          "path": "workloads/materialized_array_setter.js",
+          "sha256": "cf5001b7a31cbb8078e7c3756e88ce040a625a0fbcccfcca0edaa31a45d95669",
+          "expected": "20000:19999:false\n"
+        },
+        {
+          "case": "materialized-array-write",
+          "size": 1,
+          "path": "workloads/materialized_array_write.js",
+          "sha256": "0e894f4e19d7d6266ffa63fb960bf007423a56ecbd9eea4c4ea2578a06757e07",
+          "expected": "199999:3:false\n"
+        },
+        {
+          "case": "native-coercion",
+          "size": 1,
+          "path": "workloads/native-coercion.js",
+          "sha256": "24a8c03048ef6a37c4f546e458cf2adcca0a31cac038093cad4edf6e3b11e5fa",
+          "expected": "1260000:30000\n"
+        },
+        {
+          "case": "native-collections",
+          "size": 1,
+          "path": "workloads/native-collections.js",
+          "sha256": "57e7c8e4c5ae53194a9253d4172928f6595f944dc494f4092c86b89907290c5e",
+          "expected": "100000:0\n"
+        },
+        {
+          "case": "native-numeric",
+          "size": 1,
+          "path": "workloads/native-numeric.js",
+          "sha256": "81dfaf3d5a7a7ab5099b0d23e154b498ece1ff662091fdcf5367aa9f29409484",
+          "expected": "10050000\n"
+        },
+        {
+          "case": "ordinary-property-write",
+          "size": 1,
+          "path": "workloads/ordinary_property_write.js",
+          "sha256": "419c86188282c85888d175cb75b149d7a79f46e8360b23c506f8c3cc448c47f1",
+          "expected": "199999\n"
+        },
+        {
+          "case": "string-scalar-concat-object",
+          "size": 1,
+          "path": "workloads/string-scalar-concat-object.js",
+          "sha256": "5f1fd12d1d66ff5829669f629354fbbc84e66db8c51318deb62143b6f0207816",
+          "expected": "660000:20000\n"
+        },
+        {
+          "case": "string-scalar-concat",
+          "size": 1,
+          "path": "workloads/string-scalar-concat.js",
+          "sha256": "5aed60406bd8d730eb0009574c879d763b9f4b13f331a0448f626ca4743d9e42",
+          "expected": "450000\n"
+        },
+        {
+          "case": "string-scalar-index",
+          "size": 1,
+          "path": "workloads/string-scalar-index.js",
+          "sha256": "4548805124f198de1c2cc7ac344040b6a5adb45030126e7663eb42624c1f2d7a",
+          "expected": "40200000\n"
+        },
+        {
+          "case": "string-scalar-object",
+          "size": 1,
+          "path": "workloads/string-scalar-object.js",
+          "sha256": "bc99618ee1fc72751bcf41a9bdba0b4939b18482cfbce65741237ae42e869779",
+          "expected": "2010000\n"
+        },
+        {
+          "case": "string-scalar-rope",
+          "size": 1,
+          "path": "workloads/string-scalar-rope.js",
+          "sha256": "63f6131620e8110833a67684d6dd250be1dd71cb63ec0ccbec135e08ebd57f19",
+          "expected": "81960000\n"
+        }
+      ]
+    }
+  }
+}

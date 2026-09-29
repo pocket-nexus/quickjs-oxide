@@ -1,0 +1,213 @@
+{
+  "schema": "oxide-build-v2",
+  "mode": "plain",
+  "vm_configuration": "stack-vm",
+  "features": [],
+  "commit": "ec291e62890c145f6ba7faa88a447d09d5e2a54f",
+  "source": {
+    "commit": {
+      "command": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "exit_code": 0,
+      "stdout": "ec291e62890c145f6ba7faa88a447d09d5e2a54f",
+      "stderr": ""
+    },
+    "tree": {
+      "command": [
+        "git",
+        "rev-parse",
+        "HEAD^{tree}"
+      ],
+      "exit_code": 0,
+      "stdout": "2fb5349ac7dd45d823aef56e638f953b871e4fdd",
+      "stderr": ""
+    },
+    "top_level": {
+      "command": [
+        "git",
+        "rev-parse",
+        "--show-toplevel"
+      ],
+      "exit_code": 0,
+      "stdout": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef",
+      "stderr": ""
+    },
+    "status": {
+      "command": [
+        "git",
+        "status",
+        "--porcelain"
+      ],
+      "exit_code": 0,
+      "stdout": "",
+      "stderr": ""
+    }
+  },
+  "binary_sha256": "b185c22e2c23c20eb527a10d0a607779ec05a091d2da88c25bd0c83c25b3ea44",
+  "tooling": {
+    "repository": {
+      "commit": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD"
+        ],
+        "exit_code": 0,
+        "stdout": "ec291e62890c145f6ba7faa88a447d09d5e2a54f",
+        "stderr": ""
+      },
+      "tree": {
+        "command": [
+          "git",
+          "rev-parse",
+          "HEAD^{tree}"
+        ],
+        "exit_code": 0,
+        "stdout": "2fb5349ac7dd45d823aef56e638f953b871e4fdd",
+        "stderr": ""
+      },
+      "top_level": {
+        "command": [
+          "git",
+          "rev-parse",
+          "--show-toplevel"
+        ],
+        "exit_code": 0,
+        "stdout": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef",
+        "stderr": ""
+      },
+      "status": {
+        "command": [
+          "git",
+          "status",
+          "--porcelain"
+        ],
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": ""
+      }
+    },
+    "snapshots": {
+      "build.py": {
+        "path": "/tmp/oxide-three-build-combined/release/qjs.build.tooling-build.py",
+        "sha256": "fc8392a9d26290a6095742b2ab4cb45f5ab37b964c9daa51d22f7088259b1f50"
+      },
+      "run.py": {
+        "path": "/tmp/oxide-three-build-combined/release/qjs.build.tooling-run.py",
+        "sha256": "36420b9e7df2dca1c094d506ab1ae045c730cb14d88bd593d118af4955ab47e5"
+      }
+    }
+  },
+  "command": [
+    "cargo",
+    "build",
+    "--locked",
+    "--release",
+    "--verbose",
+    "-p",
+    "quickjs-oxide-cli",
+    "--no-default-features",
+    "--target-dir",
+    "/tmp/oxide-three-build-combined",
+    "--jobs",
+    "2"
+  ],
+  "cwd": "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef",
+  "exit_code": 0,
+  "stdout": {
+    "path": "/tmp/oxide-three-build-combined/release/qjs.build.stdout.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "stderr": {
+    "path": "/tmp/oxide-three-build-combined/release/qjs.build.stderr.log",
+    "sha256": "966a07bbbf6d496abf71a8f6162bae40af0c4a6c86980b1a544bde748abb0e29"
+  },
+  "rustc": {
+    "command": [
+      "rustc",
+      "-vV"
+    ],
+    "exit_code": 0,
+    "stdout": "rustc 1.88.0 (6b00bc388 2025-06-23)\nbinary: rustc\ncommit-hash: 6b00bc3880198600130e1cf62b8f8a93494488cc\ncommit-date: 2025-06-23\nhost: x86_64-unknown-linux-gnu\nrelease: 1.88.0\nLLVM version: 20.1.5",
+    "stderr": ""
+  },
+  "cargo": {
+    "command": [
+      "cargo",
+      "-V"
+    ],
+    "exit_code": 0,
+    "stdout": "cargo 1.88.0 (873a06493 2025-05-10)",
+    "stderr": ""
+  },
+  "cargo_toml_sha256": "14f5e4d4f172150d6c212b61871da24a4e5b26e34e363f6de2a7f250bbe6e48d",
+  "cargo_lock_sha256": "c26c9f1999da579c0d1176c62981afa716ea998949a8dd15b1365f85b66944e3",
+  "release_profile": {
+    "manifest": {
+      "lto": "\"fat\"",
+      "codegen-units": "1"
+    },
+    "environment_overrides": {
+      "RUSTUP_TOOLCHAIN": "1.88.0"
+    },
+    "cargo_config_sha256": {},
+    "qjs_rustc_invocation": {
+      "command": "/home/eric/.rustup/toolchains/1.88.0-x86_64-unknown-linux-gnu/bin/rustc --crate-name qjs --edition=2024 apps/cli/src/main.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C opt-level=3 -C lto=fat -C codegen-units=1 '--warn=clippy::all' --forbid=unsafe_code --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values(\"default\", \"profiling\", \"test262-host\"))' -C metadata=d5f01890a101dd96 -C extra-filename=-e6f074151e962dfb --out-dir /tmp/oxide-three-build-combined/release/deps -C strip=debuginfo -L dependency=/tmp/oxide-three-build-combined/release/deps --extern quickjs_oxide=/tmp/oxide-three-build-combined/release/deps/libquickjs_oxide-0776fb822d05ec04.rlib --extern quickjs_oxide_host=/tmp/oxide-three-build-combined/release/deps/libquickjs_oxide_host-b1a56ee8844539ce.rlib",
+      "crate": "qjs",
+      "codegen": {
+        "opt-level": "3",
+        "lto": "fat",
+        "codegen-units": "1"
+      },
+      "target": null
+    },
+    "observed_rustc_compilations": 9,
+    "observed_codegen_groups": [
+      {
+        "target": null,
+        "codegen": {
+          "opt-level": "3",
+          "codegen-units": "1"
+        },
+        "crates": [
+          "tz",
+          "num_traits",
+          "num_integer",
+          "num_bigint",
+          "quickjs_oxide",
+          "quickjs_oxide_host"
+        ]
+      },
+      {
+        "target": null,
+        "codegen": {},
+        "crates": [
+          "autocfg",
+          "build_script_build"
+        ]
+      },
+      {
+        "target": null,
+        "codegen": {
+          "opt-level": "3",
+          "lto": "fat",
+          "codegen-units": "1"
+        },
+        "crates": [
+          "qjs"
+        ]
+      }
+    ]
+  },
+  "target": {
+    "requested_triple": null,
+    "rustc_host": "x86_64-unknown-linux-gnu",
+    "observed_triple": null,
+    "observed_target_cpu": null,
+    "observed_target_feature": null
+  },
+  "commit_environment": "ec291e62890c145f6ba7faa88a447d09d5e2a54f"
+}

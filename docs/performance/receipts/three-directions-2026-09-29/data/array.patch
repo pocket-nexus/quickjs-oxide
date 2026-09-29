@@ -1,0 +1,174 @@
+diff --git a/src/engine/object/ordinary_storage.rs b/src/engine/object/ordinary_storage.rs
+index 47bf2a3e..8eeda8bf 100644
+--- a/src/engine/object/ordinary_storage.rs
++++ b/src/engine/object/ordinary_storage.rs
+@@ -165,12 +165,22 @@ fn select_set_slot(
+             // executor changes its value but adds no exotic [[Set]] semantics.
+             ObjectPayload::RegExp(_) => true,
+             ObjectPayload::Array { .. } => {
++                if state.atoms.array_index(atom)?.is_some() {
++                    // An existing indexed slot does not grow the Array or
++                    // change its descriptor. Its own data/accessor semantics
++                    // are identical to an ordinary slot, including a distinct
++                    // Reflect.set receiver. Missing indices still require the
++                    // Array definition algorithm and its length checks.
++                    return Ok(match locate(state, id, atom)? {
++                        Some(slot) => select_found_set_slot(data, slot),
++                        None => BorrowedSet::Special(SpecialKind::Other),
++                    });
++                }
+                 let shape = state.heap.shape(data.shape)?;
+-                state.atoms.array_index(atom)?.is_none()
+-                    && shape
+-                        .entries()
+-                        .first()
+-                        .is_some_and(|entry| entry.atom != AtomIdx::from_raw(atom.raw()))
++                shape
++                    .entries()
++                    .first()
++                    .is_some_and(|entry| entry.atom != AtomIdx::from_raw(atom.raw()))
+             }
+             _ => false,
+         };
+@@ -179,16 +189,20 @@ fn select_set_slot(
+     }
+     Ok(match locate(state, id, atom)? {
+         None => BorrowedSet::Missing(state.heap.shape(data.shape)?.prototype()),
+-        Some(slot) => match &data.slots[slot.index] {
+-            PropertySlot::Data(_) => BorrowedSet::Data(slot),
+-            PropertySlot::Accessor { set, .. } => BorrowedSet::Setter(set.option()),
+-            PropertySlot::AutoInit(_) | PropertySlot::VarRef(_) => {
+-                BorrowedSet::Special(SpecialKind::Other)
+-            }
+-        },
++        Some(slot) => select_found_set_slot(data, slot),
+     })
+ }
+ 
++fn select_found_set_slot(data: &crate::engine::heap::ObjectData, slot: OwnSlot) -> BorrowedSet {
++    match &data.slots[slot.index] {
++        PropertySlot::Data(_) => BorrowedSet::Data(slot),
++        PropertySlot::Accessor { set, .. } => BorrowedSet::Setter(set.option()),
++        PropertySlot::AutoInit(_) | PropertySlot::VarRef(_) => {
++            BorrowedSet::Special(SpecialKind::Other)
++        }
++    }
++}
++
+ enum MissingSelection {
+     Define,
+     Complete(SetProbe),
+@@ -472,6 +486,16 @@ impl Runtime {
+             Selected::DataReplace(slot) => {
+                 let raw = value.as_raw();
+                 let mut state = self.0.state.borrow_mut();
++                #[cfg(feature = "profiling")]
++                if matches!(
++                    state.heap.object(object.object_id())?.payload,
++                    ObjectPayload::Array { dense: None }
++                ) && state.atoms.array_index(key.atom())?.is_some()
++                {
++                    crate::engine::api::profiling::record_owned_execution_event(
++                        "array_materialized_own_data_write",
++                    );
++                }
+                 let replaced = replace_data(
+                     &mut state,
+                     object.object_id(),
+@@ -872,6 +896,66 @@ mod dense_set_tests {
+     use crate::engine::object::operations::PropertySetAction;
+     use crate::engine::object::ordinary::SetStep;
+ 
++    #[test]
++    fn materialized_index_set_preserves_descriptors_receivers_and_array_length() {
++        let runtime = Runtime::new();
++        let mut context = runtime.new_context();
++        assert_eq!(
++            context.eval(r#"(()=>{
++                let a=[1,,3], trace='';
++                const proto=new Proxy(Array.prototype,{getOwnPropertyDescriptor(){throw 99},
++                    set(){throw 98}});
++                Object.setPrototypeOf(a,proto);
++                a[0]=7;
++                Object.setPrototypeOf(a,Array.prototype);
++                Object.preventExtensions(a);
++                Object.defineProperty(a,'length',{writable:false});
++                a[0]=7;
++                if(a[0]!==7 || a.length!==3 || Reflect.set(a,'1',8) || Reflect.set(a,'3',8)) return false;
++                Object.defineProperty(a,'0',{writable:false});
++                if(Reflect.set(a,'0',9) || a[0]!==7) return false;
++                let source=[4,,6], receiver=[0,,2];
++                Object.defineProperty(receiver,'length',{writable:false});
++                if(!Reflect.set(source,'0',11,receiver) || receiver[0]!==11 || source[0]!==4) return false;
++                Object.defineProperty(receiver,'0',{get(){return 12},set(){throw 97}});
++                if(Reflect.set(source,'0',13,receiver) || receiver[0]!==12) return false;
++                Object.defineProperty(source,'0',{set(v){trace+='s'+v; if(this!==receiver)throw 96}});
++                if(!Reflect.set(source,'0',14,receiver) || trace!=='s14') return false;
++                let marker={}, calls=0;
++                Object.defineProperty(source,'0',{set(){calls++;throw marker}});
++                try {source[0]=15;return false} catch(e) {if(e!==marker || calls!==1)return false}
++                let frozen=Object.freeze([1,,3]);
++                if(Reflect.set(frozen,'0',16) || frozen[0]!==1) return false;
++                let large=[]; large[2147483648]=1;
++                Object.defineProperty(large,'length',{writable:false});
++                large[2147483648]=2;
++                if(large[2147483648]!==2 || large.length!==2147483649) return false;
++                return true;
++            })()"#).unwrap(),
++            Value::Bool(true)
++        );
++    }
++
++    #[test]
++    fn materialized_index_set_selects_without_owning_a_descriptor() {
++        let runtime = Runtime::new();
++        let mut context = runtime.new_context();
++        let Value::Object(array) = context.eval("[1,,3]").unwrap() else {
++            panic!("expected array")
++        };
++        let key = runtime.intern_property_key("0").unwrap();
++        let operation = runtime.operation();
++        assert!(matches!(
++            runtime.ordinary_set_probe(&array, &key, &JsValue::Int(9), true).unwrap(),
++            SetProbe::Stored(true)
++        ));
++        drop(operation);
++        assert!(matches!(
++            runtime.ordinary_read_probe(&array, &key).unwrap(),
++            ReadProbe::Value(JsValue::Int(9))
++        ));
++    }
++
+     #[test]
+     fn existing_dense_set_preserves_hole_prototype_descriptor_and_receiver_rules() {
+         let runtime = Runtime::new();
+@@ -908,10 +992,19 @@ mod dense_set_tests {
+ 
+     #[test]
+     fn existing_dense_set_finishes_without_waiting_and_releases_last_owners() {
++        check_existing_set_owners("[{}]");
++    }
++
++    #[test]
++    fn existing_materialized_set_finishes_without_waiting_and_releases_last_owners() {
++        check_existing_set_owners("[{},,3]");
++    }
++
++    fn check_existing_set_owners(source: &str) {
+         let runtime = Runtime::new();
+         let weak = std::rc::Rc::downgrade(&runtime.0);
+         let mut context = runtime.new_context();
+-        let Value::Object(array) = context.eval("[{}]").unwrap() else {
++        let Value::Object(array) = context.eval(source).unwrap() else {
+             panic!("expected array")
+         };
+         let array_id = array.object_id();
+@@ -940,7 +1033,7 @@ mod dense_set_tests {
+             key.clone(),
+             runtime.into_jsvalue(Value::Object(replacement)).unwrap(),
+             runtime.into_jsvalue(Value::Object(array.clone())).unwrap(),
+-            |_| panic!("dense overwrite suspended"),
++            |_| panic!("existing element overwrite suspended"),
+         )
+         .unwrap();
+         assert!(matches!(action, Some(PropertySetAction::Complete)));

@@ -1,0 +1,23 @@
+    Blocking waiting for file lock on build directory
+    Checking num-traits v0.2.19
+    Checking tz-rs v0.7.3
+   Compiling unicode-ident v1.0.24
+    Checking cfg-if v1.0.4
+    Checking once_cell v1.21.4
+   Compiling proc-macro2 v1.0.107
+   Compiling wasm-bindgen-shared v0.2.126
+   Compiling quote v1.0.47
+    Checking num-integer v0.1.46
+   Compiling syn v2.0.119
+    Checking num-bigint v0.5.1
+    Checking quickjs-oxide v0.0.1 (/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef)
+   Compiling wasm-bindgen-macro-support v0.2.126
+   Compiling wasm-bindgen-macro v0.2.126
+    Checking wasm-bindgen v0.2.126
+    Checking js-sys v0.3.103
+    Checking quickjs-oxide-host v0.0.1 (/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/adapters/native)
+    Checking quickjs-oxide-web-host v0.0.1 (/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/adapters/web)
+    Checking quickjs-oxide-web v0.0.1 (/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/apps/web)
+    Checking quickjs-oxide-cli v0.0.1 (/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/apps/cli)
+    Checking quickjs-oxide-test262 v0.0.1 (/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/conformance/test262)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2m 18s

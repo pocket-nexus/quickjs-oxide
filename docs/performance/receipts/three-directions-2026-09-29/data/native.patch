@@ -1,0 +1,439 @@
+diff --git a/src/engine/vm/driver/ordinary.rs b/src/engine/vm/driver/ordinary.rs
+index 0144ae7d..b9595d92 100644
+--- a/src/engine/vm/driver/ordinary.rs
++++ b/src/engine/vm/driver/ordinary.rs
+@@ -67,10 +67,7 @@ pub(super) fn enter_selected(
+             crate::engine::vm::call::ordinary::OrdinaryCall,
+             crate::engine::vm::stack::CheckedOrdinaryCallOperands,
+         ),
+-        Native(
+-            crate::engine::object::CallableRef,
+-            crate::engine::vm::frames::NativeClassification,
+-        ),
++        Native(crate::engine::vm::frames::NativeClassification),
+     }
+     // End every Result/selection container holding a slot borrow before any
+     // frame installation or operand transfer. Only owning facts and the
+@@ -91,19 +88,16 @@ pub(super) fn enter_selected(
+             profile_pc,
+             linked,
+         );
+-        let Some((callable, selected)) =
+-            crate::engine::vm::frames::NativeClassification::promote_linked(
+-                runtime, selected, linked,
+-            )
+-            .map_err(runtime_error_to_vm_error)?
+-        else {
++        let Some(selected) = crate::engine::vm::frames::NativeClassification::classify_linked(
++            runtime, selected, linked,
++        ) else {
+             return Ok(Entry::General);
+         };
+         #[cfg(feature = "profiling")]
+         crate::engine::api::profiling::record_owned_execution_event(
+             "native_linked_classification_consumed",
+         );
+-        Prepared::Native(callable, selected)
++        Prepared::Native(selected)
+     } else {
+         let callable_value = if method {
+             transaction.peek(count)?
+@@ -153,10 +147,9 @@ pub(super) fn enter_selected(
+                 if !transaction.validate_call_value_domains(runtime, count, method)? {
+                     return Ok(Entry::General);
+                 }
+-                let (callable, selected) =
+-                    crate::engine::vm::frames::NativeClassification::promote_selected(native)
+-                        .map_err(runtime_error_to_vm_error)?;
+-                Prepared::Native(callable, selected)
++                let selected =
++                    crate::engine::vm::frames::NativeClassification::classify_selected(native);
++                Prepared::Native(selected)
+             }
+             Err(error) => {
+                 if !transaction.validate_call_value_domains(runtime, count, method)? {
+@@ -179,13 +172,17 @@ pub(super) fn enter_selected(
+             crate::engine::api::profiling::record_owned_instruction(depth);
+             Ok(Entry::Ordinary)
+         }
+-        Prepared::Native(callable, mut selected) => {
++        Prepared::Native(mut selected) => {
+             let target = selected.target();
+             let realm = selected.defining_realm();
+             let minimum = selected.minimum();
+             let operation = selected.take_operation();
+-            let (arguments, receiver) =
+-                transaction.take_native_call_operands(runtime, logical_depth, count, method)?;
++            let (arguments, receiver, callable) = transaction.take_validated_native_call_operands(
++                runtime,
++                logical_depth,
++                count,
++                method,
++            )?;
+             drop(transaction);
+             if !execution.frames.can_push_with_continuations(0)
+                 || runtime.host_stack_would_overflow()
+@@ -426,6 +423,52 @@ mod layout_tests {
+         assert!(costs.callsites.values().any(|site| site.calls > 0));
+     }
+ 
++    #[test]
++    fn transferred_native_call_keeps_coercion_reentry_throw_and_actual_arity() {
++        use crate::engine::api::{Runtime, Value};
++        let runtime = Runtime::new();
++        let mut context = runtime.new_context();
++        for source in [
++            "(()=>{let log='',marker={};let a={valueOf(){log+='a';return 3}},b={valueOf(){log+='b';throw marker}},c={valueOf(){log+='c';return 1}};try{Math.min(a,b,c)}catch(e){return e===marker&&log==='ab'}return false})()",
++            "(()=>{let map=new Map(),key={},value={};map.set(key,value);let f=Math.min;let n=0;let a={valueOf(){n++;map.set(key,{x:42});return map.get(key).x}};return f(a,50)===42&&n===1&&map.get(key).x===42})()",
++            "(()=>{let f=Math.max;return f()===-Infinity&&f(1,2,3,4,5,6)===6&&Number.isFinite(3,{})})()",
++            "(()=>{let map=new Map(),key={},value={};let holder={call:map.set};let failed=false;try{holder.call(key,value)}catch(e){failed=e instanceof TypeError}map.set(key,value);return failed&&map.get(key)===value})()",
++        ] {
++            assert_eq!(context.eval(source).unwrap(), Value::Bool(true), "{source}");
++            assert!(runtime.0.state.borrow().active_frames.is_empty());
++        }
++        runtime.run_gc().unwrap();
++        assert_eq!(runtime.0.active_frame_depth.get(), 0);
++    }
++
++    #[cfg(feature = "profiling")]
++    #[test]
++    fn native_direct_entry_records_owner_transfer_and_validation_reuse() {
++        use crate::engine::api::{Runtime, Value, profiling::CostProfile};
++        let runtime = Runtime::new();
++        let mut context = runtime.new_context();
++        drop(
++            context
++                .eval("Math.min; Map.prototype.set; Map.prototype.get")
++                .unwrap(),
++        );
++        let profile = CostProfile::start();
++        assert_eq!(context.eval("(()=>{let map=new Map(),key={},value={x:42};map.set(key,value);let f=Math.min;return f(map.get(key).x,50)})()").unwrap(), Value::Int(42));
++        let costs = profile.snapshot();
++        let transferred = costs
++            .owned_execution_events
++            .get("native_callee_owner_transferred")
++            .copied()
++            .unwrap_or(0);
++        assert!(transferred >= 3, "{:#?}", costs.owned_execution_events);
++        assert_eq!(
++            costs
++                .owned_execution_events
++                .get("native_argv_validation_reused"),
++            Some(&transferred)
++        );
++    }
++
+     #[test]
+     fn unified_call_entry_keeps_the_ordinary_result_abi_size() {
+         // The boxed error channel is one word, so a result transaction is now
+diff --git a/src/engine/vm/frames.rs b/src/engine/vm/frames.rs
+index de2accab..c5dce299 100644
+--- a/src/engine/vm/frames.rs
++++ b/src/engine/vm/frames.rs
+@@ -27,54 +27,40 @@ pub(in crate::engine::vm) struct NativeClassification {
+ }
+ 
+ impl NativeClassification {
+-    pub(in crate::engine::vm) fn promote_selected(
++    /// The authenticated caller transaction keeps its callee slot unchanged
++    /// until it transfers that owner into the activation's CallableRef.
++    pub(in crate::engine::vm) fn classify_selected(
+         selection: super::call::ordinary::NativeSelection<'_>,
+-    ) -> Result<(crate::engine::object::CallableRef, Self), RuntimeError> {
++    ) -> Self {
+         let (runtime, function, target, defining_realm, min_readable_args, operation) =
+             selection.into_parts();
+-        let domain = runtime.domain_id();
+-        let callable = crate::engine::object::CallableRef::from_validated_object(
+-            ObjectRef::from_borrowed_handle(runtime.clone(), function)?,
+-        );
+-        Ok((
+-            callable,
+-            Self {
+-                function,
+-                domain,
+-                target,
+-                defining_realm,
+-                min_readable_args,
+-                operation: Some(operation),
+-            },
+-        ))
++        Self {
++            function,
++            domain: runtime.domain_id(),
++            target,
++            defining_realm,
++            min_readable_args,
++            operation: Some(operation),
++        }
+     }
+ 
+-    pub(in crate::engine::vm) fn promote_linked(
++    pub(in crate::engine::vm) fn classify_linked(
+         runtime: &Runtime,
+         selection: crate::engine::object::LinkedNativeSelection,
+         value: &crate::engine::value::JsValue,
+-    ) -> Result<Option<(crate::engine::object::CallableRef, Self)>, RuntimeError> {
++    ) -> Option<Self> {
+         let crate::engine::value::JsValue::Object(function) = value else {
+-            return Ok(None);
++            return None;
+         };
+-        let Some(data) = selection.into_parts_jsvalue(runtime, *function) else {
+-            return Ok(None);
+-        };
+-        let domain = runtime.domain_id();
+-        let callable = crate::engine::object::CallableRef::from_validated_object(
+-            ObjectRef::from_borrowed_handle(runtime.clone(), *function)?,
+-        );
+-        Ok(Some((
+-            callable,
+-            Self {
+-                function: *function,
+-                domain,
+-                target: data.target,
+-                defining_realm: data.realm.expect("selected native realm"),
+-                min_readable_args: data.min_readable_args,
+-                operation: data.operation(),
+-            },
+-        )))
++        let data = selection.into_parts_jsvalue(runtime, *function)?;
++        Some(Self {
++            function: *function,
++            domain: runtime.domain_id(),
++            target: data.target,
++            defining_realm: data.realm.expect("selected native realm"),
++            min_readable_args: data.min_readable_args,
++            operation: data.operation(),
++        })
+     }
+ 
+     pub(in crate::engine::vm) fn select(
+diff --git a/src/engine/vm/stack.rs b/src/engine/vm/stack.rs
+index c6ed5335..9abcf638 100644
+--- a/src/engine/vm/stack.rs
++++ b/src/engine/vm/stack.rs
+@@ -378,23 +378,41 @@ impl SlotStore {
+         method: bool,
+     ) -> Result<(Vec<JsValue>, JsValue), Error> {
+         self.check_current(window)?;
+-        self.take_native_call_operands_current(runtime, window, count, method)
++        let arguments = self.take_native_arguments_current::<false>(window, count, method)?;
++        // Preserve the checked general entry's callee-release boundary.
++        let callee = self.pop_current(window)?;
++        runtime
++            .release_jsvalue(callee)
++            .map_err(runtime_error_to_vm_error)?;
++        let receiver = if method {
++            self.pop_current(window)?
++        } else {
++            JsValue::Undefined
++        };
++        Ok((arguments, receiver))
+     }
+ 
+-    fn take_native_call_operands_current(
++    fn take_native_arguments_current<const VALIDATED: bool>(
+         &mut self,
+-        runtime: &Runtime,
+         window: &mut FrameWindow,
+         count: usize,
+         method: bool,
+-    ) -> Result<(Vec<JsValue>, JsValue), Error> {
++    ) -> Result<Vec<JsValue>, Error> {
+         let mut arguments = self.take_native_argument_buffer(count)?;
+-        for offset in 0..count + 1 + usize::from(method) {
+-            self.peek_current(window, offset)?;
++        if !VALIDATED {
++            for offset in 0..count + 1 + usize::from(method) {
++                self.peek_current(window, offset)?;
++            }
++        }
++        #[cfg(feature = "profiling")]
++        if VALIDATED {
++            crate::engine::api::profiling::record_owned_execution_event(
++                "native_argv_validation_reused",
++            );
+         }
+         let start = window.operands().start + window.depth - count;
+-        for index in start..start + count {
+-            let Some(FrameBinding::Direct(value)) = self.slots[index].take() else {
++        for slot in &mut self.slots[start..start + count] {
++            let Some(FrameBinding::Direct(value)) = slot.take() else {
+                 unreachable!("native operand transaction authenticated each slot")
+             };
+             arguments.push(value);
+@@ -409,18 +427,7 @@ impl SlotStore {
+             );
+             crate::engine::api::profiling::record_call_buffer_moves("call.native_argv", count);
+         }
+-        // Match the previous callee then receiver pop/drop order. The classified
+-        // callable owner pins the callee throughout this transfer.
+-        let callee = self.pop_current(window)?;
+-        runtime
+-            .release_jsvalue(callee)
+-            .map_err(runtime_error_to_vm_error)?;
+-        let receiver = if method {
+-            self.pop_current(window)?
+-        } else {
+-            JsValue::Undefined
+-        };
+-        Ok((arguments, receiver))
++        Ok(arguments)
+     }
+ 
+     /// Cleanup cannot allocate or retain JavaScript owners. Producers outside
+@@ -2028,6 +2035,98 @@ mod tests {
+         slots.clear_frame(&runtime, window).unwrap();
+     }
+ 
++    #[test]
++    fn validated_native_transfer_moves_callee_owner_and_keeps_deferred_drain() {
++        let runtime = Runtime::new();
++        let mut context = runtime.new_context();
++        let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
++        owner.metadata.max_stack = 4;
++        let mut slots = SlotStore::new(4);
++        let mut window = slots
++            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
++            .unwrap();
++        let receiver = runtime.new_object(None).unwrap();
++        let receiver_id = receiver.object_id();
++        let argument = runtime.new_object(None).unwrap();
++        let argument_id = argument.object_id();
++        let callee = context.eval("Map.prototype.set").unwrap();
++        let Value::Object(callee_root) = &callee else {
++            panic!("native function")
++        };
++        let callee_id = callee_root.object_id();
++        for value in [
++            Value::Object(receiver),
++            callee,
++            Value::Int(7),
++            Value::Object(argument),
++        ] {
++            slots
++                .push(&mut window, into_internal(&runtime, value))
++                .unwrap();
++        }
++        let before = runtime
++            .0
++            .state
++            .borrow()
++            .heap
++            .object_strong_count(callee_id)
++            .unwrap();
++        let mut transaction = slots.frame_transaction(&mut window).unwrap();
++        assert!(matches!(transaction.peek(2).unwrap(), JsValue::Object(id) if *id == callee_id));
++        assert!(
++            transaction
++                .validate_call_value_domains(&runtime, 2, true)
++                .unwrap()
++        );
++        // The removed duplicate's release used to drain this unrelated edge.
++        let pending = runtime.new_object(None).unwrap();
++        let pending_id = pending.object_id();
++        {
++            let state = runtime.0.state.borrow();
++            drop(pending);
++            assert!(state.heap.object(pending_id).is_ok());
++        }
++        assert!(runtime.0.deferred_references.has_pending());
++        let (arguments, receiver, callable) = transaction
++            .take_validated_native_call_operands(&runtime, 0, 2, true)
++            .unwrap();
++        drop(transaction);
++        assert_eq!(window.depth, 0);
++        assert_eq!(callable.as_object().object_id(), callee_id);
++        assert_eq!(
++            runtime
++                .0
++                .state
++                .borrow()
++                .heap
++                .object_strong_count(callee_id)
++                .unwrap(),
++            before
++        );
++        assert_eq!(arguments, [JsValue::Int(7), JsValue::Object(argument_id)]);
++        assert_eq!(receiver, JsValue::Object(receiver_id));
++        assert!(!runtime.0.deferred_references.has_pending());
++        assert!(runtime.0.state.borrow().heap.object(pending_id).is_err());
++        for value in arguments {
++            runtime.release_jsvalue(value).unwrap();
++        }
++        runtime.release_jsvalue(receiver).unwrap();
++        drop(callable);
++        assert_eq!(
++            runtime
++                .0
++                .state
++                .borrow()
++                .heap
++                .object_strong_count(callee_id)
++                .unwrap(),
++            before - 1
++        );
++        assert!(runtime.0.state.borrow().heap.object(argument_id).is_err());
++        assert!(runtime.0.state.borrow().heap.object(receiver_id).is_err());
++        slots.clear_frame(&runtime, window).unwrap();
++    }
++
+     #[test]
+     fn ordinary_field_leaf_declines_without_consuming_stack_inputs() {
+         use crate::engine::code::bytecode::Instruction;
+diff --git a/src/engine/vm/stack/window.rs b/src/engine/vm/stack/window.rs
+index ec6507ab..ee5b6079 100644
+--- a/src/engine/vm/stack/window.rs
++++ b/src/engine/vm/stack/window.rs
+@@ -108,17 +108,46 @@ impl FrameTransaction<'_> {
+             has_non_scalar_argument,
+         })
+     }
+-    pub(in crate::engine::vm) fn take_native_call_operands(
++    /// Consume native operands already checked within this transaction: the
++    /// callee by native selection, and receiver/arguments by domain validation.
++    /// No mutable slot access may intervene. Classification executes no JS and
++    /// keeps the callee in its original slot until this owning transfer.
++    pub(in crate::engine::vm) fn take_validated_native_call_operands(
+         &mut self,
+         runtime: &Runtime,
+         logical_active_depth: usize,
+         count: usize,
+         method: bool,
+-    ) -> Result<(Vec<JsValue>, JsValue), Error> {
++    ) -> Result<(Vec<JsValue>, JsValue, crate::engine::object::CallableRef), Error> {
+         self.store
+             .reserve_native_argument_depth(logical_active_depth.saturating_add(1))?;
+-        self.store
+-            .take_native_call_operands_current(runtime, self.window, count, method)
++        let arguments =
++            self.store
++                .take_native_arguments_current::<true>(self.window, count, method)?;
++        let JsValue::Object(function) = self.store.pop_current(self.window)? else {
++            unreachable!("native selection authenticated the callee object")
++        };
++        // The slot's original edge becomes the activation's callable owner.
++        // The callee stays continuously live until normal activation cleanup,
++        // so its former retain/release pair is unnecessary.
++        let callable = crate::engine::object::CallableRef::from_validated_object(
++            crate::engine::object::ObjectRef::from_owned_handle(runtime.clone(), function),
++        );
++        // Releasing the old duplicate also drained unrelated pending edges.
++        // Preserve that observation boundary before consuming the receiver.
++        if runtime.0.deferred_references.has_pending() {
++            drop(runtime.operation());
++        }
++        let receiver = if method {
++            self.store.pop_current(self.window)?
++        } else {
++            JsValue::Undefined
++        };
++        #[cfg(feature = "profiling")]
++        crate::engine::api::profiling::record_owned_execution_event(
++            "native_callee_owner_transferred",
++        );
++        Ok((arguments, receiver, callable))
+     }
+ 
+     pub(in crate::engine::vm) fn slots(&mut self) -> FrameSlots<'_> {

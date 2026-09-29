@@ -1,0 +1,2 @@
+0000000000573360 000000000000011e t quickjs_oxide::engine::vm::frames::NativeClassification::promote_selected
+00000000004be8e0 0000000000000901 t quickjs_oxide::engine::builtins::primitive::text::ScalarTextStep::start

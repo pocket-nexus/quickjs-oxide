@@ -1,0 +1,32 @@
+{
+  "parent": {
+    "plain_bytes": 9409936,
+    "stripped_bytes": 8438592,
+    "sha256": "58a7854db7b9e1a5260b78c915d766052051be38b14ee34da99728c0a35ace9d"
+  },
+  "pr52": {
+    "plain_bytes": 9319944,
+    "stripped_bytes": 8356672,
+    "sha256": "3574e364dc077b7ad1e6130450423f604bdd7c6c0dc59029395e20f0ab2c61b0"
+  },
+  "string-final": {
+    "plain_bytes": 9410376,
+    "stripped_bytes": 8438592,
+    "sha256": "d1bbb432d8a0e29d49da24a18667f44582a92459455ccd26ba99f5e5b6fb692c"
+  },
+  "array": {
+    "plain_bytes": 9410056,
+    "stripped_bytes": 8438592,
+    "sha256": "67c3fd32360959419fcf221dc29e7c13aa2e7c640b2e137372fe3c6d0a128869"
+  },
+  "native": {
+    "plain_bytes": 9409608,
+    "stripped_bytes": 8438592,
+    "sha256": "fdc76d1592cd4adf9c44c2299c66a85455165ffac70bf74e14f733bbf94db2fc"
+  },
+  "combined": {
+    "plain_bytes": 9414256,
+    "stripped_bytes": 8442688,
+    "sha256": "b185c22e2c23c20eb527a10d0a607779ec05a091d2da88c25bd0c83c25b3ea44"
+  }
+}

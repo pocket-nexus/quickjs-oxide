@@ -1,0 +1,1298 @@
+[
+  {
+    "case": "realworld-react",
+    "engine": "parent",
+    "repetition": 0,
+    "values": {
+      "instructions:u": 3530213494,
+      "cycles:u": 1534494538
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/realworld-react-parent-0.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+    ],
+    "binary_sha256": "58a7854db7b9e1a5260b78c915d766052051be38b14ee34da99728c0a35ace9d",
+    "wrapper_peak_rss_kib": 30228,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "realworld-react",
+    "engine": "combined",
+    "repetition": 0,
+    "values": {
+      "instructions:u": 3296939536,
+      "cycles:u": 1412673154
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/realworld-react-combined-0.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+    ],
+    "binary_sha256": "b185c22e2c23c20eb527a10d0a607779ec05a091d2da88c25bd0c83c25b3ea44",
+    "wrapper_peak_rss_kib": 30388,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "realworld-react",
+    "engine": "combined",
+    "repetition": 1,
+    "values": {
+      "instructions:u": 3297098807,
+      "cycles:u": 1407098621
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/realworld-react-combined-1.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+    ],
+    "binary_sha256": "b185c22e2c23c20eb527a10d0a607779ec05a091d2da88c25bd0c83c25b3ea44",
+    "wrapper_peak_rss_kib": 31408,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "realworld-react",
+    "engine": "parent",
+    "repetition": 1,
+    "values": {
+      "instructions:u": 3529447744,
+      "cycles:u": 1532607137
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/realworld-react-parent-1.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+    ],
+    "binary_sha256": "58a7854db7b9e1a5260b78c915d766052051be38b14ee34da99728c0a35ace9d",
+    "wrapper_peak_rss_kib": 30248,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "realworld-react",
+    "engine": "combined",
+    "repetition": 2,
+    "values": {
+      "instructions:u": 3297460708,
+      "cycles:u": 1411729297
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/realworld-react-combined-2.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+    ],
+    "binary_sha256": "b185c22e2c23c20eb527a10d0a607779ec05a091d2da88c25bd0c83c25b3ea44",
+    "wrapper_peak_rss_kib": 31136,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "realworld-react",
+    "engine": "parent",
+    "repetition": 2,
+    "values": {
+      "instructions:u": 3529164318,
+      "cycles:u": 1535078381
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/realworld-react-parent-2.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+    ],
+    "binary_sha256": "58a7854db7b9e1a5260b78c915d766052051be38b14ee34da99728c0a35ace9d",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "realworld-react",
+    "engine": "parent",
+    "repetition": 3,
+    "values": {
+      "instructions:u": 3529369110,
+      "cycles:u": 1547005076
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/realworld-react-parent-3.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+    ],
+    "binary_sha256": "58a7854db7b9e1a5260b78c915d766052051be38b14ee34da99728c0a35ace9d",
+    "wrapper_peak_rss_kib": 31344,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "realworld-react",
+    "engine": "combined",
+    "repetition": 3,
+    "values": {
+      "instructions:u": 3297066967,
+      "cycles:u": 1423907959
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/realworld-react-combined-3.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/tmp/oxide-phase2-app-bundles-v0/react-realworld.js"
+    ],
+    "binary_sha256": "b185c22e2c23c20eb527a10d0a607779ec05a091d2da88c25bd0c83c25b3ea44",
+    "wrapper_peak_rss_kib": 30172,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "crypto",
+    "engine": "parent",
+    "repetition": 0,
+    "values": {
+      "instructions:u": 12915508046,
+      "cycles:u": 4135324356
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/crypto-parent-0.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/tmp/oxide-ordinary-perf/v8-fixed-formal/generated/final/crypto.js"
+    ],
+    "binary_sha256": "58a7854db7b9e1a5260b78c915d766052051be38b14ee34da99728c0a35ace9d",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "crypto",
+    "engine": "combined",
+    "repetition": 0,
+    "values": {
+      "instructions:u": 11294987024,
+      "cycles:u": 3547603096
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/crypto-combined-0.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/tmp/oxide-ordinary-perf/v8-fixed-formal/generated/final/crypto.js"
+    ],
+    "binary_sha256": "b185c22e2c23c20eb527a10d0a607779ec05a091d2da88c25bd0c83c25b3ea44",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "crypto",
+    "engine": "combined",
+    "repetition": 1,
+    "values": {
+      "instructions:u": 11294994926,
+      "cycles:u": 3331045156
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/crypto-combined-1.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/tmp/oxide-ordinary-perf/v8-fixed-formal/generated/final/crypto.js"
+    ],
+    "binary_sha256": "b185c22e2c23c20eb527a10d0a607779ec05a091d2da88c25bd0c83c25b3ea44",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "crypto",
+    "engine": "parent",
+    "repetition": 1,
+    "values": {
+      "instructions:u": 12915476416,
+      "cycles:u": 4090896854
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/crypto-parent-1.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/tmp/oxide-ordinary-perf/v8-fixed-formal/generated/final/crypto.js"
+    ],
+    "binary_sha256": "58a7854db7b9e1a5260b78c915d766052051be38b14ee34da99728c0a35ace9d",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "crypto",
+    "engine": "combined",
+    "repetition": 2,
+    "values": {
+      "instructions:u": 11294984997,
+      "cycles:u": 3343225375
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/crypto-combined-2.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/tmp/oxide-ordinary-perf/v8-fixed-formal/generated/final/crypto.js"
+    ],
+    "binary_sha256": "b185c22e2c23c20eb527a10d0a607779ec05a091d2da88c25bd0c83c25b3ea44",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "crypto",
+    "engine": "parent",
+    "repetition": 2,
+    "values": {
+      "instructions:u": 12915384678,
+      "cycles:u": 4051146278
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/crypto-parent-2.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/tmp/oxide-ordinary-perf/v8-fixed-formal/generated/final/crypto.js"
+    ],
+    "binary_sha256": "58a7854db7b9e1a5260b78c915d766052051be38b14ee34da99728c0a35ace9d",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "crypto",
+    "engine": "parent",
+    "repetition": 3,
+    "values": {
+      "instructions:u": 12915357554,
+      "cycles:u": 4105346702
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/crypto-parent-3.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/tmp/oxide-ordinary-perf/v8-fixed-formal/generated/final/crypto.js"
+    ],
+    "binary_sha256": "58a7854db7b9e1a5260b78c915d766052051be38b14ee34da99728c0a35ace9d",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "crypto",
+    "engine": "combined",
+    "repetition": 3,
+    "values": {
+      "instructions:u": 11294960015,
+      "cycles:u": 3302169253
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/crypto-combined-3.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/tmp/oxide-ordinary-perf/v8-fixed-formal/generated/final/crypto.js"
+    ],
+    "binary_sha256": "b185c22e2c23c20eb527a10d0a607779ec05a091d2da88c25bd0c83c25b3ea44",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "materialized-array-write",
+    "engine": "parent",
+    "repetition": 0,
+    "values": {
+      "instructions:u": 1605506627,
+      "cycles:u": 593819949
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/materialized-array-write-parent-0.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/materialized_array_write.js"
+    ],
+    "binary_sha256": "58a7854db7b9e1a5260b78c915d766052051be38b14ee34da99728c0a35ace9d",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "materialized-array-write",
+    "engine": "combined",
+    "repetition": 0,
+    "values": {
+      "instructions:u": 845305159,
+      "cycles:u": 288107540
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/materialized-array-write-combined-0.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/materialized_array_write.js"
+    ],
+    "binary_sha256": "b185c22e2c23c20eb527a10d0a607779ec05a091d2da88c25bd0c83c25b3ea44",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "materialized-array-write",
+    "engine": "combined",
+    "repetition": 1,
+    "values": {
+      "instructions:u": 845306440,
+      "cycles:u": 278446242
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/materialized-array-write-combined-1.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/materialized_array_write.js"
+    ],
+    "binary_sha256": "b185c22e2c23c20eb527a10d0a607779ec05a091d2da88c25bd0c83c25b3ea44",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "materialized-array-write",
+    "engine": "parent",
+    "repetition": 1,
+    "values": {
+      "instructions:u": 1605506193,
+      "cycles:u": 583542623
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/materialized-array-write-parent-1.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/materialized_array_write.js"
+    ],
+    "binary_sha256": "58a7854db7b9e1a5260b78c915d766052051be38b14ee34da99728c0a35ace9d",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "materialized-array-write",
+    "engine": "combined",
+    "repetition": 2,
+    "values": {
+      "instructions:u": 845305348,
+      "cycles:u": 282275255
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/materialized-array-write-combined-2.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/materialized_array_write.js"
+    ],
+    "binary_sha256": "b185c22e2c23c20eb527a10d0a607779ec05a091d2da88c25bd0c83c25b3ea44",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "materialized-array-write",
+    "engine": "parent",
+    "repetition": 2,
+    "values": {
+      "instructions:u": 1605505791,
+      "cycles:u": 591286997
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/materialized-array-write-parent-2.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/materialized_array_write.js"
+    ],
+    "binary_sha256": "58a7854db7b9e1a5260b78c915d766052051be38b14ee34da99728c0a35ace9d",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "materialized-array-write",
+    "engine": "parent",
+    "repetition": 3,
+    "values": {
+      "instructions:u": 1605505888,
+      "cycles:u": 618725706
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/materialized-array-write-parent-3.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/materialized_array_write.js"
+    ],
+    "binary_sha256": "58a7854db7b9e1a5260b78c915d766052051be38b14ee34da99728c0a35ace9d",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "materialized-array-write",
+    "engine": "combined",
+    "repetition": 3,
+    "values": {
+      "instructions:u": 845306016,
+      "cycles:u": 280480586
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/materialized-array-write-combined-3.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/materialized_array_write.js"
+    ],
+    "binary_sha256": "b185c22e2c23c20eb527a10d0a607779ec05a091d2da88c25bd0c83c25b3ea44",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "native-collections",
+    "engine": "parent",
+    "repetition": 0,
+    "values": {
+      "instructions:u": 2790174723,
+      "cycles:u": 1014204287
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/native-collections-parent-0.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/native-collections.js"
+    ],
+    "binary_sha256": "58a7854db7b9e1a5260b78c915d766052051be38b14ee34da99728c0a35ace9d",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "native-collections",
+    "engine": "combined",
+    "repetition": 0,
+    "values": {
+      "instructions:u": 2664773475,
+      "cycles:u": 947941512
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/native-collections-combined-0.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/native-collections.js"
+    ],
+    "binary_sha256": "b185c22e2c23c20eb527a10d0a607779ec05a091d2da88c25bd0c83c25b3ea44",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "native-collections",
+    "engine": "combined",
+    "repetition": 1,
+    "values": {
+      "instructions:u": 2664773386,
+      "cycles:u": 949706687
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/native-collections-combined-1.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/native-collections.js"
+    ],
+    "binary_sha256": "b185c22e2c23c20eb527a10d0a607779ec05a091d2da88c25bd0c83c25b3ea44",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "native-collections",
+    "engine": "parent",
+    "repetition": 1,
+    "values": {
+      "instructions:u": 2790173719,
+      "cycles:u": 1030753456
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/native-collections-parent-1.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/native-collections.js"
+    ],
+    "binary_sha256": "58a7854db7b9e1a5260b78c915d766052051be38b14ee34da99728c0a35ace9d",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "native-collections",
+    "engine": "combined",
+    "repetition": 2,
+    "values": {
+      "instructions:u": 2664774176,
+      "cycles:u": 1012231011
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/native-collections-combined-2.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/native-collections.js"
+    ],
+    "binary_sha256": "b185c22e2c23c20eb527a10d0a607779ec05a091d2da88c25bd0c83c25b3ea44",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "native-collections",
+    "engine": "parent",
+    "repetition": 2,
+    "values": {
+      "instructions:u": 2790174476,
+      "cycles:u": 1021311209
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/native-collections-parent-2.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/native-collections.js"
+    ],
+    "binary_sha256": "58a7854db7b9e1a5260b78c915d766052051be38b14ee34da99728c0a35ace9d",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "native-collections",
+    "engine": "parent",
+    "repetition": 3,
+    "values": {
+      "instructions:u": 2790174414,
+      "cycles:u": 1021603599
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/native-collections-parent-3.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/native-collections.js"
+    ],
+    "binary_sha256": "58a7854db7b9e1a5260b78c915d766052051be38b14ee34da99728c0a35ace9d",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "native-collections",
+    "engine": "combined",
+    "repetition": 3,
+    "values": {
+      "instructions:u": 2664773209,
+      "cycles:u": 952276344
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/native-collections-combined-3.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/native-collections.js"
+    ],
+    "binary_sha256": "b185c22e2c23c20eb527a10d0a607779ec05a091d2da88c25bd0c83c25b3ea44",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "ordinary-property-write",
+    "engine": "parent",
+    "repetition": 0,
+    "values": {
+      "instructions:u": 717196835,
+      "cycles:u": 241402821
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/ordinary-property-write-parent-0.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js"
+    ],
+    "binary_sha256": "58a7854db7b9e1a5260b78c915d766052051be38b14ee34da99728c0a35ace9d",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "ordinary-property-write",
+    "engine": "combined",
+    "repetition": 0,
+    "values": {
+      "instructions:u": 717797833,
+      "cycles:u": 229085042
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/ordinary-property-write-combined-0.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js"
+    ],
+    "binary_sha256": "b185c22e2c23c20eb527a10d0a607779ec05a091d2da88c25bd0c83c25b3ea44",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "ordinary-property-write",
+    "engine": "combined",
+    "repetition": 1,
+    "values": {
+      "instructions:u": 717796789,
+      "cycles:u": 228923582
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/ordinary-property-write-combined-1.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js"
+    ],
+    "binary_sha256": "b185c22e2c23c20eb527a10d0a607779ec05a091d2da88c25bd0c83c25b3ea44",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "ordinary-property-write",
+    "engine": "parent",
+    "repetition": 1,
+    "values": {
+      "instructions:u": 717196798,
+      "cycles:u": 242190929
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/ordinary-property-write-parent-1.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js"
+    ],
+    "binary_sha256": "58a7854db7b9e1a5260b78c915d766052051be38b14ee34da99728c0a35ace9d",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "ordinary-property-write",
+    "engine": "combined",
+    "repetition": 2,
+    "values": {
+      "instructions:u": 717796286,
+      "cycles:u": 227815780
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/ordinary-property-write-combined-2.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js"
+    ],
+    "binary_sha256": "b185c22e2c23c20eb527a10d0a607779ec05a091d2da88c25bd0c83c25b3ea44",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "ordinary-property-write",
+    "engine": "parent",
+    "repetition": 2,
+    "values": {
+      "instructions:u": 717195708,
+      "cycles:u": 239076064
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/ordinary-property-write-parent-2.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js"
+    ],
+    "binary_sha256": "58a7854db7b9e1a5260b78c915d766052051be38b14ee34da99728c0a35ace9d",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "ordinary-property-write",
+    "engine": "parent",
+    "repetition": 3,
+    "values": {
+      "instructions:u": 717196579,
+      "cycles:u": 241785869
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/ordinary-property-write-parent-3.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js"
+    ],
+    "binary_sha256": "58a7854db7b9e1a5260b78c915d766052051be38b14ee34da99728c0a35ace9d",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "ordinary-property-write",
+    "engine": "combined",
+    "repetition": 3,
+    "values": {
+      "instructions:u": 717795764,
+      "cycles:u": 243781619
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/ordinary-property-write-combined-3.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/ordinary_property_write.js"
+    ],
+    "binary_sha256": "b185c22e2c23c20eb527a10d0a607779ec05a091d2da88c25bd0c83c25b3ea44",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "string-scalar-index",
+    "engine": "parent",
+    "repetition": 0,
+    "values": {
+      "instructions:u": 3968101880,
+      "cycles:u": 1674095110
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/string-scalar-index-parent-0.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/string-scalar-index.js"
+    ],
+    "binary_sha256": "58a7854db7b9e1a5260b78c915d766052051be38b14ee34da99728c0a35ace9d",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "string-scalar-index",
+    "engine": "combined",
+    "repetition": 0,
+    "values": {
+      "instructions:u": 2622099216,
+      "cycles:u": 913071543
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/string-scalar-index-combined-0.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/string-scalar-index.js"
+    ],
+    "binary_sha256": "b185c22e2c23c20eb527a10d0a607779ec05a091d2da88c25bd0c83c25b3ea44",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "string-scalar-index",
+    "engine": "combined",
+    "repetition": 1,
+    "values": {
+      "instructions:u": 2622099381,
+      "cycles:u": 910211770
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/string-scalar-index-combined-1.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/string-scalar-index.js"
+    ],
+    "binary_sha256": "b185c22e2c23c20eb527a10d0a607779ec05a091d2da88c25bd0c83c25b3ea44",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "string-scalar-index",
+    "engine": "parent",
+    "repetition": 1,
+    "values": {
+      "instructions:u": 3968101759,
+      "cycles:u": 1675212189
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/string-scalar-index-parent-1.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/string-scalar-index.js"
+    ],
+    "binary_sha256": "58a7854db7b9e1a5260b78c915d766052051be38b14ee34da99728c0a35ace9d",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "string-scalar-index",
+    "engine": "combined",
+    "repetition": 2,
+    "values": {
+      "instructions:u": 2622099660,
+      "cycles:u": 903985415
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/string-scalar-index-combined-2.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/string-scalar-index.js"
+    ],
+    "binary_sha256": "b185c22e2c23c20eb527a10d0a607779ec05a091d2da88c25bd0c83c25b3ea44",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "string-scalar-index",
+    "engine": "parent",
+    "repetition": 2,
+    "values": {
+      "instructions:u": 3968102070,
+      "cycles:u": 1661871925
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/string-scalar-index-parent-2.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/string-scalar-index.js"
+    ],
+    "binary_sha256": "58a7854db7b9e1a5260b78c915d766052051be38b14ee34da99728c0a35ace9d",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "string-scalar-index",
+    "engine": "parent",
+    "repetition": 3,
+    "values": {
+      "instructions:u": 3968102376,
+      "cycles:u": 1657222150
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/string-scalar-index-parent-3.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-parent/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/string-scalar-index.js"
+    ],
+    "binary_sha256": "58a7854db7b9e1a5260b78c915d766052051be38b14ee34da99728c0a35ace9d",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  },
+  {
+    "case": "string-scalar-index",
+    "engine": "combined",
+    "repetition": 3,
+    "values": {
+      "instructions:u": 2622100018,
+      "cycles:u": 901380331
+    },
+    "command": [
+      "perf",
+      "stat",
+      "-x,",
+      "-o",
+      "/tmp/oxide-three-evidence/hardware/string-scalar-index-combined-3.csv",
+      "-e",
+      "instructions:u,cycles:u",
+      "--",
+      "taskset",
+      "-c",
+      "2",
+      "/tmp/oxide-three-build-combined/release/qjs",
+      "/home/eric/.lody/repos/github---pocket-nexus---quickjs-oxide/worktrees/8584b6de-ee19-449e-8b46-e972b9b555ef/docs/performance/receipts/three-directions-2026-09-29/workloads/string-scalar-index.js"
+    ],
+    "binary_sha256": "b185c22e2c23c20eb527a10d0a607779ec05a091d2da88c25bd0c83c25b3ea44",
+    "wrapper_peak_rss_kib": 29692,
+    "rss_scope": "Rejected as engine RSS: includes inherited Python fork high-water floor; see separate rss.json."
+  }
+]
