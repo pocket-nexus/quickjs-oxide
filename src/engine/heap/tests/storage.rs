@@ -1664,8 +1664,8 @@ fn canonical_append_retains_self_and_duplicate_accessor_edges_exactly_once() {
         object,
         accessor_shape,
         PropertySlot::Accessor {
-            get: Some(target),
-            set: Some(target),
+            get: AccessorRef::from_option(Some(target)),
+            set: AccessorRef::from_option(Some(target)),
         },
     )
     .unwrap_or_else(|failure| panic!("{:?}", failure.error));
