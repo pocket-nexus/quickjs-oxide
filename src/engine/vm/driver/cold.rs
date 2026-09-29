@@ -61,15 +61,6 @@ pub(super) fn dispatch(
         conversion_prepared,
     };
     Ok(match exit {
-        VmAction::Pure(operation) => {
-            let step = super::super::frame_operations::pure(
-                context.runtime,
-                context.execution,
-                context.id,
-                operation,
-            )?;
-            context.step(step)
-        }
         VmAction::CopyData {
             target,
             source,
@@ -149,15 +140,6 @@ pub(super) fn dispatch(
                 context.execution,
                 context.id,
                 kind,
-            )?;
-            context.step(step)
-        }
-        VmAction::StrictEquality(negate) => {
-            let step = super::super::frame_operations::strict_equality(
-                context.runtime,
-                context.execution,
-                context.id,
-                negate,
             )?;
             context.step(step)
         }
@@ -328,7 +310,7 @@ pub(super) fn dispatch(
         }
         VmAction::Bridge => Disposition::Bridge,
         VmAction::Suspend(kind) => Disposition::Suspend(kind),
-        VmAction::Materialize => {
+        VmAction::Materialize | VmAction::Pure(_) | VmAction::StrictEquality(_) => {
             return Err(Error::internal("resident-only exit reached cold dispatch"));
         }
     })

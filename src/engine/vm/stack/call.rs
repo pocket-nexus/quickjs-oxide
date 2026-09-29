@@ -1,5 +1,10 @@
 //! Fresh ordinary entry; restore/materialized entry stays in stack.rs.
 use super::*;
+pub(in crate::engine::vm) struct InstalledOrdinaryFrame {
+    pub window: FrameWindow,
+    pub function: crate::engine::object::ObjectRef,
+    pub input: crate::engine::vm::CallInput,
+}
 impl SlotStore {
     pub(in crate::engine::vm) fn push_ordinary_frame(
         &mut self,
@@ -7,9 +12,9 @@ impl SlotStore {
         layout: &FrameLayout<'_>,
         parent: &mut FrameWindow,
         checked: CheckedOrdinaryCallOperands,
-        function: &crate::engine::object::ObjectRef,
+        function: crate::engine::heap::ObjectId,
         observes_arguments: bool,
-    ) -> Result<FrameWindow, Error> {
+    ) -> Result<InstalledOrdinaryFrame, Error> {
         self.check_current(parent)?;
         if parent.id != checked.window_id || parent.depth != checked.depth {
             return Err(Error::internal(
@@ -23,10 +28,9 @@ impl SlotStore {
             .filter(|n| *n <= parent.depth)
             .ok_or_else(|| Error::internal("outgoing call exceeds caller operands"))?;
         let start = parent.operands().start + parent.depth - count;
-        // The checked call operands remain untouched between the transaction
-        // and this install. Preserve every non-scalar original until teardown,
-        // even when a writable parameter is replaced or captured.
-        let keep_originals = observes_arguments || checked.has_non_scalar_argument;
+        // Only language-visible original arguments need a second owner.
+        // WeakRef liveness belongs to the enclosing execution turn.
+        let keep_originals = observes_arguments;
         let parameter_count = layout.argument_slots(count);
         let local_count = layout.locals().len();
         let function_name = layout.function_name_local();
@@ -96,7 +100,7 @@ impl SlotStore {
                 .fill_with(|| Some(FrameBinding::Direct(JsValue::Undefined)));
         } else {
             for (index, definition) in layout.locals().iter().enumerate() {
-                let binding = match super::super::call::prepare::initial_local_binding(
+                let binding = match super::super::call::prepare::initial_local_binding_id(
                     runtime,
                     definition.is_lexical,
                     function_name == Some(index as u16),
@@ -118,11 +122,22 @@ impl SlotStore {
         for index in 0..count {
             self.slots[base + index] = self.slots[start + index].take();
         }
-        for index in start - 1 - usize::from(method)..start {
-            if let Some(binding) = self.slots[index].take() {
-                release_binding(runtime, binding)?;
-            }
-        }
+        // All fallible work has completed. Transfer these roots directly from
+        // caller operands; no retain/release round trip or JS re-entry occurs.
+        let Some(FrameBinding::Direct(JsValue::Object(callee))) = self.slots[start - 1].take()
+        else {
+            unreachable!("authenticated ordinary callee is an object")
+        };
+        let receiver = if method {
+            let Some(FrameBinding::Direct(receiver)) = self.slots[start - 2].take() else {
+                unreachable!("checked receiver is direct")
+            };
+            receiver
+        } else {
+            JsValue::Undefined
+        };
+        let function = crate::engine::object::ObjectRef::from_owned_handle(runtime.clone(), callee);
+        let input = crate::engine::vm::CallInput::new(runtime, receiver, JsValue::Undefined, None);
         parent.depth -= consumed;
         self.active_end = end;
         let id = self.next_window;
@@ -160,21 +175,23 @@ impl SlotStore {
                 "call_outgoing_tail_transferred",
             );
             if !keep_originals {
-                crate::engine::api::profiling::record_owned_execution_event(
-                    "ordinary_scalar_argv_elided",
-                );
+                crate::engine::api::profiling::record_owned_execution_event("ordinary_argv_elided");
             }
         }
-        Ok(FrameWindow {
-            owner: self.owner.clone(),
-            id,
-            base,
-            original_end,
-            parameters_end,
-            locals_end,
-            end,
-            depth: 0,
-            actual_count: count,
+        Ok(InstalledOrdinaryFrame {
+            function,
+            input,
+            window: FrameWindow {
+                owner: self.owner.clone(),
+                id,
+                base,
+                original_end,
+                parameters_end,
+                locals_end,
+                end,
+                depth: 0,
+                actual_count: count,
+            },
         })
     }
 }
@@ -241,9 +258,10 @@ mod tests {
                 &executable.frame_layout(),
                 &mut parent,
                 checked,
-                &function,
+                function.object_id(),
                 false,
             )
+            .map(|installed| installed.window)
             .unwrap();
         assert!(matches!(
             slots.local(&child, 0).unwrap(),
@@ -276,9 +294,10 @@ mod tests {
                 &executable.frame_layout(),
                 &mut parent,
                 checked,
-                &function,
+                function.object_id(),
                 false,
             )
+            .map(|installed| installed.window)
             .unwrap();
         assert!(matches!(
             slots.local(&child, 0).unwrap(),
@@ -292,7 +311,7 @@ mod tests {
         slots.clear_frame(&runtime, parent).unwrap();
     }
     #[test]
-    fn scalar_elision_preserves_arity_but_reference_originals_survive_parameter_writes() {
+    fn argument_transfer_preserves_arity_and_releases_overwritten_parameters() {
         let runtime = Runtime::new();
         let context = runtime.new_context();
         let function = runtime.new_object(None).unwrap();
@@ -316,9 +335,10 @@ mod tests {
                 &executable.frame_layout(),
                 &mut parent,
                 checked,
-                &function,
+                function.object_id(),
                 false,
             )
+            .map(|installed| installed.window)
             .unwrap();
         assert!(child.original_arguments().is_empty());
         assert_eq!(slots.actual_argument_count(&child).unwrap(), 1);
@@ -348,17 +368,18 @@ mod tests {
                 &executable.frame_layout(),
                 &mut parent,
                 checked,
-                &function,
+                function.object_id(),
                 false,
             )
+            .map(|installed| installed.window)
             .unwrap();
-        assert_eq!(child.original_arguments().len(), 1);
+        assert!(child.original_arguments().is_empty());
         let replaced = slots
             .replace_parameter(&child, 0, FrameBinding::Direct(JsValue::Undefined))
             .unwrap();
         release_binding(&runtime, replaced).unwrap();
         runtime.run_gc().unwrap();
-        assert!(runtime.0.state.borrow().heap.object(marker_id).is_ok());
+        assert!(runtime.0.state.borrow().heap.object(marker_id).is_err());
         slots.clear_frame(&runtime, child).unwrap();
         assert!(runtime.0.state.borrow().heap.object(marker_id).is_err());
         slots.clear_frame(&runtime, parent).unwrap();
@@ -400,9 +421,10 @@ mod tests {
                     &executable.frame_layout(),
                     &mut parent,
                     checked,
-                    &function,
-                    false
+                    function.object_id(),
+                    true
                 )
+                .map(|installed| installed.window)
                 .is_err()
         );
         assert_eq!(slots.active_end, end);
@@ -464,9 +486,10 @@ mod tests {
                 &executable.frame_layout(),
                 &mut parent,
                 checked,
-                &function,
+                function.object_id(),
                 false,
             )
+            .map(|installed| installed.window)
             .unwrap();
         assert!(matches!(
             &input.this_value,
@@ -542,9 +565,10 @@ mod tests {
                     &executable.frame_layout(),
                     &mut parent,
                     checked,
-                    &function,
-                    false,
+                    function.object_id(),
+                    true,
                 )
+                .map(|installed| installed.window)
                 .is_err()
         );
         assert_eq!(slots.active_end, end);
@@ -633,9 +657,10 @@ mod tests {
                 &callee_layout.frame_layout(),
                 &mut parent,
                 checked,
-                &stale_function,
+                stale_function.object_id(),
                 false,
             )
+            .map(|installed| installed.window)
             .err()
             .expect("the named local must reject a stale function handle");
         // Disarm the synthetic wrapper without releasing a nonexistent edge.
@@ -711,9 +736,10 @@ mod tests {
                 &executable.frame_layout(),
                 &mut parent,
                 checked,
-                &function,
+                function.object_id(),
                 false,
             )
+            .map(|installed| installed.window)
             .err()
             .unwrap();
         assert_eq!(

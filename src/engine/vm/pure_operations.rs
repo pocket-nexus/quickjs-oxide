@@ -362,7 +362,8 @@ fn perform(
             super::bindings::validate_module_import_collision(descriptor)?;
             let root = frame
                 .cold
-                .closure_slots
+                .function
+                .closures()
                 .get(usize::from(index))
                 .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?;
             runtime
@@ -374,7 +375,8 @@ fn perform(
             let value = slots.pop(&mut frame.window)?;
             let root = frame
                 .cold
-                .closure_slots
+                .function
+                .closures()
                 .get(usize::from(index))
                 .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?
                 .clone();

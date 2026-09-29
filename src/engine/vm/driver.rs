@@ -1159,8 +1159,8 @@ mod tests {
                 rare: std::cell::OnceCell::new(),
                 return_to: None,
                 entry_guard: Some(prepared.active_frame),
-                function: (function).into(),
-                closure_slots,
+                function: crate::engine::vm::closure::FrameFunction::new(function, closure_slots)
+                    .into(),
                 reusable_captured_locals: vec![false; locals],
                 input: (prepared.input).into(),
             }),

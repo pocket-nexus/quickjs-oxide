@@ -86,8 +86,11 @@ impl BytecodeCallRequest {
                 rare: std::cell::OnceCell::new(),
                 return_to: Some(return_to),
                 entry_guard: Some(prepared.active_frame),
-                function: (callable.into_object()).into(),
-                closure_slots,
+                function: crate::engine::vm::closure::FrameFunction::new(
+                    callable.into_object(),
+                    closure_slots,
+                )
+                .into(),
                 reusable_captured_locals: flags,
                 input: (prepared.input).into(),
             });

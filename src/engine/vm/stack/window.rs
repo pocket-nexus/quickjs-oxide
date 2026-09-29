@@ -37,14 +37,15 @@ pub(in crate::engine::vm) struct CheckedOrdinaryCallOperands {
     pub(super) depth: usize,
     pub(super) count: usize,
     pub(super) method: bool,
-    pub(super) has_non_scalar_argument: bool,
 }
 
 impl CheckedOrdinaryCallOperands {
+    #[cfg(feature = "profiling")]
     pub(in crate::engine::vm) fn count(&self) -> usize {
         self.count
     }
 
+    #[cfg(feature = "profiling")]
     pub(in crate::engine::vm) fn method(&self) -> bool {
         self.method
     }
@@ -67,8 +68,7 @@ impl FrameTransaction<'_> {
     }
 
     /// Validate the receiver, arguments, and callee before an ordinary call's
-    /// first fallible authentication step. Collect the dynamic argument class
-    /// in the same pass so frame installation need not scan these slots again.
+    /// first fallible authentication step.
     pub(in crate::engine::vm) fn validate_ordinary_call_operands(
         &self,
         count: usize,
@@ -86,18 +86,8 @@ impl FrameTransaction<'_> {
                     .ok_or_else(SlotStore::operand_stack_underflow)?,
             )?;
         }
-        let mut has_non_scalar_argument = false;
         for offset in (0..count).rev() {
-            let value = self.peek(offset)?;
-            has_non_scalar_argument |= !matches!(
-                value,
-                JsValue::Undefined
-                    | JsValue::Null
-                    | JsValue::Bool(_)
-                    | JsValue::Int(_)
-                    | JsValue::Float(_)
-                    | JsValue::ShortBigInt(_)
-            );
+            self.peek(offset)?;
         }
         self.peek(count)?;
         Ok(CheckedOrdinaryCallOperands {
@@ -105,7 +95,6 @@ impl FrameTransaction<'_> {
             depth: self.window.depth,
             count,
             method,
-            has_non_scalar_argument,
         })
     }
     /// Consume native operands already checked within this transaction: the

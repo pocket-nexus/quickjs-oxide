@@ -1675,7 +1675,7 @@ pub(super) fn execute_frame(
                     && let Some(value) = super::environment_driver::try_read_global_cell(
                         runtime,
                         executable,
-                        &body.owners.closure_slots,
+                        body.owners.function.closures(),
                         index,
                     )?
                 {

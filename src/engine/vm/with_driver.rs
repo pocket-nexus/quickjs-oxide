@@ -24,7 +24,7 @@ pub(super) fn start(
             &frame.executable,
             source,
             |index| execution.slots.local(&frame.window, index).ok(),
-            &frame.cold.closure_slots,
+            frame.cold.function.closures(),
         )?;
         let key = super::environment_driver::linked_key(runtime, &frame.executable, name)?;
         let depth = execution.slots.depth(&frame.window);

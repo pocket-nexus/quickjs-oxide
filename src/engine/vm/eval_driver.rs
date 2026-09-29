@@ -158,7 +158,7 @@ fn prepare_and_enter(
             frame.executable.metadata.strict,
             locals,
             parameters,
-            &frame.cold.closure_slots,
+            frame.cold.function.closures(),
         )?;
         Some(PreparedEvalEnvironment {
             index: environment,
@@ -169,20 +169,24 @@ fn prepare_and_enter(
     };
     let prepared = runtime
         .prepare_direct_eval_original(realm, invocation, prepared, |prepared| {
-            eval_bindings::materialize(prepared, &frame.cold.closure_slots, |source, descriptor| {
-                let binding = match source {
-                    EvalBindingSource::Local(index) => {
-                        execution.slots.local_mut(&frame.window, index)?
-                    }
-                    EvalBindingSource::Argument(index) => {
-                        execution.slots.parameter_mut(&frame.window, index)?
-                    }
-                    EvalBindingSource::Closure(_) => {
-                        return Err(Error::internal("eval closure reached owned capture"));
-                    }
-                };
-                super::bindings::capture_frame_binding(runtime, binding, descriptor)
-            })
+            eval_bindings::materialize(
+                prepared,
+                frame.cold.function.closures(),
+                |source, descriptor| {
+                    let binding = match source {
+                        EvalBindingSource::Local(index) => {
+                            execution.slots.local_mut(&frame.window, index)?
+                        }
+                        EvalBindingSource::Argument(index) => {
+                            execution.slots.parameter_mut(&frame.window, index)?
+                        }
+                        EvalBindingSource::Closure(_) => {
+                            return Err(Error::internal("eval closure reached owned capture"));
+                        }
+                    };
+                    super::bindings::capture_frame_binding(runtime, binding, descriptor)
+                },
+            )
         })
         .map_err(runtime_error_to_vm_error)?;
     #[cfg(feature = "profiling")]
@@ -613,8 +617,11 @@ mod capture_tests {
                     rare: std::cell::OnceCell::new(),
                     return_to: None,
                     entry_guard: Some(prepared.active_frame),
-                    function: callable.as_object().clone().into(),
-                    closure_slots: vec![closure.clone()].into(),
+                    function: crate::engine::vm::closure::FrameFunction::new(
+                        callable.as_object().clone(),
+                        vec![closure.clone()].into(),
+                    )
+                    .into(),
                     reusable_captured_locals: vec![false; 2],
                     input: prepared.input.into(),
                 }),

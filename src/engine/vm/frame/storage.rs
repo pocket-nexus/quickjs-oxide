@@ -197,7 +197,6 @@ impl CallStorage {
         cold.return_to = None;
         cold.entry_guard = None;
         cold.function.0 = None;
-        cold.closure_slots = Default::default();
         cold.input.0 = None;
         cold.executable.0 = None;
         if flags.capacity() != 0 && self.capture_flags.len() < self.capture_flags.capacity() {
@@ -248,7 +247,8 @@ mod tests {
             .unwrap();
         let function = runtime.new_object(None).unwrap();
         let id = function.object_id();
-        cold.function = function.into();
+        cold.function =
+            crate::engine::vm::closure::FrameFunction::new(function, Default::default()).into();
         cold.input = CallInput::new(&runtime, JsValue::Undefined, JsValue::Undefined, None).into();
         cold.executable = executable.into();
         cold.window = window.into();
@@ -419,7 +419,6 @@ impl CallStorage {
                     entry_guard: None,
                     function: Resident(None),
                     input: Resident(None),
-                    closure_slots: Default::default(),
                     reusable_captured_locals: Vec::new(),
                 }),
                 size_of::<FrameBody>(),
