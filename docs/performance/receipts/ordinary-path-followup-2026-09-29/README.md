@@ -3,8 +3,7 @@
 This receipt covers the revised #67–#69 draft stack on 2026-09-29. The
 baseline is #53 (`90c85e3d`); staged heads are O1 `bfc8def1`, P1
 `79b1a09a`, and the E1 code head `4284336c`. This stack is based on #53.
-The #66 B1/B2 integration is deferred, so these measurements do not describe
-its combined behavior. The [initial draft gate](../ordinary-path-draft/README.md)
+The [initial draft gate](../ordinary-path-draft/README.md)
 recorded a React regression and no reduction in the principal read handoff.
 
 P1 now returns cold data, accessor, and complete absence directly from the
