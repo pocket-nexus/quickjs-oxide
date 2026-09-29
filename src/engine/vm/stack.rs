@@ -1136,17 +1136,27 @@ impl SlotStore {
     #[inline]
     fn operand_push_index(&self, window: &FrameWindow) -> Result<usize, Error> {
         if window.depth >= window.operands().len() {
-            return Err(Error::internal(
-                "owned operand stack exceeds verified capacity",
-            ));
+            return Err(Self::operand_stack_capacity_exceeded());
         }
         let index = window.operands().start + window.depth;
         if self.slots[index].is_some() {
-            return Err(Error::internal(
-                "owned operand push would replace a live value",
-            ));
+            return Err(Self::operand_push_replaces_live_value());
         }
         Ok(index)
+    }
+
+    // Keep error allocation outside the push check so its successful path can
+    // inline into installation and share the same slot bounds check.
+    #[cold]
+    #[inline(never)]
+    fn operand_stack_capacity_exceeded() -> Error {
+        Error::internal("owned operand stack exceeds verified capacity")
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn operand_push_replaces_live_value() -> Error {
+        Error::internal("owned operand push would replace a live value")
     }
 
     /// The checked index is private and consumed without an observable boundary.
