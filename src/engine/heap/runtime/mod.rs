@@ -6,6 +6,7 @@
 
 pub(crate) mod execution_turn;
 mod layout;
+mod retained_shapes;
 use self::error::RuntimeError;
 use self::intrinsics::promise::HostPromiseRejectionTracker;
 use self::module::ModuleLoader;
@@ -122,6 +123,7 @@ pub(crate) struct RuntimeState {
     /// QuickJS's shape hash is non-owning. These generational IDs are likewise
     /// weak and are validated before reuse. Buckets are keyed by
     /// [`shape::compute_fingerprint_hash`] and collisions compare layouts.
+    pub(crate) retained_shapes: retained_shapes::RetainedShapes,
     pub(crate) shape_cache: HashMap<u64, Vec<ShapeId>, FxBuildHasher>,
     pub(crate) shape_hashes: HashMap<ShapeId, u64, FxBuildHasher>,
     pub(crate) shape_transitions:
@@ -737,6 +739,10 @@ impl RuntimeState {
 impl Drop for RuntimeInner {
     fn drop(&mut self) {
         let state = self.state.get_mut();
+        let retained = state
+            .release_retained_shapes()
+            .and_then(|cleanup| state.apply_cleanup(cleanup));
+        debug_assert!(retained.is_ok(), "shape pool teardown failed: {retained:?}");
         let clear = state.clear_kept_objects();
         debug_assert!(clear.is_ok(), "kept-object teardown failed: {clear:?}");
         let deferred = &self.deferred_references;

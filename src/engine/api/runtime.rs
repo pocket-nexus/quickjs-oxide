@@ -73,6 +73,7 @@ impl Runtime {
                 pending_exception: None,
                 pending_jobs: VecDeque::new(),
                 debug_info_mode: DebugInfoMode::Full,
+                retained_shapes: Default::default(),
                 shape_cache: HashMap::default(),
                 shape_hashes: HashMap::default(),
                 shape_transitions: HashMap::default(),

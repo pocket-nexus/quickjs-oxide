@@ -582,6 +582,9 @@ impl RuntimeState {
                 };
             }
         }
+        if existing.is_none() && !dictionary {
+            state.retain_construction_shape(shape_id)?;
+        }
         // An exclusively owned layout may append in place only when no
         // canonical successor already exists; otherwise the successor (and the
         // sharing it enables) would be stranded by an equivalent duplicate.

@@ -24,7 +24,16 @@ Remote verification and publishing are blocked by Lody identity connectivity.
   closure/eval/suspension, recursion, argument and receiver tests passed.
 - Source work removed is established; timings and generated-code acceptance remain pending.
 
+## 3. Bounded construction prefixes
+
+- Up to 256 shared prefix shapes, at most 64 properties each and 256 KiB charged
+  direct shape storage; FIFO eviction and fallible optional admission.
+- Explicit GC and runtime teardown release every optional root, including its
+  atom/prototype edges. Dictionary and larger unique shapes retain their append path.
+- Library validation: 2017 passed. Lifecycle tests compare after cache flush;
+  retained prefixes stay immutable and subsequent objects reuse canonical successors.
+
 ## Remaining acceptance
 
-Bounded intermediate shapes, four-entry property cache, in-place heap finalization;
+Four-entry property cache, in-place heap finalization;
 full frozen Test262 vector and paired workload/Score/RSS measurements against #73.

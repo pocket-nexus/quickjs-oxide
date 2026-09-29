@@ -16,6 +16,8 @@ impl Runtime {
     pub fn run_gc(&self) -> Result<GcStats, RuntimeError> {
         let _operation = self.operation();
         let mut state = self.0.state.borrow_mut();
+        // Optional shape roots must not keep prototype graphs alive across GC.
+        let retained_cleanup = state.release_retained_shapes()?;
         let mut atom_error = None;
         let mut stats = {
             let RuntimeState {
@@ -44,6 +46,7 @@ impl Runtime {
                 &mut finalization_sink,
             )?
         };
+        stats.cleanup.merge(retained_cleanup);
         if let Some(error) = atom_error {
             return Err(error.into());
         }

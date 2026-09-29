@@ -14,6 +14,7 @@ fn finalized_shapes_unlink_exact_weak_cache_entries() {
     }
     assert!(runtime.0.state.borrow().shape_hashes.len() >= objects.len());
     drop(objects);
+    runtime.run_gc().unwrap(); // Explicit GC also releases optional prefix roots.
     let state = runtime.0.state.borrow();
     assert!(state.shape_cache.is_empty());
     assert!(state.shape_hashes.is_empty());
@@ -122,14 +123,18 @@ fn unique_shape_append_never_mutates_a_shared_shape() {
     );
     assert!(set_property(&runtime, &first, &c, Value::Int(4)).unwrap());
     let state = runtime.0.state.borrow();
+    let final_shape = state.heap.object(first.object_id()).unwrap().shape;
+    assert_ne!(
+        final_shape, unique_shape,
+        "retained prefixes remain immutable"
+    );
     assert_eq!(
-        state.heap.object(first.object_id()).unwrap().shape,
-        unique_shape,
-        "the second unique addition should append to the existing shape"
+        state.heap.shape(unique_shape).unwrap().entries().len(),
+        shared_keys.len() + 1
     );
     assert!(
         state.shape_is_canonical(unique_shape),
-        "the in-place append relinks the mutated shape under its successor"
+        "the retained prefix remains canonical"
     );
     assert_eq!(
         state.heap.object(second.object_id()).unwrap().shape,
@@ -158,7 +163,7 @@ fn unique_shape_append_never_mutates_a_shared_shape() {
     assert_eq!(
         state
             .heap
-            .shape(unique_shape)
+            .shape(final_shape)
             .unwrap()
             .entries()
             .iter()
