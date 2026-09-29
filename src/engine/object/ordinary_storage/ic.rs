@@ -517,6 +517,68 @@ impl Runtime {
 }
 
 impl Runtime {
+    /// Existing ordinary scalar slots need no key owner, continuation, or
+    /// observable cleanup. The published function owns the linked atom; the
+    /// frame owns receiver and value until this transaction has committed.
+    pub(crate) fn try_linked_scalar_field_write(
+        &self,
+        base: &JsValue,
+        value: &JsValue,
+        executable: &PublishedFunctionSnapshot,
+        key_index: u32,
+    ) -> Result<bool, RuntimeError> {
+        if !matches!(
+            value,
+            JsValue::Undefined
+                | JsValue::Null
+                | JsValue::Bool(_)
+                | JsValue::Int(_)
+                | JsValue::Float(_)
+                | JsValue::ShortBigInt(_)
+        ) {
+            return Ok(false);
+        }
+        let JsValue::Object(object) = base else {
+            return Ok(false);
+        };
+        let Some(atom) = linked_field_atom(self, executable, key_index) else {
+            return Ok(false);
+        };
+        if self.slot_value_release_readiness_jsvalue(base)? != SlotReleaseReadiness::Ready {
+            return Ok(false);
+        }
+        let mut state = self.0.state.borrow_mut();
+        if !super::is_ordinary(state.heap.object(*object)?) {
+            return Ok(false);
+        }
+        let Some(slot) = super::locate(&state, *object, atom)? else {
+            return Ok(false);
+        };
+        if !slot.flags.writable
+            || !matches!(
+                state.heap.object(*object)?.slots.get(slot.index),
+                Some(crate::engine::heap::PropertySlot::Data(
+                    RawValue::Undefined
+                        | RawValue::Null
+                        | RawValue::Bool(_)
+                        | RawValue::Int(_)
+                        | RawValue::Float(_)
+                        | RawValue::ShortBigInt(_)
+                ))
+            )
+        {
+            return Ok(false);
+        }
+        // Both values own no edges. The shared replacement kernel preserves
+        // storage invariants without enqueueing cleanup or changing layout.
+        state.replace_property_slot(
+            *object,
+            slot.index,
+            crate::engine::heap::PropertySlot::Data(value.as_raw()),
+        )?;
+        Ok(true)
+    }
+
     pub(crate) fn try_dense_array_write_scalar(
         &self,
         base: &JsValue,
@@ -585,6 +647,163 @@ mod tests {
 
     fn site(runtime: &Runtime) -> (PublishedFunctionSnapshot, usize, u32) {
         site_for(runtime, "(function(o){return o.x})")
+    }
+
+    #[test]
+    fn linked_scalar_field_write_commits_without_set_protocol() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let (code, _, key) = site(&runtime);
+        let base = runtime
+            .into_jsvalue(
+                context
+                    .eval("globalThis.scalarBase = {x:1}; scalarBase")
+                    .unwrap(),
+            )
+            .unwrap();
+        let owners = runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .object_strong_count(object(&base))
+            .unwrap();
+        assert!(
+            runtime
+                .try_linked_scalar_field_write(&base, &JsValue::Int(42), &code, key)
+                .unwrap()
+        );
+        assert_eq!(context.eval("scalarBase.x").unwrap(), Value::Int(42));
+        assert_eq!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(object(&base))
+                .unwrap(),
+            owners
+        );
+        runtime.release_jsvalue(base).unwrap();
+    }
+
+    #[test]
+    fn linked_scalar_field_write_declines_observable_or_non_scalar_storage() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let (code, _, key) = site(&runtime);
+        for source in [
+            "Object.freeze({x:1})",
+            "({get x(){throw 99}, set x(v){throw 98}})",
+            "Object.create({x:1})",
+            "new Proxy({x:1},{set(){throw 97}})",
+            "({x:{marker:1}})",
+            "({x:'old'})",
+            "Object.assign([], {x:1})",
+        ] {
+            let base = runtime.into_jsvalue(context.eval(source).unwrap()).unwrap();
+            let root = runtime.dup_jsvalue(&base).unwrap();
+            assert!(
+                !runtime
+                    .try_linked_scalar_field_write(&base, &JsValue::Int(42), &code, key)
+                    .unwrap(),
+                "{source}"
+            );
+            runtime.release_jsvalue(root).unwrap();
+            runtime.release_jsvalue(base).unwrap();
+        }
+        let base = runtime
+            .into_jsvalue(context.eval("({x:1})").unwrap())
+            .unwrap();
+        // Last receiver retirement belongs to the ordinary observation boundary.
+        assert!(
+            !runtime
+                .try_linked_scalar_field_write(&base, &JsValue::Int(42), &code, key)
+                .unwrap()
+        );
+        let root = runtime.dup_jsvalue(&base).unwrap();
+        {
+            let _borrow = runtime.0.state.borrow();
+            assert!(
+                !runtime
+                    .try_linked_scalar_field_write(&base, &JsValue::Int(42), &code, key)
+                    .unwrap()
+            );
+        }
+        let released = runtime.new_object(None).unwrap();
+        {
+            let _borrow = runtime.0.state.borrow();
+            drop(released);
+        }
+        assert!(runtime.0.deferred_references.has_pending());
+        assert!(
+            !runtime
+                .try_linked_scalar_field_write(&base, &JsValue::Int(42), &code, key)
+                .unwrap()
+        );
+        runtime.drain_deferred_references().unwrap();
+        assert!(
+            runtime
+                .try_linked_scalar_field_write(&base, &JsValue::Int(42), &code, key)
+                .unwrap()
+        );
+        runtime.release_jsvalue(root).unwrap();
+        runtime.release_jsvalue(base).unwrap();
+    }
+
+    #[test]
+    fn scalar_field_vm_preserves_assignment_results_and_fallbacks() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(context.eval(r#"
+            (() => {
+                let calls = 0;
+                const o = {x:1, y:0};
+                const p = {set x(v){calls++; o.y = v + 1;}};
+                Object.setPrototypeOf(o, p);
+                if ((o.x = 3) !== 3 || ++o.x !== 4 || o.x++ !== 4 || o.x !== 5 || calls) return false;
+                Object.defineProperty(o, 'x', {get(){return 9}, set(v){calls++; p.x = v}, configurable:true});
+                if ((o.x = 4) !== 4 || calls !== 2) return false;
+                delete o.x;
+                Object.setPrototypeOf(o, null);
+                o.x = {marker:1};
+                o.x = 7;
+                if (o.x !== 7) return false;
+                const frozen = Object.freeze({x:1}); frozen.x = 2;
+                try { (function(){'use strict'; frozen.x = 3;})(); return false; }
+                catch(e) { if (!(e instanceof TypeError)) return false; }
+                const proxy = new Proxy(o, {set(t,k,v,r){calls++; return Reflect.set(t,k,v,r)}});
+                if ((proxy.x = 8) !== 8 || o.x !== 8 || calls !== 3) return false;
+                const a = [1,2,3]; a.length = 1;
+                if (a.length !== 1 || a[1] !== undefined) return false;
+                ({}).x = 1;
+                return frozen.x === 1;
+            })()
+        "#).unwrap(), Value::Bool(true));
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[cfg(feature = "profiling")]
+    #[test]
+    fn scalar_field_vm_records_local_completion() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let _ = context.eval("globalThis.scalarProfile = {x:0};").unwrap();
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        assert_eq!(
+            context
+                .eval("for (let i=0; i<16; i++) scalarProfile.x = i; scalarProfile.x")
+                .unwrap(),
+            Value::Int(15)
+        );
+        assert_eq!(
+            profile
+                .snapshot()
+                .owned_execution_events
+                .get("ordinary_scalar_field_write_in_execute")
+                .copied(),
+            Some(16)
+        );
     }
 
     #[test]

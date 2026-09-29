@@ -2069,6 +2069,17 @@ pub(super) fn execute_frame(
                     });
                 }
             }
+            Opcode::PutField => {
+                let Some(generation) = frame.property_generation.checked_add(1) else {
+                    return Ok(VmAction::SetProperty(Some(operand)));
+                };
+                if !cursor.with_slots(|slots| {
+                    slots.try_scalar_field_write(runtime, executable, operand)
+                })? {
+                    return Ok(VmAction::SetProperty(Some(operand)));
+                }
+                frame.property_generation = generation;
+            }
             Opcode::PutArrayEl => {
                 let Some(generation) = frame.property_generation.checked_add(1) else {
                     return Ok(VmAction::SetProperty(None));

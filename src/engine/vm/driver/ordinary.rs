@@ -67,14 +67,12 @@ pub(super) fn enter_selected(
             crate::engine::vm::call::ordinary::OrdinaryCall,
             crate::engine::vm::stack::CheckedOrdinaryCallOperands,
         ),
-        Native(
-            crate::engine::object::CallableRef,
-            crate::engine::vm::frames::NativeClassification,
-        ),
+        Native(crate::engine::vm::frames::NativeClassification),
     }
     // End every Result/selection container holding a slot borrow before any
-    // frame installation or operand transfer. Only owning facts and the
-    // single-use non-owning ordinary operand proof leave this transaction.
+    // frame installation or operand transfer. Native facts remain pinned by
+    // the callee slot until that same owner is transferred below; the ordinary
+    // operand proof instead leaves this transaction for frame installation.
     let prepared = if let Some(selected) = selected_native {
         if !transaction.validate_call_value_domains(runtime, count, method)? {
             return Ok(Entry::General);
@@ -91,19 +89,16 @@ pub(super) fn enter_selected(
             profile_pc,
             linked,
         );
-        let Some((callable, selected)) =
-            crate::engine::vm::frames::NativeClassification::promote_linked(
-                runtime, selected, linked,
-            )
-            .map_err(runtime_error_to_vm_error)?
-        else {
+        let Some(selected) = crate::engine::vm::frames::NativeClassification::classify_linked(
+            runtime, selected, linked,
+        ) else {
             return Ok(Entry::General);
         };
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event(
             "native_linked_classification_consumed",
         );
-        Prepared::Native(callable, selected)
+        Prepared::Native(selected)
     } else {
         let callable_value = if method {
             transaction.peek(count)?
@@ -153,10 +148,9 @@ pub(super) fn enter_selected(
                 if !transaction.validate_call_value_domains(runtime, count, method)? {
                     return Ok(Entry::General);
                 }
-                let (callable, selected) =
-                    crate::engine::vm::frames::NativeClassification::promote_selected(native)
-                        .map_err(runtime_error_to_vm_error)?;
-                Prepared::Native(callable, selected)
+                let selected =
+                    crate::engine::vm::frames::NativeClassification::classify_selected(native);
+                Prepared::Native(selected)
             }
             Err(error) => {
                 if !transaction.validate_call_value_domains(runtime, count, method)? {
@@ -179,13 +173,17 @@ pub(super) fn enter_selected(
             crate::engine::api::profiling::record_owned_instruction(depth);
             Ok(Entry::Ordinary)
         }
-        Prepared::Native(callable, mut selected) => {
+        Prepared::Native(mut selected) => {
             let target = selected.target();
             let realm = selected.defining_realm();
             let minimum = selected.minimum();
             let operation = selected.take_operation();
-            let (arguments, receiver) =
-                transaction.take_native_call_operands(runtime, logical_depth, count, method)?;
+            let (arguments, receiver, callable) = transaction.take_validated_native_call_operands(
+                runtime,
+                logical_depth,
+                count,
+                method,
+            )?;
             drop(transaction);
             if !execution.frames.can_push_with_continuations(0)
                 || runtime.host_stack_would_overflow()
@@ -424,6 +422,52 @@ mod layout_tests {
         );
         let costs = profile.snapshot();
         assert!(costs.callsites.values().any(|site| site.calls > 0));
+    }
+
+    #[test]
+    fn transferred_native_call_keeps_coercion_reentry_throw_and_actual_arity() {
+        use crate::engine::api::{Runtime, Value};
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        for source in [
+            "(()=>{let log='',marker={};let a={valueOf(){log+='a';return 3}},b={valueOf(){log+='b';throw marker}},c={valueOf(){log+='c';return 1}};try{Math.min(a,b,c)}catch(e){return e===marker&&log==='ab'}return false})()",
+            "(()=>{let map=new Map(),key={},value={};map.set(key,value);let f=Math.min;let n=0;let a={valueOf(){n++;map.set(key,{x:42});return map.get(key).x}};return f(a,50)===42&&n===1&&map.get(key).x===42})()",
+            "(()=>{let f=Math.max;return f()===-Infinity&&f(1,2,3,4,5,6)===6&&Number.isFinite(3,{})})()",
+            "(()=>{let map=new Map(),key={},value={};let holder={call:map.set};let failed=false;try{holder.call(key,value)}catch(e){failed=e instanceof TypeError}map.set(key,value);return failed&&map.get(key)===value})()",
+        ] {
+            assert_eq!(context.eval(source).unwrap(), Value::Bool(true), "{source}");
+            assert!(runtime.0.state.borrow().active_frames.is_empty());
+        }
+        runtime.run_gc().unwrap();
+        assert_eq!(runtime.0.active_frame_depth.get(), 0);
+    }
+
+    #[cfg(feature = "profiling")]
+    #[test]
+    fn native_direct_entry_records_owner_transfer_and_validation_reuse() {
+        use crate::engine::api::{Runtime, Value, profiling::CostProfile};
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        drop(
+            context
+                .eval("Math.min; Map.prototype.set; Map.prototype.get")
+                .unwrap(),
+        );
+        let profile = CostProfile::start();
+        assert_eq!(context.eval("(()=>{let map=new Map(),key={},value={x:42};map.set(key,value);let f=Math.min;return f(map.get(key).x,50)})()").unwrap(), Value::Int(42));
+        let costs = profile.snapshot();
+        let transferred = costs
+            .owned_execution_events
+            .get("native_callee_owner_transferred")
+            .copied()
+            .unwrap_or(0);
+        assert!(transferred >= 3, "{:#?}", costs.owned_execution_events);
+        assert_eq!(
+            costs
+                .owned_execution_events
+                .get("native_argv_validation_reused"),
+            Some(&transferred)
+        );
     }
 
     #[test]

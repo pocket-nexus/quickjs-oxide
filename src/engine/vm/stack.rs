@@ -378,23 +378,41 @@ impl SlotStore {
         method: bool,
     ) -> Result<(Vec<JsValue>, JsValue), Error> {
         self.check_current(window)?;
-        self.take_native_call_operands_current(runtime, window, count, method)
+        let arguments = self.take_native_arguments_current::<false>(window, count, method)?;
+        // Preserve the checked general entry's callee-release boundary.
+        let callee = self.pop_current(window)?;
+        runtime
+            .release_jsvalue(callee)
+            .map_err(runtime_error_to_vm_error)?;
+        let receiver = if method {
+            self.pop_current(window)?
+        } else {
+            JsValue::Undefined
+        };
+        Ok((arguments, receiver))
     }
 
-    fn take_native_call_operands_current(
+    fn take_native_arguments_current<const VALIDATED: bool>(
         &mut self,
-        runtime: &Runtime,
         window: &mut FrameWindow,
         count: usize,
         method: bool,
-    ) -> Result<(Vec<JsValue>, JsValue), Error> {
+    ) -> Result<Vec<JsValue>, Error> {
         let mut arguments = self.take_native_argument_buffer(count)?;
-        for offset in 0..count + 1 + usize::from(method) {
-            self.peek_current(window, offset)?;
+        if !VALIDATED {
+            for offset in 0..count + 1 + usize::from(method) {
+                self.peek_current(window, offset)?;
+            }
+        }
+        #[cfg(feature = "profiling")]
+        if VALIDATED {
+            crate::engine::api::profiling::record_owned_execution_event(
+                "native_argv_validation_reused",
+            );
         }
         let start = window.operands().start + window.depth - count;
-        for index in start..start + count {
-            let Some(FrameBinding::Direct(value)) = self.slots[index].take() else {
+        for slot in &mut self.slots[start..start + count] {
+            let Some(FrameBinding::Direct(value)) = slot.take() else {
                 unreachable!("native operand transaction authenticated each slot")
             };
             arguments.push(value);
@@ -409,18 +427,7 @@ impl SlotStore {
             );
             crate::engine::api::profiling::record_call_buffer_moves("call.native_argv", count);
         }
-        // Match the previous callee then receiver pop/drop order. The classified
-        // callable owner pins the callee throughout this transfer.
-        let callee = self.pop_current(window)?;
-        runtime
-            .release_jsvalue(callee)
-            .map_err(runtime_error_to_vm_error)?;
-        let receiver = if method {
-            self.pop_current(window)?
-        } else {
-            JsValue::Undefined
-        };
-        Ok((arguments, receiver))
+        Ok(arguments)
     }
 
     /// Cleanup cannot allocate or retain JavaScript owners. Producers outside
@@ -1129,17 +1136,27 @@ impl SlotStore {
     #[inline]
     fn operand_push_index(&self, window: &FrameWindow) -> Result<usize, Error> {
         if window.depth >= window.operands().len() {
-            return Err(Error::internal(
-                "owned operand stack exceeds verified capacity",
-            ));
+            return Err(Self::operand_stack_capacity_exceeded());
         }
         let index = window.operands().start + window.depth;
         if self.slots[index].is_some() {
-            return Err(Error::internal(
-                "owned operand push would replace a live value",
-            ));
+            return Err(Self::operand_push_replaces_live_value());
         }
         Ok(index)
+    }
+
+    // Keep error allocation outside the push check so its successful path can
+    // inline into installation and share the same slot bounds check.
+    #[cold]
+    #[inline(never)]
+    fn operand_stack_capacity_exceeded() -> Error {
+        Error::internal("owned operand stack exceeds verified capacity")
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn operand_push_replaces_live_value() -> Error {
+        Error::internal("owned operand push would replace a live value")
     }
 
     /// The checked index is private and consumed without an observable boundary.
@@ -2025,6 +2042,97 @@ mod tests {
         );
         drop(arguments);
         drop(moved_receiver);
+        slots.clear_frame(&runtime, window).unwrap();
+    }
+
+    #[test]
+    fn validated_native_transfer_moves_callee_owner_and_keeps_deferred_drain() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
+        owner.metadata.max_stack = 4;
+        let mut slots = SlotStore::new(4);
+        let mut window = slots
+            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
+            .unwrap();
+        let receiver = runtime.new_object(None).unwrap();
+        let receiver_id = receiver.object_id();
+        let argument = runtime.new_object(None).unwrap();
+        let argument_id = argument.object_id();
+        let callee = context.eval("Map.prototype.set").unwrap();
+        let Value::Object(callee_root) = &callee else {
+            panic!("native function")
+        };
+        let callee_id = callee_root.object_id();
+        for value in [
+            Value::Object(receiver),
+            callee,
+            Value::Int(7),
+            Value::Object(argument),
+        ] {
+            slots
+                .push(&mut window, into_internal(&runtime, value))
+                .unwrap();
+        }
+        let before = runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .object_strong_count(callee_id)
+            .unwrap();
+        let mut transaction = slots.frame_transaction(&mut window).unwrap();
+        assert!(matches!(transaction.peek(2).unwrap(), JsValue::Object(id) if *id == callee_id));
+        assert!(
+            transaction
+                .validate_call_value_domains(&runtime, 2, true)
+                .unwrap()
+        );
+        // The removed duplicate's release used to drain this unrelated edge.
+        let pending = runtime.new_object(None).unwrap();
+        let pending_id = pending.object_id();
+        {
+            let state = runtime.0.state.borrow();
+            drop(pending);
+            assert!(state.heap.object(pending_id).is_ok());
+        }
+        assert!(runtime.0.deferred_references.has_pending());
+        let (arguments, receiver, callable) = transaction
+            .take_validated_native_call_operands(&runtime, 0, 2, true)
+            .unwrap();
+        assert_eq!(window.depth, 0);
+        assert_eq!(callable.as_object().object_id(), callee_id);
+        assert_eq!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(callee_id)
+                .unwrap(),
+            before
+        );
+        assert_eq!(arguments, [JsValue::Int(7), JsValue::Object(argument_id)]);
+        assert_eq!(receiver, JsValue::Object(receiver_id));
+        assert!(!runtime.0.deferred_references.has_pending());
+        assert!(runtime.0.state.borrow().heap.object(pending_id).is_err());
+        for value in arguments {
+            runtime.release_jsvalue(value).unwrap();
+        }
+        runtime.release_jsvalue(receiver).unwrap();
+        drop(callable);
+        assert_eq!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(callee_id)
+                .unwrap(),
+            before - 1
+        );
+        assert!(runtime.0.state.borrow().heap.object(argument_id).is_err());
+        assert!(runtime.0.state.borrow().heap.object(receiver_id).is_err());
         slots.clear_frame(&runtime, window).unwrap();
     }
 
