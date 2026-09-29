@@ -1,5 +1,9 @@
 # Ordinary execution path: integrated draft gate
 
+This is the first, failing gate for the draft PR stack. The follow-up
+implementation and its new measurements are recorded in
+[the follow-up receipt](../ordinary-path-followup-2026-09-29/README.md).
+
 This receipt records the plain-build gate for the O1/P1/E1 draft stack on
 2026-09-29. The cumulative reference is #53 (`90c85e3d`). The staged heads
 are O1 `bfc8def1`, P1 `104f8318`, and E1 `29abc017`. E1 remains a draft:
