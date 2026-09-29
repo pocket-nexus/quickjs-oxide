@@ -20,7 +20,8 @@ use crate::engine::vm::execution::RunningExecution;
 use crate::engine::vm::frame::FrameId;
 use crate::engine::vm::frames::ActiveFrameToken;
 use crate::engine::vm::stack::{
-    DirectSlot, FrameSlots, FrameTransaction, PropertyReadProgress, StoreProgress, copy_value,
+    DirectSlot, FrameSlots, FrameTransaction, NamedReadOperation, PropertyReadProgress,
+    StoreProgress, copy_value,
 };
 
 #[cfg(test)]
@@ -181,6 +182,23 @@ impl FallthroughPc {
     }
 }
 
+#[derive(Clone, Copy)]
+struct PendingNamedRead {
+    index: u32,
+    keep_receiver: bool,
+    fallthrough: FallthroughPc,
+}
+
+impl PendingNamedRead {
+    fn action(self) -> VmAction {
+        VmAction::GetField {
+            index: self.index,
+            keep_receiver: self.keep_receiver,
+            fallthrough: self.fallthrough,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum VmAction {
     Import,
@@ -287,7 +305,58 @@ impl VmAction {
 
     #[cfg(feature = "profiling")]
     pub(super) fn diagnostic_name(self) -> &'static str {
-        "execute.continuation"
+        match self {
+            Self::Import => "execute.action.import",
+            Self::Pure(_) => "execute.action.pure",
+            Self::ApplyEval(_) => "execute.action.apply_eval",
+            Self::Apply(_) => "execute.action.apply",
+            Self::Eval { .. } => "execute.action.eval",
+            Self::Call { .. } => "execute.action.call",
+            Self::SetProperty(_) => "execute.action.set_property",
+            Self::GetField { .. } => "execute.action.get_field",
+            Self::GetElement { .. } => "execute.action.get_element",
+            Self::InitializeDerived(_) => "execute.action.initialize_derived",
+            Self::LexicalUninitialized(_) => "execute.action.lexical_uninitialized",
+            Self::Binding { .. } => "execute.action.binding",
+            Self::ClassInitializer(_) => "execute.action.class_initializer",
+            Self::DefineClass { .. } => "execute.action.define_class",
+            Self::DefineProperty { .. } => "execute.action.define_property",
+            Self::Environment(_) => "execute.action.environment",
+            Self::GetSuper => "execute.action.get_super",
+            Self::Predicate(_) => "execute.action.predicate",
+            Self::HomeObject => "execute.action.home_object",
+            Self::SuperProperty(_) => "execute.action.super_property",
+            Self::ReturnDerived(_) => "execute.action.return_derived",
+            Self::InitDerivedConstructor => "execute.action.init_derived_constructor",
+            Self::Construct(_) => "execute.action.construct",
+            Self::ConvertAdd => "execute.action.convert_add",
+            Self::ConvertPlus => "execute.action.convert_plus",
+            Self::ConvertPropertyKey => "execute.action.convert_property_key",
+            Self::NormalizeThis => "execute.action.normalize_this",
+            Self::Arguments(_) => "execute.action.arguments",
+            Self::Rest(_) => "execute.action.rest",
+            Self::InstantiateClosure(_) => "execute.action.instantiate_closure",
+            Self::SetName(_) => "execute.action.set_name",
+            Self::CloseCaptured(_) => "execute.action.close_captured",
+            Self::ResetCaptured(_) => "execute.action.reset_captured",
+            Self::Catch(_) => "execute.action.catch",
+            Self::DropCatch => "execute.action.drop_catch",
+            Self::NipCatch => "execute.action.nip_catch",
+            Self::Throw => "execute.action.throw",
+            Self::Materialize => "execute.action.materialize",
+            Self::BindingError { .. } => "execute.action.binding_error",
+            Self::PrivateInitialize { .. } => "execute.action.private_initialize",
+            Self::PrivateAccess { .. } => "execute.action.private_access",
+            Self::StrictEquality(_) => "execute.action.strict_equality",
+            Self::Numeric { .. } => "execute.action.numeric",
+            Self::ForIn(_) => "execute.action.for_in",
+            Self::CopyData { .. } => "execute.action.copy_data",
+            #[cfg(all(test, feature = "profiling"))]
+            Self::ReleaseOperand { .. } => "execute.action.release_operand",
+            Self::Complete => "execute.action.complete",
+            Self::Suspend(_) => "execute.action.suspend",
+            Self::Bridge => "execute.action.bridge",
+        }
     }
 }
 
@@ -1327,18 +1396,64 @@ pub(super) fn execute_frame(
                         Some("guard")
                     },
                 );
-                if let crate::engine::object::NamedDataSelection::Data(value) = selection {
-                    cursor.commit_owned(runtime, value)?;
-                    cursor.advance(decoded.operand(2) as usize);
-                    continue;
-                }
-                if matches!(
-                    selection,
-                    crate::engine::object::NamedDataSelection::CompleteAbsent
-                ) {
-                    cursor.commit_push(JsValue::Undefined)?;
-                    cursor.advance(decoded.operand(2) as usize);
-                    continue;
+                match selection {
+                    crate::engine::object::NamedDataSelection::Data(value) => {
+                        cursor.commit_owned(runtime, value)?;
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_owned_execution_event(
+                            "local_completion.borrowed_named_read",
+                        );
+                        cursor.advance(decoded.operand(2) as usize);
+                        continue;
+                    }
+                    crate::engine::object::NamedDataSelection::CompleteAbsent => {
+                        cursor.commit_push(JsValue::Undefined)?;
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_owned_execution_event(
+                            "local_completion.borrowed_named_read",
+                        );
+                        cursor.advance(decoded.operand(2) as usize);
+                        continue;
+                    }
+                    crate::engine::object::NamedDataSelection::Accessor(getter) => {
+                        let selected = cursor.with_slots(|slots| {
+                            let receiver = slots.direct_value(base).ok_or_else(|| {
+                                Error::internal("selected borrowed receiver disappeared")
+                            })?;
+                            runtime
+                                .prepare_selected_linked_getter(receiver, getter)
+                                .map_err(runtime_error_to_vm_error)
+                        })?;
+                        let load = if decoded.opcode == Opcode::BorrowedFieldLocal {
+                            read_local::<false>(&mut cursor, runtime, base_index)
+                        } else {
+                            read_arg(&mut cursor, runtime, base_index)
+                        };
+                        match load {
+                            Ok(None) => {
+                                debug_assert!(execution.selected_named_read.is_none());
+                                execution.selected_named_read =
+                                    Some(super::property_driver::SelectedNamedRead::Read(selected));
+                                cursor.advance(next);
+                                cursor.begin();
+                                return Ok(VmAction::GetField {
+                                    index: decoded.operand(1),
+                                    keep_receiver: false,
+                                    fallthrough: FallthroughPc(decoded.operand(2)),
+                                });
+                            }
+                            Ok(Some(action)) => {
+                                selected.release(runtime);
+                                return Ok(action);
+                            }
+                            Err(error) => {
+                                selected.release(runtime);
+                                return Err(error);
+                            }
+                        }
+                    }
+                    crate::engine::object::NamedDataSelection::NeedsObservation
+                    | crate::engine::object::NamedDataSelection::ContinueLookup => {}
                 }
                 if decoded.opcode == Opcode::BorrowedFieldLocal {
                     if let Some(action) = read_local::<false>(&mut cursor, runtime, base_index)? {
@@ -1872,13 +1987,20 @@ pub(super) fn execute_frame(
             Opcode::GetFieldCached | Opcode::GetField2Cached => {
                 let keep_receiver = decoded.opcode == Opcode::GetField2Cached;
                 let mut native = None;
-                let progress = cursor.with_slots(|slots| {
+                let pending = PendingNamedRead {
+                    index: operand,
+                    keep_receiver,
+                    fallthrough: FallthroughPc::from_decoded(decoded),
+                };
+                let step = cursor.with_slots(|slots| {
                     slots.property_ic_read(
                         runtime,
                         executable,
-                        pc,
-                        operand,
-                        keep_receiver,
+                        NamedReadOperation {
+                            site: pc,
+                            key_index: operand,
+                            keep_receiver,
+                        },
                         &mut native,
                     )
                 })?;
@@ -1888,18 +2010,37 @@ pub(super) fn execute_frame(
                     executable,
                     pc,
                     "field_cache",
-                    if matches!(progress, PropertyReadProgress::Completed) {
+                    if matches!(step, PropertyReadProgress::Completed) {
                         None
                     } else {
                         Some("guard")
                     },
                 );
-                if !matches!(progress, PropertyReadProgress::Completed) {
-                    return Ok(VmAction::GetField {
-                        index: operand,
-                        keep_receiver,
-                        fallthrough: FallthroughPc::from_decoded(decoded),
-                    });
+                match step {
+                    PropertyReadProgress::Completed => {
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_owned_execution_event(
+                            "local_completion.named_read",
+                        );
+                    }
+                    PropertyReadProgress::NeedsObservation | PropertyReadProgress::Driver => {
+                        return Ok(pending.action());
+                    }
+                    PropertyReadProgress::Selected(getter) => {
+                        let read = cursor.with_slots(|slots| {
+                            Ok(runtime
+                                .prepare_selected_linked_getter(slots.peek(0)?, getter)
+                                .map_err(runtime_error_to_vm_error))
+                        })?;
+                        debug_assert!(execution.selected_named_read.is_none());
+                        execution.selected_named_read = Some(match read {
+                            Ok(read) => super::property_driver::SelectedNamedRead::Read(read),
+                            Err(error) => {
+                                super::property_driver::SelectedNamedRead::LookupError(error)
+                            }
+                        });
+                        return Ok(pending.action());
+                    }
                 }
             }
             Opcode::GetArrayElDense | Opcode::GetArrayEl2Dense | Opcode::GetArrayEl3Dense => {

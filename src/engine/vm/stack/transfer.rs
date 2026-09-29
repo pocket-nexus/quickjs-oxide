@@ -246,12 +246,16 @@ fn record_completion(_class: Displaced) {
         Displaced::Scalar => "ordinary_store.complete_scalar",
         Displaced::Owned => "ordinary_store.complete_owned",
     });
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_execution_event("local_completion.store");
 }
 
 #[inline]
 fn record_observation() {
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_execution_event("ordinary_store.observe");
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_execution_event("local_handoff.store_observe");
 }
 
 #[cfg(test)]
