@@ -702,7 +702,7 @@ mod selected_append_tests {
         let PropertySlot::Data(RawValue::Symbol(symbol)) = object.slots[0] else {
             panic!()
         };
-        let symbol_atom = Atom::from_raw(symbol.raw());
+        let symbol_atom = state.atoms.brand(symbol).unwrap();
         let before_atoms = state.atoms.resolve(symbol_atom).unwrap().ref_count;
         let before_shape = state.heap.shape_strong_count(shape).unwrap();
         // A shape with no appended entry fails before slot publication. The
