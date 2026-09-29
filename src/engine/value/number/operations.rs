@@ -24,6 +24,29 @@ mod tests {
     }
 
     #[test]
+    fn int32_preserves_integer_payload_and_float_conversion() {
+        for value in [i32::MIN, i32::MIN + 1, -1, 0, 1, i32::MAX - 1, i32::MAX] {
+            assert_eq!(Number::Int(value).int32(), value);
+            assert_eq!(Number::Float(f64::from(value)).int32(), value);
+        }
+        for (input, expected) in [
+            (f64::NAN, 0),
+            (f64::INFINITY, 0),
+            (f64::NEG_INFINITY, 0),
+            (-0.0, 0),
+            (2.9, 2),
+            (-2.9, -2),
+            (2_147_483_648.0, i32::MIN),
+            (4_294_967_295.0, -1),
+            (4_294_967_298.0, 2),
+            (-4_294_967_298.0, -2),
+            (f64::MAX, 0),
+        ] {
+            assert_eq!(Number::Float(input).int32(), expected, "{input:?}");
+        }
+    }
+
+    #[test]
     fn final_only_product_compaction_matches_two_number_operations() {
         let values = [
             0.0,
@@ -114,7 +137,12 @@ impl Number {
     }
 
     pub(crate) fn int32(self) -> i32 {
-        super::integer::to_int32(self.float())
+        // An Int payload has already satisfied ToInt32. Preserve that fact
+        // instead of converting to f64 and reducing it modulo 2^32 again.
+        match self {
+            Self::Int(value) => value,
+            Self::Float(value) => super::integer::to_int32(value),
+        }
     }
     pub(crate) fn negate(self) -> Self {
         match self {
