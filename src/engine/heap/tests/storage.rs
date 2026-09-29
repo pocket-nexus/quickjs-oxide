@@ -1529,3 +1529,156 @@ fn accessor_refs_pack_the_null_sentinel_into_eight_bytes() {
     assert_eq!(set.option(), Some(getter));
     assert_eq!(size_of::<PropertySlot>(), 24);
 }
+
+#[test]
+fn canonical_append_preserves_existing_owners_without_retaining_them() {
+    let mut heap = Heap::new();
+    let empty = empty_shape(&mut heap);
+    let target = leaf(&mut heap, empty);
+    let shape = one_slot_shape(&mut heap);
+    let object = heap
+        .allocate_object(ObjectData::ordinary(
+            shape,
+            vec![PropertySlot::Data(RawValue::Object(target))],
+        ))
+        .unwrap();
+    let mut entries = heap.shape(shape).unwrap().entries().to_vec();
+    entries.push(ShapeEntry {
+        atom: AtomIdx::from_raw(42),
+        flags: DATA_FLAGS,
+    });
+    let successor = heap
+        .allocate_shape(Shape::new(None, entries).unwrap())
+        .unwrap();
+    // Even a saturated existing edge is transferred: no temporary retain is
+    // permitted or necessary for an unchanged property.
+    heap.set_strong_count_for_test(RawId::Object(target), u32::MAX);
+    let cleanup = heap
+        .append_object_slot_with_shape(object, successor, PropertySlot::Data(RawValue::Int(42)))
+        .unwrap_or_else(|failure| panic!("{:?}", failure.error));
+    assert_eq!(cleanup, HeapCleanup::default());
+    assert_eq!(heap.object_strong_count(target), Ok(u32::MAX));
+    assert_eq!(heap.object(object).unwrap().shape, successor);
+    assert_eq!(heap.object(object).unwrap().slots.len(), 2);
+    assert_eq!(heap.shape_strong_count(shape), Ok(1));
+    assert_eq!(heap.shape_strong_count(successor), Ok(2));
+    heap.set_strong_count_for_test(RawId::Object(target), 2);
+    heap.release_object(object).unwrap();
+    assert_eq!(heap.object_strong_count(target), Ok(1));
+    heap.release_object(target).unwrap();
+    heap.release_shape(shape).unwrap();
+    heap.release_shape(successor).unwrap();
+    heap.release_shape(empty).unwrap();
+    assert_eq!(heap.counts().live, 0);
+}
+
+#[test]
+fn canonical_append_rejects_changed_prefix_and_stale_edges_before_publication() {
+    let mut heap = Heap::new();
+    let shape = one_slot_shape(&mut heap);
+    let object = heap
+        .allocate_object(ObjectData::ordinary(
+            shape,
+            vec![PropertySlot::Data(RawValue::Int(7))],
+        ))
+        .unwrap();
+    let first = heap.shape(shape).unwrap().entries()[0];
+    let last = ShapeEntry {
+        atom: AtomIdx::from_raw(42),
+        flags: DATA_FLAGS,
+    };
+    let successor = heap
+        .allocate_shape(Shape::new(None, [first, last]).unwrap())
+        .unwrap();
+    let different_flags = ShapeEntry {
+        flags: PropertyFlags::data(false, true, true),
+        ..first
+    };
+    let wrong_prefix = heap
+        .allocate_shape(Shape::new(None, [different_flags, last]).unwrap())
+        .unwrap();
+    let stale = heap
+        .allocate_object(ObjectData::ordinary(
+            shape,
+            vec![PropertySlot::Data(RawValue::Null)],
+        ))
+        .unwrap();
+    heap.release_object(stale).unwrap();
+    let stale_shape = heap
+        .allocate_shape(Shape::new(None, [first, last]).unwrap())
+        .unwrap();
+    heap.release_shape(stale_shape).unwrap();
+    for (selected, replacement) in [
+        (wrong_prefix, PropertySlot::Data(RawValue::Int(9))),
+        (successor, PropertySlot::Data(RawValue::Object(stale))),
+        (stale_shape, PropertySlot::Data(RawValue::Int(9))),
+    ] {
+        let failure = heap
+            .append_object_slot_with_shape(object, selected, replacement)
+            .err()
+            .unwrap();
+        assert!(!failure.published);
+        assert_eq!(heap.object(object).unwrap().shape, shape);
+        assert_eq!(heap.object(object).unwrap().slots.len(), 1);
+        assert!(matches!(
+            heap.object(object).unwrap().slots[0],
+            PropertySlot::Data(RawValue::Int(7))
+        ));
+        assert_eq!(heap.shape_strong_count(successor), Ok(1));
+    }
+    heap.release_object(object).unwrap();
+    heap.release_shape(shape).unwrap();
+    heap.release_shape(successor).unwrap();
+    heap.release_shape(wrong_prefix).unwrap();
+    assert_eq!(heap.counts().live, 0);
+}
+
+#[test]
+fn canonical_append_retains_self_and_duplicate_accessor_edges_exactly_once() {
+    let mut heap = Heap::new();
+    let empty = empty_shape(&mut heap);
+    let object = leaf(&mut heap, empty);
+    let first = ShapeEntry {
+        atom: AtomIdx::from_raw(41),
+        flags: DATA_FLAGS,
+    };
+    let self_shape = heap
+        .allocate_shape(Shape::new(None, [first]).unwrap())
+        .unwrap();
+    heap.append_object_slot_with_shape(
+        object,
+        self_shape,
+        PropertySlot::Data(RawValue::Object(object)),
+    )
+    .unwrap_or_else(|failure| panic!("{:?}", failure.error));
+    assert_eq!(heap.object_strong_count(object), Ok(2));
+    let accessor = ShapeEntry {
+        atom: AtomIdx::from_raw(42),
+        flags: PropertyFlags::accessor(true, true),
+    };
+    let accessor_shape = heap
+        .allocate_shape(Shape::new(None, [first, accessor]).unwrap())
+        .unwrap();
+    let target = leaf(&mut heap, empty);
+    heap.append_object_slot_with_shape(
+        object,
+        accessor_shape,
+        PropertySlot::Accessor {
+            get: Some(target),
+            set: Some(target),
+        },
+    )
+    .unwrap_or_else(|failure| panic!("{:?}", failure.error));
+    assert_eq!(heap.object_strong_count(object), Ok(2));
+    assert_eq!(heap.object_strong_count(target), Ok(3));
+    heap.replace_object_slot(object, 0, PropertySlot::Data(RawValue::Null))
+        .unwrap();
+    assert_eq!(heap.object_strong_count(object), Ok(1));
+    heap.release_object(object).unwrap();
+    assert_eq!(heap.object_strong_count(target), Ok(1));
+    heap.release_object(target).unwrap();
+    heap.release_shape(empty).unwrap();
+    heap.release_shape(self_shape).unwrap();
+    heap.release_shape(accessor_shape).unwrap();
+    assert_eq!(heap.counts().live, 0);
+}

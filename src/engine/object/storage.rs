@@ -618,9 +618,7 @@ impl RuntimeState {
                     flags,
                 },
             )?;
-            let mut slots = state.heap.object(object_id)?.slots.clone();
-            slots.push(replacement);
-            return state.replace_layout_with_owned_shape(object_id, target, slots);
+            return state.append_slot_with_owned_shape(object_id, target, replacement);
         }
         // Reconfiguration does not inherit append-only facts.
         state.unlink_shape_transitions(shape_id);
@@ -652,6 +650,81 @@ impl RuntimeState {
 mod selected_append_tests {
     use super::*;
     use crate::engine::heap::HeapError;
+
+    #[test]
+    fn canonical_append_preserves_symbols_accessors_self_edges_and_cache_updates() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let result = context
+            .eval(
+                r#"(function () {
+            var first = Symbol('first'), second = Symbol('second');
+            var a = {old: first}, b = {old: first};
+            a.self = a; b.self = b;
+            a.next = second; b.next = second;
+            var calls = 0;
+            function both(v) { if (arguments.length) calls += v; return this.next; }
+            Object.defineProperty(a, 'access', {get: both, set: both, configurable: true});
+            Object.defineProperty(b, 'access', {get: both, set: both, configurable: true});
+            if (a.access !== second || b.access !== second) return 1;
+            a.access = 3; b.access = 4;
+            if (calls !== 7 || a.old !== first || b.old !== first) return 2;
+            if (a.self !== a || b.self !== b) return 3;
+            function read(o) { return o.next; }
+            if (read(a) !== second || read(b) !== second) return 4;
+            delete a.next; a.next = first;
+            if (read(a) !== first || read(b) !== second) return 5;
+            var child = Object.create(a);
+            if (child.next !== first) return 6;
+            delete a.next; a.next = second;
+            if (child.next !== second) return 7;
+            a[first] = second; b[first] = first;
+            if (a[first] !== second || b[first] !== first) return 8;
+            return 42;
+        })()"#,
+            )
+            .unwrap();
+        assert_eq!(result, crate::engine::value::Value::Int(42));
+    }
+
+    #[test]
+    fn canonical_append_rolls_back_new_symbol_owner_on_bad_successor() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let crate::engine::value::Value::Object(owner) =
+            context.eval("({old: Symbol('owned')})").unwrap()
+        else {
+            panic!()
+        };
+        let mut state = runtime.0.state.borrow_mut();
+        let object = state.heap.object(owner.object_id()).unwrap();
+        let shape = object.shape;
+        let PropertySlot::Data(RawValue::Symbol(symbol)) = object.slots[0] else {
+            panic!()
+        };
+        let symbol_atom = Atom::from_raw(symbol.raw());
+        let before_atoms = state.atoms.resolve(symbol_atom).unwrap().ref_count;
+        let before_shape = state.heap.shape_strong_count(shape).unwrap();
+        // A shape with no appended entry fails before slot publication. The
+        // runtime consumes its temporary shape owner and undoes only new atoms.
+        state.heap.retain_shape(shape).unwrap();
+        assert!(
+            state
+                .append_slot_with_owned_shape(
+                    owner.object_id(),
+                    shape,
+                    PropertySlot::Data(RawValue::Symbol(symbol))
+                )
+                .is_err()
+        );
+        assert_eq!(
+            state.atoms.resolve(symbol_atom).unwrap().ref_count,
+            before_atoms
+        );
+        assert_eq!(state.heap.shape_strong_count(shape).unwrap(), before_shape);
+        assert_eq!(state.heap.object(owner.object_id()).unwrap().slots.len(), 1);
+        assert_eq!(state.heap.object(owner.object_id()).unwrap().shape, shape);
+    }
 
     #[test]
     fn selected_missing_append_failure_restores_cache_and_atom_ownership() {

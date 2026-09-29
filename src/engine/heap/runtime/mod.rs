@@ -539,6 +539,43 @@ impl RuntimeState {
         self.replace_layout_with_owned_shape(object, shape, slots)
     }
 
+    /// Consume the selected successor shape reference. Existing slots stay in
+    /// place, so only the appended slot acquires new Atom and heap owners.
+    pub(crate) fn append_slot_with_owned_shape(
+        &mut self,
+        object: ObjectId,
+        shape: ShapeId,
+        replacement: PropertySlot,
+    ) -> Result<(), RuntimeError> {
+        let retained_atoms = match self.retain_slot_atoms(std::slice::from_ref(&replacement)) {
+            Ok(atoms) => atoms,
+            Err(error) => {
+                let cleanup = self.heap.release_shape(shape)?;
+                self.apply_cleanup(cleanup)?;
+                return Err(error);
+            }
+        };
+        let result = self
+            .heap
+            .append_object_slot_with_shape(object, shape, replacement);
+        // The caller's temporary shape owner is consumed even if preparation
+        // failed. On a published error the new slot still owns its Atom edges.
+        let shape_cleanup = self.heap.release_shape(shape)?;
+        match result {
+            Ok(cleanup) => {
+                self.apply_cleanup(cleanup)?;
+                self.apply_cleanup(shape_cleanup)
+            }
+            Err(failure) => {
+                if !failure.published {
+                    self.release_atoms(retained_atoms)?;
+                }
+                self.apply_cleanup(shape_cleanup)?;
+                Err(failure.error.into())
+            }
+        }
+    }
+
     /// Consume the caller's shape reference on both success and rollback.
     pub(crate) fn replace_layout_with_owned_shape(
         &mut self,
