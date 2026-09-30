@@ -69,6 +69,7 @@ pub(super) fn run(
                 arguments,
                 method,
                 tail,
+                fallthrough,
             } => {
                 let selected_native = execution.selected_native.take();
                 if let Some(boundary) = enter_call(
@@ -79,6 +80,7 @@ pub(super) fn run(
                     method,
                     tail,
                     selected_native,
+                    fallthrough,
                 )? {
                     return Ok(boundary);
                 }
@@ -262,6 +264,8 @@ fn property_boundary(
     }
 }
 
+// Keep the decoded call facts explicit across the ordinary/native boundary.
+#[allow(clippy::too_many_arguments)]
 fn enter_call(
     runtime: &Runtime,
     execution: &mut RunningExecution,
@@ -270,6 +274,7 @@ fn enter_call(
     method: bool,
     tail: bool,
     selected_native: Option<crate::engine::object::LinkedNativeSelection>,
+    fallthrough: crate::engine::vm::execute::FallthroughPc,
 ) -> Result<Option<Boundary>, Error> {
     Ok(
         match super::ordinary::enter_selected(
@@ -280,6 +285,7 @@ fn enter_call(
             method,
             tail,
             selected_native,
+            fallthrough,
         )? {
             super::ordinary::Entry::Ordinary => {
                 *id = execution.frames.current_id().unwrap();
@@ -299,6 +305,7 @@ fn enter_call(
                     arguments,
                     method,
                     tail,
+                    fallthrough,
                 }))
             }
         },

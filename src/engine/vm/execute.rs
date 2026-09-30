@@ -241,6 +241,7 @@ pub(super) enum VmAction {
         arguments: u16,
         method: bool,
         tail: bool,
+        fallthrough: FallthroughPc,
     },
     SetProperty(Option<u32>),
     GetField {
@@ -2308,6 +2309,7 @@ pub(super) fn execute_frame(
                     arguments: published_u16(operand),
                     method: matches!(decoded.opcode, Opcode::CallMethod | Opcode::TailCallMethod),
                     tail: matches!(decoded.opcode, Opcode::TailCall | Opcode::TailCallMethod),
+                    fallthrough: FallthroughPc::from_decoded(decoded),
                 });
             }
             Opcode::Return => {
@@ -3027,6 +3029,28 @@ fn borrowed_this_read_ready(runtime: &crate::engine::api::Runtime, base: &JsValu
 #[cfg(test)]
 mod execution_span_tests {
     use crate::engine::api::{Runtime, Value};
+
+    #[test]
+    fn carried_call_continuation_resumes_nested_method_and_throwing_calls_once() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(
+            context
+                .eval(
+                    r#"(() => {
+            let log=[];
+            function f(x){log.push(x);return x+1;}
+            const obj={m(x){return f(x)+this.bias},bias:2};
+            function tail(x){return obj.m(x);}
+            let value=f(f(1))+tail(4);
+            try{(function(){throw 7;})()}catch(e){value+=e;}
+            return value===17 && log.join() === '1,2,4';
+        })()"#
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+    }
 
     #[test]
     fn borrowed_this_field_handles_aliases_prototypes_accessors_and_primitives() {

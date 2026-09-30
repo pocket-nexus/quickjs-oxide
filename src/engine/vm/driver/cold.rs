@@ -263,6 +263,7 @@ pub(super) fn dispatch(
             arguments,
             method,
             tail,
+            ..
         } => call(&mut context, arguments, method, tail)?,
         VmAction::Environment(super::super::environment_driver::Operation::Has {
             source,

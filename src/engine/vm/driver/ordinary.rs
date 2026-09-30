@@ -25,12 +25,28 @@ pub(super) fn enter(
     method: bool,
     tail: bool,
 ) -> Result<Entry, Error> {
-    enter_selected(runtime, execution, id, count, method, tail, None)
+    let frame = execution.frames.current_mut(id)?;
+    let decoded = frame
+        .executable
+        .exec
+        .decode_published(frame.fault_pc as u32)
+        .map_err(|_| Error::internal("test ordinary call has no instruction"))?;
+    let fallthrough = crate::engine::vm::execute::FallthroughPc::from_decoded(decoded);
+    enter_selected(
+        runtime,
+        execution,
+        id,
+        count,
+        method,
+        tail,
+        None,
+        fallthrough,
+    )
 }
 
 // These explicit drops end the authenticated slot lease before installing a
 // child or entering native code; keep the boundary visible to reviewers.
-#[allow(clippy::drop_non_drop)]
+#[allow(clippy::drop_non_drop, clippy::too_many_arguments)]
 pub(super) fn enter_selected(
     runtime: &Runtime,
     execution: &mut RunningExecution,
@@ -39,6 +55,7 @@ pub(super) fn enter_selected(
     method: bool,
     tail: bool,
     selected_native: Option<crate::engine::object::LinkedNativeSelection>,
+    fallthrough: crate::engine::vm::execute::FallthroughPc,
 ) -> Result<Entry, Error> {
     #[cfg(feature = "profiling")]
     let _sample = crate::engine::api::profiling::VmCallSample::enter();
@@ -168,7 +185,11 @@ pub(super) fn enter_selected(
             if !execution.frames.can_push() || runtime.bytecode_call_would_overflow() {
                 return Ok(Entry::General);
             }
-            call.install(runtime, execution, id, checked, tail)?;
+            call.install(runtime, execution, id, checked, tail, fallthrough)?;
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "ordinary_call.carried_fallthrough",
+            );
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_instruction(depth);
             Ok(Entry::Ordinary)
