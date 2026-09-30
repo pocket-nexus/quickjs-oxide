@@ -25,67 +25,66 @@ pub(super) const IMMORTAL_STRONG: u32 = u32::MAX;
 
 /// Collection-local indexing keeps equal numeric indices in different arenas
 /// independent. Leaves have no outgoing edges and are absent from this graph.
+#[derive(Clone, Copy, Default)]
+struct TrialNode {
+    count: u32,
+    present: bool,
+    reachable: bool,
+}
+
+impl TrialNode {
+    fn live(count: u32) -> Self {
+        Self {
+            count,
+            present: true,
+            reachable: false,
+        }
+    }
+}
+
 struct CollectionScratch {
-    shared_trial: Vec<Option<u32>>,
-    var_ref_trial: Vec<Option<u32>>,
-    shape_trial: Vec<Option<u32>>,
-    shared_reachable: Vec<bool>,
-    var_ref_reachable: Vec<bool>,
-    shape_reachable: Vec<bool>,
+    shared: Vec<TrialNode>,
+    var_refs: Vec<TrialNode>,
+    shapes: Vec<TrialNode>,
 }
 
 impl CollectionScratch {
     fn new(heap: &Heap) -> Self {
         Self {
-            shared_trial: vec![None; heap.slots.len()],
-            var_ref_trial: vec![None; heap.var_refs.slots.len()],
-            shape_trial: vec![None; heap.shapes.slots.len()],
-            shared_reachable: vec![false; heap.slots.len()],
-            var_ref_reachable: vec![false; heap.var_refs.slots.len()],
-            shape_reachable: vec![false; heap.shapes.slots.len()],
+            shared: vec![TrialNode::default(); heap.slots.len()],
+            var_refs: vec![TrialNode::default(); heap.var_refs.slots.len()],
+            shapes: vec![TrialNode::default(); heap.shapes.slots.len()],
         }
     }
 
-    fn trial_mut(&mut self, id: RawId) -> Result<&mut Option<u32>, HeapError> {
-        let slot = match id {
-            RawId::VarRef(_) => self.var_ref_trial.get_mut(id.index() as usize),
-            RawId::Shape(_) => self.shape_trial.get_mut(id.index() as usize),
-            RawId::Object(_) | RawId::Context(_) | RawId::FunctionBytecode(_) => {
-                self.shared_trial.get_mut(id.index() as usize)
+    #[inline]
+    fn node_mut(&mut self, id: RawId) -> Result<&mut TrialNode, HeapError> {
+        let arena = match id {
+            RawId::VarRef(_) => &mut self.var_refs,
+            RawId::Shape(_) => &mut self.shapes,
+            RawId::Object(_) | RawId::Context(_) | RawId::FunctionBytecode(_) => &mut self.shared,
+            RawId::String(_) | RawId::BigInt(_) => {
+                return Err(HeapError::Invariant("leaf node entered the cycle graph"));
             }
-            RawId::String(_) | RawId::BigInt(_) => None,
         };
-        slot.ok_or(HeapError::Invariant(
-            "collection edge indexed outside its arena",
-        ))
+        arena
+            .get_mut(id.index() as usize)
+            .ok_or(HeapError::Invariant(
+                "collection edge indexed outside its arena",
+            ))
     }
 
-    /// Mark a node and report whether it was newly reached.
     fn mark(&mut self, id: RawId) -> Result<bool, HeapError> {
-        let slot = match id {
-            RawId::VarRef(_) => self.var_ref_reachable.get_mut(id.index() as usize),
-            RawId::Shape(_) => self.shape_reachable.get_mut(id.index() as usize),
-            RawId::Object(_) | RawId::Context(_) | RawId::FunctionBytecode(_) => {
-                self.shared_reachable.get_mut(id.index() as usize)
-            }
-            RawId::String(_) | RawId::BigInt(_) => None,
-        }
-        .ok_or(HeapError::Invariant(
-            "collection mark indexed outside its arena",
-        ))?;
-        let new = !*slot;
-        *slot = true;
+        let node = self.node_mut(id)?;
+        let new = !node.reachable;
+        node.reachable = true;
         Ok(new)
     }
 
     #[cfg(feature = "profiling")]
     fn capacity_bytes(&self) -> usize {
-        (self.shared_trial.capacity() + self.var_ref_trial.capacity() + self.shape_trial.capacity())
-            * std::mem::size_of::<Option<u32>>()
-            + (self.shared_reachable.capacity()
-                + self.var_ref_reachable.capacity()
-                + self.shape_reachable.capacity())
-                * std::mem::size_of::<bool>()
+        (self.shared.capacity() + self.var_refs.capacity() + self.shapes.capacity())
+            * std::mem::size_of::<TrialNode>()
     }
 }
 
@@ -219,12 +218,16 @@ impl FinalizationJobSink for DiscardFinalizationJobSink {
 }
 
 impl Heap {
-    fn live_nonleaf_edges(&self, id: RawId) -> Result<Edges, HeapError> {
+    fn visit_live_nonleaf_edges(
+        &self,
+        id: RawId,
+        visit: &mut impl FnMut(RawId) -> Result<(), HeapError>,
+    ) -> Result<(), HeapError> {
         match id {
-            RawId::VarRef(cell) => Ok(var_ref_edges(&self.var_refs.live(cell)?.data)),
-            RawId::Shape(shape) => Ok(shape_edges(&self.shapes.live(shape)?.data).into()),
+            RawId::VarRef(cell) => visit_var_ref_edges(&self.var_refs.live(cell)?.data, visit),
+            RawId::Shape(shape) => visit_shape_edges(&self.shapes.live(shape)?.data, visit),
             RawId::Object(_) | RawId::Context(_) | RawId::FunctionBytecode(_) => {
-                Ok(self.live_node(id)?.data.edges())
+                self.live_node(id)?.data.visit_edges(visit)
             }
             RawId::String(_) | RawId::BigInt(_) => {
                 Err(HeapError::Invariant("leaf node entered the cycle graph"))
@@ -634,19 +637,19 @@ impl Heap {
             if let SlotState::Resident(node) = &slot.state
                 && node.strong.get() != 0
             {
-                scratch.shared_trial[index] = Some(node.strong.get());
+                scratch.shared[index] = TrialNode::live(node.strong.get());
                 examined_nodes = examined_nodes.saturating_add(1);
             }
         }
         for (index, slot) in self.var_refs.slots.iter().enumerate() {
             if let AuxiliaryState::Live(node) = &slot.state {
-                scratch.var_ref_trial[index] = Some(node.strong.get());
+                scratch.var_refs[index] = TrialNode::live(node.strong.get());
                 examined_nodes = examined_nodes.saturating_add(1);
             }
         }
         for (index, slot) in self.shapes.slots.iter().enumerate() {
             if let AuxiliaryState::Live(node) = &slot.state {
-                scratch.shape_trial[index] = Some(node.strong.get());
+                scratch.shapes[index] = TrialNode::live(node.strong.get());
                 examined_nodes = examined_nodes.saturating_add(1);
             }
         }
@@ -656,37 +659,37 @@ impl Heap {
         // Leaf edges are skipped: leaves own no outgoing edges and can never
         // join a cycle, so they stay outside the trial graph.
         {
-            let mut subtract_edges = |edges: Edges| -> Result<(), HeapError> {
-                for edge in edges {
-                    if edge.is_leaf() {
-                        continue;
-                    }
-                    self.validate_live_nonleaf(edge)?;
-                    let trial = scratch.trial_mut(edge)?;
-                    let count = (*trial).ok_or(HeapError::Invariant(
-                        "live edge targeted a node outside the trial set",
-                    ))?;
-                    *trial = Some(count.checked_sub(1).ok_or(HeapError::Invariant(
-                        "internal incoming references exceeded strong count",
-                    ))?);
+            let mut subtract_edge = |edge: RawId| -> Result<(), HeapError> {
+                if edge.is_leaf() {
+                    return Ok(());
                 }
+                self.validate_live_nonleaf(edge)?;
+                let trial = scratch.node_mut(edge)?;
+                if !trial.present {
+                    return Err(HeapError::Invariant(
+                        "live edge targeted a node outside the trial set",
+                    ));
+                }
+                trial.count = trial.count.checked_sub(1).ok_or(HeapError::Invariant(
+                    "internal incoming references exceeded strong count",
+                ))?;
                 Ok(())
             };
             for slot in &self.slots {
                 if let SlotState::Resident(node) = &slot.state
                     && node.strong.get() != 0
                 {
-                    subtract_edges(node.data.edges())?;
+                    node.data.visit_edges(&mut subtract_edge)?;
                 }
             }
             for slot in &self.var_refs.slots {
                 if let AuxiliaryState::Live(node) = &slot.state {
-                    subtract_edges(var_ref_edges(&node.data))?;
+                    visit_var_ref_edges(&node.data, &mut subtract_edge)?;
                 }
             }
             for slot in &self.shapes.slots {
                 if let AuxiliaryState::Live(node) = &slot.state {
-                    subtract_edges(shape_edges(&node.data).into())?;
+                    visit_shape_edges(&node.data, &mut subtract_edge)?;
                 }
             }
         }
@@ -695,9 +698,9 @@ impl Heap {
         // equivalent to QuickJS's gc_scan phase.
         let mut work = VecDeque::new();
         let mut external_root_nodes = 0usize;
-        for index in 0..scratch.shared_trial.len() {
-            let count = scratch.shared_trial[index];
-            if count.is_some_and(|count| count != 0) {
+        for index in 0..scratch.shared.len() {
+            let count = scratch.shared[index];
+            if count.present && count.count != 0 {
                 let slot = &self.slots[index];
                 let kind = slot.state.kind().ok_or(HeapError::Invariant(
                     "collection root lost its shared payload",
@@ -711,9 +714,9 @@ impl Heap {
                 external_root_nodes = external_root_nodes.saturating_add(1);
             }
         }
-        for index in 0..scratch.var_ref_trial.len() {
-            let count = scratch.var_ref_trial[index];
-            if count.is_some_and(|count| count != 0) {
+        for index in 0..scratch.var_refs.len() {
+            let count = scratch.var_refs[index];
+            if count.present && count.count != 0 {
                 let index = u32::try_from(index).map_err(|_| HeapError::Overflow {
                     operation: "constructing a collection worklist",
                 })?;
@@ -726,9 +729,9 @@ impl Heap {
                 external_root_nodes = external_root_nodes.saturating_add(1);
             }
         }
-        for index in 0..scratch.shape_trial.len() {
-            let count = scratch.shape_trial[index];
-            if count.is_some_and(|count| count != 0) {
+        for index in 0..scratch.shapes.len() {
+            let count = scratch.shapes[index];
+            if count.present && count.count != 0 {
                 let index = u32::try_from(index).map_err(|_| HeapError::Overflow {
                     operation: "constructing a collection worklist",
                 })?;
@@ -741,16 +744,17 @@ impl Heap {
                 external_root_nodes = external_root_nodes.saturating_add(1);
             }
         }
+        // The preceding pass validated every internal edge. Between these
+        // phases the heap is exclusively borrowed; no mutation, user callback,
+        // finalization or generation change occurs. Read each reached source
+        // through its checked arena accessor, without revalidating its targets.
         while let Some(id) = work.pop_front() {
-            for edge in self.live_nonleaf_edges(id)? {
-                if edge.is_leaf() {
-                    continue;
-                }
-                self.validate_live_nonleaf(edge)?;
-                if scratch.mark(edge)? {
+            self.visit_live_nonleaf_edges(id, &mut |edge| {
+                if !edge.is_leaf() && scratch.mark(edge)? {
                     work.push_back(edge);
                 }
-            }
+                Ok(())
+            })?;
         }
 
         let mut candidate_nodes = 0usize;
@@ -759,7 +763,7 @@ impl Heap {
             let SlotState::Resident(node) = &slot.state else {
                 continue;
             };
-            if node.strong.get() == 0 || scratch.shared_reachable[index] {
+            if node.strong.get() == 0 || scratch.shared[index].reachable {
                 continue;
             }
             candidate_nodes = candidate_nodes.saturating_add(1);
@@ -784,12 +788,12 @@ impl Heap {
             }
         }
         for (index, slot) in self.var_refs.slots.iter().enumerate() {
-            if matches!(slot.state, AuxiliaryState::Live(_)) && !scratch.var_ref_reachable[index] {
+            if matches!(slot.state, AuxiliaryState::Live(_)) && !scratch.var_refs[index].reachable {
                 candidate_nodes = candidate_nodes.saturating_add(1);
             }
         }
         for (index, slot) in self.shapes.slots.iter().enumerate() {
-            if matches!(slot.state, AuxiliaryState::Live(_)) && !scratch.shape_reachable[index] {
+            if matches!(slot.state, AuxiliaryState::Live(_)) && !scratch.shapes[index].reachable {
                 candidate_nodes = candidate_nodes.saturating_add(1);
             }
         }
@@ -2244,13 +2248,26 @@ pub(super) fn object_layout_edges(shape: ShapeId, slots: &[PropertySlot]) -> Vec
 
 pub(super) fn object_edges(object: &ObjectData) -> Edges {
     let mut edges = Edges::new();
+    visit_object_edges(object, &mut |edge| {
+        edges.push(edge);
+        Ok::<_, std::convert::Infallible>(())
+    })
+    .unwrap_or_else(|never| match never {});
+    edges
+}
+
+#[inline]
+pub(super) fn visit_object_edges<E>(
+    object: &ObjectData,
+    visit: &mut impl FnMut(RawId) -> Result<(), E>,
+) -> Result<(), E> {
     for slot in &object.slots {
-        append_property_slot_edges(&mut edges, slot);
+        visit_property_slot_edges(slot, visit)?;
     }
-    edges.push(RawId::Shape(object.shape));
+    visit(RawId::Shape(object.shape))?;
     match &object.payload {
-        ObjectPayload::Primitive(PrimitiveObjectData::String(id)) => edges.push(RawId::String(*id)),
-        ObjectPayload::Primitive(PrimitiveObjectData::BigInt(id)) => edges.push(RawId::BigInt(*id)),
+        ObjectPayload::Primitive(PrimitiveObjectData::String(id)) => visit(RawId::String(*id))?,
+        ObjectPayload::Primitive(PrimitiveObjectData::BigInt(id)) => visit(RawId::BigInt(*id))?,
         ObjectPayload::Primitive(PrimitiveObjectData::ShortBigInt(_)) => {}
         ObjectPayload::Primitive(
             PrimitiveObjectData::Number(_)
@@ -2259,7 +2276,9 @@ pub(super) fn object_edges(object: &ObjectData) -> Edges {
         ) => {}
         ObjectPayload::Array { dense } => {
             if let Some(dense) = dense {
-                edges.extend(dense.iter().filter_map(raw_value_edge));
+                for edge in dense.iter().filter_map(raw_value_edge) {
+                    visit(edge)?;
+                }
             }
         }
         ObjectPayload::Ordinary
@@ -2274,91 +2293,129 @@ pub(super) fn object_edges(object: &ObjectData) -> Edges {
         | ObjectPayload::WeakSet { .. }
         | ObjectPayload::WeakRef { .. } => {}
         ObjectPayload::DataView(data) => {
-            edges.push(RawId::Object(data.buffer));
+            visit(RawId::Object(data.buffer))?;
         }
         ObjectPayload::TypedArray(data) => {
-            edges.push(RawId::Object(data.view.buffer));
+            visit(RawId::Object(data.view.buffer))?;
         }
         ObjectPayload::IteratorHelper(data) => {
-            edges.push(RawId::Object(data.source));
-            edges.extend(raw_value_edge(&data.next));
-            edges.extend(raw_value_edge(&data.callback));
-            edges.extend(data.inner.map(RawId::Object));
+            visit(RawId::Object(data.source))?;
+            if let Some(edge) = raw_value_edge(&data.next) {
+                visit(edge)?;
+            }
+            if let Some(edge) = raw_value_edge(&data.callback) {
+                visit(edge)?;
+            }
+            if let Some(edge) = data.inner.map(RawId::Object) {
+                visit(edge)?;
+            }
         }
         ObjectPayload::IteratorWrap(data) => {
-            edges.extend(raw_value_edge(&data.source));
-            edges.extend(raw_value_edge(&data.next));
+            if let Some(edge) = raw_value_edge(&data.source) {
+                visit(edge)?;
+            }
+            if let Some(edge) = raw_value_edge(&data.next) {
+                visit(edge)?;
+            }
         }
         ObjectPayload::AsyncFromSyncIterator(data) => {
-            edges.push(RawId::Object(data.sync_iterator));
-            edges.extend(raw_value_edge(&data.next));
+            visit(RawId::Object(data.sync_iterator))?;
+            if let Some(edge) = raw_value_edge(&data.next) {
+                visit(edge)?;
+            }
         }
         ObjectPayload::IteratorConcat(data) => {
             // This order mirrors the class finalizer: active iterator, cached
             // next, then the unconsumed captured pairs.
-            edges.extend(data.iterator.map(RawId::Object));
-            edges.extend(raw_value_edge(&data.next));
+            if let Some(edge) = data.iterator.map(RawId::Object) {
+                visit(edge)?;
+            }
+            if let Some(edge) = raw_value_edge(&data.next) {
+                visit(edge)?;
+            }
             for item in data.items.iter().flatten() {
-                edges.push(RawId::Object(item.iterable));
-                edges.extend(raw_value_edge(&item.method));
+                visit(RawId::Object(item.iterable))?;
+                if let Some(edge) = raw_value_edge(&item.method) {
+                    visit(edge)?;
+                }
             }
         }
         ObjectPayload::Proxy(data) => {
             // Revocation deliberately leaves both edges intact. This mirrors
             // QuickJS, where JSProxyData continues to own target and handler
             // until the Proxy itself is finalized.
-            edges.push(RawId::Object(data.target));
-            edges.push(RawId::Object(data.handler));
+            visit(RawId::Object(data.target))?;
+            visit(RawId::Object(data.handler))?;
         }
         ObjectPayload::RegExpStringIterator { regexp, .. } => {
-            edges.push(RawId::Object(*regexp));
+            visit(RawId::Object(*regexp))?;
         }
         ObjectPayload::ArrayIterator { object, .. } => {
-            edges.extend(object.map(RawId::Object));
+            if let Some(edge) = object.map(RawId::Object) {
+                visit(edge)?;
+            }
         }
         ObjectPayload::Map { records, .. } => {
             for record in records.iter() {
-                edges.extend(raw_value_edge(&record.key));
-                edges.extend(raw_value_edge(&record.value));
+                if let Some(edge) = raw_value_edge(&record.key) {
+                    visit(edge)?;
+                }
+                if let Some(edge) = raw_value_edge(&record.value) {
+                    visit(edge)?;
+                }
             }
         }
         ObjectPayload::MapIterator { object, .. } => {
-            edges.extend(object.map(RawId::Object));
+            if let Some(edge) = object.map(RawId::Object) {
+                visit(edge)?;
+            }
         }
         ObjectPayload::Set { records, .. } => {
             for record in records.iter() {
-                edges.extend(raw_value_edge(&record.key));
+                if let Some(edge) = raw_value_edge(&record.key) {
+                    visit(edge)?;
+                }
             }
         }
         ObjectPayload::SetIterator { object, .. } => {
-            edges.extend(object.map(RawId::Object));
+            if let Some(edge) = object.map(RawId::Object) {
+                visit(edge)?;
+            }
         }
         ObjectPayload::WeakMap { records } => {
             for value in records.values() {
                 // Weak keys are intentionally absent from the graph. Values
                 // retain their ordinary owned edges, matching QuickJS mark.
-                edges.extend(raw_value_edge(value));
+                if let Some(edge) = raw_value_edge(value) {
+                    visit(edge)?;
+                }
             }
         }
         ObjectPayload::FinalizationRegistry(data) => {
-            edges.push(RawId::Object(data.callback));
-            edges.push(RawId::Context(data.realm));
+            visit(RawId::Object(data.callback))?;
+            visit(RawId::Context(data.realm))?;
             for entry in &data.entries {
                 // target and unregister_token are intentionally weak. Only
                 // held values participate in ordinary trial-deletion tracing.
-                edges.extend(raw_value_edge(&entry.held_value));
+                if let Some(edge) = raw_value_edge(&entry.held_value) {
+                    visit(edge)?;
+                }
             }
         }
         ObjectPayload::ForInIterator(data) => {
-            edges.extend(data.object.map(RawId::Object));
+            if let Some(edge) = data.object.map(RawId::Object) {
+                visit(edge)?;
+            }
         }
         ObjectPayload::GlobalObject { uninitialized_vars } => {
-            edges.push(RawId::Object(*uninitialized_vars))
+            visit(RawId::Object(*uninitialized_vars))?
         }
         ObjectPayload::NativeFunction { data, internal } => {
-            edges.extend(data.realm.map(RawId::Context));
+            if let Some(edge) = data.realm.map(RawId::Context) {
+                visit(edge)?;
+            }
             if let Some(internal) = internal {
-                edges.extend(internal_callable_edges(internal));
+                visit_internal_callable_edges(internal, visit)?;
             }
         }
         ObjectPayload::BoundFunction {
@@ -2366,10 +2423,14 @@ pub(super) fn object_edges(object: &ObjectData) -> Edges {
             this_value,
             arguments,
         } => {
-            edges.push(RawId::Object(*target));
-            edges.extend(raw_value_edge(this_value));
+            visit(RawId::Object(*target))?;
+            if let Some(edge) = raw_value_edge(this_value) {
+                visit(edge)?;
+            }
             for argument in arguments.iter() {
-                edges.extend(raw_value_edge(argument));
+                if let Some(edge) = raw_value_edge(argument) {
+                    visit(edge)?;
+                }
             }
         }
         ObjectPayload::BytecodeFunction {
@@ -2380,44 +2441,50 @@ pub(super) fn object_edges(object: &ObjectData) -> Edges {
             ..
         } => {
             if let Some(home_object) = home_object {
-                edges.push(RawId::Object(*home_object));
+                visit(RawId::Object(*home_object))?;
             }
             if let Some(initializer) = class_instance_initializer {
-                edges.push(RawId::Object(*initializer));
+                visit(RawId::Object(*initializer))?;
             }
-            edges.push(RawId::FunctionBytecode(*bytecode));
-            edges.extend(closure_slots.iter().copied().map(RawId::VarRef));
+            visit(RawId::FunctionBytecode(*bytecode))?;
+            for edge in closure_slots.iter().copied().map(RawId::VarRef) {
+                visit(edge)?;
+            }
         }
         ObjectPayload::Generator { activation, .. } => {
             if let Some(activation) = activation.as_deref() {
-                edges.extend(generator_activation_edges(activation));
+                visit_generator_activation_edges(activation, visit)?;
             }
         }
         ObjectPayload::AsyncGenerator(data) => {
             if let Some(activation) = data.activation.as_deref() {
-                edges.extend(generator_activation_edges(activation));
+                visit_generator_activation_edges(activation, visit)?;
             }
             for request in &data.queue {
-                edges.extend(async_generator_request_edges(request));
+                visit_async_generator_request_edges(request, visit)?;
             }
-            edges.extend(data.resume_realm.map(RawId::Context));
+            if let Some(edge) = data.resume_realm.map(RawId::Context) {
+                visit(edge)?;
+            }
         }
         ObjectPayload::AsyncFunctionState(data) => {
-            edges.push(RawId::Context(data.driver_realm));
-            edges.push(RawId::Object(data.outer_resolve));
-            edges.push(RawId::Object(data.outer_reject));
+            visit(RawId::Context(data.driver_realm))?;
+            visit(RawId::Object(data.outer_resolve))?;
+            visit(RawId::Object(data.outer_reject))?;
             if let Some(activation) = data.activation.as_deref() {
-                edges.extend(generator_activation_edges(activation));
+                visit_generator_activation_edges(activation, visit)?;
             }
         }
         ObjectPayload::Promise(data) => {
-            edges.extend(raw_value_edge(&data.result));
+            if let Some(edge) = raw_value_edge(&data.result) {
+                visit(edge)?;
+            }
             for reaction in data.fulfill_reactions.iter().chain(&data.reject_reactions) {
-                edges.extend(promise_reaction_edges(reaction));
+                visit_promise_reaction_edges(reaction, visit)?;
             }
         }
     }
-    edges
+    Ok(())
 }
 
 fn promise_capability_edges(capability: &PromiseCapabilityData) -> [RawId; 2] {
@@ -2428,88 +2495,121 @@ fn promise_capability_edges(capability: &PromiseCapabilityData) -> [RawId; 2] {
 }
 
 pub(super) fn async_generator_request_edges(request: &AsyncGeneratorRequestData) -> Edges {
-    let mut edges = raw_value_edges(&request.result);
-    edges.extend([
-        RawId::Object(request.promise),
-        RawId::Object(request.resolve),
-        RawId::Object(request.reject),
-    ]);
+    let mut edges = Edges::new();
+    visit_async_generator_request_edges(request, &mut |edge| {
+        edges.push(edge);
+        Ok::<_, std::convert::Infallible>(())
+    })
+    .unwrap_or_else(|never| match never {});
     edges
 }
 
-pub(super) fn promise_reaction_edges(reaction: &PromiseReaction) -> Vec<RawId> {
-    reaction
-        .handler
-        .map(RawId::Object)
-        .into_iter()
-        .chain(
-            reaction
-                .capability
-                .as_ref()
-                .into_iter()
-                .flat_map(promise_capability_edges),
-        )
-        .collect()
+fn visit_async_generator_request_edges<E>(
+    request: &AsyncGeneratorRequestData,
+    visit: &mut impl FnMut(RawId) -> Result<(), E>,
+) -> Result<(), E> {
+    if let Some(edge) = raw_value_edge(&request.result) {
+        visit(edge)?;
+    }
+    for object in [request.promise, request.resolve, request.reject] {
+        visit(RawId::Object(object))?;
+    }
+    Ok(())
 }
 
-fn internal_callable_edges(internal: &InternalCallableData) -> Vec<RawId> {
+pub(super) fn promise_reaction_edges(reaction: &PromiseReaction) -> Vec<RawId> {
+    let mut edges = Vec::new();
+    visit_promise_reaction_edges(reaction, &mut |edge| {
+        edges.push(edge);
+        Ok::<_, std::convert::Infallible>(())
+    })
+    .unwrap_or_else(|never| match never {});
+    edges
+}
+
+fn visit_promise_reaction_edges<E>(
+    reaction: &PromiseReaction,
+    visit: &mut impl FnMut(RawId) -> Result<(), E>,
+) -> Result<(), E> {
+    if let Some(handler) = reaction.handler {
+        visit(RawId::Object(handler))?;
+    }
+    if let Some(capability) = &reaction.capability {
+        for edge in promise_capability_edges(capability) {
+            visit(edge)?;
+        }
+    }
+    Ok(())
+}
+
+fn visit_internal_callable_edges<E>(
+    internal: &InternalCallableData,
+    visit: &mut impl FnMut(RawId) -> Result<(), E>,
+) -> Result<(), E> {
     match internal {
         InternalCallableData::ProxyRevoke { proxy } => {
-            proxy.map(RawId::Object).into_iter().collect()
+            if let Some(object) = proxy {
+                visit(RawId::Object(*object))?;
+            }
         }
-        InternalCallableData::AsyncFunctionResume { state, .. } => {
-            vec![RawId::Object(*state)]
-        }
+        InternalCallableData::AsyncFunctionResume { state, .. } => visit(RawId::Object(*state))?,
         InternalCallableData::AsyncGeneratorResume { generator, .. } => {
-            vec![RawId::Object(*generator)]
+            visit(RawId::Object(*generator))?
         }
-        InternalCallableData::PromiseResolving { promise, .. } => {
-            vec![RawId::Object(*promise)]
+        InternalCallableData::PromiseResolving { promise, .. } => visit(RawId::Object(*promise))?,
+        InternalCallableData::PromiseCapabilityExecutor(capture) => {
+            for value in capture.resolve.iter().chain(capture.reject.iter()) {
+                if let Some(edge) = raw_value_edge(value) {
+                    visit(edge)?;
+                }
+            }
         }
-        InternalCallableData::PromiseCapabilityExecutor(capture) => capture
-            .resolve
-            .iter()
-            .chain(capture.reject.iter())
-            .flat_map(raw_value_edges)
-            .collect(),
         InternalCallableData::PromiseFinallyHandler {
             constructor,
             on_finally,
-        } => constructor
-            .map(RawId::Object)
-            .into_iter()
-            .chain(std::iter::once(RawId::Object(*on_finally)))
-            .collect(),
+        } => {
+            if let Some(object) = constructor {
+                visit(RawId::Object(*object))?;
+            }
+            visit(RawId::Object(*on_finally))?;
+        }
         InternalCallableData::PromiseFinallyThunk { value } => {
-            raw_value_edges(value).into_iter().collect()
+            if let Some(edge) = raw_value_edge(value) {
+                visit(edge)?;
+            }
         }
         InternalCallableData::PromiseAllResolveElement {
             values, resolve, ..
-        } => vec![RawId::Object(*values), RawId::Object(*resolve)],
-        InternalCallableData::PromiseAllSettledElement {
+        }
+        | InternalCallableData::PromiseAllSettledElement {
             values, resolve, ..
-        } => vec![RawId::Object(*values), RawId::Object(*resolve)],
+        } => {
+            visit(RawId::Object(*values))?;
+            visit(RawId::Object(*resolve))?;
+        }
         InternalCallableData::PromiseAnyRejectElement { errors, reject, .. } => {
-            vec![RawId::Object(*errors), RawId::Object(*reject)]
+            visit(RawId::Object(*errors))?;
+            visit(RawId::Object(*reject))?;
         }
         InternalCallableData::ModuleEvaluation { module, .. } => {
-            vec![RawId::Context(module.cache)]
+            visit(RawId::Context(module.cache))?
         }
         InternalCallableData::DynamicImportHandler {
             module,
             resolve,
             reject,
             ..
-        } => vec![
-            RawId::Context(module.cache),
-            RawId::Object(*resolve),
-            RawId::Object(*reject),
-        ],
-        InternalCallableData::AsyncFromSyncIteratorUnwrap { .. } => Vec::new(),
+        } => {
+            visit(RawId::Context(module.cache))?;
+            visit(RawId::Object(*resolve))?;
+            visit(RawId::Object(*reject))?;
+        }
+        InternalCallableData::AsyncFromSyncIteratorUnwrap { .. } => {}
         InternalCallableData::AsyncFromSyncIteratorClose { sync_iterator } => {
-            vec![RawId::Object(*sync_iterator)]
+            visit(RawId::Object(*sync_iterator))?
         }
     }
+    Ok(())
 }
 
 pub(super) fn generator_activation_edges(activation: &GeneratorActivationData) -> Vec<RawId> {
@@ -2522,10 +2622,24 @@ pub(super) fn generator_activation_edges(activation: &GeneratorActivationData) -
             .saturating_add(activation.locals.len())
             .saturating_add(8),
     );
-    edges.push(RawId::FunctionBytecode(activation.bytecode));
-    edges.push(RawId::Context(vm.callee_realm));
-    edges.push(RawId::Object(vm.current_function));
-    edges.push(RawId::Object(vm.callee_global));
+    visit_generator_activation_edges(activation, &mut |edge| {
+        edges.push(edge);
+        Ok::<_, std::convert::Infallible>(())
+    })
+    .unwrap_or_else(|never| match never {});
+    edges
+}
+
+fn visit_generator_activation_edges<E>(
+    activation: &GeneratorActivationData,
+    visit: &mut impl FnMut(RawId) -> Result<(), E>,
+) -> Result<(), E> {
+    let vm = &activation.vm;
+
+    visit(RawId::FunctionBytecode(activation.bytecode))?;
+    visit(RawId::Context(vm.callee_realm))?;
+    visit(RawId::Object(vm.current_function))?;
+    visit(RawId::Object(vm.callee_global))?;
     for value in vm
         .stack
         .iter()
@@ -2534,32 +2648,67 @@ pub(super) fn generator_activation_edges(activation: &GeneratorActivationData) -
         .chain(vm.normalized_this.iter())
         .chain(std::iter::once(&vm.new_target))
     {
-        edges.extend(raw_value_edge(value));
+        if let Some(edge) = raw_value_edge(value) {
+            visit(edge)?;
+        }
     }
     for binding in activation.arguments.iter().chain(activation.locals.iter()) {
         match binding {
-            GeneratorFrameBinding::Direct(value) => edges.extend(raw_value_edge(value)),
+            GeneratorFrameBinding::Direct(value) => {
+                if let Some(edge) = raw_value_edge(value) {
+                    visit(edge)?;
+                }
+            }
             GeneratorFrameBinding::PrivateCallable(object) => {
-                edges.push(RawId::Object(*object));
+                visit(RawId::Object(*object))?;
             }
             GeneratorFrameBinding::Captured(var_ref) => {
-                edges.push(RawId::VarRef(*var_ref));
+                visit(RawId::VarRef(*var_ref))?;
             }
             GeneratorFrameBinding::Private(_) | GeneratorFrameBinding::Uninitialized => {}
         }
     }
+    Ok(())
+}
+
+pub(super) fn shape_edges(shape: &Shape) -> Edges {
+    let mut edges = Edges::new();
+    visit_shape_edges(shape, &mut |edge| {
+        edges.push(edge);
+        Ok::<_, std::convert::Infallible>(())
+    })
+    .unwrap_or_else(|never| match never {});
     edges
 }
 
-pub(super) fn shape_edges(shape: &Shape) -> Vec<RawId> {
-    shape
-        .prototype()
-        .map(|prototype| vec![RawId::Object(prototype)])
-        .unwrap_or_default()
+fn visit_shape_edges<E>(
+    shape: &Shape,
+    visit: &mut impl FnMut(RawId) -> Result<(), E>,
+) -> Result<(), E> {
+    if let Some(object) = shape.prototype() {
+        visit(RawId::Object(object))?;
+    }
+    Ok(())
 }
 
 pub(super) fn var_ref_edges(var_ref: &VarRefData) -> Edges {
-    raw_value_edges(&var_ref.value)
+    let mut edges = Edges::new();
+    visit_var_ref_edges(var_ref, &mut |edge| {
+        edges.push(edge);
+        Ok::<_, std::convert::Infallible>(())
+    })
+    .unwrap_or_else(|never| match never {});
+    edges
+}
+
+fn visit_var_ref_edges<E>(
+    var_ref: &VarRefData,
+    visit: &mut impl FnMut(RawId) -> Result<(), E>,
+) -> Result<(), E> {
+    if let Some(edge) = raw_value_edge(&var_ref.value) {
+        visit(edge)?;
+    }
+    Ok(())
 }
 
 /// True when a data payload owns neither a heap edge nor an atom, so a
@@ -2586,17 +2735,32 @@ pub(super) fn property_slot_edges(slot: &PropertySlot) -> Edges {
 /// same get-before-set order and duplicate edges used by transactional retains
 /// and ordered finalization, without constructing another inline buffer.
 fn append_property_slot_edges(edges: &mut Edges, slot: &PropertySlot) {
+    visit_property_slot_edges(slot, &mut |edge| {
+        edges.push(edge);
+        Ok::<_, std::convert::Infallible>(())
+    })
+    .unwrap_or_else(|never| match never {});
+}
+
+fn visit_property_slot_edges<E>(
+    slot: &PropertySlot,
+    visit: &mut impl FnMut(RawId) -> Result<(), E>,
+) -> Result<(), E> {
     match slot {
-        PropertySlot::Data(value) => edges.extend(raw_value_edge(value)),
-        PropertySlot::VarRef(var_ref) => edges.push(RawId::VarRef(*var_ref)),
-        PropertySlot::Accessor { get, set } => edges.extend(
-            get.option()
-                .into_iter()
-                .chain(set.option())
-                .map(RawId::Object),
-        ),
-        PropertySlot::AutoInit(initializer) => edges.push(RawId::Context(initializer.realm())),
+        PropertySlot::Data(value) => {
+            if let Some(edge) = raw_value_edge(value) {
+                visit(edge)?;
+            }
+        }
+        PropertySlot::VarRef(cell) => visit(RawId::VarRef(*cell))?,
+        PropertySlot::Accessor { get, set } => {
+            for object in get.option().into_iter().chain(set.option()) {
+                visit(RawId::Object(object))?;
+            }
+        }
+        PropertySlot::AutoInit(initializer) => visit(RawId::Context(initializer.realm()))?,
     }
+    Ok(())
 }
 
 pub(super) fn raw_value_edges(value: &RawValue) -> Edges {
@@ -2649,163 +2813,246 @@ pub(super) fn context_edges(context: &ContextData) -> Vec<RawId> {
             .saturating_add(context.intrinsics.len())
             .saturating_add(context.initial_shapes.len()),
     );
-    edges.push(RawId::Object(context.object_prototype));
-    edges.push(RawId::Object(context.function_prototype));
-    edges.push(RawId::Object(context.array_prototype));
-    edges.push(RawId::Object(context.iterator_prototype));
-    edges.push(RawId::Object(context.array_iterator_prototype));
-    edges.push(RawId::Object(context.string_iterator_prototype));
-    edges.extend(
-        context
-            .primitive_prototypes
-            .iter()
-            .flatten()
-            .copied()
-            .map(RawId::Object),
-    );
-    edges.extend(context.date_prototype.map(RawId::Object));
+    visit_context_edges(context, &mut |edge| {
+        edges.push(edge);
+        Ok::<_, std::convert::Infallible>(())
+    })
+    .unwrap_or_else(|never| match never {});
+    edges
+}
+
+pub(super) fn visit_context_edges<E>(
+    context: &ContextData,
+    visit: &mut impl FnMut(RawId) -> Result<(), E>,
+) -> Result<(), E> {
+    visit(RawId::Object(context.object_prototype))?;
+    visit(RawId::Object(context.function_prototype))?;
+    visit(RawId::Object(context.array_prototype))?;
+    visit(RawId::Object(context.iterator_prototype))?;
+    visit(RawId::Object(context.array_iterator_prototype))?;
+    visit(RawId::Object(context.string_iterator_prototype))?;
+    for edge in context
+        .primitive_prototypes
+        .iter()
+        .flatten()
+        .copied()
+        .map(RawId::Object)
+    {
+        visit(edge)?;
+    }
+    if let Some(edge) = context.date_prototype.map(RawId::Object) {
+        visit(edge)?;
+    }
     if let Some(regexp) = context.regexp {
-        edges.push(RawId::Object(regexp.prototype));
-        edges.push(RawId::Object(regexp.constructor));
-        edges.push(RawId::Object(regexp.string_iterator_prototype));
-        edges.push(RawId::Shape(regexp.object_shape));
-        edges.extend(regexp.result_shapes.into_iter().flatten().map(RawId::Shape));
+        visit(RawId::Object(regexp.prototype))?;
+        visit(RawId::Object(regexp.constructor))?;
+        visit(RawId::Object(regexp.string_iterator_prototype))?;
+        visit(RawId::Shape(regexp.object_shape))?;
+        for edge in regexp.result_shapes.into_iter().flatten().map(RawId::Shape) {
+            visit(edge)?;
+        }
     }
     if let Some(map) = context.map {
-        edges.push(RawId::Object(map.prototype));
-        edges.push(RawId::Object(map.iterator_prototype));
+        visit(RawId::Object(map.prototype))?;
+        visit(RawId::Object(map.iterator_prototype))?;
     }
     if let Some(set) = context.set {
-        edges.push(RawId::Object(set.prototype));
-        edges.push(RawId::Object(set.iterator_prototype));
+        visit(RawId::Object(set.prototype))?;
+        visit(RawId::Object(set.iterator_prototype))?;
     }
     if let Some(weak_map) = context.weak_map {
-        edges.push(RawId::Object(weak_map.prototype));
+        visit(RawId::Object(weak_map.prototype))?;
     }
     if let Some(weak_set) = context.weak_set {
-        edges.push(RawId::Object(weak_set.prototype));
+        visit(RawId::Object(weak_set.prototype))?;
     }
     if let Some(weak_ref) = context.weak_ref {
-        edges.push(RawId::Object(weak_ref.weak_ref_prototype));
-        edges.push(RawId::Object(weak_ref.finalization_registry_prototype));
+        visit(RawId::Object(weak_ref.weak_ref_prototype))?;
+        visit(RawId::Object(weak_ref.finalization_registry_prototype))?;
     }
     if let Some(array_buffer) = context.array_buffer {
-        edges.push(RawId::Object(array_buffer.prototype));
+        visit(RawId::Object(array_buffer.prototype))?;
     }
     if let Some(shared_array_buffer) = context.shared_array_buffer {
-        edges.push(RawId::Object(shared_array_buffer.prototype));
+        visit(RawId::Object(shared_array_buffer.prototype))?;
     }
     if let Some(data_view) = context.data_view {
-        edges.push(RawId::Object(data_view.prototype));
+        visit(RawId::Object(data_view.prototype))?;
     }
     if let Some(typed_array) = context.typed_array {
-        edges.extend(typed_array.prototypes.into_iter().map(RawId::Object));
+        for edge in typed_array.prototypes.into_iter().map(RawId::Object) {
+            visit(edge)?;
+        }
     }
     if let Some(generator) = context.generator {
-        edges.push(RawId::Object(generator.prototype));
-        edges.push(RawId::Object(generator.function_prototype));
+        visit(RawId::Object(generator.prototype))?;
+        visit(RawId::Object(generator.function_prototype))?;
     }
     if let Some(async_function) = context.async_function {
-        edges.push(RawId::Object(async_function.function_prototype));
+        visit(RawId::Object(async_function.function_prototype))?;
     }
     if let Some(async_generator) = context.async_generator {
-        edges.push(RawId::Object(async_generator.async_iterator_prototype));
-        edges.push(RawId::Object(
+        visit(RawId::Object(async_generator.async_iterator_prototype))?;
+        visit(RawId::Object(
             async_generator.async_from_sync_iterator_prototype,
-        ));
-        edges.push(RawId::Object(async_generator.prototype));
-        edges.push(RawId::Object(async_generator.function_prototype));
+        ))?;
+        visit(RawId::Object(async_generator.prototype))?;
+        visit(RawId::Object(async_generator.function_prototype))?;
     }
     if let Some(promise) = context.promise {
-        edges.push(RawId::Object(promise.prototype));
-        edges.push(RawId::Object(promise.constructor));
+        visit(RawId::Object(promise.prototype))?;
+        visit(RawId::Object(promise.constructor))?;
     }
     if let Some(iterator) = context.iterator {
-        edges.push(RawId::Object(iterator.constructor));
-        edges.push(RawId::Object(iterator.concat_prototype));
-        edges.push(RawId::Object(iterator.helper_prototype));
-        edges.push(RawId::Object(iterator.wrap_prototype));
+        visit(RawId::Object(iterator.constructor))?;
+        visit(RawId::Object(iterator.concat_prototype))?;
+        visit(RawId::Object(iterator.helper_prototype))?;
+        visit(RawId::Object(iterator.wrap_prototype))?;
     }
-    edges.extend(context.function_constructor.map(RawId::Object));
-    edges.extend(context.array_constructor.map(RawId::Object));
-    edges.extend(context.array_prototype_values.map(RawId::Object));
-    edges.extend(context.throw_type_error.map(RawId::Object));
-    edges.extend(context.eval_function.map(RawId::Object));
-    edges.push(RawId::Object(context.global_object));
-    edges.push(RawId::Object(context.global_var_object));
-    edges.extend(context.error_prototype.map(RawId::Object));
-    edges.extend(
-        context
-            .native_error_prototypes
-            .iter()
-            .flatten()
-            .copied()
-            .map(RawId::Object),
-    );
-    edges.extend(context.global_objects.iter().copied().map(RawId::Object));
+    if let Some(edge) = context.function_constructor.map(RawId::Object) {
+        visit(edge)?;
+    }
+    if let Some(edge) = context.array_constructor.map(RawId::Object) {
+        visit(edge)?;
+    }
+    if let Some(edge) = context.array_prototype_values.map(RawId::Object) {
+        visit(edge)?;
+    }
+    if let Some(edge) = context.throw_type_error.map(RawId::Object) {
+        visit(edge)?;
+    }
+    if let Some(edge) = context.eval_function.map(RawId::Object) {
+        visit(edge)?;
+    }
+    visit(RawId::Object(context.global_object))?;
+    visit(RawId::Object(context.global_var_object))?;
+    if let Some(edge) = context.error_prototype.map(RawId::Object) {
+        visit(edge)?;
+    }
+    for edge in context
+        .native_error_prototypes
+        .iter()
+        .flatten()
+        .copied()
+        .map(RawId::Object)
+    {
+        visit(edge)?;
+    }
+    for edge in context.global_objects.iter().copied().map(RawId::Object) {
+        visit(edge)?;
+    }
     for value in &context.intrinsics {
-        edges.extend(raw_value_edge(value));
+        if let Some(edge) = raw_value_edge(value) {
+            visit(edge)?;
+        }
     }
-    edges.extend(context.initial_shapes.iter().copied().map(RawId::Shape));
-    edges.extend(
-        context
-            .regexp_group_shapes
-            .values()
-            .copied()
-            .map(RawId::Shape),
-    );
+    for edge in context.initial_shapes.iter().copied().map(RawId::Shape) {
+        visit(edge)?;
+    }
+    for edge in context
+        .regexp_group_shapes
+        .values()
+        .copied()
+        .map(RawId::Shape)
+    {
+        visit(edge)?;
+    }
     for record in context.loaded_modules.records.iter().flatten() {
-        edges.extend(raw_module_record_edges(record));
+        visit_raw_module_record_edges(record, visit)?;
     }
-    edges
+    Ok(())
 }
 
 pub(super) fn raw_module_record_edges(record: &RawModuleRecord) -> Vec<RawId> {
     let mut edges = Vec::new();
+    visit_raw_module_record_edges(record, &mut |edge| {
+        edges.push(edge);
+        Ok::<_, std::convert::Infallible>(())
+    })
+    .unwrap_or_else(|never| match never {});
+    edges
+}
+
+fn visit_raw_module_record_edges<E>(
+    record: &RawModuleRecord,
+    visit: &mut impl FnMut(RawId) -> Result<(), E>,
+) -> Result<(), E> {
     if let Some(RawModuleLinkRealm::Other(realm)) = record.link_realm {
-        edges.push(RawId::Context(realm));
+        visit(RawId::Context(realm))?;
     }
     match &record.body {
         RawModuleRecordBody::Parsing | RawModuleRecordBody::Aborted => {}
         RawModuleRecordBody::SourceText { function } => {
-            edges.push(RawId::FunctionBytecode(*function));
+            visit(RawId::FunctionBytecode(*function))?;
         }
         RawModuleRecordBody::Json { default_value } => {
-            edges.extend(raw_value_edge(default_value));
+            if let Some(edge) = raw_value_edge(default_value) {
+                visit(edge)?;
+            }
         }
     }
-    edges.extend(record.import_meta.map(RawId::Object));
+    if let Some(edge) = record.import_meta.map(RawId::Object) {
+        visit(edge)?;
+    }
     if let Some(instance) = &record.instance {
-        edges.extend(instance.slots.iter().flatten().copied().map(RawId::VarRef));
-        edges.extend(instance.callable.map(RawId::Object));
+        for edge in instance.slots.iter().flatten().copied().map(RawId::VarRef) {
+            visit(edge)?;
+        }
+        if let Some(edge) = instance.callable.map(RawId::Object) {
+            visit(edge)?;
+        }
     }
     match record.namespace {
         RawModuleNamespaceState::Empty => {}
         RawModuleNamespaceState::Building(namespace)
-        | RawModuleNamespaceState::Ready(namespace) => edges.push(RawId::Object(namespace)),
+        | RawModuleNamespaceState::Ready(namespace) => visit(RawId::Object(namespace))?,
     }
     if let RawModuleEvaluationState::Errored(exception) = &record.evaluation {
-        edges.extend(raw_value_edge(exception));
+        if let Some(edge) = raw_value_edge(exception) {
+            visit(edge)?;
+        }
     }
-    edges.extend(record.evaluation_promise.map(RawId::Object));
-    edges.extend(record.evaluation_resolve.map(RawId::Object));
-    edges.extend(record.evaluation_reject.map(RawId::Object));
-    edges
+    if let Some(edge) = record.evaluation_promise.map(RawId::Object) {
+        visit(edge)?;
+    }
+    if let Some(edge) = record.evaluation_resolve.map(RawId::Object) {
+        visit(edge)?;
+    }
+    if let Some(edge) = record.evaluation_reject.map(RawId::Object) {
+        visit(edge)?;
+    }
+    Ok(())
 }
 
 pub(super) fn function_bytecode_edges(bytecode: &FunctionBytecodeData) -> Vec<RawId> {
     let mut edges = Vec::with_capacity(bytecode.constants.len().saturating_add(1));
+    visit_function_bytecode_edges(bytecode, &mut |edge| {
+        edges.push(edge);
+        Ok::<_, std::convert::Infallible>(())
+    })
+    .unwrap_or_else(|never| match never {});
+    edges
+}
+
+pub(super) fn visit_function_bytecode_edges<E>(
+    bytecode: &FunctionBytecodeData,
+    visit: &mut impl FnMut(RawId) -> Result<(), E>,
+) -> Result<(), E> {
     for constant in bytecode.constants.iter() {
         match constant {
-            BytecodeConstant::Value(value) => edges.extend(raw_value_edge(value)),
+            BytecodeConstant::Value(value) => {
+                if let Some(edge) = raw_value_edge(value) {
+                    visit(edge)?;
+                }
+            }
             BytecodeConstant::RegExp { .. } => {}
             BytecodeConstant::Function(function) => {
-                edges.push(RawId::FunctionBytecode(*function));
+                visit(RawId::FunctionBytecode(*function))?;
             }
         }
     }
-    edges.push(RawId::Context(bytecode.realm));
-    edges
+    visit(RawId::Context(bytecode.realm))?;
+    Ok(())
 }
 
 pub(super) fn property_slot_atoms(slot: &PropertySlot) -> impl Iterator<Item = AtomIdx> + '_ {
@@ -3505,5 +3752,85 @@ mod immortal_release_tests {
 
         assert_eq!(heap.try_release_leaf_reference(raw).unwrap(), Some(true));
         assert!(heap.bigint(id).is_err());
+    }
+}
+
+#[cfg(test)]
+mod canonical_edge_tests {
+    use super::*;
+    use crate::engine::heap::AutoInitProperty;
+
+    #[test]
+    fn canonical_edges_preserve_order_duplicate_owners_and_hidden_function_roots() {
+        let object = ObjectId {
+            index: 7,
+            generation: 3,
+        };
+        let shape = ShapeId {
+            index: 2,
+            generation: 5,
+        };
+        let realm = ContextId {
+            index: 7,
+            generation: 3,
+        };
+        let bytecode = FunctionBytecodeId {
+            index: 6,
+            generation: 2,
+        };
+        let cell = VarRefId {
+            index: 4,
+            generation: 2,
+        };
+        let mut function = ObjectData::ordinary(
+            shape,
+            vec![
+                PropertySlot::Data(RawValue::Object(object)),
+                PropertySlot::accessor(Some(object), Some(object)),
+                PropertySlot::auto_init(AutoInitProperty::Math { realm }),
+            ],
+        );
+        function.payload = ObjectPayload::BytecodeFunction {
+            authentication: std::cell::RefCell::new(None),
+            bytecode,
+            home_object: Some(object),
+            class_instance_initializer: Some(object),
+            class_static_initializer_started: false,
+            closure_slots: std::rc::Rc::from([cell, cell]),
+        };
+        let node = NodeData::Object(function);
+        let expected = [
+            RawId::Object(object),
+            RawId::Object(object),
+            RawId::Object(object),
+            RawId::Context(realm),
+            RawId::Shape(shape),
+            RawId::Object(object),
+            RawId::Object(object),
+            RawId::FunctionBytecode(bytecode),
+            RawId::VarRef(cell),
+            RawId::VarRef(cell),
+        ];
+        let mut actual = Vec::new();
+        node.visit_edges(&mut |edge| {
+            actual.push(edge);
+            Ok::<_, ()>(())
+        })
+        .unwrap();
+        assert_eq!(actual, expected);
+        // Stop immediately on an error, preserving the already visited prefix.
+        for stop in 1..=expected.len() {
+            let mut prefix = Vec::new();
+            let error = node.visit_edges(&mut |edge| {
+                prefix.push(edge);
+                if prefix.len() == stop {
+                    Err("stop")
+                } else {
+                    Ok(())
+                }
+            });
+            assert_eq!(error, Err("stop"));
+            assert_eq!(prefix, expected[..stop]);
+        }
     }
 }

@@ -107,6 +107,7 @@ impl ExecutionTurn {
         if depth == 0 {
             runtime.0.state.borrow_mut().clear_kept_objects()?;
             runtime.drain_deferred_references()?;
+            runtime.collect_if_requested()?;
         }
         Ok(())
     }

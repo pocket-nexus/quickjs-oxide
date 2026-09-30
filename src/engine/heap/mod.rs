@@ -205,6 +205,14 @@ impl NodeData {
         }
     }
 
+    fn visit_edges<E>(&self, visit: &mut impl FnMut(RawId) -> Result<(), E>) -> Result<(), E> {
+        match self {
+            Self::Object(object) => gc::visit_object_edges(object, visit),
+            Self::Context(context) => gc::visit_context_edges(context, visit),
+            Self::FunctionBytecode(bytecode) => gc::visit_function_bytecode_edges(bytecode, visit),
+        }
+    }
+
     fn edges(&self) -> Edges {
         match self {
             Self::Object(object) => object_edges(object),
@@ -493,3 +501,6 @@ mod suspension_storage;
 
 pub(crate) mod gc_pressure;
 pub use gc_pressure::GcPolicy;
+
+#[cfg(test)]
+mod gc_safepoint_tests;

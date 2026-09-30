@@ -28,6 +28,9 @@ pub(super) fn run(
     #[cfg(feature = "profiling")]
     let mut entered = false;
     loop {
+        runtime
+            .collect_if_requested()
+            .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
         #[cfg(feature = "profiling")]
         {
             if entered {
