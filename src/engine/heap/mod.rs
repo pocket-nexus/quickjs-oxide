@@ -330,6 +330,7 @@ pub struct Heap {
     leaf_alloc_sites: Vec<Option<gc::AllocSite>>,
     #[cfg(feature = "profiling")]
     collection_scratch_peak_bytes: usize,
+    gc_pressure: Option<std::rc::Rc<gc_pressure::GcPressure>>,
 }
 
 impl Default for Heap {
@@ -489,3 +490,6 @@ mod promise_storage;
 mod iterator_storage;
 
 mod suspension_storage;
+
+pub(crate) mod gc_pressure;
+pub use gc_pressure::GcPolicy;

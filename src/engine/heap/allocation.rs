@@ -21,6 +21,7 @@ impl Heap {
             self.object_mut(prototype)?.used_as_prototype = true;
         }
         self.shapes.publish(id, shape)?;
+        self.record_cycle_allocation();
         Ok(id)
     }
 
@@ -1373,6 +1374,7 @@ impl Heap {
         self.var_refs
             .publish(id, var_ref)
             .expect("fresh VarRef reservation must publish exactly once");
+        self.record_cycle_allocation();
         Ok(id)
     }
 
@@ -1387,6 +1389,7 @@ impl Heap {
         }
 
         self.var_refs.publish(id, var_ref)?;
+        self.record_cycle_allocation();
         Ok(id)
     }
 }

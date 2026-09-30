@@ -63,6 +63,7 @@ pub(crate) struct RuntimeInner {
     pub(crate) recursion_limit: Cell<usize>,
     pub(crate) next_context_id: Cell<u64>,
     pub(crate) domain_id: u64,
+    pub(crate) gc_pressure: Rc<super::gc_pressure::GcPressure>,
 }
 
 #[derive(Clone, Copy, Debug)]

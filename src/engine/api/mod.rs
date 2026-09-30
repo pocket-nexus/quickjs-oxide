@@ -12,7 +12,7 @@ pub use crate::engine::code::rooted::FunctionBytecodeRef;
 pub use crate::engine::compiler::CompileOptions;
 
 pub use crate::engine::code::module::{ModuleImportAttribute, ModuleImportAttributes};
-pub use crate::engine::heap::{ContextId, GcStats, HeapCounts, PromiseState};
+pub use crate::engine::heap::{ContextId, GcPolicy, GcStats, HeapCounts, PromiseState};
 pub use crate::engine::host::HostServices;
 pub use crate::engine::jobs::{PendingJobError, PendingJobOutcome};
 pub use crate::engine::modules::{
