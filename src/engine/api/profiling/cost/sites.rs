@@ -250,6 +250,7 @@ pub(crate) fn record_execution_static(runtime: &Runtime, executable: &PublishedF
                 | Opcode::GetField2Cached
                 | Opcode::BorrowedFieldLocal
                 | Opcode::BorrowedFieldArg
+                | Opcode::BorrowedFieldThis
                 | Opcode::FieldAccSetDrop
         ));
         cost.dense_array_read_sites += u64::from(matches!(

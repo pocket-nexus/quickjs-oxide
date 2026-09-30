@@ -24,6 +24,7 @@ pub(crate) enum NamedDataSelection {
     /// The consumer must acquire owning getter/receiver edges before handoff.
     Accessor(ObjectId),
     ContinueLookup,
+    #[cfg(test)]
     NeedsObservation,
 }
 
