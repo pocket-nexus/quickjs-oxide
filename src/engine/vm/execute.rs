@@ -1524,6 +1524,19 @@ pub(super) fn execute_frame(
                     });
                     continue;
                 }
+                if matches!(comparison, Opcode::Eq | Opcode::Neq) {
+                    if let Some(equal) =
+                        cursor.with_slots(|slots| slots.nullish_equality(runtime))?
+                    {
+                        let decision = equal != (comparison == Opcode::Neq);
+                        cursor.advance(if decision == (descriptor & 0x400 != 0) {
+                            decoded.operand(1) as usize
+                        } else {
+                            next + 2
+                        });
+                        continue;
+                    }
+                }
                 let completed = cursor.with_slots(|slots| {
                     slots.binary_number(|left, right| binary_number_result(comparison, left, right))
                 })?;
@@ -1979,6 +1992,17 @@ pub(super) fn execute_frame(
                     })
                 })?;
                 if !completed {
+                    if matches!(decoded.opcode, Opcode::Eq | Opcode::Neq) {
+                        if let Some(equal) =
+                            cursor.with_slots(|slots| slots.nullish_equality(runtime))?
+                        {
+                            cursor.commit_push(JsValue::Bool(
+                                equal != (decoded.opcode == Opcode::Neq),
+                            ))?;
+                            cursor.advance(next);
+                            continue;
+                        }
+                    }
                     if matches!(decoded.opcode, Opcode::StrictEq | Opcode::StrictNeq) {
                         if !frame.active_frame.is_materialized() {
                             return Ok(VmAction::StrictEquality(
