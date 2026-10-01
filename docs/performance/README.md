@@ -4,18 +4,16 @@
 
 ## 文档入口
 
-- [PR #73 根因研究](receipts/pr73-root-causes-2026-09-30/README.md)：调用、布局生命周期、属性缓存和阶段测量。
-
 - [架构](../architecture.md)：模块责任、发布和执行边界。
 - [现行执行路径](roadmap.md)：数值操作、普通写入、命名属性读取和 continuation。
 - [执行不变量](principles.md)：所有权、借用、位置与可观察操作。
 - [类型化存储](typed-arenas.md)：捕获变量、形状和回收。
 - [测量方法](measurement.md)：构建身份、固定工作量、profile 与资源成本。
-- [属性读取测量](current-measurement.md)：普通属性读取路径的配对样本和诊断计数。
-- [字符串、数组写入与 native 调用测量](receipts/three-directions-2026-09-29/README.md)：三项优化的独立及集成时间、机制证据和完整 Test262 验收。
-- [V8 六项 Profile 与并行优化验收](receipts/v8-six-directions-2026-09-29/README.md)：五个独立候选、四项保留改动、原版 Score、进程时间、资源成本和完整语义回归。
+- [当前 V8 v7 测量摘要](current-measurement.md)：main 与 PR #84 的八项原版 Score、combined 和配对变化区间。
 - [诊断工具](../profiling.md)与 [benchmark 工具](../../scripts/benchmark/README.md)：可运行的命令和输出契约。
 
 性能结论以受测源码、二进制、负载和原始样本为单位。改动执行路径时，同时核对语义、局部操作成本、完整程序时间、编译成本和内存生命周期。
 
 优化先明确目标属性、场景、硬约束及允许的交换，再根据 Profile 或确定的资源问题选择机制。现有接口支持时直接改实现；只有契约确实阻碍目标机制才改类型和职责。分别验证机制、目标结果与完整代价，不把指令数下降等同于提速。
+
+原始采样、日志、profile 和实验归档写入 `target/` 或仓库外；版本库只维护现行设计、测量方法及精简结果摘要。自动循环回收的预算与执行边界见 [GC 策略](../cycle-collection.md)。

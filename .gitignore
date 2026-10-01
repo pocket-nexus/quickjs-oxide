@@ -4,3 +4,8 @@
 *.profdata
 __pycache__/
 /docs/reports/primitive-vm-s09-fair-three-rounds.json
+
+# Raw performance evidence belongs outside the versioned source tree.
+/docs/performance/receipts/
+/perf.data
+/perf.data.*

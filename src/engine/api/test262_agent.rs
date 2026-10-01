@@ -1383,448 +1383,67 @@ $262.agent.start(`
     }
 
     #[test]
-    fn zz_probe_bigint_literal() {
+    fn imported_shared_buffer_survives_rust_call_arguments_and_receivers() {
+        for (source, receiver, expected) in [
+            (
+                "(function(sab, value){ return sab.byteLength + value; })",
+                false,
+                5,
+            ),
+            ("(function(){ return 1; })", false, 1),
+            ("(function(sab){ return sab.byteLength; })", false, 4),
+            (
+                "(function(sab){ return Object.getPrototypeOf(sab) ? 1 : 0; })",
+                false,
+                1,
+            ),
+            ("(function(){ return this.byteLength; })", true, 4),
+            (
+                "(function(sab){ return Object.keys(sab).length; })",
+                false,
+                0,
+            ),
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            let shared = context
+                .import_shared_array_buffer(SharedBufferHandle::new(4, None).unwrap())
+                .unwrap();
+            let function = context.eval(source).unwrap();
+            let callable = runtime.callable_from_value(function).unwrap();
+            let this = if receiver {
+                Value::Object(shared.clone())
+            } else {
+                Value::Undefined
+            };
+            assert_eq!(
+                context
+                    .call(&callable, this, &[Value::Object(shared), Value::Int(1)])
+                    .unwrap(),
+                Value::Int(expected),
+                "{source}"
+            );
+            drop(callable);
+            drop(context);
+            runtime.run_gc().unwrap();
+        }
         let runtime = Runtime::new();
         let mut context = runtime.new_context();
-        drop(context.eval("var x = 12345678901234567890n; 'ok'").unwrap());
-    }
-
-    #[test]
-    fn zz_probe_string_literal() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        drop(context.eval("var x = 'abcdefghij'; 'ok'").unwrap());
-    }
-
-    #[test]
-    fn zz_probe_agent_install_only() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        let session = Test262AgentSession::new(Runtime::new);
-        context.install_test262_host_with_agent(&session).unwrap();
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_agent_own_keys() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        let session = Test262AgentSession::new(Runtime::new);
-        context.install_test262_host_with_agent(&session).unwrap();
-        eval_string(&mut context, "Reflect.ownKeys($262.agent).length; 'ok'");
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_agent_descriptor_262() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        let session = Test262AgentSession::new(Runtime::new);
-        context.install_test262_host_with_agent(&session).unwrap();
-        eval_string(
-            &mut context,
-            "Object.getOwnPropertyDescriptor($262, 'agent') && 'ok'",
-        );
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_agent_descriptor_method() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        let session = Test262AgentSession::new(Runtime::new);
-        context.install_test262_host_with_agent(&session).unwrap();
-        eval_string(
-            &mut context,
-            "Object.getOwnPropertyDescriptor($262.agent, 'start') && 'ok'",
-        );
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_agent_descriptor_name() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        let session = Test262AgentSession::new(Runtime::new);
-        context.install_test262_host_with_agent(&session).unwrap();
-        eval_string(
-            &mut context,
-            "Object.getOwnPropertyDescriptor($262.agent.start, 'name') && 'ok'",
-        );
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_plain_own_keys() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        eval_string(&mut context, "Reflect.ownKeys({a:1}).length + ''");
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_plain_gopd() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        eval_string(
-            &mut context,
-            "Object.getOwnPropertyDescriptor({a:1}, 'a') && 'ok'",
-        );
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_plain_keys() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        eval_string(&mut context, "Object.keys({a:1}).length + ''");
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_gopd_discard() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        eval_string(
-            &mut context,
-            "Object.getOwnPropertyDescriptor({a:1}, 'a'); 'ok'",
-        );
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_gopd_missing() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        eval_string(
-            &mut context,
-            "Object.getOwnPropertyDescriptor({a:1}, 'b'); 'ok'",
-        );
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_reflect_get() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        eval_string(&mut context, "Reflect.get({a:1}, 'a'); 'ok'");
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_has_own() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        eval_string(&mut context, "Object.hasOwn({a:1}, 'a'); 'ok'");
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_reflect_has() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        eval_string(&mut context, "Reflect.has({a:1}, 'a'); 'ok'");
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_reflect_get_receiver() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        eval_string(&mut context, "Reflect.get({a:1}, 'a', {}); 'ok'");
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_object_define_property() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        eval_string(
-            &mut context,
-            "Object.defineProperty({}, 'a', {value:1}); 'ok'",
-        );
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_call_with_object_argument() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        let handle = SharedBufferHandle::new(4, None).unwrap();
-        let shared = context.import_shared_array_buffer(handle).unwrap();
-        let function = context
-            .eval("(function(sab, value){ return sab.byteLength + value; })")
+        let shared = context
+            .import_shared_array_buffer(SharedBufferHandle::new(4, None).unwrap())
             .unwrap();
-        let callable = runtime.callable_from_value(function).unwrap();
-        drop(
-            context
-                .call(
-                    &callable,
-                    Value::Undefined,
-                    &[Value::Object(shared), Value::Int(1)],
-                )
-                .unwrap(),
-        );
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_call_object_arg_ignored() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        let handle = SharedBufferHandle::new(4, None).unwrap();
-        let shared = context.import_shared_array_buffer(handle).unwrap();
-        let function = context.eval("(function(){ return 1; })").unwrap();
-        let callable = runtime.callable_from_value(function).unwrap();
-        drop(
-            context
-                .call(&callable, Value::Undefined, &[Value::Object(shared)])
-                .unwrap(),
-        );
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_call_object_arg_returned() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        let handle = SharedBufferHandle::new(4, None).unwrap();
-        let shared = context.import_shared_array_buffer(handle).unwrap();
         let function = context.eval("(function(sab){ return sab; })").unwrap();
         let callable = runtime.callable_from_value(function).unwrap();
-        let result = context
-            .call(&callable, Value::Undefined, &[Value::Object(shared)])
+        let returned = context
+            .call(
+                &callable,
+                Value::Undefined,
+                &[Value::Object(shared.clone())],
+            )
             .unwrap();
-        drop(result);
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_call_object_this() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        let handle = SharedBufferHandle::new(4, None).unwrap();
-        let shared = context.import_shared_array_buffer(handle).unwrap();
-        let function = context.eval("(function(){ return 1; })").unwrap();
-        let callable = runtime.callable_from_value(function).unwrap();
-        drop(context.call(&callable, Value::Object(shared), &[]).unwrap());
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_call_object_arg_native() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        let handle = SharedBufferHandle::new(4, None).unwrap();
-        let shared = context.import_shared_array_buffer(handle).unwrap();
-        let function = context.eval("Object.keys").unwrap();
-        let callable = runtime.callable_from_value(function).unwrap();
-        drop(
-            context
-                .call(&callable, Value::Undefined, &[Value::Object(shared)])
-                .unwrap(),
-        );
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_call_object_arg_byte_length() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        let handle = SharedBufferHandle::new(4, None).unwrap();
-        let shared = context.import_shared_array_buffer(handle).unwrap();
-        let function = context
-            .eval("(function(sab){ return sab.byteLength; })")
-            .unwrap();
-        let callable = runtime.callable_from_value(function).unwrap();
-        drop(
-            context
-                .call(&callable, Value::Undefined, &[Value::Object(shared)])
-                .unwrap(),
-        );
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_call_object_arg_get_prototype() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        let handle = SharedBufferHandle::new(4, None).unwrap();
-        let shared = context.import_shared_array_buffer(handle).unwrap();
-        let function = context
-            .eval("(function(sab){ return Object.getPrototypeOf(sab) ? 1 : 0; })")
-            .unwrap();
-        let callable = runtime.callable_from_value(function).unwrap();
-        drop(
-            context
-                .call(&callable, Value::Undefined, &[Value::Object(shared)])
-                .unwrap(),
-        );
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_promise_then() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        eval_string(&mut context, "Promise.resolve().then(function () {}); 'ok'");
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_promise_ctor_direct() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        eval_string(&mut context, "new Promise(function (r) { r(); }); 'ok'");
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_promise_species_undefined() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        eval_string(
-            &mut context,
-            "var p = Promise.resolve(); Object.defineProperty(p, 'constructor', {value: undefined}); p.then(function () {}); 'ok'",
-        );
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_promise_then_species_ctor() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        eval_string(
-            &mut context,
-            "class P extends Promise {}; var p = new P(function (r) { r(); }); p.then(function () {}); 'ok'",
-        );
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_class_ctor_direct() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        eval_string(
-            &mut context,
-            "class P extends Promise {}; new P(function (r) { r(); }); 'ok'",
-        );
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_class_reflect_construct() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        eval_string(
-            &mut context,
-            "class P extends Promise {}; Reflect.construct(P, [function (r) { r(); }], P); 'ok'",
-        );
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_promise_species_read_only() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        eval_string(
-            &mut context,
-            "var p = Promise.resolve(); Object.defineProperty(p, 'constructor', {value: {get [Symbol.species]() { return undefined; }}}); p.then(function () {}); 'ok'",
-        );
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_promise_resolve() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        eval_string(&mut context, "Promise.resolve(); 'ok'");
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_ab_construct() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        eval_string(&mut context, "var b = new ArrayBuffer(4); 'ok'");
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_ab_getter_call() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        eval_string(
-            &mut context,
-            "var b = new ArrayBuffer(4); var g = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'byteLength').get; var n = g.call(b); 'ok'",
-        );
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_shared_byte_length() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        eval_string(
-            &mut context,
-            "var b = new SharedArrayBuffer(4); var n = b.byteLength; 'ok'",
-        );
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_array_buffer_byte_length() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        eval_string(
-            &mut context,
-            "var b = new ArrayBuffer(4); var n = b.byteLength; 'ok'",
-        );
-        drop(context);
-        runtime.run_gc().unwrap();
-    }
-
-    #[test]
-    fn zz_probe_shared_own_property_descriptor() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        eval_string(
-            &mut context,
-            "var b = new SharedArrayBuffer(4); Object.getOwnPropertyDescriptor(SharedArrayBuffer.prototype, 'byteLength').get.call(b); 'ok'",
-        );
+        assert_eq!(returned, Value::Object(shared));
+        drop(returned);
+        drop(callable);
         drop(context);
         runtime.run_gc().unwrap();
     }
