@@ -1,6 +1,5 @@
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
-use crate::engine::atom::AtomIdx;
 
 use crate::engine::code::function::metadata::{ClosureVariable, ClosureVariableKind};
 use crate::engine::heap::{HeapError, RawValue, VarRefData, VarRefId};
@@ -160,6 +159,7 @@ impl Runtime {
     /// Root a fresh non-immediate cell value without entering an operation or
     /// draining either release queue. A run-window caller must use its normal
     /// boundary when this guarded read declines.
+    #[cfg(test)]
     pub(crate) fn try_read_owned_var_ref(
         &self,
         root: &impl crate::engine::heap::roots::VarRefHandle,
@@ -197,58 +197,6 @@ impl Runtime {
         )?))
     }
 
-    /// Trusted shared-borrow read of a proven live captured cell.
-    ///
-    /// Handles the object, string, BigInt and symbol cases without a mutable
-    /// state borrow: node payloads clone their inner `Rc`, objects take the
-    /// trusted retain fast path, and symbols retain through the atom table's
-    /// shared-borrow `Cell` counter.  A declined read claims no owner and
-    /// leaves the cell unchanged.
-    #[inline]
-    pub(crate) fn read_owned_cell_fast(
-        &self,
-        root: &impl crate::engine::heap::roots::VarRefHandle,
-    ) -> Option<JsValue> {
-        if !root.belongs_to(self) || self.0.deferred_references.has_pending() {
-            return None;
-        }
-        let state = self.0.state.try_borrow().ok()?;
-        if !state.heap.zero_queue.is_empty() {
-            return None;
-        }
-        let cell = state.heap.var_ref_fast(root.id());
-        if cell.kind.is_private() {
-            return None;
-        }
-        match &cell.value {
-            RawValue::Object(object) => {
-                state.heap.retain_object_fast(*object);
-                Some(JsValue::Object(*object))
-            }
-            RawValue::String(id) => {
-                state.heap.retain_string_shared(*id).ok()?;
-                Some(JsValue::String(*id))
-            }
-            RawValue::ShortBigInt(value) => Some(JsValue::ShortBigInt(*value)),
-            RawValue::BigInt(id) => {
-                state.heap.retain_bigint_shared(*id).ok()?;
-                Some(JsValue::BigInt(*id))
-            }
-            RawValue::Symbol(index) => {
-                state.atoms.retain_index_shared(*index).ok()?;
-                Some(JsValue::Symbol(*index))
-            }
-            RawValue::Undefined
-            | RawValue::Null
-            | RawValue::Bool(_)
-            | RawValue::Int(_)
-            | RawValue::Float(_)
-            | RawValue::Private(_)
-            | RawValue::Uninitialized
-            | RawValue::Exception => None,
-        }
-    }
-
     /// Trusted borrowed read of a proven live captured cell: return the cell's
     /// object handle without creating any owner edge. The cell's own edge
     /// keeps the object alive, so the handle stays valid until user JS runs,
@@ -257,6 +205,7 @@ impl Runtime {
     /// exactly like the owned fast read so the canonical operation path keeps
     /// draining it promptly.
     #[inline]
+    #[cfg(test)]
     pub(crate) fn borrow_cell_object_fast(
         &self,
         root: &impl crate::engine::heap::roots::VarRefHandle,
@@ -276,100 +225,6 @@ impl Runtime {
             RawValue::Object(object) => Some(*object),
             _ => None,
         }
-    }
-
-    /// Guarded global own-data read for an unresolved, non-lexical binding.
-    /// No lookup fact escapes this borrow, and autoinit/accessor/prototype
-    /// cases retain the normal environment driver. As with owned cell reads,
-    /// pending cleanup declines before any retain or public owner is created.
-    pub(crate) fn try_read_unresolved_global(
-        &self,
-        root: &impl VarRefHandle,
-        realm: crate::engine::heap::ContextId,
-        atom: crate::engine::atom::Atom,
-    ) -> Result<Option<JsValue>, RuntimeError> {
-        use crate::engine::heap::{ObjectKind, ObjectPayload, PropertySlot};
-        use crate::engine::object::shape::PropertyStorageKind;
-        if !root.belongs_to(self) || self.0.deferred_references.has_pending() {
-            return Ok(None);
-        }
-        let Ok(mut state) = self.0.state.try_borrow_mut() else {
-            return Ok(None);
-        };
-        if !state.heap.zero_queue.is_empty() {
-            return Ok(None);
-        }
-        let cell = state.heap.var_ref(root.id())?;
-        if cell.is_lexical
-            || cell.kind.is_private()
-            || !matches!(cell.value, RawValue::Uninitialized)
-        {
-            return Ok(None);
-        }
-        let global = state.heap.context(realm)?.global_object;
-        let object = state.heap.object(global)?;
-        if !matches!(
-            (object.kind, &object.payload),
-            (ObjectKind::GlobalObject, ObjectPayload::GlobalObject { .. })
-        ) {
-            return Ok(None);
-        }
-        let shape = state.heap.shape(object.shape)?;
-        let revision = shape.layout_revision();
-        let cached = cell.global_location.get().filter(|entry| {
-            entry.realm == realm
-                && entry.atom == atom
-                && entry.shape == object.shape
-                && entry.revision == revision
-                && revision != u64::MAX
-        });
-        let index = if let Some(entry) = cached {
-            entry.index
-        } else {
-            let Some(index) = shape.find(AtomIdx::from_raw(atom.raw())) else {
-                cell.global_location.set(None);
-                return Ok(None);
-            };
-            cell.global_location
-                .set(Some(super::binding_records::GlobalLocation {
-                    realm,
-                    atom,
-                    shape: object.shape,
-                    revision,
-                    index,
-                }));
-            index
-        };
-        let index = index as usize;
-        if shape.entries()[index].flags.storage != PropertyStorageKind::Data {
-            return Ok(None);
-        }
-        let raw = match object.slots.get(index) {
-            Some(PropertySlot::Data(raw)) => raw,
-            Some(PropertySlot::VarRef(id)) => &state.heap.var_ref(*id)?.value,
-            _ => return Ok(None),
-        };
-        if !matches!(
-            raw,
-            RawValue::Undefined
-                | RawValue::Null
-                | RawValue::Bool(_)
-                | RawValue::Int(_)
-                | RawValue::Float(_)
-                | RawValue::ShortBigInt(_)
-                | RawValue::String(_)
-                | RawValue::Object(_)
-                | RawValue::Symbol(_)
-                | RawValue::BigInt(_)
-        ) {
-            return Ok(None);
-        }
-        let raw = raw.clone();
-        state.retain_raw_root(raw.clone())?;
-        drop(state);
-        Ok(Some(JsValue::from_raw(raw).ok_or(
-            RuntimeError::Invariant("internal value sentinel occupied a global binding cell"),
-        )?))
     }
 
     pub(crate) fn raw_var_ref_value(
@@ -591,69 +446,6 @@ impl Drop for VarRefRoot {
 mod owned_cell_tests {
     use super::*;
     use crate::engine::heap::RawId;
-
-    #[test]
-    fn unresolved_global_leaf_observes_replacement_and_declines_accessors_and_tdz() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        drop(
-            context
-                .eval("globalThis.nativeLeaf = { value: 1 }")
-                .unwrap(),
-        );
-        let atom = runtime
-            .0
-            .state
-            .borrow_mut()
-            .atoms
-            .intern("nativeLeaf")
-            .unwrap();
-        let root = runtime.new_uninitialized_var_ref().unwrap();
-        let first = runtime
-            .try_read_unresolved_global(&root, context.realm, atom)
-            .unwrap()
-            .unwrap();
-        assert!(matches!(&first, JsValue::Object(_)));
-        runtime.release_jsvalue(first).unwrap();
-        drop(context.eval("nativeLeaf = 7").unwrap());
-        assert_eq!(
-            runtime
-                .try_read_unresolved_global(&root, context.realm, atom)
-                .unwrap(),
-            Some(JsValue::Int(7))
-        );
-        drop(context.eval("Object.defineProperty(globalThis, 'nativeLeaf', { get() { throw 99; }, configurable: true })").unwrap());
-        assert!(
-            runtime
-                .try_read_unresolved_global(&root, context.realm, atom)
-                .unwrap()
-                .is_none()
-        );
-        drop(context.eval("delete globalThis.nativeLeaf").unwrap());
-        assert!(
-            runtime
-                .try_read_unresolved_global(&root, context.realm, atom)
-                .unwrap()
-                .is_none()
-        );
-        let lexical = runtime
-            .new_uninitialized_captured_var_ref(true, false, ClosureVariableKind::Normal)
-            .unwrap();
-        assert!(
-            runtime
-                .try_read_unresolved_global(&lexical, context.realm, atom)
-                .unwrap()
-                .is_none()
-        );
-        let foreign = Runtime::new();
-        assert!(
-            foreign
-                .try_read_unresolved_global(&root, context.realm, atom)
-                .unwrap()
-                .is_none()
-        );
-        runtime.0.state.borrow_mut().atoms.release(atom).unwrap();
-    }
 
     #[test]
     fn owned_cell_read_retains_one_owner_and_survives_replacement() {

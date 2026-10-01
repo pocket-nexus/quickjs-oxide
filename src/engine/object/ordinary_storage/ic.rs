@@ -1,7 +1,6 @@
 //! Promote a location-cache hit without draining runtime cleanup or invoking JS.
 use super::{LinkedNativeSelection, linked_field_atom};
 use crate::engine::api::{runtime::Runtime, runtime_error::RuntimeError};
-use crate::engine::atom::AtomIdx;
 use crate::engine::code::runtime::PublishedFunctionSnapshot;
 use crate::engine::heap::runtime::RuntimeState;
 use crate::engine::heap::{ObjectId, ObjectPayload, RawValue, SlotReleaseReadiness};
@@ -302,181 +301,6 @@ impl Runtime {
 }
 
 impl Runtime {
-    pub(crate) fn try_property_ic_write_owned(
-        &self,
-        base: &JsValue,
-        executable: &PublishedFunctionSnapshot,
-        pc: usize,
-        key: u32,
-        value: &JsValue,
-    ) -> Result<bool, RuntimeError> {
-        let Some(atom) = linked_field_atom(self, executable, key) else {
-            return Ok(false);
-        };
-        let JsValue::Object(object) = base else {
-            return Ok(false);
-        };
-        let Some(cache) = executable.property_read_ic.write_site(pc) else {
-            return Ok(false);
-        };
-        // The borrowed value already carries its edges; the stored copy is
-        // retained transactionally below, so no producer edge is created.
-        let raw = value.as_raw();
-        let mut state = self.0.state.borrow_mut();
-        let id = *object;
-        let slot = match cache.slot(&state.heap, self.domain_id(), executable.realm, id) {
-            Some(slot) => slot,
-            None => {
-                cache.miss(
-                    &state.heap,
-                    &state.atoms,
-                    self.domain_id(),
-                    executable.realm,
-                    id,
-                    atom,
-                );
-                let Some(slot) = cache.slot(&state.heap, self.domain_id(), executable.realm, id)
-                else {
-                    drop(state);
-                    return Ok(false);
-                };
-                slot
-            }
-        };
-        // Input owners remain rooted; retain the new value before releasing the
-        // old edge. The caller has ended RunSlots and published the current PC.
-        let replaced =
-            state.replace_property_slot(id, slot, crate::engine::heap::PropertySlot::Data(raw));
-        drop(state);
-        replaced?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("property_write_ic.hit");
-        Ok(true)
-    }
-
-    pub(crate) fn try_dense_array_write_owned(
-        &self,
-        base: &JsValue,
-        index: u32,
-        value: &JsValue,
-    ) -> Result<bool, RuntimeError> {
-        let JsValue::Object(object) = base else {
-            return Ok(false);
-        };
-        // The borrowed value already carries its edges; the stored copy is
-        // retained transactionally below, so no producer edge is created.
-        let raw = value.as_raw();
-        let mut state = self.0.state.borrow_mut();
-        let data = match state.heap.object(*object) {
-            Ok(data) => data,
-            Err(error) => {
-                drop(state);
-                return Err(error.into());
-            }
-        };
-        if !matches!(data.kind, crate::engine::heap::ObjectKind::Array)
-            || data.dense_array_value(index).is_none()
-        {
-            return Ok(false);
-        }
-        let atoms = match state.retain_raw_value_atoms([&raw]) {
-            Ok(atoms) => atoms,
-            Err(error) => {
-                drop(state);
-                return Err(error);
-            }
-        };
-        let appended = state.heap.replace_array_dense_value(*object, index, raw);
-        match appended {
-            Ok(cleanup) => {
-                state.apply_cleanup(cleanup)?;
-            }
-            Err(error) => {
-                let released = state.release_atoms(atoms);
-                released?;
-                return Err(error.into());
-            }
-        }
-        Ok(true)
-    }
-
-    pub(crate) fn try_define_field_owned(
-        &self,
-        base: &JsValue,
-        executable: &PublishedFunctionSnapshot,
-        key: u32,
-        value: &JsValue,
-    ) -> Result<bool, RuntimeError> {
-        let Some(atom) = linked_field_atom(self, executable, key) else {
-            return Ok(false);
-        };
-        let JsValue::Object(object) = base else {
-            return Ok(false);
-        };
-        // The borrowed value already carries its edges; the stored copy is
-        // retained transactionally below, so no producer edge is created.
-        let raw = value.as_raw();
-        let mut state = self.0.state.borrow_mut();
-        let data = match state.heap.object(*object) {
-            Ok(data) => data,
-            Err(error) => {
-                drop(state);
-                return Err(error.into());
-            }
-        };
-        let shape_has_atom = state
-            .heap
-            .shape(data.shape)
-            .map(|shape| shape.find(AtomIdx::from_raw(atom.raw())).is_some())?;
-        if !super::is_ordinary(data) || !data.extensible || shape_has_atom {
-            return Ok(false);
-        }
-        state.store_selected_property_slot(
-            *object,
-            atom,
-            crate::engine::object::shape::PropertyFlags::data(true, true, true),
-            crate::engine::heap::PropertySlot::Data(raw),
-            None,
-        )?;
-        Ok(true)
-    }
-
-    pub(crate) fn try_delete_own_data(
-        &self,
-        base: &JsValue,
-        key: &crate::engine::object::PropertyKey,
-    ) -> Result<Option<bool>, RuntimeError> {
-        let JsValue::Object(object) = base else {
-            return Ok(None);
-        };
-        let mut state = self.0.state.borrow_mut();
-        let data = state.heap.object(*object)?;
-        if !super::is_ordinary(data) {
-            return Ok(None);
-        }
-        let shape = state.heap.shape(data.shape)?;
-        let Some(slot) = shape.find(AtomIdx::from_raw(key.atom().raw())) else {
-            return Ok(Some(true));
-        };
-        if !shape.entries()[slot as usize].flags.configurable
-            || !matches!(
-                data.slots[slot as usize],
-                crate::engine::heap::PropertySlot::Data(_)
-            )
-        {
-            return Ok(None);
-        }
-        // Ordinary own data deletion has no exotic callback or virtual index.
-        // Complete it under the same borrow that located the slot, rather than
-        // entering the general delete path and looking the property up again.
-        state.ensure_dictionary_layout(*object)?;
-        let cleanup = state.heap.delete_dictionary_property(*object, key.atom())?;
-        state.apply_cleanup(cleanup)?;
-        Ok(Some(true))
-    }
-}
-
-impl Runtime {
     pub(crate) fn try_dense_array_kept_read(&self, base: &JsValue, index: u32) -> Option<JsValue> {
         let JsValue::Object(object) = base else {
             return None;
@@ -487,84 +311,6 @@ impl Runtime {
             return None;
         }
         super::immediate_value_jsvalue(data.dense_array_value(index)?)
-    }
-}
-
-impl Runtime {
-    pub(crate) fn try_property_ic_write_scalar(
-        &self,
-        base: &JsValue,
-        executable: &PublishedFunctionSnapshot,
-        pc: usize,
-        key: u32,
-        value: &JsValue,
-    ) -> Result<Option<bool>, RuntimeError> {
-        // Some(false) means this site's IC cannot accept the write even after
-        // its miss update. The owning IC would repeat the same lookup; go
-        // straight to the canonical property writer. None means only the
-        // scalar leaf declined and the owning IC may still complete it.
-        if !matches!(
-            value,
-            JsValue::Undefined
-                | JsValue::Null
-                | JsValue::Bool(_)
-                | JsValue::Int(_)
-                | JsValue::Float(_)
-                | JsValue::ShortBigInt(_)
-        ) {
-            return Ok(None);
-        }
-        let Some(atom) = linked_field_atom(self, executable, key) else {
-            return Ok(Some(false));
-        };
-        let JsValue::Object(object) = base else {
-            return Ok(Some(false));
-        };
-        let Some(cache) = executable.property_read_ic.write_site(pc) else {
-            return Ok(Some(false));
-        };
-        let mut state = self.0.state.borrow_mut();
-        let id = *object;
-        let slot = match cache.slot(&state.heap, self.domain_id(), executable.realm, id) {
-            Some(slot) => slot,
-            None => {
-                cache.miss(
-                    &state.heap,
-                    &state.atoms,
-                    self.domain_id(),
-                    executable.realm,
-                    id,
-                    atom,
-                );
-                let Some(slot) = cache.slot(&state.heap, self.domain_id(), executable.realm, id)
-                else {
-                    return Ok(Some(false));
-                };
-                slot
-            }
-        };
-        let crate::engine::heap::PropertySlot::Data(old) = &state.heap.object(id)?.slots[slot]
-        else {
-            return Ok(None);
-        };
-        if super::immediate_value(old).is_none() {
-            // Releasing a non-scalar old value may need a driver boundary.
-            // Re-check the receiver once the heap borrow is dropped; the slot
-            // index stays valid because the readiness probe never mutates the
-            // heap.
-            drop(state);
-            if self.slot_value_release_readiness_jsvalue(base)? != SlotReleaseReadiness::Ready {
-                return Ok(None);
-            }
-            state = self.0.state.borrow_mut();
-        }
-        // `value` was matched to a scalar above, so this id copy allocates
-        // nothing and never takes the state borrow the caller still holds.
-        let raw = value.as_raw();
-        state.replace_property_slot(id, slot, crate::engine::heap::PropertySlot::Data(raw))?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("property_write_ic.hit");
-        Ok(Some(true))
     }
 }
 
@@ -622,7 +368,8 @@ mod tests {
         };
         let executable = runtime.snapshot_function_bytecode(&bytecode).unwrap();
         let (pc, key) = executable
-            .code
+            .exec
+            .test_ir()
             .iter()
             .enumerate()
             .find_map(|(pc, op)| match op {
@@ -630,6 +377,7 @@ mod tests {
                 _ => None,
             })
             .unwrap();
+        let pc = executable.exec.exec_pc(pc as u32).unwrap() as usize;
         (executable, pc, key)
     }
 

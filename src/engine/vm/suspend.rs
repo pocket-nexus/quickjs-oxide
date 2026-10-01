@@ -351,7 +351,9 @@ impl RootedVmActivation {
             entry.active_frame = guard.token();
             runtime.update_active_bytecode_pc(
                 guard.token(),
-                BytecodePc::new(self.saved_pc.saturating_sub(1)),
+                BytecodePc::new(entry.executable.exec.previous_pc(self.saved_pc).ok_or(
+                    RuntimeError::Invariant("suspended resume PC is not an execution boundary"),
+                )?),
             )?;
             entry.cold.entry_guard = Some(guard);
             // Both frame storage and the resume input retain their original

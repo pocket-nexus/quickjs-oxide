@@ -1,14 +1,14 @@
 # Profiling and external benchmarks
 
 The optional `profiling` feature implements the memory snapshots, safe partial
-allocation trace, lifecycle timing and benchmark workflow proposed in the
-original design report. Diagnostics are off by default. This is an
+allocation trace, lifecycle timing and benchmark workflow. Diagnostics are off by default. This is an
 observability baseline, not a CPU/call-stack sampler or a claim of
 feature/performance parity with QuickJS.
 
 Historical measurement reports are retained locally; each applies to its
-recorded source and build. The [primitive VM overview](primitive-vm.md) records
-the final architecture and measurement results.
+recorded source and build. [Architecture](architecture.md) describes #52;
+[primitive VM results](primitive-vm.md) are historical. Future instrumentation
+and optimization work is proposed in the [roadmap](performance/roadmap.md).
 
 ## Build and run
 
@@ -30,7 +30,7 @@ events. Dropping the trace handle does not stop the runtime's collector.
 Reports go to stderr, preserving script stdout. `--profile-output PATH` creates
 a **new** file and refuses existing paths, including the input script. JSON
 output is one complete object per line: `oxide-memory-v1`,
-`oxide-allocation-trace-v1`, `oxide-compile-vm-cost-v1` when compilation or
+`oxide-allocation-trace-v1`, `oxide-compile-vm-cost-v2` when compilation or
 execution occurred, and, for `-q -d`, `oxide-lifecycle-v1`. Multiple
 records can share the output. Human-readable mode includes accounting notes
 and raw lifecycle samples. File-open errors are CLI errors before execution;
@@ -52,7 +52,8 @@ Trace serialization happens after Context and Runtime teardown.
 | --- | --- | --- |
 | Heap population | Object, shape, variable-reference, Context and bytecode node counts; lifecycle states; pending jobs | Logical node counts are not allocation counts or byte totals |
 | Owned storage | Arena slots/free indices/zero queue, object property slots, dense array elements, ordinary ArrayBuffer bytes | `used_bytes` measures initialized inline storage and `capacity_bytes` its reserved capacity; nested allocations and allocator headers are excluded |
-| Bytecode | Unique instruction slices, deduplicated by their shared storage identity | Rc headers, nested operands, constants and debug data are excluded |
+| Bytecode | Published `ExecCode` words, deduplicated by shared storage identity | Rc headers, PC boundary mapping, constants and debug data are excluded; the compiler's temporary `Instruction` array is not retained by published functions |
+| Execution boundaries | `exec_boundaries`: deduplicated u32 boundary slices, including the terminal sentinel | Separate from bytecode word bytes; not source/debug metadata or total executable size |
 | Static property keys | `bytecode_property_keys`: linked-name count and deduplicated constant-indexed Atom slice bytes, including unused slots | Rc headers and the separate owning references in `auxiliary_atoms` are excluded; no table is allocated for functions without static names |
 | Atoms and strings | Live table-backed atom count; immediate integers excluded | Full string storage/counts are unavailable because strings can be shared with atoms, bytecode and embedder values |
 | Shared buffers | SharedArrayBuffer wrapper count | Shared backing bytes are unavailable, avoiding duplication across wrappers/contexts/runtimes |
@@ -89,20 +90,22 @@ reject profiling flags with an explanatory error.
 ## Compile and VM cost diagnostics
 
 `-d --profile-json` reuses the same CLI and benchmark workload entry. Its
-`oxide-compile-vm-cost-v1` record describes the owned execution core:
-parse/resolution/lowering, blocks, fusion, relocation and publish attempts
+`oxide-compile-vm-cost-v2` record describes the owned execution core:
+parse/resolution/lowering, blocks, encoding, relocation and publish attempts
 and inclusive/exclusive monotonic wall nanoseconds,
-successfully lowered function drafts (including children), final instruction
-count and inline typed-code bytes, maximum verified stack, and owned instruction
-count and operand depth.
+successfully lowered function drafts (including children), compiler instruction
+count and inline IR bytes, maximum verified stack, and partial driver completion
+counts/depth observations.
 Failed parses still count as attempts; lowered drafts are not published-code
-or unique-code counts. Inline code bytes exclude boxed operands and metadata.
+or unique-code counts. `code_inline_bytes` is instruction count multiplied by
+`size_of::<Instruction>()`; it measures temporary IR, not published `ExecCode`
+words. It excludes boxed operands and metadata.
 Inclusive phase time includes nested compilation and callbacks and is not
 additive. `exclusive_ns` subtracts measured child phases in the same collector;
 uninstrumented work and nested collectors remain charged to their parent.
-Publish covers flattening, linking and heap
-publication (including the heap boundary's independent checks). Blocks covers
-compiler block discovery; fusion covers the owned execution projection.
+Publish covers the iterative post-order linking/publication walk, root handling
+and heap metadata checks; the old flatten layer is gone. Blocks covers
+compiler block discovery; encoding covers `Instruction` to `ExecCode` conversion and verification.
 Relocation covers IR fragment moves and target-bearing lowered instructions,
 not the entire lowering/emission loop. Fine-grained diagnostic timers introduce
 overhead and must not be compared against ordinary compile-only timings.
@@ -150,69 +153,33 @@ Without the `profiling` feature, compiler and interpreter hooks are compiled out
 是全量安装尝试入口事件（包括后续安装失败），分别提供接收者形式和参数数量分布；
 不能把它们当作成功安装数。
 
-### 候选跨度与调用点逻辑诊断
+### 执行字与调用点逻辑诊断
 
-`oxide-compile-vm-cost-v1.fusion_diagnostics` 是逻辑事件计数，不采样耗时。
-`functions` 仅登记该收集区间**实际进入执行帧**的已发布函数，并不枚举所有
-编译或发布的函数。`runtime_id` 与 `bytecode_id`（槽位及发布代数）共同标识
-一次 Runtime 内的不可变函数；再加规范字节码 `pc` 才是候选或调用点位置。
-这些数字不能跨独立运行直接当作相同函数的 ID。函数清单还复制源码
-`function_name`、`filename` 与零基定义行列；剥离 debug 数据、匿名函数或
-诊断时暂时无法借用 Runtime 时，对应字段为 `null`。这些文本是独立副本，
-不保留 JS 字符串、Atom 或字节码 owner。
+`oxide-compile-vm-cost-v2.execution_diagnostics` 记录
+`ExecCode` 的普通和专用 opcode，**没有 `FusionPlan` 或旧跨度派发**。该对象是逻辑事件计数，
+不是耗时、退休指令或收益上界。`functions` 只包含收集区间实际进入的函数，
+`runtime_id`、`bytecode_id` 和 `pc` 联合标识站点；这里的 `pc` 是执行字偏移，
+可以用 `ExecCode` 的边界表映射回编译阶段指令索引。不同运行的 ID 不可直接相等比较。
 
-| 字段 | 口径 |
+| 字段 | 当前口径 |
 | --- | --- |
-| `functions[].unfused_read_sites` | 已执行函数中，静态没有任何 fusion flag 的直接 local/argument 读取 PC 数；每个函数登记一次。 |
-| `functions[].dense_candidate_sites` / `dense_noncandidate_read_sites` | 直接读取 PC 中发布了 dense span / 未发布 dense span 的静态数量。后者可以仍有其他 fusion 候选。 |
-| `dispatch[].visits` / `static_noncandidate_visits` | 每个直接读取 PC 的动态访问次数，及其中静态 fusion flag 为零的访问次数；用于量化查询无候选位置的频率。捕获参数的 `GetArg` 在提前处理分支也计入 dispatch。 |
-| `sites[].attempts`, `hits`, `misses` | 每个已发布候选起始 PC **实际进入候选处理器**的尝试、完成和未完成结果；保留的记录满足 `attempts = hits + sum(misses)`。捕获参数的 `GetArg` 在提前处理分支只计 dispatch，不进入 dense 候选，因此不计入这里的 attempts。普通 `guard` 和 dense 的动态失败均回到规范指令起点。`error` 是候选执行时的异常终止，**不表示回退**。 |
-| `callsites[]` | 仅覆盖普通驱动器 `enter_selected` 入口观察到的 callee；不是所有 call、construct 或 native 再入口的总账。`callee_identity_changes` 只比较连续的 Object callee 身份，非 Object 会断开连续序列。 |
+| `functions[].instructions` | 边界表中的指令条目数，包含成功 span 跳过的 generic 条目；不是动态工作量或执行字数。每个进入过的函数登记一次。 |
+| `direct_local_read_sites` / `direct_argument_read_sites` | 普通与专用 local／argument 读站点的静态数。 |
+| `specialized_number_read_sites` | 历史字段名；统计 collector 列举的专用 local/argument 入口，包括 Number、数组、字段、更新和比较形态，不仅是 NumberInc。 |
+| `cached_field_read_sites` / `dense_array_read_sites` | 发布成字段缓存或 dense 数组读 opcode 的静态数。 |
+| `generic_read_sites` | 普通 local／argument 读站点的静态数。 |
+| `dispatch[].visits` / `generic_visits` | 已接入 emitter 的普通/专用入口 visits，以及其中标为直接 generic 的次数；不是所有 opcode dispatch 总数，部分 stack 比较入口也记录 visits。 |
+| `sites[].attempts`, `hits`, `misses` | 接入的专用入口记录 outcome，主要 miss 为粗粒度 `guard`；`error` 表示异常结束，不表示可重放的 guard miss。不同 handler 的记录时机不同，不推断完整错误覆盖。 |
+| `callsites[]` | 普通调用入口观察到的 callee 身份分布；不覆盖所有 call／construct 路径。 |
 
-Dense 失败标签只描述**先前 leaf 失败后、再次只读观察到的首个不满足条件**，
-不声称它是唯一原因，也不改变规范执行。`source` 指发布形状或常量不可用；
-`binding` 指直接槽不可读；`non_number` 指数值源类型；`index` 指索引不是
-非负 Int。数组探针进一步区分 `base_not_object`、`not_array`、
-`array_materialized.*`（Array 已转普通属性表示）、`outside_dense_prefix_in_length`
-（逻辑 length 内但不在连续 dense 前缀）、`beyond_array_length`、
-`dense_non_number` 与读写借用不可用。`room` 指虚拟操作数峰值无法容纳。
-诊断探针的观察时间晚于原始失败；若状态不再吻合，则报告
-`dense_ready_after_failure` 或较保守的 `commit`/`generation` 等标签。
-`array_materialized.*` 在同一次借用内进一步只读查询当前 own slot：
-`own_default_number`、`own_nondefault_descriptor`、`own_non_number`、
-`own_accessor`、`own_special_slot`、`missing_own_index`。超出 immediate atom
-范围或布局不可读分别记为 `index_not_immediate`、`layout_unavailable`，不为诊断
-创建 atom。它不调用 getter、不查原型、不扫描整张数组，也不解释整个数组为什么
-仍为普通表示。与旧收据的 `array_materialized` 比较时，应汇总此前缀下所有标签；
-每次失败仍只记一个标签，不能把聚合值再次加到 attempts。
-顺序填充通常保留 dense 前缀，反向从高索引填充会转成普通属性表示；完整的默认
-索引集合若在新增索引 0 时符合恢复策略，可以重新转回 dense。
-两者不能合并归因为“缓存未命中”。
+静态 inventory 上限为 4,096 函数，站点 map 各有 16,384 的上限；检查
+`omitted_*` 字段后再解释覆盖。callee distinct 身份只精确记录前四种，超过后
+`distinct_overflow` 表示下界；身份变化不是类型/shape 变化。#52 没有生产适应
+计数，也没有覆盖所有拒绝原因的分类，缺项不表示零成本。
 
-`owned_execution_events` 还记录数组表示变化：
-
-- `array_storage_dense_materialization` 只在 dense→ordinary 布局提交成功后增加，
-  已为 ordinary 的早退和失败事务不计入。后缀 `_gap_write`、`_descriptor_path`、
-  `_interior_delete` 区分三个调用位置；descriptor 路径也可能处理跳跃写入，
-  不能把它解释成“全部由非默认属性标志导致”。
-- `array_storage_dense_recovery_enter` 只计实际调用恢复函数的次数；
-  `array_storage_dense_recovery` 计成功恢复。`_reject_*` 是该次检查首先确定的
-  拒绝原因：非普通 Array、短 length、槽数上限、槽数不足、索引／命名表分配失败、
-  越界索引、非默认 descriptor、非 data 槽、缺失索引或 shape 分配失败。
-  `_heap_declined` 保留堆接口 `Ok(None)` 的未细分含义；错误返回不计为普通拒绝。
-
-这些是事件次数，不是对象去重计数，也没有提供转换发生的 VM PC。
-恢复只在已接线的新增索引 0 边界尝试：没有 enter 事件不能证明对象不符合恢复条件。
-保留的命名属性本身不阻止恢复；单槽 `own_default_number` 也不证明全数组没有孔。
-
-每类 per-PC map 最多记录 16384 个位置，函数清单最多 4096 项，
-`omitted` 分别计数超限事件。其中 `omitted.static_functions` 计数函数清单
-满额后被拒绝的**登记尝试**；同一未登记函数每次进入帧都可能再次增加，
-不能将它解释为不同函数数目。每个调用点只保存最近 callee 身份及最多
-四个不同的非 owning ObjectId；`distinct_callees_observed` 在四个以内精确，
-`distinct_overflow=true` 后仅是下界。没有任何 callee owner 被诊断保留。
-此构建的额外 map、分类借用和 JSON 写入会影响运行时间；正式性能比较
-应使用无 `profiling` 特性的 plain 构建及独立 A/B 测量。
+这些数据可用来排序站点和检查未命中成本，不能从某个符号或站点的自时间推出机制收益上界。
+要裁决优化，还需固定源码、工具链和负载，做 A/A、交错 A/B，并分别记录固定工作量指令数、
+cycles、生成代码与原版 benchmark 得分。受其他工作干扰的耗时结果必须显式标注。
 
 ## Disable and measure overhead
 
@@ -241,35 +208,42 @@ Only our orchestration, parsers, tests, documentation and result summaries live
 in this repository. Third-party benchmark source and generated bundles stay
 outside it. No complete QuickJS `std`/`os` module implementation is required.
 
-### 最终码与指令契约
+### 编译 IR 与执行字位置
 
-`profiling` feature 下，调用 `CostProfile::capture_disassembly()` 可为该作用域随后成功完成的 lowering 捕获逐函数反汇编。`snapshot().code_disassembly` 按 lowering 完成顺序保存文本；每行包括最终 PC、指令与同一 `InstructionInfo` 的栈状态、控制流、操作数和潜在效果。默认是 `None`，重复启用不清空已有记录。该选项用于诊断，不能用于正式计时；文本不持有 Runtime roots 或原始 IR。
+`CostProfile::capture_disassembly()` 捕获随后成功 lowering 的 `Instruction`
+文本，`snapshot().code_disassembly` 按完成顺序保存。文本 PC 是编译阶段指令
+索引，不是发布后的执行字偏移；它不能单独证明某个专用 opcode 已发布。
+文本含 `InstructionInfo` 的 stack/control/operand/effect 信息，默认 `None`，
+重复启用不清空已有记录；不保留 Runtime roots 或原始 IR。
 
-潜在回调/分配效果是通用语义的保守上界，不能据此断言每次 Number 运算都会调用 JS 或分配。可捕获 JS 异常与引擎分配/不变量错误分开；catch、iterator、gosub 和 resume 的动态验证不会被 nominal 栈数量代替。
+执行站点的 `pc` 则是 `ExecCode` 字偏移。定位同一源码需通过已发布边界映射，
+不能将两种 PC 直接相等比较。effect 描述是通用语义的保守上界，不代表每次
+Number 操作都调用 JS。后续完整的发布字 dump 与原因诊断见路线，不能由
+当前 lowering dump 冒充。
 
-The same cost snapshot carries `owned_instructions` and
-`owned_max_operand_depth`. An owned instruction is counted after its step
-commits (a call commits when its child frame is installed, before the callee
-returns). Property, conversion, iterator and callback requests stay in the
-owned driver; synchronous consumers use the same domain steps. Promise,
-generator, module and host/API entries run through the same owned driver as
-described in [the primitive VM overview](primitive-vm.md). The counters
-describe the measured interval, not every possible path of an intrinsic.
-Temporary request/continuation Box allocations and Proxy operation state
-storage are outside `call_preparation` coverage.
+`owned_instructions` and `owned_max_operand_depth` are compatibility fields
+with **partial coverage in #52**. Their emitters are selected call installation
+and conversion-completion sites in the driver. The instruction loop does not
+increment them for every ordinary or specialized opcode. They are neither a
+logical instruction budget nor a complete opcode/depth profile.
 
-`run` keeps only the resume PC local; the fault PC is written directly into
-Frame at each actual dispatch entry. `owned_execution_events` separates:
+`FrameCursor` keeps both fault and resume PCs local. Its drop writes both back;
+`publish_fault` additionally exposes the fault position before observable
+release. Current `owned_execution_events` coverage is:
 
-| Counter | Current meaning |
+| Counter | Meaning at #52 |
 | --- | --- |
-| `run_frame_fault_pc_write` | Source-level Frame fault assignment at each actual run dispatch entry, including entries that subsequently take a cold/error exit. A fused span does not manufacture writes for its skipped canonical dispatches. |
-| `run_frame_resume_pc_write` | Publication of the local resume value when its ProgramCounter guard drops on normal, Result-error, cold, suspension, or Rust-unwind exit. |
-| `runtime_pc_publication` | Existing driver publication to the active Runtime frame at observation boundaries; this is not a per-instruction counter. |
+| `runtime_pc_publication` | Active Runtime frame updates at the instrumented publication boundaries; not every opcode or every frame-field store |
+| `execute.continuation` | Successful actions returned through the instrumented ready-driver exit; all action kinds share this label |
+| `execute_continuation.EngineError` | Engine-error exits observed by that ready-driver wrapper |
+| `run_frame_fault_pc_write` / `run_frame_resume_pc_write` | Historical names with no current producer; absence is not evidence of zero writes |
 
-These source-level counters are not machine store counts. The resume and
-Runtime-publication counters describe observation boundaries rather than
-per-instruction stores.
+The old action-specific `run_exit.*` populations cannot be reproduced from
+`execute.continuation`. Source-level events are not machine store counts.
+Storage and ownership observations below remain partial; request/continuation
+Box allocations are separately observed by their named producers, not by a
+complete global allocation ledger. Current frame and continuation contracts
+are described in [architecture](architecture.md).
 
 `owned_storage` records SlotStore/FrameStore capacity changes, frame-depth and
 slot peaks, logical owner moves, cleanup clears, value copies, and narrow hot
@@ -313,8 +287,8 @@ out of ordinary builds; instrumented timings are not formal throughput results.
 
 ### 字节码调用准备成本
 
-`oxide-compile-vm-cost-v1.call_preparation` 记录成功完成的字节码构帧准备；
-函数体随后抛错也保留该事件。新旧执行器共用同一准备入口，计数包含参数与
+`oxide-compile-vm-cost-v2.call_preparation` 记录成功完成的字节码构帧准备；
+函数体随后抛错也保留该事件。通用准备入口的计数包含参数与
 局部 Vec 的非空 backing allocation、累计实际容量字节、初始化槽数，以及
 参数 Value 复制、其中 Object/Symbol root 复制和准备函数中的 callee root
 复制。缺少实参的 Undefined padding 计作槽初始化，不计作实参复制；额外
@@ -323,7 +297,7 @@ out of ordinary builds; instrumented timings are not formal throughput results.
 owned 入口另记录 FrameCold Box 的成功分配、captured-reuse 位标记 Vec
 的非空分配和容量，以及进入该帧时独占的原始实参 Vec 容量。最后一项是
 **buffer 观察，不是实参分配事件总数**：bound/apply 的中间缓冲区、闭包
-快照、原生/旧桥内部容器、暂停 operation 载荷及 allocator 元数据均不在
+快照、原生内部容器、暂停 operation 载荷及 allocator 元数据均不在
 此字段覆盖内。所有容量为累计观察值，不是同时存活峰值；不能与
 `owned_storage` 的逐 arena 峰值相加。root 复制也仅覆盖列明的边界，
 不等于全 Runtime retain/release 统计。正式性能仍须使用关闭诊断的构建。
@@ -338,7 +312,7 @@ owned 普通根调用和普通子调用直接初始化 SlotStore 参数/局部�
 不是省略参数副本。FrameCold、捕获标记和 unwind regions 只复用清空后的容量，
 按最大同时活动帧深度预留；`owned_frame_allocations` 不计复用命中。
 
-`oxide-compile-vm-cost-v1.call_buffers` 按实际生产者分组：
+`oxide-compile-vm-cost-v2.call_buffers` 按实际生产者分组：
 `native.readable`、`bound.raw_snapshot`、`bound.rooted_snapshot`、`bound.merge`、
 `apply.indexed`、`arguments.fast_raw/fast_ordering/fast_rooted`、
 `function.call_suffix`、`call.boundary_argv`。Array/Arguments 快照也供 spread

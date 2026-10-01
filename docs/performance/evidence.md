@@ -1,7 +1,11 @@
 # 性能证据账本：issues #41–#44
 
 > 原账本整理日期：2026-09-25；历史主仓快照 R0：`f531f6052cb497ce4707f01c276e8642e5e26788`。下列 E41–E44 的旧表格保留原维护者实验身份，不冒充当前组合版测量。
-> 实施更新：#41 已以新身份 `04bb1a74` 恢复并合入当前集成分支；13 种数值数组跨度已全部实现。[#41 复验](receipts/gates-2026-09-25/README.md)、[四函数 25 站点 manifest](receipts/all-dense-6db6bfb0/README.md)及[四方正式 benchmark／profile](receipts/fourway-2026-09-25/README.md)分别记录独立门禁、静态覆盖和组合实测。组合版八项隔离几何平均相对 R0 为 +12.1%，原版 combined 为 +13.0%；不等于原计划 3–4 倍目标已达成。
+> 2026-09-25 实施记录：#41 以新身份 `04bb1a74` 恢复并合入当时集成分支；13 种数值数组跨度已全部实现。[#41 复验](receipts/gates-2026-09-25/README.md)、[四函数 25 站点 manifest](receipts/all-dense-6db6bfb0/README.md)及[四方正式 benchmark／profile](receipts/fourway-2026-09-25/README.md)分别记录独立门禁、静态覆盖和组合实测。组合版八项隔离几何平均相对 R0 为 +12.1%，原版 combined 为 +13.0%；不等于原计划 3–4 倍目标已达成。
+
+本文的源码路径、计数口径、准入裁决和目标均属于各自历史实验。#52 已替换旧
+`FusionPlan`／`run` 结构；当前实现见 [架构说明](../architecture.md)，新实验按
+[路线](roadmap.md)和[测量协议](measurement.md)相对 #52 与直接父版本开展。
 
 ## E0. 版本与证据可取得性
 
@@ -9,7 +13,7 @@
 | --- | --- | --- | --- |
 | [E41] | 历史报告候选 `0cd4acee`；新恢复候选 `04bb1a74` 另见[复验](receipts/gates-2026-09-25/README.md) | 宽错误载体改小后的 ABI 和固定指令变化；新复验发现 cycles／错误分配／RSS 回退；[四方 V8](receipts/fourway-2026-09-25/README.md)另见完整 Score | 第二次独立正式轮和当前四方固定微负载矩阵未测 |
 | [E42] | `8a4b89d4` → `f531f605`，Rust 1.88.0；固定 10M 轮，CPU 2、5 样本中位 | 数组路径剩余工作明显多于其他三个循环 | 四探针原来未入库；V8 captured miss 未测；无总分增益结果 |
-| [E43] | `8a4b89d4` → `f531f605`，Rust 1.94.1；release perf 自时间与独立 profiling 计数 | 四个真实 V8 子项上的调用路径不是主要高倍数来源 | 上游 checkout 为 `2034d98`，不是旧文档的 pin；仅四子项，无完整调用点类型分布 |
+| [E43] | `8a4b89d4` → `f531f605`，Rust 1.94.1；release perf 自时间与独立 profiling 计数 | 四个 V8 子项中指定调用符号组的采样分布；不能据此求架构优化上限 | 上游 checkout 为 `2034d98`，不是旧文档的 pin；仅四子项，无完整调用点类型分布 |
 | [E44] | `f531f605`；同机串行 release A/B；固定指令重复一致 | 便宜 guard 前移的候选在所测分布上净亏 | 更大 V8 语料的失败比例仍未知；wall 受共享主机影响 |
 
 R0 已合入 PR #48 的无状态 Test262 gate。#41 评论提到“合并后晋升源码指纹”，不能直接沿用为新计划要求：当前 gate 比较结果正文，性能改动没有改变结果正文时，不需要为每个 commit 晋升语义基线。以 [Test262 当前契约](../test262.md) 为准。
@@ -19,7 +23,7 @@ R0 已合入 PR #48 的无状态 Test262 gate。#41 评论提到“合并后晋�
 原整理时 `0cd4acee` 不可解析，因此未把旧 hash 冒充当前实验。现已独立恢复 `04bb1a74`，本仓只保留 R0 复验的[结果总结](receipts/gates-2026-09-25/README.md)；原始样本与构建文件不进入 PR。#44 的历史报告仍按其原身份阅读。
 
 <a id="e41"></a>
-## E41. 紧凑错误载体：历史机制与当前负结果
+## E41. 紧凑错误载体：历史机制与复验负结果
 
 [E41] 的候选是约 60 行、两个源文件的 `Error(Box<ErrorData>)`，不是全仓库 API 重构。记录如下。
 
@@ -50,7 +54,7 @@ R0 已合入 PR #48 的无状态 Test262 gate。#41 评论提到“合并后晋�
 
 报告称 14 个错误场景、CLI 输出／退出码、3009 workspace tests、2048 test262-host tests、完整 Test262 80010/80060 等通过。这是原候选的历史验证记录，不替代恢复版或组合版的重放；恢复版的独立验证见[#41 报告](../reports/issue-41-error-carrier.md)。
 
-原门禁据此拒绝单独接纳 #41；当前用户要求继续完成全部代码并记录未达门禁的结果，故它已进入集成分支。组合版表现须重新测量，不能用历史正结果或单独负结果直接替代。
+原门禁据此拒绝单独接纳 #41；当时用户要求继续完成全部代码并记录未达门禁的结果，故它进入了该集成分支。组合版表现不能用历史正结果或单独负结果直接替代。
 
 <a id="e42"></a>
 ## E42. 数组差距：已复现，但不能外推为总分
@@ -72,10 +76,10 @@ R0 已合入 PR #48 的无状态 Test262 gate。#41 评论提到“合并后晋�
 
 Crypto 使用 JS 数组数值内核，实际初始化为 `setupEngine(am3, 28)`；NavierStokes 用普通 `Array` 存场量并执行 `project`／`lin_solve`／`advect`。因此优先研究 dense 数组与 Number／位运算，而不是优化 Rust BigInt 库。外部语料与生成产物仍须重新 pin。
 
-未测：八子项的 span 动态覆盖、captured binding 拒绝比例、数组空洞／慢形态比例、执行块前后正式 Score。新计划把这些列为继续投入的门槛。
+该报告未测八子项的 span 动态覆盖、captured binding 拒绝比例、数组空洞／慢形态比例、执行块前后正式 Score。后续历史补测见 E46；这些空白限定原报告的结论范围，不自动关闭新的执行设计。
 
 <a id="e43"></a>
-## E43. 调用画像：下调投入，而非继续寻找理由扩大范围
+## E43. 调用画像：符号采样与归因边界
 
 [E43] 的 `call0` 固定工作量是 4151.28→3926.27 指令／轮（−5.42%），R0／QuickJS 为 10.12×。这证明微负载差距，**不证明真实程序花了同样比例的时间在调用入口**。
 
@@ -92,11 +96,11 @@ Crypto 使用 JS 数组数值内核，实际初始化为 `setupEngine(am3, 28)`�
 
 普通函数认证缓存命中 99.995–100%，native argv 全程容量增长至多一次（启动的 16–32 B），buffer 计数 `values_copied=0`、`values_moved=实参数量`。因此取消“已有函数级缓存再造一遍”和“消除每次 native argv 分配”的立项依据。
 
-**函数级 auth 命中率不等于调用点单态率。** 同一 PC 可以在多个已认证函数间轮换而保持 auth 全命中；若重开 callsite cache，必须新增按 `(FunctionBytecodeId, canonical PC)` 的实际 callee 身份／变化率计数，不能复用本表冒充。
+**函数级 auth 命中率不等于调用点单态率。** 同一 PC 可以在多个已认证函数间轮换而保持 auth 全命中，本表没有逐调用点证据。#52 已有部分按函数身份与执行字 PC 记录的有界 callee 计数，其覆盖与限制见 [profiling](../profiling.md)；不能拿本表或有界计数冒充完整身份分布。
 
 这些时间比例来自无 debug info／帧指针的 release 符号 self% 归组；内联成本可能归到 `run` 或 driver，分组不是完整且精确的语义成本分割。对上述被测分组，假设全消除 DeltaBlue 的 10.46% 且其他成本不变，Amdahl 算术为约 1.117 倍；这不是整个调用语义的绝对上限，更不是可兑现收益。ownership／RC 组同样不能全算作可删除成本。
 
-裁决：不扩大通用 JS/native 调用专项；只有在统一语料、#41 后重新归因及定向 A/B 支持下，允许 DeltaBlue 的窄 frame／方法路径实验。
+当时裁决缩小了调用专项范围。它不限制 #52 后的帧安装、continuation 位置复用和释放边界设计；这些方向需用实际删除的工作、端到端测量与覆盖证据评估，不能由上述 self% 推出速度上限。
 
 <a id="e44"></a>
 ## E44. 检查顺序负结果
@@ -125,28 +129,28 @@ Crypto 使用 JS 数组数值内核，实际初始化为 `setupEngine(am3, 28)`�
 
 peek 失败还包含 `Megamorphic(1024)` 倒数期的反复 burst，不只是首轮冷启动。这只构成“测量 IC 策略成本”的线索，不是删去身份／shape 校验或立即更改冷却策略的授权。
 
-裁决：拒绝当前重排与其更差变体；只有新的真实失败分布加新的 codegen A/B 表明净收益，才重开。
+当时裁决拒绝这两个具体重排候选。后续 guard 或自适应设计可据新机制继续探索，用真实失败分布及 codegen A/B 判断其成本，旧负结果不构成永久禁令。
 
-## E45. 历史债务与不应复活的结论
+## E45. 历史累计成本与结论范围
 
-[PR #37] 记录 BigInt32／64／256 相对其 pre-B2 基线累计退休指令 +4.07%／+3.64%／+2.30%。每片 <2% 不能消除累计回退。[E45] 要求保留累计裁决。#41 的下降与上述增长来自不同测量身份，不得直接相加后声称债务已清偿；必须同协议重建 pre-B2、B37、R0 与候选。
+[PR #37] 记录 BigInt32／64／256 相对其 pre-B2 基线累计退休指令 +4.07%／+3.64%／+2.30%。每片 <2% 不能消除累计回退。[E45] 要求保留累计裁决。#41 的下降与上述增长来自不同测量身份，不得直接相加后声称债务已清偿；若要重新裁决这段历史累计变化，需同协议重建 pre-B2、B37、R0 与候选。新优化的默认比较对象为 #52 和候选直接父版本。
 
-B1 的解码、二次分类和 C 单槽 TOS 的准入／spill 负结果保留在 [原负结果报告](../reports/s3-c-negative-result.md)。B2.0 的统一 `span(pc)` 查询曾引发 helper 内联翻转；新计划不无条件复活它。
+B1 的解码、二次分类和 C 单槽 TOS 的准入／spill 负结果保留在 [原负结果报告](../reports/s3-c-negative-result.md)。B2.0 的统一 `span(pc)` 查询曾引发 helper 内联翻转；新设计需检查自身工作量与 codegen，不能仅凭接口名称接受或排除它。
 
 B2.2 的旧上界实验只把 `prop_read` 从 752→632 指令／轮（约 1.19 倍工作量改善）；可上线校验保留后的 90–100 指令回收是旧估计，不是实现结果。outlined handler 25–45% cycles 自时间不意味着全部可删除。更早的 V8 对 QuickJS 17.1×／16.6× 差距见 [全量重测历史](../reports/s3-full-rerun-results.md)，不是当前 R0 成绩。
 
-## E46. 本次补全：静态设计证据，不是新增性能测量
+## E46. 历史补全：静态设计证据与后续收据
 
-对 PR #6 head `6f09205c51f8b34e3c7a90ce406739fe1dd07c48` 的源代码重新核对，得到四项会直接影响实施的约束：
+当时对 PR #6 head `6f09205c51f8b34e3c7a90ce406739fe1dd07c48` 的源代码重新核对，得到四项影响该轮实施的约束；其中旧 flag 与 handler 接口不适用于 #52：
 
 1. `FusionPlan::update` 通过 bit16 识别旧更新跨度，新 flags 必须避免误识别；v1 固定使用 1–13。
 2. `lower_update_expression` 的 postfix 是 PostInc/PostDec + Put，prefix 是 Inc/Dec + Set；索引更新必须暂存到唯一提交点，miss 不能预先修改绑定。
 3. computed assignment 包含 Insert3/PutArrayEl；写跨度要保住原栈契约、尾部 Drop 和 run 的 property_generation 更新，不能仅写 heap 后跳 PC。
 4. 数组 canonical 叶仍做 release-readiness 与可变 Runtime 借用；新 Number-only 读明确使用短期共享借用，不能把通用事务包进新 API。
 
-[当时实施规格](numeric-array-spans.md) §8 给出固定源码链接；13 种序列及栈代数来自这些规则。对 pin 上游源码另核对：project 实际使用 `u[++nextValue]` 等前缀更新，advect 的原顺序是 `d0[i0 + row1]`，不能以等价手写表达式冒充原始程序。
+[当时实施规格](https://github.com/pocket-nexus/quickjs-oxide/blob/996663f771afdabdc69d52c94bd4d2fb392e27b1/docs/performance/numeric-array-spans.md) §8 给出固定源码链接；13 种序列及栈代数来自这些规则。对 pin 上游源码另核对：project 实际使用 `u[++nextValue]` 等前缀更新，advect 的原顺序是 `d0[i0 + row1]`，不能以等价手写表达式冒充原始程序。
 
-最初整理本文时尚无 Rust 编译或真实函数 PC。后续已用[捕获入口](probes/run_dump.py)和[test-only 探针](probes/dump_numeric_spans.rs)取得[发布覆盖总结](receipts/all-dense-6db6bfb0/README.md)，并完成[四方 V8 与 profile 总结](receipts/fourway-2026-09-25/README.md)。生成文件只保留在本机测量目录，不作为 PR 附件。
+最初整理本文时尚无 Rust 编译或真实函数 PC。后续已用[捕获入口](probes/run_dump.py)和[test-only 探针](probes/dump_numeric_spans.rs)取得[发布覆盖总结](receipts/all-dense-6db6bfb0/README.md)，并完成[四方 V8 与 profile 总结](receipts/fourway-2026-09-25/README.md)。这些探针依赖当时的 `FusionPlan` 源码，只供对应版本复现，不能直接用作 #52 发布覆盖工具。生成文件只保留在本机测量目录，不作为 PR 附件。
 
 ## 来源
 

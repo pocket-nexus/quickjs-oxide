@@ -18,7 +18,7 @@ use crate::engine::code::function::{
 use crate::engine::code::rooted::FunctionBytecodeRef;
 use crate::engine::heap::ownership::ConvertedValue;
 use crate::engine::heap::{
-    BytecodeConstant, ContextId, FunctionBytecodeData, FunctionDebugInfo, PublishedPrivateBinding,
+    BytecodeConstant, ContextId, FunctionBytecodeDraft, FunctionDebugInfo, PublishedPrivateBinding,
     PublishedPrivateBindings, RawValue,
 };
 use crate::engine::object::ObjectRef;
@@ -381,10 +381,7 @@ impl Runtime {
             }
 
             let owned_atoms = auxiliary_atoms.clone();
-            let bytecode = FunctionBytecodeData {
-                executable: Default::default(),
-
-                fusion: Default::default(),
+            let bytecode = FunctionBytecodeDraft {
                 code: code.into(),
                 constants: linked_constants.into(),
                 property_key_atoms: (!property_key_atoms.is_empty())
@@ -470,7 +467,8 @@ impl Runtime {
             .borrow()
             .heap
             .function_bytecode(function.bytecode_id())?
-            .code
+            .exec
+            .test_ir()
             .to_vec())
     }
 

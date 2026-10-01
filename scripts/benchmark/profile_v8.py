@@ -26,7 +26,8 @@ BENCHMARKS = {
 SUITE_DECL = re.compile(r"\bnew\s+BenchmarkSuite\s*\(\s*(['\"])([^'\"]+)\1")
 BENCH_DECL = re.compile(r"\bnew\s+Benchmark\s*\(\s*(['\"])([^'\"]+)\1")
 MARKER = "__oxide_v8_fixed_profile_complete__"
-COST_SCHEMA = "oxide-compile-vm-cost-v1"
+COST_SCHEMA = "oxide-compile-vm-cost-v2"
+LEGACY_COST_SCHEMA = "oxide-compile-vm-cost-v1"
 
 
 def validate_source(source, expected_commit):
@@ -125,7 +126,7 @@ def parse_cost_json(path, expected_commit=None):
         if not isinstance(record, dict) or not isinstance(record.get("schema"), str):
             raise ValueError(f"invalid profile record at line {line_number}")
         records.append(record)
-    costs = [record for record in records if record["schema"] == COST_SCHEMA]
+    costs = [record for record in records if record["schema"] in (COST_SCHEMA, LEGACY_COST_SCHEMA)]
     if len(costs) != 1:
         raise ValueError("profile must contain exactly one compile/VM cost record")
     cost = costs[0]
@@ -136,19 +137,19 @@ def parse_cost_json(path, expected_commit=None):
         raise ValueError("cost record did not come from a profiling build")
     if expected_commit and metadata.get("commit") != expected_commit:
         raise ValueError("profile embedded commit differs from build receipt")
-    fusion = cost.get("fusion_diagnostics")
-    if not isinstance(fusion, dict) or not isinstance(fusion.get("omitted"), dict):
-        raise ValueError("profile lacks fusion coverage and omission fields")
+    diagnostics = cost.get("execution_diagnostics" if cost["schema"] == COST_SCHEMA else "fusion_diagnostics")
+    if not isinstance(diagnostics, dict) or not isinstance(diagnostics.get("omitted"), dict):
+        raise ValueError("profile lacks execution coverage and omission fields")
     omission_fields = ("static_functions", "dispatch_events", "outcome_events", "callsite_events")
-    if any(type(fusion["omitted"].get(name)) is not int or fusion["omitted"][name] < 0
+    if any(type(diagnostics["omitted"].get(name)) is not int or diagnostics["omitted"][name] < 0
            for name in omission_fields):
-        raise ValueError("invalid fusion omission counters")
+        raise ValueError("invalid execution omission counters")
     for name in ("functions", "dispatch", "sites", "callsites"):
-        if not isinstance(fusion.get(name), list):
-            raise ValueError(f"profile lacks fusion {name} list")
-    if not isinstance(fusion.get("callsite_scope"), str):
+        if not isinstance(diagnostics.get(name), list):
+            raise ValueError(f"profile lacks execution {name} list")
+    if not isinstance(diagnostics.get("callsite_scope"), str):
         raise ValueError("profile lacks callsite coverage scope")
-    if not fusion["functions"] and not fusion["omitted"]["static_functions"]:
+    if not diagnostics["functions"] and not diagnostics["omitted"]["static_functions"]:
         raise ValueError("profile lacks function coverage")
     vm_phases = cost.get("vm_phases")
     if not isinstance(vm_phases, dict):
@@ -160,9 +161,9 @@ def parse_cost_json(path, expected_commit=None):
             raise ValueError("invalid VM phase omissions")
     return {"schemas": [record["schema"] for record in records],
             "embedded_commit": metadata.get("commit"),
-            "fusion_callsite_scope": fusion.get("callsite_scope"),
-            "fusion_omitted": fusion["omitted"],
-            "fusion_counts": {name: len(fusion[name]) for name in ("functions", "dispatch", "sites", "callsites")},
+            "execution_callsite_scope": diagnostics.get("callsite_scope"),
+            "execution_omitted": diagnostics["omitted"],
+            "execution_counts": {name: len(diagnostics[name]) for name in ("functions", "dispatch", "sites", "callsites")},
             "vm_phase_omitted_samples": {name: phase.get("omitted_samples") for name, phase in vm_phases.items()},
             "unavailable": cost.get("unavailable")}
 

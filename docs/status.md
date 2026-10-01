@@ -6,10 +6,14 @@ Rust/WASM engine in the GitHub Pages playground, but it is not yet at Feature
 Parity.
 
 The [architecture guide](architecture.md) describes the current implementation.
-The primitive execution core is the only engine: explicit JS frames, one driver
-and owned domain continuations replace the retired dispatch/bridge paths. The
-validation baseline below is unchanged; the final architecture and measured
-results are in the [primitive VM overview](primitive-vm.md).
+At PR #52 (`996663f771afdabdc69d52c94bd4d2fb392e27b1`), the engine executes one
+`ExecCode` word stream with explicit JS frames, one driver, and owned domain
+continuations. The validation baseline below is unchanged. The
+[primitive VM overview](primitive-vm.md) preserves earlier results; the
+[#52 rewrite receipt](performance/receipts/vm-rewrite-2026-09-27/README.md)
+identifies its own measured snapshot. Neither is a fresh validation of these
+documentation edits. Proposed optimization work is in the
+[roadmap](performance/roadmap.md).
 
 ## Current baseline
 
@@ -78,9 +82,11 @@ host is isolated behind a non-default feature.
 ## Compiler pipeline simplification
 
 The BC5 bytecode reader was removed on 2026-09-24, and a follow-up removed the
-standalone verification pass and publication's flatten layer: drafts now reach
-execution through one iterative post-order publication walk which allocates
-each heap node as soon as its subtree completes. On `functions-4194304`
+standalone verification pass and publication's flatten layer. The current
+publisher uses an iterative post-order walk which allocates each heap node as
+its subtree completes; lowering, metadata publication, and `ExecCode` encoding
+still validate their respective contracts. The following measurements belong
+to the 2026-09-24 simplification experiment. On `functions-4194304`
 (release `qjs -d`, min of 3 runs) the publish phase fell from 281.8ms to
 198.2ms (−29.7%) and verify+publish from 454.9ms to 198.2ms (−56.4%); total
 compile fell from 1173.3ms to 918.8ms (−21.7%). Allocation-probe totals fell
@@ -88,8 +94,8 @@ compile fell from 1173.3ms to 918.8ms (−21.7%). Allocation-probe totals fell
 verify+publish at −54.6% and publish alone at −16.8%. The full Test262 outcome
 vector was byte-identical to the `172fde6e` baseline across 102,037 variants,
 and the +28-pass drift was promoted into the new pinned vector (80,010 pass of
-80,060 eligible). See `docs/verify-publication-plan.md` and
-`docs/compile-benchmark.md` §9.12.
+80,060 eligible). See the [historical results](compile-benchmark.md#verify-publication-results)
+and [current publication guarantees](architecture.md).
 
 ## Remaining parity work
 
@@ -101,7 +107,7 @@ machinery, the narrow `Context::read_trusted_*` APIs, the function-bytecode
 and SAB C oracle fixtures, and the BC5 pinned-atom/opcode gates were removed
 on 2026-09-24: upstream bytecode is a version-bound cache rather than an
 interface, so the project no longer claims BC5 interoperability (see
-`docs/verify-publication-plan.md` and `docs/parity.md` §11). BJSON object
+[the parity contract](parity.md#bytecode-compatibility)). BJSON object
 serialization and `qjsc` packaging remain deferred parity work for a
 separate plan.
 

@@ -105,11 +105,27 @@ impl Default for PublishedPrivateBindings {
     }
 }
 
-/// Runtime-owned immutable bytecode, constant pool, and function realm.
-///
-/// `code` is an `Rc` leaf with no runtime edges.  The VM may cheaply clone it
-/// before dropping the runtime's `RefCell` borrow, while a bytecode root keeps
-/// the raw constant pool alive for the duration of execution.
+/// Input to publication. Compiler instructions are consumed by the allocator;
+/// no `FunctionBytecodeDraft` is retained by a published function.
+#[derive(Debug)]
+pub struct FunctionBytecodeDraft {
+    pub code: Rc<[Instruction]>,
+    pub constants: Rc<[BytecodeConstant]>,
+    pub property_key_atoms: Option<Rc<[Atom]>>,
+    pub realm: ContextId,
+    pub metadata: FunctionMetadata,
+    pub parameter_environment: Option<ParameterEnvironmentLayout>,
+    pub func_name: Option<JsString>,
+    pub argument_definitions: Rc<[VariableDefinition]>,
+    pub local_definitions: Rc<[VariableDefinition]>,
+    pub closure_variables: Rc<[ClosureVariable]>,
+    pub private_bindings: PublishedPrivateBindings,
+    pub eval_environments: Rc<[EvalEnvironment<Atom>]>,
+    pub debug: Option<FunctionDebugInfo>,
+    pub auxiliary_atoms: Box<[Atom]>,
+}
+
+/// Runtime-owned immutable execution words, constant pool, and function realm.
 #[derive(Debug)]
 pub struct FunctionBytecodeData {
     /// Lazily shared read-only execution projection. It contains no GC roots:
@@ -118,8 +134,7 @@ pub struct FunctionBytecodeData {
     pub(crate) executable:
         std::cell::OnceCell<Rc<crate::engine::code::runtime::PublishedFunctionData>>,
 
-    pub(crate) fusion: crate::engine::code::fusion::FusionPlan,
-    pub code: Rc<[Instruction]>,
+    pub exec: crate::engine::code::exec::ExecCode,
     pub constants: Rc<[BytecodeConstant]>,
     /// Constant-indexed static names linked by the runtime publisher. Null
     /// entries are unused; functions without static names have no table.
@@ -134,10 +149,6 @@ pub struct FunctionBytecodeData {
     pub argument_definitions: Rc<[VariableDefinition]>,
     pub local_definitions: Rc<[VariableDefinition]>,
     pub closure_variables: Rc<[ClosureVariable]>,
-    /// Name-bound private capability roles sealed by the runtime publisher.
-    /// This metadata owns no atoms; identities alias definition/descriptor
-    /// atoms whose references remain in `auxiliary_atoms`.
-    pub private_bindings: PublishedPrivateBindings,
     pub eval_environments: Rc<[EvalEnvironment<Atom>]>,
     pub debug: Option<FunctionDebugInfo>,
     /// Atom references owned by bytecode metadata/opcode operands.

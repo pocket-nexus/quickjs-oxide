@@ -112,6 +112,27 @@ pub(super) struct Frame {
     pub resume_pc: usize,
     pub cold: ColdFrame,
 }
+impl Frame {
+    /// The next instruction boundary in the sole published word stream.
+    pub(super) fn next_pc(&self) -> Result<usize, Error> {
+        self.executable
+            .exec
+            .decode(self.fault_pc as u32)
+            .map(|decoded| decoded.next_pc as usize)
+            .map_err(|_| Error::internal("frame fault PC is not a verified instruction boundary"))
+    }
+
+    /// Resume metadata is always stored at an instruction boundary, including
+    /// when a callback or generator enters in the middle of a frame.
+    pub(super) fn set_resume_pc(&mut self, pc: usize) -> Result<(), Error> {
+        let fault = self.executable.exec.previous_pc(pc).ok_or_else(|| {
+            Error::internal("frame resume PC is not a verified instruction boundary")
+        })?;
+        self.resume_pc = pc;
+        self.fault_pc = fault;
+        Ok(())
+    }
+}
 impl std::ops::Deref for Frame {
     type Target = storage::FrameBody;
     fn deref(&self) -> &storage::FrameBody {

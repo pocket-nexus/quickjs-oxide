@@ -225,8 +225,7 @@ impl Drop for FrameStorageGuard {
 mod number;
 mod window;
 pub(in crate::engine::vm) use window::{
-    CheckedOrdinaryCallOperands, FrameTransaction, LinkedReadCompletion, NumberUpdate,
-    NumericDestination, RunSlots,
+    CheckedOrdinaryCallOperands, DirectSlot, FrameSlots, FrameTransaction, LinkedReadCompletion,
 };
 
 impl SlotStore {
@@ -435,12 +434,12 @@ impl SlotStore {
 
     /// The exclusive borrow prevents arena growth, frame changes and any window
     /// reuse until run returns to its observation boundary.
-    pub(in crate::engine::vm) fn run_window<'a>(
+    pub(in crate::engine::vm) fn borrow_frame_slots<'a>(
         &'a mut self,
         window: &'a mut FrameWindow,
-    ) -> Result<RunSlots<'a>, Error> {
+    ) -> Result<FrameSlots<'a>, Error> {
         self.check_current(window)?;
-        Ok(RunSlots {
+        Ok(FrameSlots {
             store: self,
             window,
         })
@@ -913,77 +912,44 @@ impl SlotStore {
         Ok(true)
     }
 
-    fn typed_array_number_write_current(
+    /// A published comparison/branch consumes two immediate numbers without
+    /// materializing the intermediate Boolean. A guard miss leaves both owners
+    /// and the operand depth intact for the generic comparison.
+    #[inline]
+    fn number_pair_branch_current(
         &mut self,
         window: &mut FrameWindow,
-        runtime: &Runtime,
-    ) -> Result<bool, Error> {
+        compare: impl FnOnce(
+            crate::engine::value::number::operations::Number,
+            crate::engine::value::number::operations::Number,
+        ) -> bool,
+    ) -> Result<Option<bool>, Error> {
         let offset = window
             .depth
-            .checked_sub(3)
+            .checked_sub(2)
             .ok_or_else(Self::operand_stack_underflow)?;
         let index = window.operands().start + offset;
         let [
-            Some(FrameBinding::Direct(base)),
-            Some(FrameBinding::Direct(key)),
-            Some(FrameBinding::Direct(value)),
-        ] = &self.slots[index..index + 3]
+            Some(FrameBinding::Direct(left)),
+            Some(FrameBinding::Direct(right)),
+        ] = &self.slots[index..index + 2]
         else {
             return Err(Self::operand_slot_not_a_value());
         };
-        let JsValue::Int(key) = key else {
-            return Ok(false);
+        let (Some(left), Some(right)) = (left.as_number_repr(), right.as_number_repr()) else {
+            return Ok(None);
         };
-        if *key < 0 {
-            return Ok(false);
-        }
-        // Dense arrays dominate the numeric-span workloads. Do their direct
-        // scalar replacement first; an accepted write never enters the typed
-        // leaf and never repeats the receiver release proof.
-        let dense = runtime
-            .try_dense_array_write_scalar(base, *key as u32, value)
-            .map_err(super::exception::runtime_error_to_vm_error)?;
-        let typed = if dense {
-            false
-        } else {
-            match value {
-                JsValue::Int(value) => {
-                    runtime.try_typed_array_number_write(base, *key as u32, f64::from(*value))
-                }
-                JsValue::Float(value) => {
-                    runtime.try_typed_array_number_write(base, *key as u32, *value)
-                }
-                _ => false,
-            }
-        };
-        if !dense && !typed {
-            return Ok(false);
-        }
-        // The successful leaf proved base's sole release cannot drain. Only
-        // numeric input moves occur before its release; no proof can change.
-        // The typed leaf accepts Number only; the dense fallback accepts
-        // immediate scalars only. The key was proved Int above. These two
-        // slots therefore carry no edge and need no general binding release.
-        self.slots[index + 2] = None;
+        let decision = compare(left, right);
+        self.slots[index] = None;
         self.slots[index + 1] = None;
-        let Some(FrameBinding::Direct(base)) = self.slots[index].take() else {
-            unreachable!("typed/dense leaf authenticated its base slot")
-        };
-        window.depth = offset;
-        runtime
-            .release_jsvalue(base)
-            .map_err(super::exception::runtime_error_to_vm_error)?;
+        window.depth -= 2;
         #[cfg(feature = "profiling")]
         {
-            self.live_slots -= 3;
-            record_owned_storage(Cost::Move(3));
-            crate::engine::api::profiling::record_owned_execution_event(if typed {
-                "typed_array_number_write_in_run"
-            } else {
-                "dense_array_scalar_write_in_run"
-            });
+            self.live_slots -= 2;
+            record_owned_storage(Cost::Move(2));
+            crate::engine::api::profiling::record_owned_execution_event("number_pair_branch");
         }
-        Ok(true)
+        Ok(Some(decision))
     }
 
     fn array_immediate_read_current(
@@ -1087,46 +1053,6 @@ impl SlotStore {
             );
         }
         Ok(true)
-    }
-
-    fn property_ic_write_scalar_current(
-        &mut self,
-        window: &mut FrameWindow,
-        runtime: &Runtime,
-        executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
-        pc: usize,
-        key: u32,
-    ) -> Result<Option<bool>, Error> {
-        let offset = window
-            .depth
-            .checked_sub(2)
-            .ok_or_else(Self::operand_stack_underflow)?;
-        let index = window.operands().start + offset;
-        let [
-            Some(FrameBinding::Direct(base)),
-            Some(FrameBinding::Direct(value)),
-        ] = &self.slots[index..index + 2]
-        else {
-            return Err(Self::operand_slot_not_a_value());
-        };
-        let outcome = runtime
-            .try_property_ic_write_scalar(base, executable, pc, key, value)
-            .map_err(super::exception::runtime_error_to_vm_error)?;
-        if outcome != Some(true) {
-            return Ok(outcome);
-        }
-        let base = self.slots[index].take();
-        let value = self.slots[index + 1].take();
-        window.depth = offset;
-        for binding in [base, value].into_iter().flatten() {
-            release_binding(runtime, binding)?;
-        }
-        #[cfg(feature = "profiling")]
-        {
-            self.live_slots -= 2;
-            record_owned_storage(Cost::Move(2));
-        }
-        Ok(Some(true))
     }
 
     /// Move an owned value into an already reserved, empty operand slot.
@@ -1366,6 +1292,7 @@ impl SlotStore {
         self.release_operand_current(window, from_top, runtime)
     }
 
+    #[cfg(all(test, feature = "profiling"))]
     fn release_operand_current(
         &mut self,
         window: &FrameWindow,
@@ -1453,21 +1380,6 @@ impl SlotStore {
         record_owned_storage(Cost::Move(2));
         Ok(self.slots[window.locals().start + usize::from(index)]
             .replace(value)
-            .unwrap())
-    }
-
-    #[inline]
-    fn replace_local_pending_current(
-        &mut self,
-        window: &FrameWindow,
-        index: u16,
-        value: &mut Option<FrameBinding>,
-    ) -> Result<FrameBinding, Error> {
-        self.local_current(window, index)?;
-        #[cfg(feature = "profiling")]
-        record_owned_storage(Cost::Move(2));
-        Ok(self.slots[window.locals().start + usize::from(index)]
-            .replace(value.take().expect("pending local owner"))
             .unwrap())
     }
 
@@ -1823,7 +1735,8 @@ mod tests {
         };
         let code = runtime.snapshot_function_bytecode(&bytecode).unwrap();
         let (pc, key) = code
-            .code
+            .exec
+            .test_ir()
             .iter()
             .enumerate()
             .find_map(|(pc, op)| match op {
@@ -1831,6 +1744,7 @@ mod tests {
                 _ => None,
             })
             .unwrap();
+        let pc = code.exec.exec_pc(pc as u32).unwrap() as usize;
         let base = context
             .eval("globalThis.icSlotValue={marker:1};({x:icSlotValue})")
             .unwrap();
@@ -1865,7 +1779,7 @@ mod tests {
             .unwrap();
         assert!(
             !slots
-                .run_window(&mut window)
+                .borrow_frame_slots(&mut window)
                 .unwrap()
                 .property_ic_read(&runtime, &code, pc, key, true, &mut native)
                 .unwrap()
@@ -1884,7 +1798,7 @@ mod tests {
         assert_eq!(to_public(&runtime, slots.peek(&window, 0).unwrap()), base);
         assert!(
             slots
-                .run_window(&mut window)
+                .borrow_frame_slots(&mut window)
                 .unwrap()
                 .property_ic_read(&runtime, &code, pc, key, false, &mut native)
                 .unwrap()
@@ -1901,7 +1815,7 @@ mod tests {
             .unwrap();
         assert!(
             slots
-                .run_window(&mut window)
+                .borrow_frame_slots(&mut window)
                 .unwrap()
                 .property_ic_read(&runtime, &code, pc, key, true, &mut native)
                 .unwrap()
@@ -2028,17 +1942,13 @@ mod tests {
         };
         let code = runtime.snapshot_function_bytecode(&bytecode).unwrap();
         let key = code
-            .code
+            .exec
+            .test_ir()
             .iter()
             .find_map(|op| match op {
                 Instruction::GetField(index) => Some(*index),
                 _ => None,
             })
-            .unwrap();
-        let pc = code
-            .code
-            .iter()
-            .position(|op| matches!(op, Instruction::PutField(_)))
             .unwrap();
         for source in [
             "({get x(){throw 42}})",
@@ -2065,7 +1975,7 @@ mod tests {
                 .unwrap();
             assert!(
                 !slots
-                    .run_window(&mut window)
+                    .borrow_frame_slots(&mut window)
                     .unwrap()
                     .ordinary_field_immediate_read(&runtime, &code, key)
                     .unwrap()
@@ -2073,29 +1983,6 @@ mod tests {
             assert_eq!(window.depth, 2);
             assert!(
                 matches!(slots.peek(&window, 0).unwrap(), JsValue::Object(handle) if *handle == id)
-            );
-            slots
-                .push(&mut window, into_internal(&runtime, Value::Int(17)))
-                .unwrap();
-            assert!(
-                slots
-                    .run_window(&mut window)
-                    .unwrap()
-                    .property_ic_write_scalar(&runtime, &code, pc, key)
-                    .unwrap()
-                    != Some(true)
-            );
-            assert_eq!(window.depth, 3);
-            assert_eq!(
-                to_public(&runtime, slots.peek(&window, 0).unwrap()),
-                Value::Int(17)
-            );
-            assert!(
-                matches!(slots.peek(&window, 1).unwrap(), JsValue::Object(handle) if *handle == id)
-            );
-            assert_eq!(
-                to_public(&runtime, slots.peek(&window, 2).unwrap()),
-                Value::Int(99)
             );
             slots.clear_frame(&runtime, window).unwrap();
         }
@@ -2231,165 +2118,6 @@ mod tests {
     }
 
     #[test]
-    fn typed_number_leaf_declines_without_consuming_or_writing_inputs() {
-        for (source, key, object_value, single_root, detached) in [
-            ("new Uint8Array(1)", 1, false, false, false),
-            ("new Uint8Array(1)", -1, false, false, false),
-            ("new Uint8Array(1)", 0, true, false, false),
-            ("new Uint8Array(1)", 0, false, true, false),
-            ("new Uint8Array(1)", 0, false, false, true),
-            (
-                "new Uint8Array(new SharedArrayBuffer(1))",
-                0,
-                false,
-                false,
-                false,
-            ),
-            ("new BigInt64Array(1)", 0, false, false, false),
-            ("({})", 0, false, false, false),
-        ] {
-            let runtime = Runtime::new();
-            let mut context = runtime.new_context();
-            let base = context.eval(source).unwrap();
-            let retained = (!single_root).then(|| base.clone());
-            if single_root {
-                assert_ne!(
-                    runtime.slot_value_release_readiness(&base).unwrap(),
-                    crate::engine::heap::SlotReleaseReadiness::Ready
-                );
-            }
-            if detached {
-                // Use the actual backing of this view, without adding a view owner.
-                let Value::Object(view) = &base else {
-                    unreachable!()
-                };
-                let snapshot = runtime.typed_array_snapshot(view).unwrap();
-                let backing = crate::engine::object::ObjectRef::from_borrowed_handle(
-                    runtime.clone(),
-                    snapshot.buffer,
-                )
-                .unwrap();
-                context
-                    .detach_array_buffer(&Value::Object(backing))
-                    .unwrap();
-            }
-            let value = if object_value {
-                context.eval("({valueOf(){throw 42}})").unwrap()
-            } else {
-                Value::Int(17)
-            };
-            let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
-            owner.metadata.max_stack = 3;
-            let mut slots = SlotStore::new(3);
-            let mut window = slots
-                .push_frame(&runtime, &owner.frame_layout(), empty_storage())
-                .unwrap();
-            for value in [base, Value::Int(key), value] {
-                slots
-                    .push(&mut window, into_internal(&runtime, value))
-                    .unwrap();
-            }
-            assert!(
-                !slots
-                    .run_window(&mut window)
-                    .unwrap()
-                    .typed_array_number_write(&runtime)
-                    .unwrap(),
-                "{source}"
-            );
-            assert_eq!(window.depth, 3);
-            assert_eq!(
-                to_public(&runtime, slots.peek(&window, 1).unwrap()),
-                Value::Int(key)
-            );
-            if !object_value {
-                assert_eq!(
-                    to_public(&runtime, slots.peek(&window, 0).unwrap()),
-                    Value::Int(17)
-                );
-            }
-            if let Some(Value::Object(view)) = &retained {
-                if source.starts_with("new Uint8Array") && !detached {
-                    assert_eq!(
-                        runtime.typed_array_read_index(view, 0).unwrap(),
-                        Some(Value::Int(0))
-                    );
-                }
-            }
-            slots.clear_frame(&runtime, window).unwrap();
-        }
-    }
-
-    #[test]
-    fn typed_number_leaf_preserves_deferred_and_borrowed_inputs_until_fallback() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        let base = context.eval("new Uint8Array(1)").unwrap();
-        let retained = base.clone();
-        let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
-        owner.metadata.max_stack = 3;
-        let mut slots = SlotStore::new(3);
-        let mut window = slots
-            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
-            .unwrap();
-        for value in [base, Value::Int(0), Value::Int(17)] {
-            slots
-                .push(&mut window, into_internal(&runtime, value))
-                .unwrap();
-        }
-        {
-            let _borrow = runtime.0.state.borrow();
-            assert!(
-                !slots
-                    .run_window(&mut window)
-                    .unwrap()
-                    .typed_array_number_write(&runtime)
-                    .unwrap()
-            );
-            assert_eq!(window.depth, 3);
-        }
-        let queued = runtime.new_object(None).unwrap();
-        {
-            let _borrow = runtime.0.state.borrow();
-            drop(queued);
-        }
-        assert!(
-            !slots
-                .run_window(&mut window)
-                .unwrap()
-                .typed_array_number_write(&runtime)
-                .unwrap()
-        );
-        assert_eq!(window.depth, 3);
-        assert_eq!(
-            to_public(&runtime, slots.peek(&window, 0).unwrap()),
-            Value::Int(17)
-        );
-        assert!(runtime.0.deferred_references.has_pending());
-        runtime.drain_deferred_references().unwrap();
-        let Value::Object(view) = &retained else {
-            unreachable!()
-        };
-        assert_eq!(
-            runtime.typed_array_read_index(view, 0).unwrap(),
-            Some(Value::Int(0))
-        );
-        assert!(
-            slots
-                .run_window(&mut window)
-                .unwrap()
-                .typed_array_number_write(&runtime)
-                .unwrap()
-        );
-        assert_eq!(window.depth, 0);
-        assert_eq!(
-            runtime.typed_array_read_index(view, 0).unwrap(),
-            Some(Value::Int(17))
-        );
-        slots.clear_frame(&runtime, window).unwrap();
-    }
-
-    #[test]
     fn recovery_string_index_leaf_preserves_spelling_and_final_key_owner() {
         for (text, retained, expected) in [
             ("0", true, true),
@@ -2423,7 +2151,7 @@ mod tests {
             let keep_capacity = runtime.new_object(None).unwrap();
             assert_eq!(
                 store
-                    .run_window(&mut window)
+                    .borrow_frame_slots(&mut window)
                     .unwrap()
                     .array_immediate_read(&runtime)
                     .unwrap(),
@@ -2489,7 +2217,7 @@ mod tests {
             }
             assert!(
                 !slots
-                    .run_window(&mut window)
+                    .borrow_frame_slots(&mut window)
                     .unwrap()
                     .array_immediate_read(&runtime)
                     .unwrap(),
@@ -2526,7 +2254,7 @@ mod tests {
             let _borrow = runtime.0.state.borrow();
             assert!(
                 !slots
-                    .run_window(&mut window)
+                    .borrow_frame_slots(&mut window)
                     .unwrap()
                     .array_immediate_read(&runtime)
                     .unwrap()
@@ -2535,7 +2263,7 @@ mod tests {
         }
         assert!(
             !slots
-                .run_window(&mut window)
+                .borrow_frame_slots(&mut window)
                 .unwrap()
                 .array_immediate_read(&runtime)
                 .unwrap()
@@ -2545,7 +2273,7 @@ mod tests {
         runtime.drain_deferred_references().unwrap();
         assert!(
             slots
-                .run_window(&mut window)
+                .borrow_frame_slots(&mut window)
                 .unwrap()
                 .array_immediate_read(&runtime)
                 .unwrap()
@@ -2600,7 +2328,7 @@ mod tests {
             }
             assert!(
                 !slots
-                    .run_window(&mut window)
+                    .borrow_frame_slots(&mut window)
                     .unwrap()
                     .array_immediate_read(&runtime)
                     .unwrap(),
@@ -2636,7 +2364,7 @@ mod tests {
             let _borrow = runtime.0.state.borrow();
             assert!(
                 !slots
-                    .run_window(&mut window)
+                    .borrow_frame_slots(&mut window)
                     .unwrap()
                     .array_immediate_read(&runtime)
                     .unwrap()
@@ -2645,7 +2373,7 @@ mod tests {
         }
         assert!(
             !slots
-                .run_window(&mut window)
+                .borrow_frame_slots(&mut window)
                 .unwrap()
                 .array_immediate_read(&runtime)
                 .unwrap()
@@ -2655,7 +2383,7 @@ mod tests {
         runtime.drain_deferred_references().unwrap();
         assert!(
             slots
-                .run_window(&mut window)
+                .borrow_frame_slots(&mut window)
                 .unwrap()
                 .array_immediate_read(&runtime)
                 .unwrap()

@@ -186,7 +186,7 @@ impl Heap {
     /// succeed.
     pub fn allocate_function_bytecode(
         &mut self,
-        mut bytecode: FunctionBytecodeData,
+        bytecode: FunctionBytecodeDraft,
     ) -> Result<FunctionBytecodeId, HeapError> {
         if bytecode
             .constants
@@ -1313,21 +1313,32 @@ impl Heap {
                 }
             }
         }
-        // A draft may have been assembled from another node's fields. Never
-        // reuse its projection: only this authenticated immutable payload may
-        // initialize the cache after publication.
-        bytecode.executable = Default::default();
+        #[cfg(feature = "profiling")]
+        let _encode_timer = crate::engine::api::profiling::PhaseTimer::start(
+            crate::engine::api::profiling::CompilePhase::Encode,
+        );
+        let exec = crate::engine::code::exec::ExecCode::encode_with_locals(
+            &bytecode.code,
+            &bytecode.local_definitions,
+        )
+        .map_err(|_| HeapError::Invariant("execution encoding rejected authenticated bytecode"))?;
+        let bytecode = FunctionBytecodeData {
+            executable: Default::default(),
+            exec,
+            constants: bytecode.constants,
+            property_key_atoms: bytecode.property_key_atoms,
+            realm: bytecode.realm,
+            metadata: bytecode.metadata,
+            parameter_environment: bytecode.parameter_environment,
+            func_name: bytecode.func_name,
+            argument_definitions: bytecode.argument_definitions,
+            local_definitions: bytecode.local_definitions,
+            closure_variables: bytecode.closure_variables,
+            eval_environments: bytecode.eval_environments,
+            debug: bytecode.debug,
+            auxiliary_atoms: bytecode.auxiliary_atoms,
+        };
 
-        {
-            // Fusion is another derived projection. Authorize spans only from
-            // the exact code and local definitions verified above, never from
-            // a caller-supplied or previously published draft's plan.
-            bytecode.fusion = crate::engine::code::fusion::FusionPlan::build(
-                &bytecode.code,
-                &bytecode.local_definitions,
-                &bytecode.constants,
-            );
-        }
         let (index, generation) = self.reserve(HeapNodeKind::FunctionBytecode)?;
         let id = FunctionBytecodeId { index, generation };
         let edges = function_bytecode_edges(&bytecode);

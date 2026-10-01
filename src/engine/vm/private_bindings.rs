@@ -211,10 +211,7 @@ pub(super) fn step(
             if let Some(home) = retained_home {
                 execution.slots.push(&mut frame.window, home)?;
             }
-            frame.resume_pc = frame
-                .fault_pc
-                .checked_add(1)
-                .ok_or_else(|| Error::internal("private initialization resume PC overflow"))?;
+            frame.resume_pc = frame.next_pc()?;
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_instruction(depth);
             Ok(None)

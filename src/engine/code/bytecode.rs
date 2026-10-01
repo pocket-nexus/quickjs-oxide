@@ -109,9 +109,8 @@ pub enum ApplyKind {
 }
 
 /// Stack-machine operations deliberately use the names and stack behavior of
-/// their `QuickJS` counterparts. This typed form is the current compiler IR and
-/// verified execution format; a future compact encoder must share this opcode
-/// metadata instead of defining a second instruction contract.
+/// their `QuickJS` counterparts. This typed form is compiler IR. Publication
+/// consumes it into `ExecCode`; the VM never dispatches this enum.
 #[derive(Clone, Debug)]
 #[cfg_attr(
     not(test),
@@ -714,11 +713,6 @@ pub enum Instruction {
     ReturnDerived(u16),
     Throw,
 }
-
-// Stage B dispatch budget: one canonical instruction moves through the owned
-// match in a single 12-byte slot. Recheck the stage B measurements before
-// widening any variant.
-const _: () = assert!(std::mem::size_of::<Instruction>() == 12);
 
 impl Instruction {
     /// String constant used as a static name by the VM's property-key bridge.

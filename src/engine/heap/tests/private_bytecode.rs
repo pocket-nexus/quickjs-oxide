@@ -83,7 +83,7 @@ fn linked_private_accessor_bytecode(
     heap: &mut Heap,
     realm: ContextId,
     shape: LinkedPrivateAccessorShape,
-) -> FunctionBytecodeData {
+) -> FunctionBytecodeDraft {
     let primary_name = Atom::from_raw(601);
     let setter_name = Atom::from_raw(602);
     let callable_arguments: &[u16] = match shape {
@@ -223,7 +223,7 @@ fn linked_private_method_bytecode(
     realm: ContextId,
     function_kind: FunctionKind,
     has_prototype: bool,
-) -> FunctionBytecodeData {
+) -> FunctionBytecodeDraft {
     let name = Atom::from_raw(604);
     let method =
         allocate_private_callable_child(heap, realm, 0, true, None, function_kind, has_prototype);

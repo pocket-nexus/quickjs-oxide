@@ -23,10 +23,10 @@ C1–C4 与耦合的 B1a–B1d 整体撤回到 `bcfb4fe5`。当时的 QuickOp co
 
 因此保留的教训是：**专用化必须删除真实 helper、拥有式中间值和重复证明；不能用更紧凑表示、更多命中或更少 dispatch 替代工作量与净收益证据。**
 
-这些证据不证明所有 execution block、所有 quickening 或所有寄存器化思想无用。新的数组跨度必须说明它与旧 facade 的工作删除差异，并独立过门禁。
+这些证据不证明所有 execution block、所有 quickening 或所有寄存器化思想无用。后续候选按 [当前原则](../performance/principles.md)说明实际删除的工作，并测量语义、命中与未命中路径、编译及空间成本；旧候选的门槛不自动沿用。
 
 ## 限制与不能重新解释的部分
 
 当时是单机／单轮、powersave，单项时间噪声约 −12%～+6%；结论不能夸大成所有子项统计显著变慢。退休指令增长与新增热路径是主要机制证据，不能反过来声称已证明 I-cache 或分支预测是根因。
 
-完整实现记录及其快照在 [历史入口](README.md) 的固定版本目录中。最新 #44 又证明即使 `run` 指令序列不变，outlined helper 的内联翻转仍可造成回退，见 [新证据账本](../performance/evidence.md#e44)。
+完整实现记录及其快照在 [历史入口](README.md) 的固定版本目录中。历史 #44 实验还发现，即使当时的 `run` 指令序列不变，outlined helper 的内联翻转仍可造成回退，见 [证据账本](../performance/evidence.md#e44)。

@@ -9,8 +9,10 @@ use crate::engine::heap::runtime::RuntimeState;
 use crate::engine::heap::{ObjectId, ObjectKind, ObjectPayload, PropertySlot, RawValue};
 use crate::engine::object::shape::PropertyFlags;
 use crate::engine::object::{ObjectRef, PropertyKey};
+use crate::engine::value::JsValue;
+#[cfg(test)]
+use crate::engine::value::Value;
 use crate::engine::value::number::operations::Number;
-use crate::engine::value::{JsValue, Value};
 
 /// Affine native payload fact selected together with an own property value.
 /// Its callee remains retained by the result/operand owner; consumption checks
@@ -957,6 +959,7 @@ mod dense_set_tests {
     }
 }
 
+#[cfg(test)]
 fn immediate_value(raw: &crate::engine::heap::RawValue) -> Option<Value> {
     use crate::engine::heap::RawValue;
     Some(match raw {
@@ -1237,7 +1240,7 @@ impl Runtime {
 
     /// Diagnose a *previously failed* numeric dense read. This performs an
     /// extra heap borrow only in profiling builds and never changes storage.
-    #[cfg(feature = "profiling")]
+    #[cfg(all(test, feature = "profiling"))]
     pub(crate) fn diagnose_dense_number_read_miss(
         &self,
         base: &JsValue,
@@ -1254,7 +1257,7 @@ impl Runtime {
 
     /// Diagnose a *previously failed* numeric dense write. The mutable
     /// borrow probe distinguishes storage readiness from an active lease.
-    #[cfg(feature = "profiling")]
+    #[cfg(all(test, feature = "profiling"))]
     pub(crate) fn diagnose_dense_number_write_miss(
         &self,
         base: &JsValue,
@@ -1275,6 +1278,7 @@ impl Runtime {
     /// and new values are immediate, so this cannot release an owner, drain
     /// cleanup, change layout or length, or invoke user code.
     #[inline]
+    #[cfg(test)]
     pub(crate) fn try_write_dense_number(&self, base: &JsValue, index: u32, value: Number) -> bool {
         let JsValue::Object(id) = base else {
             return false;
@@ -1365,7 +1369,7 @@ impl Runtime {
 /// Report the first currently observable guard failure in the same order as
 /// the dense leaf. A later canonical property operation can have additional
 /// semantics (prototype, accessor, etc.); this label is not a unique cause.
-#[cfg(feature = "profiling")]
+#[cfg(all(test, feature = "profiling"))]
 fn dense_number_miss_in_state(state: &RuntimeState, base: &JsValue, index: u32) -> &'static str {
     let JsValue::Object(id) = base else {
         return "base_not_object";
@@ -1414,7 +1418,7 @@ fn dense_number_miss_in_state(state: &RuntimeState, base: &JsValue, index: u32) 
 /// Refine the representation failure without invoking [[Get]], walking the
 /// prototype chain, interning a key, or retaining a value. These are observed
 /// own-slot states, not claims about why the whole Array stayed materialized.
-#[cfg(feature = "profiling")]
+#[cfg(all(test, feature = "profiling"))]
 fn materialized_number_miss_in_state(
     state: &RuntimeState,
     object: ObjectId,
@@ -2070,7 +2074,8 @@ mod ordinary_field_leaf_tests {
         };
         let executable = runtime.snapshot_function_bytecode(&bytecode).unwrap();
         let index = executable
-            .code
+            .exec
+            .test_ir()
             .iter()
             .find_map(|op| match op {
                 Instruction::GetField(index) => Some(*index),

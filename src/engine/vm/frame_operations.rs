@@ -14,9 +14,9 @@ pub(super) use numeric::{
 use super::Completion;
 use super::driver::{CallStep, prepare_captured_reuse};
 use super::exception::runtime_error_to_vm_error;
+use super::execute::VmAction;
 use super::execution::RunningExecution;
 use super::frame::FrameId;
-use super::run::RunExit;
 use crate::engine::api::error::Error;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::value::JsValue;
@@ -60,10 +60,7 @@ pub(super) fn home_object(
     execution
         .slots
         .push(&mut frame.window, JsValue::Object(home.into_handle()))?;
-    frame.resume_pc = frame
-        .fault_pc
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("HomeObject resume PC overflow"))?;
+    frame.resume_pc = frame.next_pc()?;
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_instruction(depth);
     Ok(CallStep::Entered)
@@ -97,10 +94,7 @@ pub(super) fn get_super(
             .release_jsvalue(discarded)
             .map_err(runtime_error_to_vm_error)?;
         execution.slots.push(&mut frame.window, prototype)?;
-        frame.resume_pc = frame
-            .fault_pc
-            .checked_add(1)
-            .ok_or_else(|| Error::internal("super resume PC overflow"))?;
+        frame.resume_pc = frame.next_pc()?;
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_instruction(depth);
         return Ok(CallStep::Entered);
@@ -208,7 +202,7 @@ pub(super) fn strict_equality(
     id: FrameId,
     negate: bool,
 ) -> Result<CallStep, Error> {
-    super::run::strict_comparison(runtime, execution, id, negate)?;
+    super::execute::strict_comparison(runtime, execution, id, negate)?;
     Ok(CallStep::Entered)
 }
 
@@ -217,7 +211,7 @@ pub(super) fn arguments(
     runtime: &Runtime,
     execution: &mut RunningExecution,
     id: FrameId,
-    exit: RunExit,
+    exit: VmAction,
 ) -> Result<CallStep, Error> {
     match super::arguments_driver::step(runtime, execution, id, exit)? {
         None => Ok(CallStep::Entered),
@@ -268,10 +262,7 @@ pub(super) fn reset_captured(
         &crate::engine::heap::roots::VarRefView::from_frame(runtime, *var_ref),
         reusable,
     )?;
-    frame.resume_pc = frame
-        .fault_pc
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("reset resume PC overflow"))?;
+    frame.resume_pc = frame.next_pc()?;
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_instruction(execution.slots.depth(&frame.window));
     Ok(CallStep::Entered)
@@ -297,10 +288,7 @@ pub(super) fn close_captured(
         execution.slots.local_mut(&frame.window, index)?,
         frame.executable.local_definitions[usize::from(index)].kind,
     )?;
-    frame.resume_pc = frame
-        .fault_pc
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("close resume PC overflow"))?;
+    frame.resume_pc = frame.next_pc()?;
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_instruction(execution.slots.depth(&frame.window));
     Ok(CallStep::Entered)
@@ -311,12 +299,14 @@ pub(super) fn catch(
     runtime: &Runtime,
     execution: &mut RunningExecution,
     id: FrameId,
-    exit: RunExit,
+    exit: VmAction,
 ) -> Result<CallStep, Error> {
     let frame = execution.frames.current_mut(id)?;
     let depth = execution.slots.depth(&frame.window);
-    if let RunExit::Catch(target) = exit {
-        if target as usize >= frame.executable.code.len() {
+    if let VmAction::Catch(target) = exit {
+        if target as usize >= frame.executable.exec.word_len()
+            || !frame.executable.exec.is_boundary(target as usize)
+        {
             return Err(Error::internal("catch target is out of bounds"));
         }
         #[cfg(feature = "profiling")]
@@ -345,7 +335,7 @@ pub(super) fn catch(
                 "catch cleanup has no innermost catch region",
             ));
         };
-        if exit == RunExit::DropCatch {
+        if exit == VmAction::DropCatch {
             if depth != stack_depth {
                 return Err(Error::internal(
                     "DropCatch did not reach its catch entry depth",
@@ -369,10 +359,7 @@ pub(super) fn catch(
         }
         frame.cold.regions.pop();
     }
-    frame.resume_pc = frame
-        .fault_pc
-        .checked_add(1)
-        .ok_or_else(|| Error::internal("catch resume PC overflow"))?;
+    frame.resume_pc = frame.next_pc()?;
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_instruction(depth);
     Ok(CallStep::Entered)
@@ -400,14 +387,14 @@ pub(super) fn binding(
     runtime: &Runtime,
     execution: &mut RunningExecution,
     id: FrameId,
-    source: super::run::BindingSource,
+    source: super::execute::BindingSource,
     index: u16,
     write: bool,
     checked: bool,
     keep: bool,
 ) -> Result<CallStep, Error> {
     let frame = execution.frames.current_mut(id)?;
-    use super::run::BindingSource;
+    use super::execute::BindingSource;
     use crate::engine::code::function::metadata::{
         ClosureSource, ClosureVariable, ClosureVariableName,
     };
@@ -490,10 +477,7 @@ pub(super) fn binding(
             if let Some(value) = value {
                 execution.slots.push(&mut frame.window, value)?;
             }
-            frame.resume_pc = frame
-                .fault_pc
-                .checked_add(1)
-                .ok_or_else(|| Error::internal("closure access resume PC overflow"))?;
+            frame.resume_pc = frame.next_pc()?;
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_instruction(depth);
             Ok(CallStep::Entered)
@@ -572,10 +556,7 @@ pub(super) fn initialize_derived(
                     ));
                 }
             }
-            frame.resume_pc = frame
-                .fault_pc
-                .checked_add(1)
-                .ok_or_else(|| Error::internal("initialization resume PC overflow"))?;
+            frame.resume_pc = frame.next_pc()?;
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_instruction(depth);
             Ok(CallStep::Entered)

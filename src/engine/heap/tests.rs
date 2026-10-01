@@ -180,11 +180,8 @@ fn bytecode(
     realm: ContextId,
     constants: Vec<BytecodeConstant>,
     auxiliary_atoms: Vec<Atom>,
-) -> FunctionBytecodeData {
-    FunctionBytecodeData {
-        executable: Default::default(),
-
-        fusion: Default::default(),
+) -> FunctionBytecodeDraft {
+    FunctionBytecodeDraft {
         code: code.clone(),
         constants: constants.into(),
         property_key_atoms: None,
@@ -209,7 +206,7 @@ fn closure_bytecode(
     code: &Rc<[Instruction]>,
     realm: ContextId,
     closure_count: u16,
-) -> FunctionBytecodeData {
+) -> FunctionBytecodeDraft {
     let mut bytecode = bytecode(code, realm, Vec::new(), Vec::new());
     bytecode.metadata.closure_count = closure_count;
     bytecode.closure_variables = (0..closure_count)

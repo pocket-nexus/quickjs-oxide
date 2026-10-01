@@ -64,8 +64,9 @@ admissions therefore extend the exact contract and cannot silently inherit the
 old phase/type-only behavior; removing an exemption requires replacing it with
 an exact contract.
 
-The baseline also names the exact source commit and a canonical engine-semantics
-fingerprint. The fingerprint hashes sorted repository paths and exact contents
+The gate authenticates the current worktree with a canonical engine-semantics
+fingerprint; the baseline does not require an external source commit to replay.
+The fingerprint hashes sorted repository paths and exact contents
 for `Cargo.toml`, `Cargo.lock`, `src/**`, the active profile/upstream pins, and
 the central preparation/gate scripts. It excludes generated caches, vendors,
 historical vectors, receipts, and `current.conf` itself. The spec remains

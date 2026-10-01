@@ -15,6 +15,7 @@ pub(crate) mod runtime;
 
 pub(crate) mod dynamic_source;
 
-mod executable;
+pub(crate) mod exec;
+pub(crate) mod exec_opcode;
 
-pub(crate) mod fusion;
+mod executable;

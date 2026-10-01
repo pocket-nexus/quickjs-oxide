@@ -1,10 +1,10 @@
 # Workspace architecture
 
 This document describes the current implementation and its responsibility
-boundaries. The [primitive VM overview](primitive-vm.md) summarizes the
-execution-core redesign: the legacy execution path is retired and the
-unified `root_call` core — explicit JS frames, one driver and owned domain
-continuations — is the only engine.
+boundaries at PR #52 (`996663f771afdabdc69d52c94bd4d2fb392e27b1`).
+[The optimization roadmap](performance/roadmap.md) describes proposed work;
+it does not describe additional implemented capabilities.
+[Primitive VM results](primitive-vm.md) retain earlier measurement provenance.
 
 ## Packages and module owners
 
@@ -33,9 +33,9 @@ src/
 ```
 
 This is a map of current owners, not a requirement to retain every internal
-file or interface. The VM plan specifies the new compiler, code and execution
-structure. Shared use alone does not require a separate crate, service trait
-or forwarding layer.
+file or interface. Future execution changes are described in the
+[roadmap](performance/roadmap.md). Shared use alone does not require a separate
+crate, service trait or forwarding layer.
 
 | Package directory | Production workspace dependencies |
 | --- | --- |
@@ -74,27 +74,89 @@ for local rewrites and delegates required normal/exception/resume stack facts
 to the existing code verifier. `optimize.rs` owns the bounded constant-branch
 rewrite and its ordered QuickJS late-throw source-site projection. It runs the
 projection before rewriting and preserves physical instruction slots.
-Profiling builds expose scoped compile/legacy-dispatch counters through
-`api/profiling/cost.rs`; default builds contain no instrumentation hooks.
+Profiling builds expose scoped compile, execution, site and call counters
+through `api/profiling/cost.rs`; default builds contain no instrumentation
+hooks.
 
-Expression intermediates live on an operand stack; numbered locals do not
-make this a register VM. The current execution path splits arguments and
-locals in `RuntimeVmHost` from the operand stack in `VmActivation`, with
-additional active-frame tracking. Ordinary JS calls recursively enter the
-Rust interpreter. These are the principal ownership and driving boundaries
-that the pending plan replaces.
+`Instruction` is temporary compiler IR. Publication validates it, encodes a
+single `ExecCode` word stream, and drops the IR. Each instruction starts with a
+word containing a 16-bit opcode header and a 16-bit short operand; wide operands
+use following 32-bit words.
+The header also encodes the verified word width, so dispatch does not recount
+extensions on every execution.
+The encoder and verifier share the opcode/operand contract. `ExecCode` stores
+instruction boundaries so control-flow targets, resumed frames and
+diagnostics use execution-word offsets. The published function retains the
+word stream, constants and metadata; product builds have no second instruction
+array or fusion plan. Tests may retain compiler IR for assertions. The current
+selector recognizes bounded instruction patterns; the dataflow-based execution
+planner in the roadmap is not implemented.
 
-Code verification and transactional publication already exist. Published
-instructions and constant storage already share immutable arrays; the plan
-must account for remaining per-call projections and roots rather than treat
-sharing as a missing feature. Code representation and publication belong in
-`code`; active pc, stack position and call state belong in `vm`.
+`vm/execute.rs` is the only instruction loop. `FrameCursor` borrows the frame
+window for one short operation at a time, moves or copies owned values, and
+keeps fault/resume word positions local. It publishes the fault PC before
+observable release. Cursor drop writes both positions back to the frame. The
+explicit frame stack and driver handle operations that can call JavaScript,
+throw or suspend. The object, conversion and iterator algorithms retain their semantic ownership
+in their respective modules; none dispatches compiler `Instruction` values.
 
-The redesign keeps stack instructions and the complete language frontend.
-It introduces explicit JS frames, one execution driver, domain-owned callback
-state and concentrated slot ownership. The final architecture, the delivered
-stages and the measured results are recorded in the
-[primitive VM overview](primitive-vm.md).
+Publication selects ordinary, cache-aware and numeric span opcodes. Ordinary
+local and argument reads enter directly, with no specialization probe. A
+numeric span hit skips its following generic words; a failed guard executes
+the same position's ordinary read and then those generic words. The verifier
+rejects any span with a control-flow entry into its middle. Field and array
+cache misses similarly enter the new execution flow's general handlers.
+The field cache retained by published code is read-only; writes use the
+general property operation without an unused write-cache allocation.
+The `quicken_same_width` helper is test-only and checks allowed opcode pairs,
+operand counts and encoded width. There is no production adaptive quickening
+policy or retry/backoff mechanism. Shared words currently use `Rc<[Cell<u32>]>`;
+this is not a frozen, portable program image.
+
+### Where execution facts are established
+
+| Boundary | Current responsibility | What it does not establish |
+| --- | --- | --- |
+| Lowering / `verify_parts` | Validate reachable stack states, control flow and constant references; compute maximum stack usage | Current JS value types, object state, or a complete local-initialization/storage proof for future direct operations |
+| Publication / heap allocation | Link atoms and constants, validate function metadata, retain child/constant roots, publish iteratively and clean up failures | Cross-runtime portability of linked identities |
+| `ExecCode` encoding / verification | Check headers, operand counts, widths, boundaries, targets and selected span contracts | Every proposed binding/ownership/effect guarantee in the roadmap |
+| Frame installation / execution entry | Reserve frame storage, authenticate its window, check the resume word boundary | That arbitrary saved values stayed unchanged across re-entry |
+| Short execution borrow | Inspect actual binding/value/storage facts and consume scoped access | Validity across callbacks, layout mutation, suspension or observable release |
+
+Removing the earlier standalone verifier removed a redundant historical stage;
+it did not eliminate stack validation, metadata checks or `ExecCode::verify`.
+A sealed type or immutable words do not themselves eliminate Rust bounds checks.
+The encoder still constructs operand descriptions for sizing and emission;
+the complete generated instruction specification is proposed work.
+
+`Frame::next_pc` currently decodes from `fault_pc`, and each `execute_frame`
+entry checks the resume boundary. Carrying already-known continuations through
+trusted internal completion is a roadmap item. Dynamic Number/index/descriptor
+and identity checks remain necessary where facts can change.
+
+### Frame ownership and observation
+
+`SlotStore` owns separate original-argument, parameter, local and operand
+windows. Its initialized backing is reused; inactive slots contain no owners.
+`FrameTransaction` exclusively borrows the store/window, while `FrameSlots`
+provides short access. References must end before re-entry or an operation that
+invalidates their facts. Suspension moves owners into saved storage; restoration
+validates dynamic frame state before execution resumes.
+
+The driver handles semantic continuations on an explicit frame stack. Ordinary
+JS callbacks do not recursively start another Rust interpreter; true host
+re-entry retains its host-stack budget. Materialization exposes frames and roots
+for observation. The current action classification is broad, and ordinary stores
+outside the direct Number path can request materialization. This describes #52;
+it is not a rule that every helper or scalar replacement must publish a frame.
+The roadmap makes release handling depend on the displaced owner and the
+operation's actual effects.
+
+Own numeric Array reads currently support dense and materialized data slots,
+including frozen data properties. Existing numeric writes have narrower dense
+storage guards. Read eligibility does not imply writability. Scoped one-borrow
+updates, homogeneous numeric backing and typed cell/shape arenas are proposals,
+not properties implied by the current helper names.
 
 ## State and semantic boundaries
 
@@ -108,8 +170,8 @@ one Runtime type, not parallel runtimes.
 Heap records retain raw data and reference edges; storage operations maintain
 those edges. Language algorithms remain with their semantic owner. Active
 rooted values and long-lived heap records must preserve the same retention
-and collection model. The VM plan details the ownership transfer required
-when execution suspends or resumes.
+and collection model. Execution, suspension and restoration transfer owners
+without weakening full generations, Object/Symbol identity or root retention.
 
 The following boundaries apply across internal reorganizations:
 
@@ -158,8 +220,8 @@ stable external bytecode format or an independent compiler product.
 ## Documentation and verification
 
 Cross-module responsibilities are maintained here; active redesign decisions
-belong in the VM plan. Local algorithm and ownership contracts belong beside
-their Rust types and functions. Add a directory guide only when it provides
+belong in the [optimization roadmap](performance/roadmap.md). Local algorithm and
+ownership contracts belong beside their Rust types and functions. Add a directory guide only when it provides
 useful navigation or operating instructions; there is no per-directory
 README requirement.
 
@@ -172,5 +234,6 @@ or fingerprints.
 Use the [verification entry point](../README.md#verify) and the affected
 owners' tests. Frozen oracle and Test262 receipts refer to their recorded
 source; a refactor or documentation edit does not renew them. The
-[primitive VM overview](primitive-vm.md) preserves the completed redesign
-decisions and results.
+[primitive VM results](primitive-vm.md) preserve earlier measurements; the
+[#52 rewrite receipt](performance/receipts/vm-rewrite-2026-09-27/README.md) identifies
+its own tested source snapshot. Documentation changes renew neither receipt.
