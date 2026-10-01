@@ -50,6 +50,48 @@ impl ClosureSlots {
         VarRefView::from_closure(self, index)
     }
 }
+/// A frame's function and environment share one callee root. A borrowed cell
+/// view cannot outlive this owner; detached environments remain independently
+/// rooted through ClosureSlots.
+pub(in crate::engine::vm) enum FrameFunction {
+    Shared(ClosureSlots),
+    Rooted {
+        owner: ObjectRef,
+        slots: ClosureSlots,
+    },
+}
+impl FrameFunction {
+    pub(in crate::engine::vm) fn new(owner: ObjectRef, slots: ClosureSlots) -> Self {
+        if let Environment::Shared {
+            owner: retained, ..
+        } = &slots.0
+        {
+            if retained == &owner {
+                return Self::Shared(slots);
+            }
+        }
+        Self::Rooted { owner, slots }
+    }
+    pub(in crate::engine::vm) fn shared(owner: ObjectRef, ids: Rc<[VarRefId]>) -> Self {
+        Self::Shared(ClosureSlots::shared(owner, ids))
+    }
+    pub(in crate::engine::vm) fn closures(&self) -> &ClosureSlots {
+        match self {
+            Self::Shared(slots) | Self::Rooted { slots, .. } => slots,
+        }
+    }
+}
+impl std::ops::Deref for FrameFunction {
+    type Target = ObjectRef;
+    fn deref(&self) -> &ObjectRef {
+        match self {
+            Self::Shared(ClosureSlots(Environment::Shared { owner, .. }))
+            | Self::Rooted { owner, .. } => owner,
+            Self::Shared(_) => unreachable!("shared frame always owns its callee"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::engine::{

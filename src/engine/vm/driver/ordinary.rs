@@ -139,7 +139,7 @@ pub(super) fn enter_selected(
                         "ordinary.authenticate.sampled",
                     );
                     ordinary
-                        .authenticate(runtime)
+                        .authenticate_slot(runtime)
                         .map_err(runtime_error_to_vm_error)?
                 };
                 Prepared::Ordinary(call, checked)

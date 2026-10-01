@@ -9,7 +9,7 @@ use crate::engine::{
     heap::{FunctionBytecodeId, ObjectId, ObjectPayload, VarRefId},
     object::ObjectRef,
     value::JsValue,
-    vm::closure::ClosureSlots,
+    vm::closure::FrameFunction,
 };
 
 #[cfg(test)]
@@ -17,9 +17,12 @@ use crate::engine::value::Value;
 
 // Only this module can authenticate or construct this witness.
 pub(in crate::engine::vm) struct OrdinaryCall {
-    function: ObjectRef,
+    function: ObjectId,
+    // Callback preparation may outlive its source root. Direct slot calls keep
+    // the source operand alive until installation transfers that same edge.
+    owner: Option<ObjectRef>,
     executable: PublishedFunctionSnapshot,
-    closure: ClosureSlots,
+    closure: std::rc::Rc<[VarRefId]>,
 }
 // Selection may read metadata but does not publish a frame or consume operands.
 // Any malformed metadata error is returned only after the original domain check.
@@ -224,7 +227,8 @@ impl OrdinaryCall {
             stack::FrameStorage,
         };
         storage.reserve()?;
-        let callback_runtime = self.function.runtime().clone();
+        let function = self.owner.expect("callback authentication owns its callee");
+        let callback_runtime = function.runtime().clone();
         let (flags, flag_bytes) = if self.executable.has_captured_locals {
             storage.capture_flags(self.executable.local_definitions.len())?
         } else {
@@ -234,8 +238,7 @@ impl OrdinaryCall {
             rare: std::cell::OnceCell::new(),
             return_to: Some(return_to),
             entry_guard: None,
-            function: self.function.into(),
-            closure_slots: self.closure,
+            function: FrameFunction::shared(function, self.closure).into(),
             reusable_captured_locals: flags,
             input: crate::engine::vm::CallInput::new(
                 &callback_runtime,
@@ -286,10 +289,10 @@ impl OrdinaryCall {
         let _timer =
             crate::engine::api::profiling::PhaseTimer::start_vm_sampled("ordinary.install.sampled");
         use crate::engine::vm::frame::{Frame, ReturnOwner, ReturnTarget, ReturnValue};
-        let count = checked.count();
-        let method = checked.method();
         #[cfg(feature = "profiling")]
         {
+            let count = checked.count();
+            let method = checked.method();
             use crate::engine::api::profiling::record_owned_execution_event as record;
             record(if method {
                 "ordinary_install.method"
@@ -309,22 +312,6 @@ impl OrdinaryCall {
         let frame = execution.frames.current_mut(parent)?;
         let caller_realm = frame.executable.realm;
         let resume = frame.next_pc()?;
-        let receiver = if method {
-            crate::engine::vm::stack::copy_value(
-                runtime,
-                execution.slots.peek(&frame.window, count + 1)?,
-            )?
-        } else {
-            crate::engine::value::JsValue::Undefined
-        };
-        // The following flag, frame, and slot preparations can fail. Hold the
-        // copied receiver edge until the child frame takes CallInput.
-        let input = crate::engine::vm::CallInput::new(
-            runtime,
-            receiver,
-            crate::engine::value::JsValue::Undefined,
-            None,
-        );
         let (flags, flag_bytes) = if self.executable.has_captured_locals {
             execution
                 .call_storage
@@ -335,7 +322,7 @@ impl OrdinaryCall {
         let prepared = execution.frames.prepare_push()?;
         let mut prepared = prepared;
         let frame = prepared.current_mut(parent)?;
-        let window = {
+        let installed = {
             #[cfg(feature = "profiling")]
             let _timer = crate::engine::api::profiling::PhaseTimer::start_vm_sampled(
                 "ordinary.install.slots.sampled",
@@ -345,7 +332,7 @@ impl OrdinaryCall {
                 &self.executable.frame_layout(),
                 &mut frame.window,
                 checked,
-                &self.function,
+                self.function,
                 self.executable.observes_arguments,
             )?
         };
@@ -358,12 +345,11 @@ impl OrdinaryCall {
             operation: None,
         });
         cold.entry_guard = None;
-        cold.function = self.function.into();
-        cold.closure_slots = self.closure;
+        cold.function = FrameFunction::shared(installed.function, self.closure).into();
         cold.reusable_captured_locals = flags;
-        cold.input = input.into();
+        cold.input = installed.input.into();
         cold.executable = self.executable.into();
-        cold.window = window.into();
+        cold.window = installed.window.into();
         prepared.install(Frame {
             property_generation: 0,
             iterator_generation: 0,
@@ -389,11 +375,30 @@ impl OrdinarySelection<'_> {
         self,
         runtime: &Runtime,
     ) -> Result<OrdinaryCall, RuntimeError> {
+        self.authenticate_impl(runtime, true)
+    }
+
+    /// The checked callee slot must stay unchanged until install consumes it.
+    pub(in crate::engine::vm) fn authenticate_slot(
+        self,
+        runtime: &Runtime,
+    ) -> Result<OrdinaryCall, RuntimeError> {
+        self.authenticate_impl(runtime, false)
+    }
+
+    fn authenticate_impl(
+        self,
+        runtime: &Runtime,
+        retain_owner: bool,
+    ) -> Result<OrdinaryCall, RuntimeError> {
         // Domain/slot validation has succeeded. Only now promote the selected
         // shared environment and owner, after ending the read-only heap borrow.
         let closure = std::rc::Rc::clone(&self.closure);
         drop(self.closure);
-        let function = ObjectRef::from_borrowed_handle(runtime.clone(), self.function)?;
+        let owner = retain_owner
+            .then(|| ObjectRef::from_borrowed_handle(runtime.clone(), self.function))
+            .transpose()?;
+        let function = self.function;
         let executable = if let Some(facts) = self.authentication {
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_execution_event(
@@ -407,7 +412,7 @@ impl OrdinarySelection<'_> {
             let facts = snapshot.authentication(closure.len());
             {
                 let state = runtime.0.state.borrow();
-                let object = state.heap.object(function.object_id())?;
+                let object = state.heap.object(function)?;
                 let ObjectPayload::BytecodeFunction { authentication, .. } = &object.payload else {
                     return Err(RuntimeError::Invariant(
                         "selected ordinary function changed kind",
@@ -422,8 +427,9 @@ impl OrdinarySelection<'_> {
             PublishedFunctionSnapshot::from_authentication(runtime, self.bytecode, facts)
         };
         Ok(OrdinaryCall {
-            closure: ClosureSlots::shared(function.clone(), closure),
+            closure,
             function,
+            owner,
             executable,
         })
     }

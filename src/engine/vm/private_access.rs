@@ -102,7 +102,8 @@ pub(super) fn step(
                 frame.executable.closure_variables[usize::from(index)],
                 frame
                     .cold
-                    .closure_slots
+                    .function
+                    .closures()
                     .get(usize::from(index))
                     .ok_or_else(|| Error::internal("private closure slot is out of bounds"))?,
             ),
@@ -293,7 +294,8 @@ fn enter_accessor(
             frame.executable.closure_variables[usize::from(index)],
             frame
                 .cold
-                .closure_slots
+                .function
+                .closures()
                 .get(usize::from(index))
                 .ok_or_else(|| Error::internal("private closure slot is out of bounds"))?,
         ),

@@ -196,17 +196,6 @@ pub(super) fn numeric(
 }
 
 #[inline(never)]
-pub(super) fn strict_equality(
-    runtime: &Runtime,
-    execution: &mut RunningExecution,
-    id: FrameId,
-    negate: bool,
-) -> Result<CallStep, Error> {
-    super::execute::strict_comparison(runtime, execution, id, negate)?;
-    Ok(CallStep::Entered)
-}
-
-#[inline(never)]
 pub(super) fn arguments(
     runtime: &Runtime,
     execution: &mut RunningExecution,
@@ -402,7 +391,8 @@ pub(super) fn binding(
         BindingSource::Closure => (
             frame
                 .cold
-                .closure_slots
+                .function
+                .closures()
                 .get(usize::from(index))
                 .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?
                 .clone(),

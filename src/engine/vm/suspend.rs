@@ -601,8 +601,11 @@ pub(crate) fn thaw(
             rare: std::cell::OnceCell::new(),
             return_to: None,
             entry_guard: None,
-            function: current_function.into(),
-            closure_slots,
+            function: crate::engine::vm::closure::FrameFunction::new(
+                current_function,
+                closure_slots,
+            )
+            .into(),
             reusable_captured_locals: data.reusable_captured_locals.clone(),
             input: input.into(),
         }),

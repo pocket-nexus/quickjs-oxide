@@ -120,7 +120,7 @@ fn compiler_vm_cost_report_labels_the_execution_path_and_failures() {
     assert!(!costs.contains("\"frames_prepared\":0"));
     {
         assert!(costs.contains("\"parameter_value_copies\":0"));
-        assert!(costs.contains("\"ordinary_scalar_argv_elided\":1"));
+        assert!(costs.contains("\"ordinary_argv_elided\":1"));
         assert!(costs.contains("\"ordinary_return_direct\":1"));
     }
     assert!(costs.contains("\"lowered_functions\":2"));

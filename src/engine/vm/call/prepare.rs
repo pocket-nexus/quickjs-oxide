@@ -169,8 +169,16 @@ pub(in crate::engine::vm) fn initial_local_binding(
     function_name: bool,
     callable: &crate::engine::object::ObjectRef,
 ) -> Result<FrameBinding, RuntimeError> {
+    initial_local_binding_id(runtime, lexical, function_name, callable.object_id())
+}
+
+pub(in crate::engine::vm) fn initial_local_binding_id(
+    runtime: &Runtime,
+    lexical: bool,
+    function_name: bool,
+    id: crate::engine::heap::ObjectId,
+) -> Result<FrameBinding, RuntimeError> {
     if function_name {
-        let id = callable.object_id();
         runtime.retain_object_handle(id)?;
         Ok(FrameBinding::Direct(JsValue::Object(id)))
     } else if lexical {

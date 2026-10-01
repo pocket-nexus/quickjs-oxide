@@ -8,7 +8,6 @@ pub(in crate::engine::vm) use storage::{CallStorage, ColdFrame};
 use crate::engine::api::error::Error;
 use crate::engine::code::runtime::PublishedFunctionSnapshot;
 use crate::engine::heap::ContextId;
-use crate::engine::object::ObjectRef;
 use crate::engine::value::JsValue;
 use crate::engine::vm::CallInput;
 use crate::engine::vm::frames::{ActiveFrameGuard, ActiveFrameToken};
@@ -100,8 +99,7 @@ pub(super) struct FrameCold {
     pub rare: std::cell::OnceCell<Box<FrameRare>>,
     pub return_to: Option<ReturnTarget>,
     pub entry_guard: Option<ActiveFrameGuard>,
-    pub function: storage::Resident<ObjectRef>,
-    pub closure_slots: crate::engine::vm::closure::ClosureSlots,
+    pub function: storage::Resident<crate::engine::vm::closure::FrameFunction>,
     pub reusable_captured_locals: Vec<bool>,
     pub input: storage::Resident<CallInput>,
 }
@@ -689,8 +687,8 @@ mod tests {
                 Some(function.clone()),
             ))
             .into(),
-            function: (function).into(),
-            closure_slots: Default::default(),
+            function: crate::engine::vm::closure::FrameFunction::new(function, Default::default())
+                .into(),
             reusable_captured_locals: Vec::new(),
         });
         cold.executable = executable.into();

@@ -95,7 +95,7 @@ pub(super) fn step(
                 if let Some(key) = super::environment_bindings::prepare_global_delete(
                     runtime,
                     &frame.executable,
-                    &frame.cold.closure_slots,
+                    frame.cold.function.closures(),
                     index,
                 )? {
                     let object = runtime
@@ -117,7 +117,7 @@ pub(super) fn step(
                     runtime,
                     realm,
                     &frame.executable,
-                    &frame.cold.closure_slots,
+                    frame.cold.function.closures(),
                     index,
                 )? {
                     GlobalReference::Lexical(object) => {
@@ -148,7 +148,7 @@ pub(super) fn step(
                     match super::environment_bindings::prepare_global_write(
                         runtime,
                         &frame.executable,
-                        &frame.cold.closure_slots,
+                        frame.cold.function.closures(),
                         index,
                         initialize,
                     )? {
@@ -173,7 +173,7 @@ pub(super) fn step(
                         &frame.executable,
                         source,
                         |index| execution.slots.local(&frame.window, index).ok(),
-                        &frame.cold.closure_slots,
+                        frame.cold.function.closures(),
                     )?,
                     WriteTarget::Reference => match execution.slots.peek(&frame.window, 1)? {
                         JsValue::Object(object) => {
@@ -230,7 +230,7 @@ pub(super) fn step(
                     &frame.executable,
                     source,
                     |index| execution.slots.local(&frame.window, index).ok(),
-                    &frame.cold.closure_slots,
+                    frame.cold.function.closures(),
                 )?;
                 if runtime
                     .0
@@ -274,7 +274,7 @@ pub(super) fn step(
                     &frame.executable,
                     source,
                     |index| execution.slots.local(&frame.window, index).ok(),
-                    &frame.cold.closure_slots,
+                    frame.cold.function.closures(),
                 )?;
                 let key = linked_key(runtime, &frame.executable, name)?;
                 query = Some((
@@ -291,7 +291,7 @@ pub(super) fn step(
                     read_global_binding(
                         runtime,
                         &frame.executable,
-                        &frame.cold.closure_slots,
+                        frame.cold.function.closures(),
                         index,
                         strict,
                     )?
@@ -326,7 +326,7 @@ pub(super) fn step(
                                 &frame.executable,
                                 source,
                                 |index| execution.slots.local(&frame.window, index).ok(),
-                                &frame.cold.closure_slots,
+                                frame.cold.function.closures(),
                             )?
                         }
                         _ => unreachable!(),

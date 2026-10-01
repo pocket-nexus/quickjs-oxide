@@ -46,6 +46,25 @@ pub(super) fn run(
         let exit = result?;
         match exit {
             VmAction::Materialize => continue,
+            VmAction::Pure(operation) => {
+                // Pure leaves can complete or throw, but cannot install another
+                // frame or a pending conversion. Keep their successful result
+                // in this loop instead of redispatching through the cold driver.
+                match crate::engine::vm::frame_operations::pure(runtime, execution, id, operation)?
+                {
+                    CallStep::Entered => {
+                        #[cfg(feature = "profiling")]
+                        record_event("pure_completed_in_same_frame");
+                    }
+                    CallStep::Complete(completion) => return Ok(Boundary::Complete(completion)),
+                    CallStep::Bridge => return Err(invariant("pure operation attempted replay")),
+                }
+            }
+            VmAction::StrictEquality(negate) => {
+                crate::engine::vm::execute::strict_comparison(runtime, execution, id, negate)?;
+                #[cfg(feature = "profiling")]
+                record_event("strict_comparison_completed_in_same_frame");
+            }
             VmAction::Call {
                 arguments,
                 method,
@@ -316,4 +335,57 @@ fn record_exit(result: &Result<VmAction, Error>) {
 #[inline(never)]
 fn record_event(event: &'static str) {
     crate::engine::api::profiling::record_owned_execution_event(event);
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::engine::api::{Runtime, Value};
+
+    #[test]
+    fn synchronous_leaves_resume_and_throw_without_losing_the_current_frame() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        #[cfg(feature = "profiling")]
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        assert_eq!(
+            context
+                .eval(
+                    r#"
+                function same(a,b) { return a === b; }
+                const object = new Proxy({}, { get() { throw 'unexpected conversion'; } });
+                let count = 0;
+                for (let i=0;i<32;i++) {
+                    if (same(object,object) && typeof object === 'object') count++;
+                }
+                class NeedsNew {}
+                let trace = '';
+                try { NeedsNew(); }
+                catch (error) { trace += error instanceof TypeError ? 'caught' : 'wrong'; }
+                finally { trace += ':finally'; }
+                count === 32 && trace === 'caught:finally' && same(object,object);
+            "#
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+        #[cfg(feature = "profiling")]
+        {
+            let events = profile.snapshot().owned_execution_events;
+            assert!(
+                events
+                    .get("pure_completed_in_same_frame")
+                    .copied()
+                    .unwrap_or(0)
+                    > 0
+            );
+            assert!(
+                events
+                    .get("strict_comparison_completed_in_same_frame")
+                    .copied()
+                    .unwrap_or(0)
+                    >= 32
+            );
+        }
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
 }

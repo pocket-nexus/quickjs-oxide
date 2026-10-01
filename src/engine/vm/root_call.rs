@@ -136,8 +136,11 @@ pub(in crate::engine::vm) fn prepare_call(
         rare: std::cell::OnceCell::new(),
         return_to: None,
         entry_guard: Some(prepared.active_frame),
-        function: (callable.as_object().clone()).into(),
-        closure_slots,
+        function: crate::engine::vm::closure::FrameFunction::new(
+            callable.as_object().clone(),
+            closure_slots,
+        )
+        .into(),
         reusable_captured_locals: vec![false; local_count],
         input: (prepared.input).into(),
     });
