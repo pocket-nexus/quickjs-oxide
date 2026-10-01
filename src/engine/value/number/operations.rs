@@ -114,7 +114,10 @@ impl Number {
     }
 
     pub(crate) fn int32(self) -> i32 {
-        super::integer::to_int32(self.float())
+        match self {
+            Self::Int(value) => value,
+            Self::Float(value) => super::integer::to_int32(value),
+        }
     }
     pub(crate) fn negate(self) -> Self {
         match self {
