@@ -33,7 +33,23 @@ Remote verification and publishing are blocked by Lody identity connectivity.
 - Library validation: 2017 passed. Lifecycle tests compare after cache flush;
   retained prefixes stay immutable and subsequent objects reuse canonical successors.
 
+## 4. Property cache and consumption
+
+- Four data locations, with existing shape-generation, revision, realm and prototype guards.
+- Retry delay starts at 16, doubles to 256 after repeated instability, and resets after 16 hits.
+- The VM consumes the selected owned value directly; cold outcomes contain no data value.
+- Library validation: 2018 passed, including four/five-shape and bounded-backoff tests.
+
+## Measured stage 2 result
+
+Eight paired fixed-work process samples per case, ABBA/BAAB order, pinned CPU 2.
+Target median-ratio geomean: 0.9642 (3.58% less time). DeltaBlue -9.26%, Richards
+-4.96%, RayTrace -2.16%, Earley-Boyer -1.58%, Splay +0.35%. Controls: Crypto +0.74%,
+RegExp -1.98%, Navier-Stokes +0.99%; combined -0.94%. All expected output matched.
+See the stage2 fixed results and bootstrap intervals in the adjacent receipt directory.
+These are stage2 results, not results for the subsequently stacked changes.
+
 ## Remaining acceptance
 
-Four-entry property cache, in-place heap finalization;
+In-place heap finalization;
 full frozen Test262 vector and paired workload/Score/RSS measurements against #73.
