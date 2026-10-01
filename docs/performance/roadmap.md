@@ -28,6 +28,10 @@
 
 捕获变量与形状分别存于类型化 arena。每个 ID 包含完整代际身份；引用释放、零计数队列和显式回收沿用同一堆生命周期规则。详细存储契约见[类型化存储](typed-arenas.md)。
 
+## 自动循环回收
+
+循环节点发布消费统一的净增长预算，普通引用计数清理按批次返还预算。预算耗尽后，ready driver 在堆借用结束的执行边界处理请求，最外层 execution turn 也处理请求。VM 没有独立的 GC 指令或分支轮询；显式 GC 与自动 GC 使用同一个完整回收器。预算、weak roots、重入和借用规则见 [GC 策略](../cycle-collection.md)。
+
 ## 验证入口
 
 - 数值选择和回落：`src/engine/compiler/tests/numeric_region.rs` 与 VM 数值测试。
