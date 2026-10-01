@@ -14,6 +14,11 @@ use crate::engine::vm::call::NativeInvocation;
 impl Runtime {
     /// Run QuickJS-style cycle collection for this runtime.
     pub fn run_gc(&self) -> Result<GcStats, RuntimeError> {
+        let pressure = &self.0.gc_pressure;
+        if pressure.collecting.replace(true) {
+            return Err(RuntimeError::Invariant("cycle collection reentered"));
+        }
+        let _collection = CollectionGuard(&pressure.collecting);
         let _operation = self.operation();
         let mut state = self.0.state.borrow_mut();
         // Optional shape roots must not keep prototype graphs alive across GC.
@@ -66,6 +71,39 @@ impl Runtime {
         Ok(stats)
     }
 
+    /// The driver and outer execution turn own automatic collection. The
+    /// executor cannot allocate cycle nodes without returning to the driver.
+    #[inline]
+    pub(crate) fn collect_if_requested(&self) -> Result<(), RuntimeError> {
+        let pressure = &self.0.gc_pressure;
+        if pressure.remaining.get() != 0
+            || pressure.policy.get() == crate::engine::heap::GcPolicy::Manual
+        {
+            return Ok(());
+        }
+        self.collect_requested()
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn collect_requested(&self) -> Result<(), RuntimeError> {
+        if self.0.gc_pressure.collecting.get() || std::thread::panicking() {
+            return Ok(());
+        }
+        let Ok(borrow) = self.0.state.try_borrow_mut() else {
+            return Ok(());
+        };
+        drop(borrow);
+        #[cfg(feature = "profiling")]
+        let _timer = crate::engine::api::profiling::PhaseTimer::start_vm("gc.automatic");
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("gc.automatic.started");
+        // run_gc's existing operation guard drains deferred releases before
+        // borrowing the graph and again before rearming the allocation budget.
+        self.run_gc()?;
+        Ok(())
+    }
+
     /// Execute QuickJS's test262-only `js_gc` host callback.
     ///
     /// The callback runs collection synchronously on the current runtime and
@@ -91,5 +129,12 @@ impl Runtime {
     pub fn heap_counts(&self) -> HeapCounts {
         let _operation = self.operation();
         self.0.state.borrow().heap.counts()
+    }
+}
+
+struct CollectionGuard<'a>(&'a std::cell::Cell<bool>);
+impl Drop for CollectionGuard<'_> {
+    fn drop(&mut self) {
+        self.0.set(false);
     }
 }

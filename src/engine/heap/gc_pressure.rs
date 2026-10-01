@@ -7,8 +7,8 @@ use std::{cell::Cell, rc::Rc};
 /// Automatic cycle collection policy. Explicit `Runtime::run_gc` always works.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum GcPolicy {
-    #[default]
     Manual,
+    #[default]
     Automatic,
 }
 
@@ -21,6 +21,7 @@ pub(crate) struct GcPressure {
     /// Net allocation headroom. Zero latches a request until successful GC;
     /// ordinary RC batches return credit while the budget is still positive.
     pub(crate) remaining: Cell<usize>,
+    pub(crate) collecting: Cell<bool>,
 }
 
 impl GcPressure {
@@ -28,6 +29,7 @@ impl GcPressure {
         Self {
             policy: Cell::new(GcPolicy::default()),
             remaining: Cell::new(MIN_GC_HEADROOM),
+            collecting: Cell::new(false),
         }
     }
 
