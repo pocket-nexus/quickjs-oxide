@@ -268,19 +268,13 @@ pub(super) fn prototypes_allow_dense_append(
     ))
 }
 
-/// Continue an already-selected missing own property without releasing the
-/// borrow. Any exotic boundary declines before changing the receiver; the
-/// ordinary state machine then performs its original observable protocol.
-///
-/// A `Define` result means the define is validated and still missing: the
-/// caller ends the borrow and commits the existing value handle through
-/// [`Runtime::store_property_slot`]. No callback or mutation can run between
-/// this selection and that commit, so splitting the borrow is unobservable.
+/// Continue an already-selected missing own property under the current borrow.
+/// Exotic boundaries return before changing the receiver; the caller consumes
+/// a local definition's same-borrow selection in the shared storage kernel.
 fn set_missing_local(
     state: &mut RuntimeState,
     receiver: ObjectId,
     atom: Atom,
-    _value: &JsValue,
     prototype: Option<ObjectId>,
 ) -> Result<MissingSelection, RuntimeError> {
     match select_missing_prototypes(state, atom, prototype)? {
@@ -371,13 +365,6 @@ impl Runtime {
             DenseAppend(u32),
 
             SpecialAt(ObjectId, SpecialKind),
-
-            /// A validated missing define on the target: commit after the
-            /// borrow, once the value conversion can take it.
-            Define,
-
-            /// A selected writable own data slot awaiting replacement.
-            DataReplace(OwnSlot),
         }
         let selected = {
             let mut state = self.0.state.borrow_mut();
@@ -421,14 +408,26 @@ impl Runtime {
                                 &mut state,
                                 id,
                                 key.atom(),
-                                value,
                                 if _walk_missing { prototype } else { None },
                             )? {
                                 MissingSelection::Complete(result) => return Ok(result),
                                 MissingSelection::Special(id, kind) => {
                                     Selected::SpecialAt(id, kind)
                                 }
-                                MissingSelection::Define => Selected::Define,
+                                MissingSelection::Define => {
+                                    state.store_selected_property_slot(
+                                        id,
+                                        key.atom(),
+                                        PropertyFlags::data(true, true, true),
+                                        PropertySlot::Data(value.as_raw()),
+                                        None,
+                                    )?;
+                                    #[cfg(feature = "profiling")]
+                                    crate::engine::api::profiling::record_owned_execution_event(
+                                        "set_missing_committed_from_selection",
+                                    );
+                                    return Ok(SetProbe::Stored(true));
+                                }
                             }
                         } else {
                             Selected::Missing(prototype)
@@ -441,7 +440,29 @@ impl Runtime {
                         if !receiver_is_target {
                             return Ok(SetProbe::Writable);
                         }
-                        Selected::DataReplace(slot)
+                        // The slot was selected under this exclusive borrow.
+                        // The shared kernel retains new edges before retiring
+                        // old ones; receiver and input owners remain rooted.
+                        #[cfg(feature = "profiling")]
+                        if matches!(
+                            state.heap.object(id)?.payload,
+                            ObjectPayload::Array { dense: None }
+                        ) && state.atoms.array_index(key.atom())?.is_some()
+                        {
+                            crate::engine::api::profiling::record_owned_execution_event(
+                                "array_materialized_own_data_write",
+                            );
+                        }
+                        state.replace_property_slot(
+                            id,
+                            slot.index,
+                            PropertySlot::Data(value.as_raw()),
+                        )?;
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_owned_execution_event(
+                            "set_own_data_committed_from_selection",
+                        );
+                        return Ok(SetProbe::Stored(true));
                     }
                     BorrowedSet::Setter(set) => Selected::Setter(set),
                     BorrowedSet::Special(kind) => return Ok(SetProbe::Special(kind)),
@@ -468,45 +489,6 @@ impl Runtime {
                     Some(reason) => SetProbe::Rejected(reason),
                 }
             }
-            Selected::Define => {
-                // Retain the existing handle into storage; the borrowed input
-                // owns its producer edge throughout this transaction.
-                let stored = self.store_property_slot(
-                    object,
-                    key,
-                    PropertyFlags::data(true, true, true),
-                    PropertySlot::Data(value.as_raw()),
-                );
-                stored?;
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_owned_execution_event(
-                    "set_missing_committed_from_selection",
-                );
-                SetProbe::Stored(true)
-            }
-            Selected::DataReplace(slot) => {
-                let raw = value.as_raw();
-                let mut state = self.0.state.borrow_mut();
-                #[cfg(feature = "profiling")]
-                if matches!(
-                    state.heap.object(object.object_id())?.payload,
-                    ObjectPayload::Array { dense: None }
-                ) && state.atoms.array_index(key.atom())?.is_some()
-                {
-                    crate::engine::api::profiling::record_owned_execution_event(
-                        "array_materialized_own_data_write",
-                    );
-                }
-                let replaced = replace_data(
-                    &mut state,
-                    object.object_id(),
-                    slot,
-                    PropertySlot::Data(raw),
-                );
-                drop(state);
-                replaced?;
-                return Ok(SetProbe::Stored(true));
-            }
             Selected::Setter(set) => SetProbe::Setter(set),
             Selected::Missing(prototype) => SetProbe::Missing(
                 prototype
@@ -515,15 +497,6 @@ impl Runtime {
             ),
         })
     }
-}
-
-fn replace_data(
-    state: &mut RuntimeState,
-    id: ObjectId,
-    slot: OwnSlot,
-    replacement: PropertySlot,
-) -> Result<(), RuntimeError> {
-    state.replace_property_slot(id, slot.index, replacement)
 }
 
 pub(super) enum ReadProbe {
@@ -788,7 +761,7 @@ impl Runtime {
             drop(state);
             return Ok(Some(false));
         }
-        let replaced = replace_data(&mut state, id, slot, PropertySlot::Data(raw));
+        let replaced = state.replace_property_slot(id, slot.index, PropertySlot::Data(raw));
         drop(state);
         // The slot retained its own copy edge on success; a rejected update
         // kept nothing. The guard balances the producer edge either way.
@@ -887,6 +860,104 @@ mod tests {
                 )
                 .unwrap(),
             Value::Int(42)
+        );
+    }
+
+    #[test]
+    fn selected_set_keeps_self_edges_and_rolls_back_invalid_replacements() {
+        let runtime = Runtime::new();
+        let object = runtime.new_object(None).unwrap();
+        let key = runtime.intern_property_key("x").unwrap();
+        let other_key = runtime.intern_property_key("y").unwrap();
+        let object_id = object.object_id();
+        let operation = runtime.operation();
+
+        // The borrowed receiver owns the producer edge while a missing slot
+        // retains its self edge. Replacing the same edge must remain balanced.
+        for _ in 0..2 {
+            assert!(matches!(
+                runtime
+                    .ordinary_set_probe(&object, &key, &JsValue::Object(object_id), true)
+                    .unwrap(),
+                SetProbe::Stored(true)
+            ));
+            assert_eq!(
+                runtime.0.state.borrow().heap.object_strong_count(object_id),
+                Ok(2)
+            );
+        }
+        assert!(matches!(
+            runtime
+                .ordinary_set_probe(&object, &key, &JsValue::Null, true)
+                .unwrap(),
+            SetProbe::Stored(true)
+        ));
+        assert_eq!(
+            runtime.0.state.borrow().heap.object_strong_count(object_id),
+            Ok(1)
+        );
+
+        let old = runtime.new_object(None).unwrap();
+        let old_id = old.object_id();
+        runtime
+            .ordinary_set_probe(&object, &key, &JsValue::Object(old_id), true)
+            .unwrap();
+        drop(old);
+        let invalid = runtime.new_object(None).unwrap();
+        let invalid_id = invalid.object_id();
+        drop(invalid);
+        for rejected_key in [&key, &other_key] {
+            assert!(
+                runtime
+                    .ordinary_set_probe(&object, rejected_key, &JsValue::Object(invalid_id), true)
+                    .is_err()
+            );
+        }
+        let state = runtime.0.state.borrow();
+        let slot = locate(&state, object_id, key.atom()).unwrap().unwrap();
+        assert!(
+            matches!(state.heap.object(object_id).unwrap().slots[slot.index],
+            PropertySlot::Data(RawValue::Object(id)) if id == old_id)
+        );
+        assert_eq!(state.heap.object_strong_count(old_id), Ok(1));
+        assert!(
+            locate(&state, object_id, other_key.atom())
+                .unwrap()
+                .is_none()
+        );
+        drop(state);
+
+        let replacement = runtime.new_object(None).unwrap();
+        let replacement_id = replacement.object_id();
+        for stored_key in [&key, &other_key] {
+            assert!(matches!(
+                runtime
+                    .ordinary_set_probe(&object, stored_key, &JsValue::Object(replacement_id), true)
+                    .unwrap(),
+                SetProbe::Stored(true)
+            ));
+        }
+        assert!(runtime.0.state.borrow().heap.object(old_id).is_err());
+        assert_eq!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(replacement_id),
+            Ok(3)
+        );
+        drop(replacement);
+        drop(object);
+        drop(operation);
+        assert!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object(replacement_id)
+                .is_err()
         );
     }
 }
@@ -1345,7 +1416,9 @@ impl Runtime {
         // The canonical transaction validates shape storage before publication.
         // With scalar old/new values it retains/releases no edges or atoms;
         // the already-empty zero queue makes post-commit cleanup infallible.
-        replace_data(&mut state, id, slot, PropertySlot::Data(raw)).is_ok()
+        state
+            .replace_property_slot(id, slot.index, PropertySlot::Data(raw))
+            .is_ok()
     }
 }
 
