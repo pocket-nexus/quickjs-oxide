@@ -188,12 +188,27 @@
 
 `daccb30b` 的生成代码还显示解释循环栈帧增加 96 字节，新增的预算值跨整个解码循环存活并被重载。它说明非参与者确实付出了表示与寄存器成本，不能单凭汇编把 Crypto 的全部回归归因于此。下一版先恢复原解释循环，利用现有 `InstanceStep::start` 的同步 Complete 分支，重新测量收益和控制项。
 
-### 正在验证的简化
+### 暂停队列的剩余六个候选
+
+暂停的 orchestrator 已恢复并正常结束，六个矩阵各 144 个有效样本，全部为 CPU 2；`wave8-remainder-gate-ledger.json` 保留 hash、全部九项及取舍。它们没有和此前 default-affinity 的六个矩阵混为一批。以下同样是固定负载耗时，括号为各项 A/A 跨度；不是原版分数或置信区间。
+
+| 候选 / 独立基线 | 主要观察 | 取舍 |
+| --- | --- | --- |
+| `fc7a3189` Object copy / `3d420407` | EarleyBoyer −0.68%（2.67%）、combined −0.10%（1.00%）；Crypto +3.80%（66.73%），其 A/A 一个 1.082s 样本与其他约 0.65s 样本全部保留；NavierStokes −6.18%（4.74%）没有目标覆盖归因 | 目标及 combined 收益未分辨，不采用；不删除异常样本再宣称 Crypto 结论 |
+| `9b2944cf` write completion / `3d420407` | DeltaBlue +2.53%（0.80%）、Crypto +3.12%（1.88%）；目标 EarleyBoyer +1.25%（1.11%），combined +1.07%（1.36%） | 拒绝；减少 completion 搬运没有兑现目标收益 |
+| `e3b0f32e` owning property value / `977d7158` | Richards +3.28%（1.07%）、DeltaBlue +2.50%（1.85%）、Crypto +3.02%（1.30%）；EarleyBoyer +0.55%（2.78%）、Splay −0.08%（1.24%）、combined +1.02%（0.90%） | 拒绝；目标未分辨，三个控制回归；实际基线为 same-borrow write selection，不与 eaf 层差混算 |
+| `b47458a3` shared constructor install / `1350c5f0` | RayTrace +2.43%（2.56%）、Splay +0.52%（1.65%）、combined +0.66%（1.63%）；EarleyBoyer +2.02%（1.88%） | 不作为性能改进采用；复用函数与代码缩小没有独立时间收益 |
+| `ddef3000` strict equality / `3d420407` | EarleyBoyer −0.88%（2.31%）、Splay −1.69%（1.29%），但 combined +1.76%（1.36%） | 拒绝当前组合控制；目标 EarleyBoyer 未分辨 |
+| `fe7b9462` truthiness / `3d420407` | DeltaBlue −1.81%（0.88%），Crypto +4.20%（2.58%）；Splay −0.86%（1.29%）、combined −0.12%（3.42%） | 拒绝 Crypto 回归，combined 未分辨；不把多数发生于 Setup 的搬运计数作为 timed body 收益 |
+
+这些候选均未进入采用的八层性能实现，且没有为已失败的完整控制继续追加原版或资源测量。下一窗口先验证独立数值算法与静态 kernel 的语义和 release 代码，再决定是否值得计时。Return owner 方向先有仅 profiling 的实际 published-tail/type 诊断草稿，尚未宣称 owner 转移能力；PGO 已有旧工具，但必须先补齐 versioned profile、训练、构建证据合同并显式区分 build technique，不能把旧 v1 PGO 标为 plain 绕过 gate。
+
+### 简化方向的累计取舍
 
 - 普通写入在同一次存储借用内完成选槽和提交，移除中间选择状态、第二次借用和重复查找；已有路径几乎都同步完成，不把它描述成消除了通用 continuation。
 - 捕获标量绑定直接读取当前 cell，移除临时 cell owner、重复借用和 driver 交接。checked 路径原来的结果复制已是标量叶操作，不能声称减少结果 retain。
-- 构造 child 安装复用既有 `push_frame`，减少重复安装代码；守卫和非参与者成本需要相对 `1350c5f0` 单独验收。
-- 已接受的普通写入直接恢复同一帧，避免 `Accepted`→未消费的 `Undefined` completion 搬运；保持拒绝、异常和 callback 原合同，等待生成代码与时间证据。
+- 构造 child 安装复用既有 `push_frame`，减少重复安装代码；相对 `1350c5f0` 的独立时间验收未分辨目标收益，当前不采用。
+- 已接受的普通写入直接恢复同一帧，避免 `Accepted`→未消费的 `Undefined` completion 搬运；保持拒绝、异常和 callback 原合同，但当前时间控制失败，拒绝该候选。
 
 已拒绝在当前证据下拆分 operand arena：`Option<FrameBinding>` 已打包为 16B，与 `JsValue` 同宽，没有证据支持体积或额外机器检查减少。捕获堆结果扩展也不能用 Splay 宽 Environment 计数支持：目前可见的相应读取主要位于 TearDown。字面量路径另行审查，保留每次分配后的 ready GC 服务；每次 timedRun 有 7,600 次 Object/ArrayFrom，而 Setup 有 760,000 次，二者不能混计收益权重。
 
