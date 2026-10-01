@@ -2261,7 +2261,7 @@ pub(super) fn object_layout_edges(shape: ShapeId, slots: &[PropertySlot]) -> Vec
 pub(super) fn object_edges(object: &ObjectData) -> Edges {
     let mut edges = Edges::new();
     for slot in &object.slots {
-        edges.extend(property_slot_edges(slot));
+        append_property_slot_edges(&mut edges, slot);
     }
     edges.push(RawId::Shape(object.shape));
     match &object.payload {
@@ -2594,6 +2594,14 @@ pub(super) const fn raw_value_is_immediate(value: &RawValue) -> bool {
 
 pub(super) fn property_slot_edges(slot: &PropertySlot) -> Edges {
     let mut edges = Edges::new();
+    append_property_slot_edges(&mut edges, slot);
+    edges
+}
+
+/// Append directly when a caller already owns the graph-edge buffer. Keep the
+/// same get-before-set order and duplicate edges used by transactional retains
+/// and ordered finalization, without constructing another inline buffer.
+fn append_property_slot_edges(edges: &mut Edges, slot: &PropertySlot) {
     match slot {
         PropertySlot::Data(value) => edges.extend(raw_value_edge(value)),
         PropertySlot::VarRef(var_ref) => edges.push(RawId::VarRef(*var_ref)),
@@ -2605,7 +2613,6 @@ pub(super) fn property_slot_edges(slot: &PropertySlot) -> Edges {
         ),
         PropertySlot::AutoInit(initializer) => edges.push(RawId::Context(initializer.realm())),
     }
-    edges
 }
 
 pub(super) fn raw_value_edges(value: &RawValue) -> Edges {

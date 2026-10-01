@@ -319,6 +319,64 @@ fn empty_shape(heap: &mut Heap) -> ShapeId {
 }
 
 #[test]
+fn object_edge_collection_keeps_property_order_duplicates_and_payload_order() {
+    let first = ObjectId {
+        index: 11,
+        generation: 3,
+    };
+    let second = ObjectId {
+        index: 12,
+        generation: 4,
+    };
+    let cell = VarRefId {
+        index: 11,
+        generation: 5,
+    };
+    let shape = ShapeId {
+        index: 11,
+        generation: 6,
+    };
+    let realm = ContextId {
+        index: 11,
+        generation: 7,
+    };
+    let object = ObjectData::ordinary(
+        shape,
+        vec![
+            PropertySlot::Data(RawValue::Int(17)),
+            PropertySlot::Data(RawValue::Object(first)),
+            PropertySlot::accessor(Some(second), Some(second)),
+            PropertySlot::VarRef(cell),
+            PropertySlot::auto_init(AutoInitProperty::FunctionPrototype { realm }),
+            PropertySlot::Data(RawValue::Object(first)),
+        ],
+    );
+    assert_eq!(
+        object_edges(&object),
+        [
+            RawId::Object(first),
+            RawId::Object(second),
+            RawId::Object(second),
+            RawId::VarRef(cell),
+            RawId::Context(realm),
+            RawId::Object(first),
+            RawId::Shape(shape),
+        ]
+    );
+    let small = ObjectData::ordinary(
+        shape,
+        vec![
+            PropertySlot::accessor(None, Some(first)),
+            PropertySlot::Data(RawValue::Null),
+        ],
+    );
+    assert_eq!(
+        object_edges(&small),
+        [RawId::Object(first), RawId::Shape(shape)]
+    );
+}
+
+#[test]
 fn small_edge_transactions_preflight_duplicates_and_late_failure() {
     let mut heap = Heap::new();
     let first_shape = empty_shape(&mut heap);

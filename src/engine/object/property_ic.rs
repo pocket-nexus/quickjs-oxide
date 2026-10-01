@@ -27,6 +27,21 @@ pub(crate) enum CacheSelection<'a> {
     Unresolved,
 }
 
+enum OrdinarySelection<'a> {
+    Data {
+        raw: &'a RawValue,
+        depth: u32,
+        slot: u32,
+    },
+    Accessor {
+        getter: Option<ObjectId>,
+        depth: u32,
+        slot: u32,
+    },
+    CompleteAbsent,
+    Unresolved,
+}
+
 enum Located<'a> {
     Data(Location, &'a RawValue),
     Accessor(Location, Option<ObjectId>),
@@ -202,10 +217,12 @@ impl PropertyReadCache {
             // prevent selecting today's ordinary data/getter/absence. The
             // caller consumes that borrowed result under this same heap
             // borrow, avoiding a second canonical lookup on data reads.
-            return match receiver.map(|r| locate(heap, atoms, domain, realm, r, atom)) {
-                Some(Located::Data(_, raw)) => CacheSelection::Data(raw),
-                Some(Located::Accessor(_, getter)) => CacheSelection::Accessor(getter),
-                Some(Located::CompleteAbsent) => CacheSelection::CompleteAbsent,
+            return match receiver.map(|r| select_cooldown(heap, atoms, r, atom)) {
+                Some(OrdinarySelection::Data { raw, .. }) => CacheSelection::Data(raw),
+                Some(OrdinarySelection::Accessor { getter, .. }) => {
+                    CacheSelection::Accessor(getter)
+                }
+                Some(OrdinarySelection::CompleteAbsent) => CacheSelection::CompleteAbsent,
                 _ => CacheSelection::Unresolved,
             };
         }
@@ -370,61 +387,164 @@ fn locate<'a>(
     if revision == u64::MAX || epoch == u64::MAX {
         return Located::Unresolved;
     }
-    let Ok(array_index) = atoms.array_index(atom) else {
+    let Some(numeric) = numeric_key(atoms, atom) else {
         return Located::Unresolved;
     };
-    let Ok(key_kind) = atoms.property_key_kind(atom) else {
-        return Located::Unresolved;
+    let location = |depth, slot| Location {
+        domain,
+        realm,
+        shape: initial.shape,
+        revision,
+        prototype_epoch: epoch,
+        depth,
+        slot,
+        numeric_key: numeric,
     };
-    let numeric = array_index.is_some()
-        || (key_kind == crate::engine::atom::PropertyKeyKind::String && {
-            // Conservative, allocation-free superset of CanonicalNumericIndexString.
-            // TypedArray intercepts -0/NaN/Infinity and non-array-index numbers.
-            let Some(spelling) = atoms.to_js_string(atom).ok() else {
-                return Located::Unresolved;
-            };
-            let first = spelling.utf16_units().next();
-            matches!(first, Some(43 | 45 | 46 | 48..=57))
-                || spelling.utf16_units().eq("NaN".encode_utf16())
-                || spelling.utf16_units().eq("Infinity".encode_utf16())
-        });
+    match select_ordinary(heap, atoms, receiver, atom, Some(numeric)) {
+        OrdinarySelection::Data { raw, depth, slot } => Located::Data(location(depth, slot), raw),
+        OrdinarySelection::Accessor {
+            getter,
+            depth,
+            slot,
+        } => Located::Accessor(location(depth, slot), getter),
+        OrdinarySelection::CompleteAbsent => Located::CompleteAbsent,
+        OrdinarySelection::Unresolved => Located::Unresolved,
+    }
+}
+
+/// Cooldown consumes today's selection without constructing future cache facts.
+/// Keep the same saturation admission as location-producing selection.
+fn select_cooldown<'a>(
+    heap: &'a Heap,
+    atoms: &AtomTable,
+    receiver: ObjectId,
+    atom: Atom,
+) -> OrdinarySelection<'a> {
+    let Some(initial) = heap.object(receiver).ok() else {
+        return OrdinarySelection::Unresolved;
+    };
+    let Some(shape) = heap.shape(initial.shape).ok() else {
+        return OrdinarySelection::Unresolved;
+    };
+    if shape.layout_revision() == u64::MAX || heap.property_layout_epoch() == u64::MAX {
+        return OrdinarySelection::Unresolved;
+    }
+    // Preserve rejection of null, stale, and foreign table-backed atoms even
+    // when an ordinary receiver does not need numeric spelling inspection.
+    if atoms.property_key_kind(atom).is_err() {
+        return OrdinarySelection::Unresolved;
+    }
+    select_ordinary(heap, atoms, receiver, atom, None)
+}
+
+fn numeric_key(atoms: &AtomTable, atom: Atom) -> Option<bool> {
+    let array_index = atoms.array_index(atom).ok()?;
+    let key_kind = atoms.property_key_kind(atom).ok()?;
+    Some(
+        array_index.is_some()
+            || (key_kind == crate::engine::atom::PropertyKeyKind::String && {
+                // Conservative, allocation-free superset of CanonicalNumericIndexString.
+                let spelling = atoms.to_js_string(atom).ok()?;
+                let first = spelling.utf16_units().next();
+                matches!(first, Some(43 | 45 | 46 | 48..=57))
+                    || spelling.utf16_units().eq("NaN".encode_utf16())
+                    || spelling.utf16_units().eq("Infinity".encode_utf16())
+            }),
+    )
+}
+
+/// Both adaptive and cooldown reads use this one ordinary traversal. Numeric
+/// interception matters only at indexed exotic objects; a cooldown ordinary
+/// chain need not inspect the immutable key's spelling at all. Borrowed results
+/// remain valid only under the caller's heap borrow.
+fn select_ordinary<'a>(
+    heap: &'a Heap,
+    atoms: &AtomTable,
+    receiver: ObjectId,
+    atom: Atom,
+    mut numeric: Option<bool>,
+) -> OrdinarySelection<'a> {
     let mut holder = receiver;
     let mut depth = 0u32;
     loop {
         let Some(data) = heap.object(holder).ok() else {
-            return Located::Unresolved;
+            return OrdinarySelection::Unresolved;
         };
-        if !ordinary_receiver(data, numeric) {
-            return Located::Unresolved;
+        match data.kind {
+            ObjectKind::Proxy | ObjectKind::ModuleNamespace => {
+                return OrdinarySelection::Unresolved;
+            }
+            ObjectKind::Array
+            | ObjectKind::Arguments
+            | ObjectKind::Primitive
+            | ObjectKind::TypedArray => {
+                let value = match numeric {
+                    Some(value) => value,
+                    None => {
+                        let Some(value) = numeric_key(atoms, atom) else {
+                            return OrdinarySelection::Unresolved;
+                        };
+                        numeric = Some(value);
+                        value
+                    }
+                };
+                if value {
+                    return OrdinarySelection::Unresolved;
+                }
+            }
+            ObjectKind::Ordinary
+            | ObjectKind::Iterator
+            | ObjectKind::ArrayIterator
+            | ObjectKind::ForInIterator
+            | ObjectKind::Date
+            | ObjectKind::RegExp
+            | ObjectKind::RegExpStringIterator
+            | ObjectKind::Map
+            | ObjectKind::MapIterator
+            | ObjectKind::Set
+            | ObjectKind::SetIterator
+            | ObjectKind::WeakMap
+            | ObjectKind::WeakSet
+            | ObjectKind::WeakRef
+            | ObjectKind::FinalizationRegistry
+            | ObjectKind::GlobalObject
+            | ObjectKind::Error
+            | ObjectKind::StringIterator
+            | ObjectKind::IteratorHelper
+            | ObjectKind::IteratorWrap
+            | ObjectKind::AsyncFromSyncIterator
+            | ObjectKind::IteratorConcat
+            | ObjectKind::ArrayBuffer
+            | ObjectKind::SharedArrayBuffer
+            | ObjectKind::DataView
+            | ObjectKind::NativeFunction
+            | ObjectKind::BoundFunction
+            | ObjectKind::BytecodeFunction
+            | ObjectKind::Generator
+            | ObjectKind::AsyncGenerator
+            | ObjectKind::AsyncFunctionState
+            | ObjectKind::Promise => {}
         }
         let Some(shape) = heap.shape(data.shape).ok() else {
-            return Located::Unresolved;
+            return OrdinarySelection::Unresolved;
         };
         if let Some(slot) = shape.find(AtomIdx::from_raw(atom.raw())) {
-            let location = Location {
-                domain,
-                realm,
-                shape: initial.shape,
-                revision,
-                prototype_epoch: epoch,
-                depth,
-                slot,
-                numeric_key: numeric,
-            };
             return match data.slots.get(slot as usize) {
-                Some(PropertySlot::Data(raw)) => Located::Data(location, raw),
-                Some(PropertySlot::Accessor { get, .. }) => {
-                    Located::Accessor(location, get.option())
-                }
-                _ => Located::Unresolved,
+                Some(PropertySlot::Data(raw)) => OrdinarySelection::Data { raw, depth, slot },
+                Some(PropertySlot::Accessor { get, .. }) => OrdinarySelection::Accessor {
+                    getter: get.option(),
+                    depth,
+                    slot,
+                },
+                _ => OrdinarySelection::Unresolved,
             };
         }
         let Some(prototype) = shape.prototype() else {
-            return Located::CompleteAbsent;
+            return OrdinarySelection::CompleteAbsent;
         };
         holder = prototype;
         let Some(next_depth) = depth.checked_add(1) else {
-            return Located::Unresolved;
+            return OrdinarySelection::Unresolved;
         };
         depth = next_depth;
     }
@@ -569,6 +689,62 @@ mod tests {
                 _ => None,
             })
     }
+    #[test]
+    fn cooldown_selection_keeps_exotic_and_callback_boundaries() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        for (source, name, expected) in [
+            ("({x:17})", "x", "data"),
+            ("Object.create({x:17})", "x", "data"),
+            ("({get x(){throw 1}})", "x", "accessor"),
+            ("({})", "missing", "absent"),
+            ("Object.create([17])", "0", "unresolved"),
+            ("Object.create(Object.assign([], {x:17}))", "x", "data"),
+            ("new Proxy({}, {get(){throw 1}})", "x", "unresolved"),
+            ("new Uint8Array(1)", "-0", "unresolved"),
+            ("new Uint8Array(1)", "NaN", "unresolved"),
+        ] {
+            let receiver = object(context.eval(source).unwrap());
+            let key = runtime.intern_property_key(name).unwrap();
+            let cache = PropertyReadCache {
+                state: Cell::new(State::Megamorphic(7)),
+            };
+            let state = runtime.0.state.borrow();
+            let selected = cache.miss_selected(
+                &state.heap,
+                &state.atoms,
+                runtime.domain_id(),
+                context.realm_id(),
+                Some(receiver.object_id()),
+                key.atom(),
+            );
+            let actual = match selected {
+                CacheSelection::Data(_) => "data",
+                CacheSelection::Accessor(_) => "accessor",
+                CacheSelection::CompleteAbsent => "absent",
+                CacheSelection::Unresolved => "unresolved",
+            };
+            assert_eq!(actual, expected, "{source}[{name}]");
+            assert!(matches!(cache.state.get(), State::Megamorphic(7)));
+        }
+    }
+
+    #[test]
+    fn cooldown_rejects_foreign_and_null_atoms() {
+        let runtime = Runtime::new();
+        let foreign = Runtime::new();
+        let mut context = runtime.new_context();
+        let receiver = object(context.eval("({x:17})").unwrap());
+        let foreign_key = foreign.intern_property_key("x").unwrap();
+        let state = runtime.0.state.borrow();
+        for atom in [foreign_key.atom(), Atom::NULL] {
+            assert!(matches!(
+                select_cooldown(&state.heap, &state.atoms, receiver.object_id(), atom),
+                OrdinarySelection::Unresolved
+            ));
+        }
+    }
+
     #[test]
     fn sparse_site_rank_crosses_words_and_omits_writes() {
         let mut code = vec![Instruction::Nop; 130];
