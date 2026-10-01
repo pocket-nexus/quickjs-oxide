@@ -213,7 +213,7 @@
 
 `82946f63` 只 profiling 的真实 Return 邻接诊断完成目标 2、profiling/host 2,299、clean profile 与八项一次逻辑运行。direct Object 标签：Richards 4,010、DeltaBlue 1,016、Crypto 18、RayTrace 25,073、EarleyBoyer 89,314、RegExp 104、Splay 160、NavierStokes 0。EarleyBoyer 的 `sc_term_12` 是 78,781 次 Object，另一 term 返回是 15,284 次 String；不能混算。它只证明已发布 GetLocal/GetArg 紧接 Return 时的当前类型，不证明 full generation/count/cleanup 准入、所有权转移或时间收益。plain 无新增调用/检查，没有 owner 优化。证据 `direct-binding-return-logical/joint-coverage-ledger.json`。
 
-PGO 另在独立 `perf/v8v7-heldout-pgo` 工具实验中推进：保持 Rust 1.88、匹配 LLVM 20.1.5，计划用通用 scaling scripts 训练、原版 V8 v7 留作验收。构建模式、真实 flags、profile merge/训练输出/源码回执必须完整，显式 build-technique 比较不能伪装 plain source 比较。目前只完成工具校验测试，没有 PGO 二进制、训练或时间收益。
+PGO 另在独立 `perf/v8v7-heldout-pgo` 工具实验中推进：保持 Rust 1.88、匹配 LLVM 20.1.5，用通用 scaling scripts 训练、原版 V8 v7 留作验收。构建模式、真实 flags、profile merge/训练输出/源码回执必须完整，显式 build-technique 比较不能伪装 plain source 比较。准备阶段只完成工具校验测试；后续实际训练和测量见下文。
 
 ### 简化方向的累计取舍
 
@@ -272,5 +272,37 @@ PGO 另在独立 `perf/v8v7-heldout-pgo` 工具实验中推进：保持 Rust 1.8
 2. `iterate_v8.py` 对八项及 combined 固定负载执行 A/A 与交错 A/B。复用首次冻结的负载，逐样本验证身份、输出和退出状态。
 3. 有可信收益的候选验证硬件计数、内存、编译与代码体积，再跑原版完整 suite；其他子项独立检查回归。
 4. 分 commit 集成，重新验证语义与累计性能。复用现有 Boa 三轮原版完整 suite 结果，八项与 Combined 分别判断，遵守用户不重复测量未变 Boa 的指示。
+
+### 新数值机制的验收进展
+
+静态 Opcode 候选 `eda47fab` 用环境匹配的 fresh plain 构建重试后，CPU 2 固定矩阵 144/144 样本有效。DeltaBlue −2.51%（A/A 1.69%）、RegExp −2.51%（1.91%）、NavierStokes −2.44%（1.38%）；目标 Crypto −1.48%（4.64%）、Richards +2.18%（2.66%）、combined −0.34%（1.07%）均未分辨。保留实验，不采用；原版与资源尚未追加。固定矩阵和代码体积增加不能单独证明完整净价值。
+
+纯 bits `Number::compact` 候选 `1e081737` 已通过目标 9、profiling/host 2,301、默认库 2,059 项测试，clean plain/profile 回执与 eaf 的 source gate 配置匹配。真实五个 arithmetic compact sites 删除旧 clamp/NaN select/roundtrip；旧 ToInt32 保留。二进制 .text +1,568B，execute 栈 +32B，部分 native 消费者新增 outlined compact/Number::add 调用。八项原事件、storage、layout、指令计数不变；新增 compaction 分类只是逻辑覆盖。第二个完整 Setup/run/TearDown cycle 没有重置 NavierStokes 内部状态，也继续消耗原版确定性随机流，不能当作统一稳态频率。固定时间尚待验收，不采用。
+
+### 独立 PGO 构建技术：原版四轮与资源
+
+`17c6c883` 只改变构建工具，运行期源码仍为 eaf 八层实现。Rust 1.88.0 / LLVM 20.1.5 下，22 个通用 scaling case × 两种规模完成 44/44 个预期输出验证，每个训练进程都产生独立非空 raw profile；V8 v7 未用于训练。训练凭据 SHA `c88451d8…fd9c9`、merged profile SHA `713c4bb0…2da`，generate/none/use 的源码、显式 target 和实际 codegen 参数逐项校验，唯一声明差异为 PGO。工具提交不是性能实现层，不把 profile-use 标成 plain。
+
+CPU 2 上固定负载 144/144 样本有效，Richards/DeltaBlue/Crypto/RayTrace/EarleyBoyer/RegExp/Splay/NavierStokes 耗时分别下降 22.86% / 24.54% / 28.33% / 24.78% / 25.41% / 15.13% / 18.80% / 22.82%，combined −21.37%，均超过各自 A/A 筛选跨度。该矩阵使用自己的冻结负载，不与旧 source 矩阵跨减。
+
+原版完整 combined ABBA–BAAB 四轮/引擎全部正常，九个标签均来自同一完整运行，主体 SHA 仍为 `777f2c2e…d9946`。历史 Boa 三轮复用，未重跑；所有样本保留。
+
+| 子项 | 匹配 none 中位数（范围） | PGO 中位数（范围） | PGO 分数变化 | PGO / 历史 Boa |
+| --- | ---: | ---: | ---: | ---: |
+| Richards | 94.5（94.4–94.7） | 122.5（122–123） | +29.63% | 54.4% |
+| DeltaBlue | 102.5（102–103） | 134.5（130–135） | +31.22% | 65.3% |
+| Crypto | 204.5（204–205） | 286.5（279–292） | +40.10% | 118.4% |
+| RayTrace | 157（155–158） | 208（206–210） | +32.48% | 52.3% |
+| EarleyBoyer | 212.5（212–213） | 288（285–290） | +35.53% | 57.4% |
+| RegExp | 88.65（87.9–89.4） | 103（102–105） | +16.19% | 152.4% |
+| Splay | 475（468–479） | 639.5（626–645） | +34.63% | 76.8% |
+| NavierStokes | 580（577–583） | 713（699–718） | +22.93% | 137.1% |
+| Combined | 188.5（188–189） | 245（243–248） | +29.97% | 81.7% |
+
+Crypto、RegExp、NavierStokes 的四个 PGO 样本均高于历史 Boa 全部样本。其余五项和 combined 仍低于，目标没有完成。PGO 的单项归因来自匹配 none 对照；历史 eaf Score 191 不是本次匹配对照，也不能把主线后来的 factory 正确性修复算进当前结果。完整证据为 `heldout-pgo-original-summary.json`。
+
+固定 combined 整进程资源 ABBA 各两次：峰值 RSS 中位数 347,262→347,570 KiB（+308 KiB / +0.089%），cycles −22.17%、instructions −14.50%、branches −15.90%、branch-misses −28.46%；全部 perf 事件 running=100%，无 multiplex。它们包含 startup/Setup/run/TearDown/exit，是资源诊断，不是原版 Score 或延迟分布。
+
+生成代码的交换也保留：.text −213,936B，.rodata +52,448B；`ready::run` 16539→177987B、栈 1320→3192B，独立 execute_frame 符号消失。编译器同时改变了多处 inline 与布局，不能把全部收益归给一处调用删除。训练、生成与再编译增加构建投入；构建日志耗时没有经过独立控制，不作编译性能结论。完整 PGO Test262 正在验收，当前尚未采用；进入主线时需在包含 factory 修复的实际新源码上重新训练与验证。
 
 本页是进行中的实验记录；没有原版 Score 的新数据时，不更新历史分数为新结论。
