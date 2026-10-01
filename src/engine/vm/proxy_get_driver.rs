@@ -2973,6 +2973,7 @@ pub(super) fn start_instance(
     target: ObjectRef,
     depth: usize,
 ) -> Result<CallStep, Error> {
+    let intrinsic_budget = execution.frames.can_push_with_continuations(0);
     let parent = execution.frames.current_mut(frame)?;
     let realm = parent.executable.realm;
     let identity = parent
@@ -2981,8 +2982,14 @@ pub(super) fn start_instance(
         .ok_or_else(|| Error::internal("instance query identity exhausted"))?;
     parent.property_generation = identity;
     let result = (|| {
-        let step = crate::engine::builtins::InstanceStep::start(runtime, realm, candidate, target)
-            .map_err(runtime_error_to_vm_error)?;
+        let step = crate::engine::builtins::InstanceStep::start(
+            runtime,
+            realm,
+            candidate,
+            target,
+            intrinsic_budget,
+        )
+        .map_err(runtime_error_to_vm_error)?;
         advance(
             runtime,
             execution,

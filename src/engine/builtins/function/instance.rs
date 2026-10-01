@@ -4,7 +4,9 @@ use crate::engine::{
         Error, ErrorKind, error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError,
     },
     builtins::native::NativeFunctionId,
-    heap::{ContextId, Heap, HeapError, ObjectId, ObjectPayload},
+    heap::{
+        ContextId, Heap, HeapError, ObjectId, ObjectKind, ObjectPayload, PropertySlot, RawValue,
+    },
     object::{CallableRef, ObjectRef, PropertyKey, WellKnownSymbol},
     value::{JsValue, conversion::NativeConversion},
     vm::{
@@ -65,7 +67,18 @@ impl InstanceStep {
         realm: ContextId,
         candidate: JsValue,
         target: ObjectRef,
+        intrinsic_budget: bool,
     ) -> Result<Self, RuntimeError> {
+        if let Some(found) =
+            try_ordinary_instanceof(runtime, &candidate, target.object_id(), intrinsic_budget)
+        {
+            runtime.release_jsvalue(candidate)?;
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "instanceof.completed_without_continuation",
+            );
+            return Ok(Self::Complete(Completion::Return(JsValue::Bool(found))));
+        }
         Self::method(runtime, realm, candidate, target, false)
     }
     fn method(
@@ -170,6 +183,174 @@ impl InstanceStep {
             )
         })
     }
+}
+
+/// Complete the non-observable part of InstanceofOperator while its inputs
+/// remain owned. A miss has selected no getter, called no code, and changed no
+/// owner or property; the existing continuation still owns the whole operation.
+/// No fact survives this runtime-state borrow.
+fn try_ordinary_instanceof(
+    runtime: &Runtime,
+    candidate: &JsValue,
+    target: ObjectId,
+    intrinsic_budget: bool,
+) -> Option<bool> {
+    if runtime.0.deferred_references.has_pending() {
+        return None;
+    }
+    let state = runtime.0.state.try_borrow().ok()?;
+    if state.heap.has_pending_zero_cleanup() {
+        return None;
+    }
+    let heap = &state.heap;
+    if heap.object_strong_count(target).ok()? < 2 {
+        return None;
+    }
+    let target_data = heap.object(target).ok()?;
+    if !matches!(
+        target_data.payload,
+        ObjectPayload::BytecodeFunction { .. } | ObjectPayload::NativeFunction { .. }
+    ) {
+        // Bound functions delegate InstanceofOperator, and a Proxy may observe
+        // both @@hasInstance and prototype. Neither uses this ordinary kernel.
+        return None;
+    }
+    let method = state
+        .well_known_symbols
+        .get(&WellKnownSymbol::HasInstance)?;
+    match borrowed_ordinary_data(heap, target, *method)? {
+        None | Some(RawValue::Null | RawValue::Undefined) => {}
+        Some(RawValue::Object(method)) => {
+            if !temporary_roots_fit(heap, *method) {
+                return None;
+            }
+            let ObjectPayload::NativeFunction { data, .. } = &heap.object(*method).ok()?.payload
+            else {
+                return None;
+            };
+            if data.target != NativeFunctionId::FunctionPrototypeHasInstance || data.realm.is_none()
+            {
+                return None;
+            }
+            // The ordinary intrinsic used to enter a native continuation.
+            // Keep its logical and physical stack admission even though this
+            // execution no longer installs that continuation. A nullish or
+            // absent method takes OrdinaryHasInstance without this call.
+            if !intrinsic_budget || runtime.proxy_method_stack_would_overflow() {
+                return None;
+            }
+            heap.context(data.realm?).ok()?;
+        }
+        _ => return None,
+    }
+    let JsValue::Object(candidate) = candidate else {
+        // Heap primitives acquire additional argument owners in the generic
+        // intrinsic call. Leave their saturation and release rules there.
+        return matches!(
+            candidate,
+            JsValue::Undefined
+                | JsValue::Null
+                | JsValue::Bool(_)
+                | JsValue::Int(_)
+                | JsValue::Float(_)
+                | JsValue::ShortBigInt(_)
+        )
+        .then_some(false);
+    };
+    if !temporary_roots_fit(heap, *candidate) {
+        return None;
+    }
+    // Completion consumes both input owners after this borrow. They must
+    // remain nonfinal even when candidate and target are the same object.
+    if heap.object_strong_count(*candidate).ok()? < if *candidate == target { 3 } else { 2 } {
+        return None;
+    }
+    let key = state
+        .pinned_atoms
+        .get(crate::engine::atom::pinned::PinnedAtom::Prototype);
+    let Some(RawValue::Object(expected)) = borrowed_ordinary_data(heap, target, key)? else {
+        // Lazy prototype materialization and the non-object prototype error
+        // must retain their original observable execution boundary.
+        return None;
+    };
+    if !temporary_roots_fit(heap, *expected) {
+        return None;
+    }
+    match walk_ordinary_chain(heap, *candidate, *expected).ok()? {
+        ChainWalk::Complete(found) => Some(found),
+        ChainWalk::Protocol(_) => None,
+    }
+}
+
+// Bound all owning roles in the callback-free generic protocol, including
+// aliases between candidate, target, selected method and expected prototype:
+//
+//   outer InstanceResume target/candidate                  2
+//   pending property-read object/receiver                 2
+//   property result and its promoted CallableRef          2
+//   native invocation receiver/argument                   2
+//   NativeActivation callable                             1
+//   InstanceStep::native receiver ObjectRef/CallableRef    2
+//   inner InstanceResume target/candidate                 2
+//   prototype result                                      1
+//   prototype-walk current/result                         2
+//                                                        --
+//                                                        16
+//
+// This is an upper bound, not a claim that all roles coexist: ownership moves
+// reuse some roots, and property projection covers either named read. Counting
+// every role against each identity also covers arbitrary aliases. Frame
+// publication borrows its callable root and adds no heap edge. Rejecting near
+// saturation preserves the generic MAX-1 -> immortal transition even when
+// this kernel omits temporary roots.
+const INSTANCE_PROTOCOL_ROOT_HEADROOM: u32 = 2 + 2 + 2 + 2 + 1 + 2 + 2 + 1 + 2;
+
+fn temporary_roots_fit(heap: &Heap, object: ObjectId) -> bool {
+    heap.object_strong_count(object)
+        .is_ok_and(|count| count < u32::MAX - INSTANCE_PROTOCOL_ROOT_HEADROOM)
+}
+
+/// Restrict Get to storage whose named reads are ordinary parallel slots.
+/// The nested Option distinguishes an absent property from a protocol miss.
+fn borrowed_ordinary_data(
+    heap: &Heap,
+    mut object: ObjectId,
+    key: crate::engine::atom::Atom,
+) -> Option<Option<&RawValue>> {
+    for _ in 0..32 {
+        if !temporary_roots_fit(heap, object) {
+            return None;
+        }
+        let data = heap.object(object).ok()?;
+        if !matches!(
+            (data.kind, &data.payload),
+            (ObjectKind::Ordinary, ObjectPayload::Ordinary)
+                | (
+                    ObjectKind::BytecodeFunction,
+                    ObjectPayload::BytecodeFunction { .. }
+                )
+                | (
+                    ObjectKind::NativeFunction,
+                    ObjectPayload::NativeFunction { .. }
+                )
+        ) {
+            return None;
+        }
+        let shape = heap.shape(data.shape).ok()?;
+        if let Some(index) = shape.find(crate::engine::atom::AtomIdx::from_raw(key.raw())) {
+            return match data.slots.get(index as usize)? {
+                PropertySlot::Data(value) => Some(Some(value)),
+                PropertySlot::Accessor { .. }
+                | PropertySlot::AutoInit(_)
+                | PropertySlot::VarRef(_) => None,
+            };
+        }
+        let Some(prototype) = shape.prototype() else {
+            return Some(None);
+        };
+        object = prototype;
+    }
+    None
 }
 impl InstanceResume {
     pub(crate) fn resume(
