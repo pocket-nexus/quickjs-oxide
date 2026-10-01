@@ -58,6 +58,23 @@
 
 计数减少只证明机制发生。缓存候选的 Combined 结果未分辨，不用其他层的收益替它背书。构造候选的测试通过也不能替代饱和引用计数与失败边界的合同审查。
 
+### 第二批独立时间筛选
+
+八个候选各完成 144 个有效固定负载样本，保留全部原始输出。下表是**耗时变化**，不是原版 Score；观察到的 A/A 范围仅用于筛选，不能代替原版验收或统计置信区间。证据索引为外部 `wave2-gate-ledger.json`。
+
+| 提交 | 机制 | 本轮时间证据 | 决定 |
+| --- | --- | --- | --- |
+| `86930db6` | Int×Int 使用 checked integer multiply，溢出及负零保留原数字语义 | NavierStokes −5.99%（A/A 2.34%）；Crypto −1.31%、combined −0.51% 均未分辨 | 进入原版复核；Crypto 3,107,216 次命中只证明机制，不声称 Crypto 提速 |
+| `6f48c178` | 普通读取不准备消费者不用的 native selection | Richards −4.08%、NavierStokes −6.13%、combined −1.43%；Crypto +1.89%（A/A 1.56%） | 保留条件实验，先复核 Crypto 控制 |
+| `c3bf45e2` | public field 经现有定义 kernel 本地完成 | Splay −8.96%、NavierStokes −4.16%、combined −2.29%，均超出本轮 A/A | 进入原版复核；Splay 固定负载包含大量 Setup，不能宣称同幅度原版分数收益 |
+| `22b9443d` | 字面量 ready 路径直接消费现有分配结果 | DeltaBlue +4.49%（A/A 2.31%）、Crypto +5.94%（A/A 1.61%）；combined −0.36% 未分辨 | 拒绝当前版本；检查非参与者表示、调用和执行频率后再决定缩小 |
+| `977785cf` | 同一次借用选槽与提交 | Richards −3.29%、NavierStokes −5.26%，均超出本轮 A/A；combined −0.62% 未分辨 | 进入原版复核；没有分辨出的其他控制回归 |
+| `aa5894ae` | 容量充足时跳过既有 RawVec reserve 边界 | Richards −3.57%、NavierStokes −4.99%；Crypto +3.23%（A/A 3.01%） | 保留条件实验，先复核 Crypto 控制 |
+| `5cb4e2f8` | Int 索引 dense own Object 结果本地 checked retain | Richards −3.26%、DeltaBlue −5.26%；Crypto +5.57%（A/A 2.29%）；combined −0.35% 未分辨 | 拒绝当前版本；下一实验检查与 scalar kernel 共享分类/借用能否避免新增探测，不预先归因回退 |
+| `67b9501d` | apply 快速参数前缀按需建立 continuation | RayTrace −2.14% 未分辨；Crypto +5.70%（A/A 1.67%）；combined −0.26% 未分辨 | 拒绝当前版本；66,596 次 Arguments 交接消失不替时间收益背书 |
+
+简化与其他技术候选同时推进：普通定义和帧退休研究重复查找/借用；数字与数组路径研究表示和专门化。任何新候选先确定实际热点覆盖和旧接口支持程度，再用独立提交验收。没有通过时间控制的版本不进入累计组合。
+
 `daccb30b` 的生成代码还显示解释循环栈帧增加 96 字节，新增的预算值跨整个解码循环存活并被重载。它说明非参与者确实付出了表示与寄存器成本，不能单凭汇编把 Crypto 的全部回归归因于此。下一版先恢复原解释循环，利用现有 `InstanceStep::start` 的同步 Complete 分支，重新测量收益和控制项。
 
 ### 正在验证的简化
