@@ -360,3 +360,7 @@ V8 的 [elements kinds](https://v8.dev/blog/elements-kinds) 和 [fast properties
 本地返回的另一独立实验保留 canonical owner 复制和源绑定，仅研究在已发布的 GetLocal/GetLocalCheck 紧邻普通 Return 时减少临时 operand 搬运。GetArg、标量与需 callback/词法读取的分支保留原消费者路径；正确性和真实命中尚待验证。上述新候选均不更新当前主线的 Score 244 或三项领先的验收状态。
 
 数组 `dc39cf80` 随后完成自己的 fresh pilot/冻结矩阵，CPU 2 上 144/144 样本有效。Crypto 耗时 −9.48%（A/A 1.18%），但 Richards +3.56%（1.69%）、NavierStokes +3.60%（1.25%）；combined +0.93%（1.11%）未分辨。拒绝当前完整版本，不追加原版、资源或完整 Test262。其他七项新 nonzero enter/success 为零，不能把这些控制回归归因于 Crypto 的 1882 次新检查；真实 execute 指令投影相同也不证明整体代码、引用的数据和布局相同。`nonzero-array-recovery-gate-ledger.json` 保留全部样本与身份，目标改路和局部收益成立，当前完整净价值未通过。
+
+Map/Set `cbed0c0c` 的 CPU 2 固定矩阵也完成 144/144 有效样本：Splay −0.09%（A/A 2.64%）、EarleyBoyer +0.35%（1.71%）均未分辨，Richards +5.80%（2.78%）、Crypto +4.09%（3.10%）、RayTrace +2.19%（0.95%）、combined +1.64%（0.67%）。拒绝作为当前速度候选，未追加原版或完整 Test262。NavierStokes +2.1194% 与 A/A 2.1186% 极接近，仅据边缘差值不能强调其回归；全部样本保留在 `map-set-boxed-records-gate-ledger.json`。
+
+这个布局候选同时有预先声明的内存目标，因此单独完成同冻结 combined、CPU 2、无其他 heavy 的资源 ABBA，每二进制各两次。峰值 RSS 样本 baseline 346104/351140 KiB，candidate 323376/324836 KiB，中位数 348622→324106 KiB（−24516 KiB / −7.03%）；cycles +1.36%、instructions +0.21%、branches +0.07%、branch misses −8.17%。所有事件 running=100%，无 multiplex。这是实际整进程内存收益与执行代价的交换，不是 arena endpoint 投影，也不能替速度控制失败背书；两个资源观察不构成置信区间。`map-set-boxed-records-resources/` 保存完整身份、原始输出和 perf 字段。当前仍不进入主线，原版 Score 244 和三项领先结论不变。
