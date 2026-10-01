@@ -86,7 +86,9 @@
 
 整数比较借鉴的是 [V8 13.6 的 RelationalComparison](https://raw.githubusercontent.com/nodejs/node/v24.21.0/deps/v8/src/codegen/code-stub-assembler.cc)：Smi 双输入直接比较，混合 HeapNumber 才进入浮点比较。我们只消费已有 Number::Int 事实，既有接口已允许，不引入 V8 的指针表示或新执行架构。kept 数组读取则补齐现有接口对存储表示的覆盖；Crypto 实际读取的是 `this.array`/`w.array`，不是普通 BigInteger 数字属性，不能将此前回退归因到未经证实的普通对象探测。
 
-第二轮累计实验 `eaf23ba8` 在 `72a4de30` 上分提交加入 `977785cf`、`c3bf45e2`、`86930db6`。clean plain/profile 构建、八项逻辑 profile、库测试 2,297/2,056、focused Test262 6,844/6,844 已完成；完整 Test262 和资源交换仍待验收。这些新交付候选尚未加入组合。
+第二轮累计实验 `eaf23ba8` 在 `72a4de30` 上分提交加入 `977785cf`、`c3bf45e2`、`86930db6`。clean plain/profile 构建、八项逻辑 profile、库测试 2,297/2,056、focused Test262 6,844/6,844 已完成；完整 102,037 变体的冻结正文比较也已通过，仍为 80,010 pass / 80,060 eligible。资源交换仍待验收。这些新交付候选尚未加入组合。
+
+`5fdc3e54` 另行验证已注册 shape successor 的直接消费：八项新增命中逐项等于旧重复注册计数；必要 shape 生命周期测试 12 项、profiling/host 2,269、default 2,030 项通过。plain 汇编保留 full generation/checked retain，registered hit 跳过 `record_transition`，解释循环不变，.text +336B、append 栈不变。追加一次 body 重复获得 RayTrace 193,723、EarleyBoyer 542,843 次追加命中；这证明 body 覆盖，不等同冷首轮精确 timed 计数。独立时间仍待验收。
 
 `daccb30b` 的生成代码还显示解释循环栈帧增加 96 字节，新增的预算值跨整个解码循环存活并被重载。它说明非参与者确实付出了表示与寄存器成本，不能单凭汇编把 Crypto 的全部回归归因于此。下一版先恢复原解释循环，利用现有 `InstanceStep::start` 的同步 Complete 分支，重新测量收益和控制项。
 
