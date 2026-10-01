@@ -15,8 +15,9 @@ use crate::engine::value::JsString;
 use crate::engine::vm::BytecodePc;
 
 /// Validated facts from direct native classification. The selected callable
-/// owner keeps the fixed payload and defining realm live; this record adds no root.
-/// Reuse checks the callable identity and runtime domain.
+/// owner keeps the fixed payload and defining realm live; during direct entry
+/// that owner stays in the authenticated callee slot until it is transferred.
+/// This record adds no root. Reuse checks callable identity and runtime domain.
 pub(in crate::engine::vm) struct NativeClassification {
     function: ObjectId,
     domain: u64,
@@ -27,54 +28,40 @@ pub(in crate::engine::vm) struct NativeClassification {
 }
 
 impl NativeClassification {
-    pub(in crate::engine::vm) fn promote_selected(
+    /// The authenticated caller transaction keeps its callee slot unchanged
+    /// until it transfers that owner into the activation's CallableRef.
+    pub(in crate::engine::vm) fn classify_selected(
         selection: super::call::ordinary::NativeSelection<'_>,
-    ) -> Result<(crate::engine::object::CallableRef, Self), RuntimeError> {
+    ) -> Self {
         let (runtime, function, target, defining_realm, min_readable_args, operation) =
             selection.into_parts();
-        let domain = runtime.domain_id();
-        let callable = crate::engine::object::CallableRef::from_validated_object(
-            ObjectRef::from_borrowed_handle(runtime.clone(), function)?,
-        );
-        Ok((
-            callable,
-            Self {
-                function,
-                domain,
-                target,
-                defining_realm,
-                min_readable_args,
-                operation: Some(operation),
-            },
-        ))
+        Self {
+            function,
+            domain: runtime.domain_id(),
+            target,
+            defining_realm,
+            min_readable_args,
+            operation: Some(operation),
+        }
     }
 
-    pub(in crate::engine::vm) fn promote_linked(
+    pub(in crate::engine::vm) fn classify_linked(
         runtime: &Runtime,
         selection: crate::engine::object::LinkedNativeSelection,
         value: &crate::engine::value::JsValue,
-    ) -> Result<Option<(crate::engine::object::CallableRef, Self)>, RuntimeError> {
+    ) -> Option<Self> {
         let crate::engine::value::JsValue::Object(function) = value else {
-            return Ok(None);
+            return None;
         };
-        let Some(data) = selection.into_parts_jsvalue(runtime, *function) else {
-            return Ok(None);
-        };
-        let domain = runtime.domain_id();
-        let callable = crate::engine::object::CallableRef::from_validated_object(
-            ObjectRef::from_borrowed_handle(runtime.clone(), *function)?,
-        );
-        Ok(Some((
-            callable,
-            Self {
-                function: *function,
-                domain,
-                target: data.target,
-                defining_realm: data.realm.expect("selected native realm"),
-                min_readable_args: data.min_readable_args,
-                operation: data.operation(),
-            },
-        )))
+        let data = selection.into_parts_jsvalue(runtime, *function)?;
+        Some(Self {
+            function: *function,
+            domain: runtime.domain_id(),
+            target: data.target,
+            defining_realm: data.realm.expect("selected native realm"),
+            min_readable_args: data.min_readable_args,
+            operation: data.operation(),
+        })
     }
 
     pub(in crate::engine::vm) fn select(

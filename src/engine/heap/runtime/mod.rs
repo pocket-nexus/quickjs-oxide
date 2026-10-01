@@ -396,10 +396,35 @@ impl RuntimeState {
     }
 
     fn record_transition(&mut self, parent: ShapeId, entry: ShapeEntry, target: ShapeId) {
-        self.shape_transitions
+        let previous = self
+            .shape_transitions
             .entry(parent)
             .or_default()
             .insert(entry, target);
+        if let Some(previous) = previous {
+            if previous == target {
+                // Reusing the same weak edge creates no new relationship.
+                // Keep reverse storage bounded by distinct forward edges.
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "shape_transition_duplicate_avoided",
+                );
+                return;
+            }
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "shape_transition_rebound_edge",
+            );
+            // A stale target may be replaced before its delayed cleanup is
+            // applied. Detach its reverse edge now so that cleanup cannot
+            // remove the newly rebound forward edge. IDs include generation.
+            if let Some(parents) = self.shape_transition_parents.get_mut(&previous) {
+                parents.retain(|pair| *pair != (parent, entry));
+                if parents.is_empty() {
+                    self.shape_transition_parents.remove(&previous);
+                }
+            }
+        }
         self.shape_transition_parents
             .entry(target)
             .or_default()
@@ -537,6 +562,43 @@ impl RuntimeState {
             self.get_or_create_shape(prototype, entries)?
         };
         self.replace_layout_with_owned_shape(object, shape, slots)
+    }
+
+    /// Consume the selected successor shape reference. Existing slots stay in
+    /// place, so only the appended slot acquires new Atom and heap owners.
+    pub(crate) fn append_slot_with_owned_shape(
+        &mut self,
+        object: ObjectId,
+        shape: ShapeId,
+        replacement: PropertySlot,
+    ) -> Result<(), RuntimeError> {
+        let retained_atoms = match self.retain_slot_atoms(std::slice::from_ref(&replacement)) {
+            Ok(atoms) => atoms,
+            Err(error) => {
+                let cleanup = self.heap.release_shape(shape)?;
+                self.apply_cleanup(cleanup)?;
+                return Err(error);
+            }
+        };
+        let result = self
+            .heap
+            .append_object_slot_with_shape(object, shape, replacement);
+        // The caller's temporary shape owner is consumed even if preparation
+        // failed. On a published error the new slot still owns its Atom edges.
+        let shape_cleanup = self.heap.release_shape(shape)?;
+        match result {
+            Ok(cleanup) => {
+                self.apply_cleanup(cleanup)?;
+                self.apply_cleanup(shape_cleanup)
+            }
+            Err(failure) => {
+                if !failure.published {
+                    self.release_atoms(retained_atoms)?;
+                }
+                self.apply_cleanup(shape_cleanup)?;
+                Err(failure.error.into())
+            }
+        }
     }
 
     /// Consume the caller's shape reference on both success and rollback.

@@ -1257,6 +1257,70 @@ impl Heap {
         Ok(())
     }
 
+    /// Append a slot while moving the existing layout owners unchanged into a
+    /// canonical successor shape. The caller supplies one owned reference for
+    /// every Symbol atom in `replacement`, transferred only on publication.
+    pub(crate) fn append_object_slot_with_shape(
+        &mut self,
+        id: ObjectId,
+        shape: ShapeId,
+        replacement: PropertySlot,
+    ) -> Result<HeapCleanup, SlotReplacementError> {
+        let prepare = (|| {
+            let object = self.object(id)?;
+            let previous = self.shape(object.shape)?;
+            let successor = self.shape(shape)?;
+            let count = object.slots.len();
+            if previous.is_dictionary()
+                || successor.is_dictionary()
+                || previous.entries().len() != count
+                || successor.entries().len() != count.saturating_add(1)
+                || successor.prototype() != previous.prototype()
+                || successor.entries().get(..count) != Some(previous.entries())
+            {
+                return Err(HeapError::Invariant(
+                    "property append shape does not extend the existing layout",
+                ));
+            }
+            if !slot_matches_storage(&replacement, successor.entries()[count].flags.storage)
+                || matches!(replacement, PropertySlot::Data(RawValue::Private(_)))
+            {
+                return Err(HeapError::Invariant("invalid appended property storage"));
+            }
+            self.object_mut(id)?
+                .slots
+                .try_reserve(1)
+                .map_err(|_| HeapError::Allocation {
+                    operation: "appending a canonical shape property",
+                })?;
+            let mut edges = property_slot_edges(&replacement);
+            edges.push(RawId::Shape(shape));
+            self.retain_edges_transactionally(&edges)
+        })();
+        prepare.map_err(|error| SlotReplacementError {
+            error,
+            published: false,
+        })?;
+
+        self.invalidate_property_layout(id);
+        let previous_shape = {
+            let object = self
+                .object_mut(id)
+                .expect("authenticated object disappeared during property append");
+            object.slots.push(replacement);
+            std::mem::replace(&mut object.shape, shape)
+        };
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "shape_append_existing_owners_preserved",
+        );
+        self.release_and_drain(RawId::Shape(previous_shape))
+            .map_err(|error| SlotReplacementError {
+                error,
+                published: true,
+            })
+    }
+
     /// Transactionally replace an object's complete shape/slot layout.
     ///
     /// This is the low-level primitive used by immutable shape transitions.
