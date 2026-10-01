@@ -279,6 +279,8 @@ PGO 另在独立 `perf/v8v7-heldout-pgo` 工具实验中推进：保持 Rust 1.8
 
 纯 bits `Number::compact` 候选 `1e081737` 已通过目标 9、profiling/host 2,301、默认库 2,059 项测试，clean plain/profile 回执与 eaf 的 source gate 配置匹配。真实五个 arithmetic compact sites 删除旧 clamp/NaN select/roundtrip；旧 ToInt32 保留。二进制 .text +1,568B，execute 栈 +32B，部分 native 消费者新增 outlined compact/Number::add 调用。八项原事件、storage、layout、指令计数不变；新增 compaction 分类只是逻辑覆盖。第二个完整 Setup/run/TearDown cycle 没有重置 NavierStokes 内部状态，也继续消耗原版确定性随机流，不能当作统一稳态频率。固定时间尚待验收，不采用。
 
+随后 CPU 2 固定矩阵 144/144 有效：Richards +5.57%（A/A 2.26%）、Crypto +1.33%（0.73%）、RayTrace +1.97%（1.50%）；NavierStokes −2.65%（1.15%），combined +1.11%（1.90%）未分辨。拒绝当前候选，不为已失败的控制追加原版/资源或完整 Test262。`exact-i32-bits-compaction-gate-ledger.json` 保留全部样本与源码身份；删除机器工作没有替代完整净价值。
+
 ### 独立 PGO 构建技术：原版四轮与资源
 
 `17c6c883` 只改变构建工具，运行期源码仍为 eaf 八层实现。Rust 1.88.0 / LLVM 20.1.5 下，22 个通用 scaling case × 两种规模完成 44/44 个预期输出验证，每个训练进程都产生独立非空 raw profile；V8 v7 未用于训练。训练凭据 SHA `c88451d8…fd9c9`、merged profile SHA `713c4bb0…2da`，generate/none/use 的源码、显式 target 和实际 codegen 参数逐项校验，唯一声明差异为 PGO。工具提交不是性能实现层，不把 profile-use 标成 plain。
@@ -304,5 +306,9 @@ Crypto、RegExp、NavierStokes 的四个 PGO 样本均高于历史 Boa 全部样
 固定 combined 整进程资源 ABBA 各两次：峰值 RSS 中位数 347,262→347,570 KiB（+308 KiB / +0.089%），cycles −22.17%、instructions −14.50%、branches −15.90%、branch-misses −28.46%；全部 perf 事件 running=100%，无 multiplex。它们包含 startup/Setup/run/TearDown/exit，是资源诊断，不是原版 Score 或延迟分布。
 
 生成代码的交换也保留：.text −213,936B，.rodata +52,448B；`ready::run` 16539→177987B、栈 1320→3192B，独立 execute_frame 符号消失。编译器同时改变了多处 inline 与布局，不能把全部收益归给一处调用删除。训练、生成与再编译增加构建投入；构建日志耗时没有经过独立控制，不作编译性能结论。完整 PGO Test262 正在验收，当前尚未采用；进入主线时需在包含 factory 修复的实际新源码上重新训练与验证。
+
+完整实验 PGO Test262 已结束，102,037 变体的 TSV/JSONL 冻结正文完全匹配，80,010/80,060 eligible 通过；实际 conformance runner flags、target、profile/source 前后 hash 均记录，runner 不是 timed CLI。针对实测 ready 栈变化，原有 mixed string search 与 typed array 回调的有限深度、溢出和恢复脚本在实际 none/use CLI、child main-thread 2MiB stack limit 下 4/4 通过。旧独立 execute 栈为 1176B，与旧 ready 同激活时的名义合计不同于 ready 单独增长，不能乘普通 JS 帧深度当作峰值。
+
+工具工作流已分提交采用为 `e96a7f7f`。主线包含 factory 正确性修复，接下来用当前 clean source fresh generate→44 个通用训练脚本→merge→use/none，重新确认累计性能；旧实验 profile 不复用于新源码，也不把旧 Score 245 标为最新主线测量。
 
 本页是进行中的实验记录；没有原版 Score 的新数据时，不更新历史分数为新结论。
