@@ -6,6 +6,8 @@
 
 保持 JavaScript 效果顺序、所有权、引用计数饱和规则、异常与栈限制、GC 服务边界以及 safe Rust。禁止针对 benchmark 名称或输入识别选择实现。候选分别提交、分别计时，通过后再验证累计结果。低覆盖、未兑现收益或维护成本过高的候选可以缩小或拒绝。
 
+简化也是候选机制：合并选槽与消费、删除中间状态、集中检查责任，使消费者直接使用当前已知事实。它需要兑现为执行工作或目标指标的改善；仅重命名、减少源码行数或增加通用抽象不构成性能验收。
+
 本轮对照是清理后的 `3d42040738b2a40569889a3fac4744c58bf2ae0c`，不是此前测量中的旧 main。历史分数与本轮独立收益不能混合归因。
 
 ## 当前证据
@@ -13,6 +15,8 @@
 外部 suite 固定在 `2034d98fc8c5f8044e186267593f5d5ea5232caf`。Rust 1.88.0、普通 release、fat LTO、CGU=1 与独立 target 的回执标识时间用二进制；profiling 构建只提供机制计数。时间采样固定 CPU 2，停止并行构建、测试和其他采样。CPU governor 是 powersave，未锁频，保留 A/A 观察范围。
 
 八项各完成一次原始 Benchmark 的 Setup/run/TearDown，全部通过完成标记校验。原生 profile 使用相同原版主体；不同引擎采用不同重复次数以获得样本，**这些不是跨引擎时间或 Score 比较**。
+
+固定单次 profile 包含 Setup 与 TearDown，不能将其频率直接当作原版 Score 的计时区间权重。具体检查已发现：Splay 的 `traverse_`/`exportKeys` 分支只在 TearDown 执行；`splay_` 同时用于 Setup 的 8000 次插入和 timed run 的 80 次替换。NavierStokes 的求解器尺寸、步长与迭代次数捕获读取则发生在 timed run 的循环内。后续方向按实际 run 覆盖排序，并补充原版自适应运行的诊断 profile。
 
 | 项目 | 已观察的成本 | 优先研究的机制 |
 | --- | --- | --- |
@@ -22,16 +26,16 @@
 | RayTrace | 66,596 次快速 Array/Arguments 载体；66,600 次 Construct | 删除中间参数表示、普通构造前缀本地完成 |
 | EarleyBoyer | 501,657 次 predicate 交接；267,379 次 Construct | 普通 instanceof、构造与比较的本地完成 |
 | RegExp | 查询、恢复与 split 路径中的状态搬运 | 内建状态生命周期；作为独立回归控制 |
-| Splay | 775,702 次 environment 交接；大量引用与堆写入 | 分支调度、绑定访问与写入职责 |
+| Splay | 775,702 次 Environment 动作，其中 767,600 次是 Object/ArrayFrom 字面量分配；另有 161,521 次 Binding 动作 | 分配结果搬运、重复帧发布与调度；按 timedRun 覆盖判断 |
 | NavierStokes | 1,355,222 次 binding 交接；数字循环 | 绑定访问和数字区域覆盖 |
 
 ### 竞争引擎的可借鉴之处
 
 - QuickJS 2026-06-04 的 `build_arg_list` 直接建立最终 argv 并复制必要 owner；没有先建立通用 raw 参数快照的要求。
 - QuickJS 的 `JS_OrdinaryIsInstanceOf` 在普通原型链上同步行走，遇到 exotic 才进入其他协议。Boa 0.22.0 的普通 `HasInstance` 同样直接调用普通算法。这支持研究本地完成；不能据此宣称我们的实现达到它们的速度。
-- QuickJS 原生热点集中在解释循环；Boa 的缓存、操作分派、存储和引用管理更分散。V8 JIT 的短 profile 主要覆盖启动和编译，样本不足以归因稳定执行期的差距；单独保留 jitless 结果，不能混称为 V8 性能。
+- QuickJS 原生热点集中在解释循环；Boa 的缓存、操作分派、存储和引用管理更分散。最初 V8 JIT 的短 profile 主要覆盖启动和编译。后续五个引擎均完成原版完整自适应运行的诊断 profile：V8 JIT 约 10K 样本已覆盖 `montReduce`、`Planner.removePropagateFrom`、`Scheduler.schedule` 等 JS 执行热点；Oxide 约 80K 样本仍显示 owner 复制和状态搬运。两个报告均无 lost sample，但频率权重包含准备、warmup 和计时区间，不能当作同工作量跨引擎时间比较。jitless 独立保留。
 
-证据在仓库外 `/home/eric/.cache/oxide-v8v7-boa-campaign/`：`baseline-logical`、`baseline-native` 保存机器、源码、二进制与负载身份、原始输出和 profile。原始大文件不入库。
+证据在仓库外 `/home/eric/.cache/oxide-v8v7-boa-campaign/`：`baseline-logical`、`baseline-native`、`original-adaptive-native` 保存机器、源码、二进制与负载身份、原始输出和 profile。`original-adaptive-native` 的所有打印分数仅作 profile 完成校验，没有作为时间验收收据。原始大文件不入库。
 
 ## 独立候选
 
@@ -42,12 +46,32 @@
 | `daccb30b` | 普通 instanceof 在解释循环完成 | EarleyBoyer 397,585 次本地完成；predicate 501,657→104,072；native activation 501,788→104,203 | 144 个固定样本有效：EarleyBoyer 耗时 −21.18%、combined −2.93%，但 Crypto +11.11%，超出 A/A 2.95%；拒绝当前版本，缩小实现 |
 | `ce30f34a` | Int(i32) 的 ToInt32 保留表示 | 数字二元 helper 的整数转浮点指令 40→29；代码 3912→4239 字节 | 144 个固定样本有效：Crypto 耗时 −5.46%，RegExp +1.57%（A/A 1.01%），combined +0.22% 未分辨；保留实验，需复核原版控制 |
 | `dc2b0c15` | 普通 Base 构造的 lazy child 安装 | 独立实现及 2248 个 profiling 库测试通过 | 审查发现 miss 可能增加临时 retain，暂停验收并修正准入 |
+| `bc497542` | 缩小 instanceof，使用现有同步 Complete 入口 | 同样删除 397,585 次 native activation；解释循环归一化 7,724 条指令恢复逐项相同；2273 个库测试通过 | 144 个固定样本有效：EarleyBoyer 耗时 −18.55%、combined −2.98%，均超出本轮 A/A；Crypto −1.23%，初版约 11% 回归消失，未分辨其他控制回归；进入原版复核 |
+| `ddef3000` | 已持有对象的严格相等本地完成 | EarleyBoyer strict driver 交接 129,305→30,524；2274 个库测试通过 | 时间待验收；大部分新 completion 计数来自原已本地路径，不能全算新增收益 |
+| `fe7b9462` | ready 堆值取反与分支本地完成 | Splay materialize 请求 32,797→0，pure 交接 12,139→0；2250 个 profiling 库测试通过 | 时间待验收；保留 producer owner 协议 |
+| `b560f6b4` | binary64 整数位替代 ToInt32 浮点取模 | 128,672 组位模式与独立算术 oracle 一致；数字 helper 3912→3156 字节；Crypto 原有操作计数保持 | 144 个固定样本有效：NavierStokes 耗时 −7.35%（A/A 1.59%）；Crypto +0.16%、combined −0.65% 均未分辨；不声称 Crypto 提速，进入原版复核 |
+| `1350c5f0` | 修正 Base 构造准入与失败合同 | EarleyBoyer callback 267,268→4；RayTrace 133,195→66,598；2252 个库测试通过 | 144 个固定样本有效：RayTrace 耗时 −8.76%、EarleyBoyer −10.66%、combined −2.72%，均超出本轮 A/A 范围；未分辨控制回归，进入原版复核；每次 admitted child 仍发布一个 active-frame record |
+| `2af5282a` | 已持有捕获 cell 的标量直接消费 | NavierStokes Binding 1,355,222→229,637，差额与 1,125,585 次命中一致；96.61% 命中位于 timedRun；库测试 2248/2032 均通过 | 144 个固定样本有效：NavierStokes 耗时 −25.50%、combined −2.08%；Crypto +3.14% 接近 A/A 3.02%，需原版及累计控制复核；解释器栈 +16B、整体 .text +32B |
+| `977785cf` | 同一次借用内选槽与提交 | Richards 已有 own data 21,536 次、missing 141 次；EarleyBoyer 2,328/534,555 次；重复查找/第二借用消失；2268/2029 个库测试通过 | 时间待验收；共享 kernel outlining 为通用调用者增加一次 ABI 调用，循环指令形态相同 |
+| `b47458a3` | 构造复用共享帧安装（父 `1350c5f0`） | 同样命中 267,264 次 Base 构造；生产代码净 −27 行；两个相关函数 text 合计 −982B；2252/2036 个库测试通过 | 相对 `1350c5f0` 增量时间待验收；有新增 helper 调用，不声称峰值栈下降 |
+| `9b2944cf` | 接受的写入直接恢复同一帧 | EarleyBoyer 538,070 次直接恢复；接受路径汇编跳过通用返回 transport；2244 个库测试通过 | 时间待验收；解释循环指令形态相同、完成 helper +153B |
 
 计数减少只证明机制发生。缓存候选的 Combined 结果未分辨，不用其他层的收益替它背书。构造候选的测试通过也不能替代饱和引用计数与失败边界的合同审查。
 
 `daccb30b` 的生成代码还显示解释循环栈帧增加 96 字节，新增的预算值跨整个解码循环存活并被重载。它说明非参与者确实付出了表示与寄存器成本，不能单凭汇编把 Crypto 的全部回归归因于此。下一版先恢复原解释循环，利用现有 `InstanceStep::start` 的同步 Complete 分支，重新测量收益和控制项。
 
+### 正在验证的简化
+
+- 普通写入在同一次存储借用内完成选槽和提交，移除中间选择状态、第二次借用和重复查找；已有路径几乎都同步完成，不把它描述成消除了通用 continuation。
+- 捕获标量绑定直接读取当前 cell，移除临时 cell owner、重复借用和 driver 交接。checked 路径原来的结果复制已是标量叶操作，不能声称减少结果 retain。
+- 构造 child 安装复用既有 `push_frame`，减少重复安装代码；守卫和非参与者成本需要相对 `1350c5f0` 单独验收。
+- 已接受的普通写入直接恢复同一帧，避免 `Accepted`→未消费的 `Undefined` completion 搬运；保持拒绝、异常和 callback 原合同，等待生成代码与时间证据。
+
+已拒绝在当前证据下拆分 operand arena：`Option<FrameBinding>` 已打包为 16B，与 `JsValue` 同宽，没有证据支持体积或额外机器检查减少。捕获堆结果扩展也不能用 Splay 宽 Environment 计数支持：目前可见的相应读取主要位于 TearDown。字面量路径另行审查，保留每次分配后的 ready GC 服务；每次 timedRun 有 7,600 次 Object/ArrayFrom，而 Setup 有 760,000 次，二者不能混计收益权重。
+
 ## 验收顺序
+
+首轮累计实验另建 clean worktree，分提交集成 Int 表示、binary64 kernel、checked Base 构造、同步 instanceof 和捕获标量读取，当前实验 head 为 `72a4de30`。Rust 1.88.0 下 profiling/test262-host 库测试 2,286 项通过。这个 head 尚未通过原版 Score 验收；尤其需要复核整数表示的 RegExp 控制和捕获读取的 Crypto 控制，不能用累计收益替各层独立结论背书。
 
 1. 原始主体上的逻辑 profile 验证命中、删除的工作和保留的 owner。
 2. `iterate_v8.py` 对八项及 combined 固定负载执行 A/A 与交错 A/B。复用首次冻结的负载，逐样本验证身份、输出和退出状态。
