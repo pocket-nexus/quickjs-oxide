@@ -3334,22 +3334,114 @@ pub(super) fn start_public_field(
     descriptor.writable = crate::engine::object::DescriptorField::Present(true);
     descriptor.enumerable = crate::engine::object::DescriptorField::Present(true);
     descriptor.configurable = crate::engine::object::DescriptorField::Present(true);
-    let realm = execution.frames.current_mut(frame)?.executable.realm;
+    let parent = execution.frames.current_mut(frame)?;
+    let realm = parent.executable.realm;
+    // Keep the instruction's admission before any own-property mutation. The
+    // fallback consumes this identity rather than checking or advancing twice.
+    let Some(identity) = parent.property_generation.checked_add(1) else {
+        // The old, unentered Define request dropped these fields in this order.
+        drop(object);
+        drop(key);
+        drop(descriptor);
+        return Err(Error::internal("instruction query identity exhausted"));
+    };
+    parent.property_generation = identity;
+    let result = {
+        // Match the dispatcher's local owner order: all definition inputs drop
+        // before publishing the next PC or reifying an error in the frame realm.
+        let object = object;
+        let key = key;
+        let descriptor = descriptor;
+        match runtime.try_define_owned_property(&object, &key, &descriptor) {
+            Ok(None) => {
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "public_field_query_fallback",
+                );
+                return start_public_field_pending(
+                    runtime, execution, frame, realm, identity, object, key, descriptor, depth,
+                );
+            }
+            Ok(Some(accepted)) => Runtime::finish_public_class_field_definition(
+                NativeConversion::Value(if accepted {
+                    crate::engine::object::operations::InternalDefineResult::Defined
+                } else {
+                    crate::engine::object::operations::InternalDefineResult::RejectedOrdinary(
+                        object,
+                    )
+                }),
+            )
+            .map_err(runtime_error_to_vm_error),
+            Err(error) => Err(runtime_error_to_vm_error(error)),
+        }
+    };
+    let result = result.and_then(|result| {
+        use crate::engine::object::operations::PropertyDefineOutcome;
+        let completion = match result {
+            PropertyDefineOutcome::Defined(true) => Completion::Return(JsValue::Undefined),
+            PropertyDefineOutcome::Defined(false) => {
+                return Err(Error::internal("public field rejected without throwing"));
+            }
+            PropertyDefineOutcome::Throw(value) => Completion::Throw(value),
+        };
+        let result = finish_instruction_call(
+            runtime,
+            execution,
+            ReturnOwner::Frame(frame),
+            completion,
+            false,
+            depth,
+        )?;
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "public_field_completed_without_query",
+        );
+        Ok(Progress::Call(result))
+    });
+    match finish_error(runtime, realm, result)? {
+        Progress::Call(step) => Ok(step),
+        Progress::Conversion(_) => Err(Error::internal("public field returned a conversion task")),
+    }
+}
+
+// Only a selected special definition needs the wide query representation.
+#[allow(clippy::too_many_arguments)]
+#[inline(never)]
+fn start_public_field_pending(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    frame: FrameId,
+    realm: crate::engine::heap::ContextId,
+    identity: u64,
+    object: ObjectRef,
+    key: PropertyKey,
+    descriptor: crate::engine::object::OwnedPropertyDescriptor,
+    depth: usize,
+) -> Result<CallStep, Error> {
     let step = Step::Define {
         object: Some(object),
         key: Some(key),
         descriptor: Some(descriptor.into()),
         resume: Some(Resume::PublicField),
     };
-    start_instruction_query(
+    let result = advance(
         runtime,
         execution,
         frame,
-        realm,
+        identity,
+        Vec::new(),
         step,
         Finish::Discard(depth),
-    )
+    );
+    match finish_error(runtime, realm, result)? {
+        Progress::Call(step) => Ok(step),
+        Progress::Conversion(_) => Err(Error::internal("instruction returned a conversion task")),
+    }
 }
+
+#[cfg(test)]
+mod public_field_tests;
+
 fn start_instruction_query(
     runtime: &Runtime,
     execution: &mut RunningExecution,
