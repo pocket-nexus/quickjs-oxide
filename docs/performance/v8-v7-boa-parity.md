@@ -150,9 +150,11 @@
 - `cbf33ee5`：Richards +5.55%（A/A 1.60%）、Crypto +7.28%（A/A 0.81%）、combined +1.86%（A/A 1.37%）。helper 缩小没有兑现时间收益，拒绝合入，不为当前版本追加原版或资源测量。
 - `345179fb`：目标 RayTrace +0.24%（A/A 1.13%）未分辨；Richards +3.12%、DeltaBlue +1.51%、Crypto +6.11%、EarleyBoyer +2.09%、Splay +1.52%、NavierStokes +8.19%、combined +1.90% 均超过各自本轮 A/A。拒绝当前字段算术融合，不扩大模式覆盖。
 - `ef6721cc`：Splay −0.99%（A/A 2.26%）、combined +0.59%（A/A 1.33%）；八项及 combined 均未分辨收益或回归。当前不作为性能收益采用，失败 push 的旧 owner 泄漏另作为正确性修复评估。
-- `e57b1fcf`：RayTrace −4.90%（A/A 3.15%），NavierStokes +1.82%（A/A 1.50%），combined +0.08%（A/A 1.17%）。即使局部时间有信号，也不能采用：旧 missing driver 对 receiver 的 checked retain 在 MAX 溢出、MAX−1 达 immortal，旧 key retain 对非 pinned MAX 溢出；新叶路径跳过了这些可观察边界。独立修复候选拒绝这些状态并保留原 fallback，验证后重新计时，原测树与回执保留。
+- `e57b1fcf`：RayTrace −4.90%（A/A 3.15%），NavierStokes +1.82%（A/A 1.50%），combined +0.08%（A/A 1.17%）。即使局部时间有信号，也不能采用：旧 missing driver 对 receiver 的 checked retain 在 MAX 溢出、MAX−1 达 immortal，旧 key retain 对非 pinned MAX 溢出；新叶路径跳过了这些可观察边界。旧短名 `x` 测试实际是 pinned None，没有覆盖 key 饱和，修复测试使用长非 pinned 字段名并强制断言 Some。独立修复候选拒绝这些状态并保留原 fallback，验证后重新计时，原测树与回执保留。
 
 下一组同时验证不同机制：在现有 Pure 协议内直接消费 `typeof` 的 number 比较，修复已注册标量创建的饱和准入，以及根据真实汇编宽返回区研究冷错误搬运。Math 现有入口已同步完成，暂不引入 continuation 重构。
+
+私有属性位置缓存也另做表示实验：`67211c16` 借用当前状态并原地调整多态顺序，保留全部 identity/layout/epoch 守卫和既有冷却策略。15 项定向、2298/2057 库测试通过。release 暖读取 2641→2141B / 栈 600→376B，miss 4970→3138B / 栈 680→136B；整体 size text −1956B、data +48B。解释循环仍为 37433B / 7585 静态指令 / 1176B 栈，仅一条运行时字段偏移增加 104B（13 个 Proxy trap 缓存各新增一个借用标志）。这些是代码与表示证据；八项实际计数和 CPU 2 时间待验收，不声明时间或总内存收益。
 
 `daccb30b` 的生成代码还显示解释循环栈帧增加 96 字节，新增的预算值跨整个解码循环存活并被重载。它说明非参与者确实付出了表示与寄存器成本，不能单凭汇编把 Crypto 的全部回归归因于此。下一版先恢复原解释循环，利用现有 `InstanceStep::start` 的同步 Complete 分支，重新测量收益和控制项。
 
