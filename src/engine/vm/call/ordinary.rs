@@ -284,6 +284,7 @@ impl OrdinaryCall {
         parent: crate::engine::vm::frame::FrameId,
         checked: crate::engine::vm::stack::CheckedOrdinaryCallOperands,
         tail: bool,
+        fallthrough: crate::engine::vm::execute::FallthroughPc,
     ) -> Result<(), Error> {
         #[cfg(feature = "profiling")]
         let _timer =
@@ -311,7 +312,9 @@ impl OrdinaryCall {
         execution.call_storage.reserve_depth(depth)?;
         let frame = execution.frames.current_mut(parent)?;
         let caller_realm = frame.executable.realm;
-        let resume = frame.next_pc()?;
+        // The private continuation comes from the instruction that produced
+        // this Call. No caller instruction or slot changed during preflight.
+        let resume = fallthrough.index();
         let (flags, flag_bytes) = if self.executable.has_captured_locals {
             execution
                 .call_storage

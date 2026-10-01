@@ -5292,6 +5292,7 @@ mod tests {
                 arguments,
                 method,
                 tail,
+                ..
             } = execute_frame(&mut pending, parent).unwrap()
             else {
                 panic!("expected native probe call");
@@ -8119,6 +8120,14 @@ mod tests {
                     .owned_execution_events
                     .get("call_value_domain_validation"),
                 Some(&1)
+            );
+            assert_eq!(
+                report
+                    .owned_execution_events
+                    .get("ordinary_call.carried_fallthrough")
+                    .copied()
+                    .unwrap_or(0),
+                u64::from(!native)
             );
             assert_eq!(
                 report
