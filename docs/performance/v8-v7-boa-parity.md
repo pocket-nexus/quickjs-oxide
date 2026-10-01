@@ -164,7 +164,19 @@
 
 其 144 个 CPU 2 固定样本显示 EarleyBoyer +0.14%（A/A 2.53%）、combined +0.31%（A/A 1.15%）目标未分辨；Richards +3.61%（A/A 2.71%）、RayTrace +2.02%（A/A 1.00%）。拒绝当前版本，不扩展融合形式。Crypto 的 A/A 跨度 32.24%，保留全部样本并记为未分辨，未删掉低样本。控制项无命中，不能将它们的变化归为 typeof 算法收益或成本的独立量值。三候选固定索引为 `wave6-gate-ledger.json`。
 
-释放接口的独立源码审查证明 `release_jsvalue` 各配置下只能返回 `Ok(())`：底层检查、释放、defer/drain 仍负责原有 invariant 诊断。新草稿让其返回 `()` 并迁移 227 个 Rust 文件；34 个聚合/尾表达式专门审查，所有可达 release 参数与顺序保留，仅删除 6 个无法进入的 release 错误分支中的额外清理。`root_and_release_jsvalue` 的 root 阶段仍真正可失败，保持 Result。当前是源码草稿，编译、语义、代码与时间尚待验证，不能因删掉 Result 宣称性能收益。
+释放接口的独立源码审查证明 `release_jsvalue` 各配置下只能返回 `Ok(())`：底层检查、释放、defer/drain 仍负责原有 invariant 诊断。`e6dbf36a` 让其返回 `()` 并迁移 227 个 Rust 文件；34 个聚合/尾表达式专门审查，所有可达 release 参数与顺序保留，仅删除 6 个无法进入的 release 错误分支中的额外清理。`root_and_release_jsvalue` 的 root 阶段仍真正可失败，保持 Result。全源码签名审计的 5,074 个函数和 132 个类型声明中，只有目标 API 的返回类型变化。2297/2056 库测试、12 项 release/trace 边界测试和 clean 双构建通过。八项 plain 运行及 profile 诊断完成；除生成文件路径归一化和计时字段外，全部存储、事件、布局与诊断逐项相同。完整 Test262 正在验证，时间尚待测量，不能因删掉 Result 宣称性能收益。
+
+### 第七批：释放协议、字段 owner 和缓存表示
+
+三个独立候选均以已采用的 `eaf23ba8` 作为完整时间基线；没有把已拒绝的父层收益记为新增层收益。
+
+| 候选 | 机制与正确性证据 | release 代码 / 表示成本 | 状态 |
+| --- | --- | --- | --- |
+| `e6dbf36a` 内部 release 返回 unit | 保留真实 defer/drain、诊断和 release 顺序，移除不可达错误协议；上述库、trace、八项逻辑验证完成 | execute 37433→37333B，栈 1176→1016B；release 323→288B，无返回区/Ok tag 写回；native argv cleanup 489→385B，栈 136→80B；commit_owned 320→237B，栈 56→16B | 完整 Test262 与 CPU 2 时间 gate 待完成；不据代码缩小声称提速 |
+| `8d88151e` registered heap 字段 owner 转移（含 `e08a9416`） | mutable 输入在 unpublished 失败时保留、publication 成功或错误时立即置 Undefined；8 组新增、10 组旧目标测试及 2316/2075 库测试通过；完整身份、receiver/key/value 的旧 checked retain 饱和边界保留 | Earl heap 完成 417617、Ray 26887；Earl 新增 materialize 267195，frame authentication 净减少 267308，而非全部 534503 次 Set exit；execute +239B、栈 +16B，整体 .text +6656B | clean 双回执、八项诊断与 repeat 完成，等待整个候选相对 eaf 的 CPU 2 控制；部分内存分类相同不等于峰值 RSS 相同 |
+| `4f03cc8c` split Cell 位置缓存 | 小状态头与四个 Cell<Option<Location>>，不使用 RefCell 借用标志；保留原 guard、probe、冷却及 prefix 顺序合同；16 项目标、2299/2058 库测试通过 | 实测每 cache 240→232B、13 个 Runtime 内联缓存合计 −104B；warm read 2641→2242B，栈 600→168B；miss 4970→3288B，栈 680→184B；execute 相同，仅一条字段偏移 −104B | clean 双构建和八项诊断完成；逻辑 ledger 收尾，等待时间 gate。Option 存在性检查和 promotion 工作需由时间验收 |
+
+`8d88151e` 的计数按 `T = scalar + heap`、`M = 新增 materialize` 分开核对：Set action 减少 T，frame authentication 减少 T−M，slot authentication 减少 2T−M。此前 Set driver 已 materialize 的职责会在后续 heap Drop/Nip 等消费者处重新出现，不能把全部 Set 退出数当成净调度收益。BigInt 在 V8 八项没有实际命中，只有针对性正确性见证。八项 storage、部分内存分类与 heap states 相同，原版时间、峰值资源仍未验收。
 
 `daccb30b` 的生成代码还显示解释循环栈帧增加 96 字节，新增的预算值跨整个解码循环存活并被重载。它说明非参与者确实付出了表示与寄存器成本，不能单凭汇编把 Crypto 的全部回归归因于此。下一版先恢复原解释循环，利用现有 `InstanceStep::start` 的同步 Complete 分支，重新测量收益和控制项。
 
