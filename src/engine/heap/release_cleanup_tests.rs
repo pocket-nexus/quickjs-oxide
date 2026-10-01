@@ -207,3 +207,180 @@ fn nonzero_release_still_drains_previously_queued_nodes() {
     assert_eq!(cleanup.finalized_shapes, 1);
     assert_eq!(heap.counts().live, 0);
 }
+
+#[test]
+fn arguments_prefix_declines_pending_zero_cleanup_without_draining() {
+    use super::RawId;
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    let Value::Object(carrier) = context.eval("(function(){return arguments})(1,2)").unwrap()
+    else {
+        panic!("carrier")
+    };
+    let pending = runtime.new_object(None).unwrap().into_handle();
+    let checkpoint = runtime.new_object(None).unwrap();
+    runtime
+        .0
+        .state
+        .borrow_mut()
+        .heap
+        .release_raw_no_drain(RawId::Object(pending))
+        .unwrap();
+    assert!(runtime.0.state.borrow().heap.has_pending_zero_cleanup());
+    assert!(
+        runtime
+            .prepare_fast_array_arguments_jsvalue(context.realm, &carrier)
+            .unwrap()
+            .is_none()
+    );
+    assert!(runtime.0.state.borrow().heap.has_pending_zero_cleanup());
+    drop(checkpoint);
+    assert!(!runtime.0.state.borrow().heap.has_pending_zero_cleanup());
+    assert!(runtime.0.state.borrow().heap.object(pending).is_err());
+}
+
+#[test]
+fn arguments_prefix_declines_carrier_saturation_and_preserves_old_clone() {
+    use crate::engine::builtins::ArgumentsStep;
+    use crate::engine::heap::RawId;
+    use crate::engine::value::JsValue;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    for count in [u32::MAX - 3, u32::MAX - 2, u32::MAX - 1, u32::MAX] {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let Value::Object(carrier) = context.eval("(function(){return arguments})(1)").unwrap()
+        else {
+            panic!("carrier");
+        };
+        let id = carrier.object_id();
+        runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .set_strong_count_for_test(RawId::Object(id), count);
+        let result = runtime.prepare_fast_array_arguments_jsvalue(context.realm, &carrier);
+        let after_probe = runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .object_strong_count(id)
+            .unwrap();
+        // Transfer the actual carrier owner, then run the unchanged slow start.
+        let id = carrier.into_handle();
+        let step = catch_unwind(AssertUnwindSafe(|| {
+            ArgumentsStep::start(&runtime, context.realm, JsValue::Object(id))
+        }));
+        let after_start = runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .object_strong_count(id)
+            .unwrap();
+        // Read owns exactly two edges after successful start; error unwind
+        // released the input carrier. Restore valid counts before teardown.
+        runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .set_strong_count_for_test(RawId::Object(id), if step.is_ok() { 2 } else { 1 });
+        assert!(matches!(result, Ok(None)));
+        assert_eq!(after_probe, count);
+        if count == u32::MAX {
+            assert!(step.is_err(), "old ObjectRef::clone must still overflow");
+            runtime.release_jsvalue(JsValue::Object(id)).unwrap();
+        } else {
+            assert_eq!(after_start, count + 1);
+            assert!(matches!(step.unwrap().unwrap(), ArgumentsStep::Read { .. }));
+        }
+    }
+}
+
+#[test]
+fn arguments_prefix_reserves_headroom_for_self_aliases_and_pinned_length() {
+    use crate::engine::atom::pinned::PinnedAtom;
+    use crate::engine::heap::RawId;
+    use crate::engine::value::{JsValue, conversion::NativeConversion};
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    let Value::Object(carrier) = context
+        .eval("(function(a){arguments[0]=arguments;return arguments})(1)")
+        .unwrap()
+    else {
+        panic!("carrier");
+    };
+    let id = carrier.object_id();
+    let original_count = runtime
+        .0
+        .state
+        .borrow()
+        .heap
+        .object_strong_count(id)
+        .unwrap();
+    let key = runtime.pinned_property_key(PinnedAtom::Length).unwrap();
+    assert_eq!(
+        runtime
+            .0
+            .state
+            .borrow()
+            .atoms
+            .resolve(key.atom())
+            .unwrap()
+            .ref_count,
+        None
+    );
+    drop(key);
+    for count in [u32::MAX - 4, u32::MAX - 3, u32::MAX - 2] {
+        runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .set_strong_count_for_test(RawId::Object(id), count);
+        let result = runtime
+            .prepare_fast_array_arguments_jsvalue(context.realm, &carrier)
+            .unwrap();
+        match result {
+            Some(NativeConversion::Value(values)) => {
+                assert_eq!(count, u32::MAX - 4);
+                assert!(matches!(values.as_slice(), [JsValue::Object(value)] if *value == id));
+                assert_eq!(
+                    runtime
+                        .0
+                        .state
+                        .borrow()
+                        .heap
+                        .object_strong_count(id)
+                        .unwrap(),
+                    count + 1
+                );
+                for value in values {
+                    runtime.release_jsvalue(value).unwrap();
+                }
+            }
+            None => assert!(count >= u32::MAX - 3),
+            Some(NativeConversion::Throw(_)) => panic!("unexpected throw"),
+        }
+        assert_eq!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(id)
+                .unwrap(),
+            count
+        );
+        runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .set_strong_count_for_test(RawId::Object(id), original_count);
+    }
+    drop(carrier);
+}

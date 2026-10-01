@@ -293,7 +293,7 @@ impl Runtime {
     /// two Reflect call/construct paths. Nullish exceptions remain a caller
     /// decision: this kernel always requires an object, as upstream does once
     /// it has entered `build_arg_list`.
-    /// Classify an Array argument carrier without invoking length or index getters.
+    /// Classify an Array or intact Arguments carrier without invoking getters.
     /// None leaves the caller free to choose an explicit property-reading protocol.
     pub(crate) fn prepare_fast_array_arguments_jsvalue(
         &self,
@@ -303,39 +303,93 @@ impl Runtime {
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("object"));
         }
-        let array = {
+        let arguments_length = {
             let state = self.0.state.borrow();
             let data = state.heap.object(object.object_id())?;
-            matches!(
-                (data.kind, &data.payload),
+            match (data.kind, &data.payload) {
+                (crate::engine::heap::ObjectKind::Array, ObjectPayload::Array { .. }) => None,
                 (
-                    crate::engine::heap::ObjectKind::Array,
-                    ObjectPayload::Array { .. }
-                )
-            )
-        };
-        if !array {
-            return Ok(None);
-        }
-        let key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
-        let Some(crate::engine::object::CompleteOrdinaryPropertyDescriptor::Data { value, .. }) =
-            self.get_own_property(object, &key)?
-        else {
-            return Err(RuntimeError::Invariant(
-                "Array argument carrier has no data length",
-            ));
-        };
-        let length = match value {
-            Value::Int(value) if value >= 0 => u64::try_from(value).unwrap(),
-            Value::Float(value)
-                if value >= 0.0 && value <= f64::from(u32::MAX) && value.fract() == 0.0 =>
-            {
-                value as u64
+                    crate::engine::heap::ObjectKind::Arguments,
+                    ObjectPayload::Arguments {
+                        fast_len: Some(length),
+                        ..
+                    },
+                ) => {
+                    // Keep the old property/conversion cleanup checkpoints when
+                    // unrelated releases await processing. Otherwise no callback
+                    // or release can intervene between this fact and the existing
+                    // fast snapshot, while `object` keeps the carrier rooted.
+                    if self.0.deferred_references.has_pending()
+                        || state.heap.has_pending_zero_cleanup()
+                    {
+                        return Ok(None);
+                    }
+                    // The old length protocol owns up to two additional carrier
+                    // references (read object and receiver). Reserve headroom for
+                    // both and conservatively for every snapshot item aliasing
+                    // the carrier, preserving checked overflow/immortal behavior.
+                    let headroom = length.saturating_add(2);
+                    if state.heap.object_strong_count(object.object_id())?
+                        >= u32::MAX.saturating_sub(headroom)
+                    {
+                        return Ok(None);
+                    }
+                    let shape = state.heap.shape(data.shape)?;
+                    let key = state
+                        .pinned_atoms
+                        .get(crate::engine::atom::pinned::PinnedAtom::Length);
+                    let Some(slot) = shape.find(crate::engine::atom::AtomIdx::from_raw(key.raw()))
+                    else {
+                        return Ok(None);
+                    };
+                    if shape.entries()[slot as usize].flags.storage
+                        != crate::engine::object::shape::PropertyStorageKind::Data
+                    {
+                        return Ok(None);
+                    }
+                    let matches_prefix = match data.slots.get(slot as usize) {
+                        Some(PropertySlot::Data(crate::engine::heap::RawValue::Int(value))) => {
+                            u32::try_from(*value).ok() == Some(*length)
+                        }
+                        Some(PropertySlot::Data(crate::engine::heap::RawValue::Float(value))) => {
+                            *value == f64::from(*length)
+                        }
+                        _ => false,
+                    };
+                    if !matches_prefix {
+                        return Ok(None);
+                    }
+                    Some(*length)
+                }
+                _ => return Ok(None),
             }
-            _ => {
+        };
+        let length = if let Some(length) = arguments_length {
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event("arguments.direct_length");
+            u64::from(length)
+        } else {
+            let key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
+            let Some(crate::engine::object::CompleteOrdinaryPropertyDescriptor::Data {
+                value, ..
+            }) = self.get_own_property(object, &key)?
+            else {
                 return Err(RuntimeError::Invariant(
-                    "Array argument carrier has an invalid length",
+                    "Array argument carrier has no data length",
                 ));
+            };
+            match value {
+                Value::Int(value) if value >= 0 => u64::try_from(value).unwrap(),
+                Value::Float(value)
+                    if value >= 0.0 && value <= f64::from(u32::MAX) && value.fract() == 0.0 =>
+                {
+                    value as u64
+                }
+                _ => {
+                    return Err(RuntimeError::Invariant(
+                        "Array argument carrier has an invalid length",
+                    ));
+                }
             }
         };
         if length > MAX_APPLY_ARGUMENTS {
@@ -652,5 +706,239 @@ mod argument_preparation_tests {
             panic!("expected oversized arguments throw")
         };
         runtime.release_jsvalue(thrown).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod arguments_prefix_tests {
+    use super::*;
+
+    fn carrier(context: &mut crate::engine::api::Context, source: &str) -> ObjectRef {
+        let Value::Object(object) = context.eval(source).unwrap() else {
+            panic!("carrier")
+        };
+        object
+    }
+    fn snapshot(runtime: &Runtime, realm: ContextId, object: &ObjectRef) -> Vec<Value> {
+        let Some(NativeConversion::Value(values)) = runtime
+            .prepare_fast_array_arguments_jsvalue(realm, object)
+            .unwrap()
+        else {
+            panic!("expected direct Arguments snapshot")
+        };
+        values
+            .into_iter()
+            .map(|value| runtime.root_and_release_jsvalue(value).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn arguments_prefix_reads_mapped_unmapped_defaults_duplicates_and_live_aliases() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        for (source, expected) in [
+            (
+                "(function(a,b){a=4;return arguments})(1,2)",
+                vec![Value::Int(4), Value::Int(2)],
+            ),
+            (
+                "(function(a,b){'use strict';a=4;return arguments})(1,2)",
+                vec![Value::Int(1), Value::Int(2)],
+            ),
+            (
+                "(function(a=8,b=9){a=4;return arguments})(1,2)",
+                vec![Value::Int(1), Value::Int(2)],
+            ),
+            (
+                "(function(a,a){a=4;return arguments})(1,2)",
+                vec![Value::Int(1), Value::Int(4)],
+            ),
+            ("(function(){return arguments})()", vec![]),
+        ] {
+            let object = carrier(&mut context, source);
+            assert_eq!(
+                snapshot(&runtime, context.realm, &object),
+                expected,
+                "{source}"
+            );
+        }
+        let object = carrier(
+            &mut context,
+            "(function(a){globalThis.updatePrefix=v=>a=v;return arguments})(1)",
+        );
+        assert_eq!(
+            snapshot(&runtime, context.realm, &object),
+            vec![Value::Int(1)]
+        );
+        let _ = context.eval("updatePrefix(9)").unwrap();
+        assert_eq!(
+            snapshot(&runtime, context.realm, &object),
+            vec![Value::Int(9)]
+        );
+    }
+
+    #[test]
+    fn arguments_prefix_declines_modified_length_holes_and_proxy_without_effects() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let _ = context.eval("globalThis.prefixHits=0").unwrap();
+        for setup in [
+            "a.length=1",
+            "a.length=1.5",
+            "a.length=-1",
+            "a.length=NaN",
+            "a.length='2'",
+            "a.length={valueOf(){prefixHits++;return 2}}",
+            "delete a.length",
+            "Object.defineProperty(a,'length',{get(){prefixHits++;throw 42}})",
+            "delete a[0];Object.setPrototypeOf(a,{get 0(){prefixHits++;throw 42}})",
+            "delete a[1]",
+            "Object.defineProperty(a,'0',{get(){prefixHits++;throw 42}})",
+            "a=new Proxy(a,{get(){prefixHits++;throw 42}})",
+        ] {
+            let object = carrier(
+                &mut context,
+                &format!(
+                    "(()=>{{let a=(function(){{return arguments}})(1,2);{setup};return a}})()"
+                ),
+            );
+            assert!(
+                runtime
+                    .prepare_fast_array_arguments_jsvalue(context.realm, &object)
+                    .unwrap()
+                    .is_none(),
+                "{setup}"
+            );
+        }
+        assert_eq!(context.eval("prefixHits").unwrap(), Value::Int(0));
+        let object = carrier(&mut context, "(function(){return arguments})(1,2)");
+        runtime.set_arguments_fast_len(&object, None).unwrap();
+        assert!(
+            runtime
+                .prepare_fast_array_arguments_jsvalue(context.realm, &object)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn arguments_prefix_serves_apply_reflect_apply_and_construct() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(
+            context
+                .eval(
+                    r#"(() => {
+            function sum(a,b) { return this.bias+a*10+b; }
+            function C(a,b) { this.value=a*10+b; }
+            function mapped(a,b) {
+                a=4;
+                return sum.apply({bias:100},arguments) === 142 &&
+                       Reflect.apply(sum,{bias:200},arguments) === 242 &&
+                       Reflect.construct(C,arguments).value === 42;
+            }
+            function unmapped(a=0,b=0) {
+                a=4;
+                return sum.apply({bias:100},arguments) === 112 &&
+                       Reflect.apply(sum,{bias:200},arguments) === 212 &&
+                       Reflect.construct(C,arguments).value === 12;
+            }
+            return mapped(1,2) && unmapped(1,2);
+        })()"#
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+    }
+
+    #[test]
+    fn arguments_prefix_fallback_preserves_length_conversion_index_order_and_throw() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(context.eval(r#"(() => {
+            let log='',called=0,marker={};
+            function target(a,b){called++;this.result=a*10+b;return a*10+b;}
+            const consumers=[a=>target.apply({},a),a=>Reflect.apply(target,{},a),a=>Reflect.construct(target,a).result];
+            for (const consume of consumers) {
+                let a=(function(){return arguments})(1,2);
+                Object.defineProperty(a,'length',{get(){log+='L';return {valueOf(){log+='N';return 2}}}});
+                Object.defineProperty(a,'0',{get(){log+='0';return 4}});
+                Object.defineProperty(a,'1',{get(){log+='1';throw marker}});
+                log='';
+                try{consume(a);return false}catch(e){if(e!==marker||log!=='LN01'||called!==0)return false}
+                a=(function(){return arguments})(1,2);delete a[0];
+                Object.setPrototypeOf(a,{get 0(){log+='I';return 4}});log='';
+                if(consume(a)!==42||log!=='I')return false;
+                a=new Proxy((function(){return arguments})(4,2),{get(t,k,r){log+=String(k)+',';return Reflect.get(t,k,r)}});log='';
+                if(consume(a)!==42||log!=='length,0,1,')return false;
+                called=0;
+                a=(function(){return arguments})(1,2);
+                Object.defineProperty(a,'length',{get(){throw marker}});
+                try{consume(a);return false}catch(e){if(e!==marker||called!==0)return false}
+                a=(function(){return arguments})(1,2);a.length=65535;
+                Object.defineProperty(a,'0',{get(){log+='X';throw marker}});log='';
+                try{consume(a);return false}catch(e){if(!(e instanceof RangeError)||log!==''||called!==0)return false}
+            }
+            return true;
+        })()"#).unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn arguments_prefix_snapshot_owns_values_after_carrier_drop() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let object = carrier(&mut context, "(function(a){return arguments})({value:42})");
+        let carrier_id = object.object_id();
+        let Some(NativeConversion::Value(values)) = runtime
+            .prepare_fast_array_arguments_jsvalue(context.realm, &object)
+            .unwrap()
+        else {
+            panic!("snapshot")
+        };
+        let JsValue::Object(value_id) = values[0] else {
+            panic!("value")
+        };
+        drop(object);
+        assert!(runtime.0.state.borrow().heap.object(carrier_id).is_err());
+        assert_eq!(
+            runtime.0.state.borrow().heap.object_strong_count(value_id),
+            Ok(1)
+        );
+        for value in values {
+            runtime.release_jsvalue(value).unwrap();
+        }
+        assert!(runtime.0.state.borrow().heap.object(value_id).is_err());
+    }
+
+    #[test]
+    fn arguments_prefix_declines_pending_deferred_cleanup_without_draining() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let object = carrier(&mut context, "(function(){return arguments})(1,2)");
+        let pending = runtime.new_object(None).unwrap();
+        let pending_id = pending.object_id();
+        {
+            let _borrow = runtime.0.state.borrow();
+            drop(pending);
+        }
+        assert!(runtime.0.deferred_references.has_pending());
+        assert!(
+            runtime
+                .prepare_fast_array_arguments_jsvalue(context.realm, &object)
+                .unwrap()
+                .is_none()
+        );
+        assert!(runtime.0.deferred_references.has_pending());
+        assert!(runtime.0.state.borrow().heap.object(pending_id).is_ok());
+        runtime.drain_deferred_references().unwrap();
+        assert_eq!(
+            snapshot(&runtime, context.realm, &object),
+            vec![Value::Int(1), Value::Int(2)]
+        );
+        let other = Runtime::new();
+        assert!(matches!(
+            other.prepare_fast_array_arguments_jsvalue(context.realm, &object),
+            Err(RuntimeError::WrongRuntime("object"))
+        ));
     }
 }

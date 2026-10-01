@@ -827,6 +827,13 @@ impl AtomTable {
         Ok(())
     }
 
+    #[cfg(test)]
+    pub(crate) fn set_ref_count_for_test(&self, index: AtomIdx, count: u32) {
+        let entry = self.entry_by_raw(index.raw()).unwrap();
+        assert!(!entry.pinned);
+        entry.ref_count.set(count);
+    }
+
     /// Mutable-borrow form of [`AtomTable::retain_index_shared`].
     pub(crate) fn retain_index(&mut self, index: AtomIdx) -> Result<(), AtomError> {
         self.retain_index_shared(index)

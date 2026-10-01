@@ -69,10 +69,6 @@ impl From<crate::engine::vm::numeric::operation::NumericStep> for Step {
                 hint: Some(hint),
                 resume: Some(Resume::VmNumeric(resume)),
             },
-            T::HtmlDda { value, resume } => Self::NumericHtmlDda {
-                value: Some(value),
-                resume: Some(resume),
-            },
         }
     }
 }

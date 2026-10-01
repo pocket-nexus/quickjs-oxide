@@ -324,10 +324,6 @@ pub(super) enum Step {
         value: Option<JsValue>,
         previous: Option<Option<JsValue>>,
     },
-    NumericHtmlDda {
-        value: Option<JsValue>,
-        resume: Option<crate::engine::vm::numeric::operation::NumericResume>,
-    },
     TypedSpeciesView {
         source: Option<ObjectRef>,
         element: Option<TypedArrayElementKind>,
@@ -754,11 +750,6 @@ impl Step {
                     release(value);
                 }
                 if let Some(Some(value)) = previous {
-                    release(value);
-                }
-            }
-            Self::NumericHtmlDda { value, resume: _ } => {
-                if let Some(value) = value {
                     release(value);
                 }
             }
