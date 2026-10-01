@@ -358,3 +358,5 @@ V8 的 [elements kinds](https://v8.dev/blog/elements-kinds) 和 [fast properties
 - 独立非测试 Step 布局诊断保留真实枚举，shadow 仅将两个冷门 DefinitionInput 外置；真实 Step 184B，shadow 128B，Resume 32B、NativeStep 64B。此前实际代码中的部分 memcpy 传递 184B Step，但并非所有 memmove 都来自它。下一实验只改变这两个生产字段，包含 Box 分配、错误与 abandon 的交换，不扩展通用执行架构。诊断宽度下降尚未证明生产代码或时间收益。
 
 本地返回的另一独立实验保留 canonical owner 复制和源绑定，仅研究在已发布的 GetLocal/GetLocalCheck 紧邻普通 Return 时减少临时 operand 搬运。GetArg、标量与需 callback/词法读取的分支保留原消费者路径；正确性和真实命中尚待验证。上述新候选均不更新当前主线的 Score 244 或三项领先的验收状态。
+
+数组 `dc39cf80` 随后完成自己的 fresh pilot/冻结矩阵，CPU 2 上 144/144 样本有效。Crypto 耗时 −9.48%（A/A 1.18%），但 Richards +3.56%（1.69%）、NavierStokes +3.60%（1.25%）；combined +0.93%（1.11%）未分辨。拒绝当前完整版本，不追加原版、资源或完整 Test262。其他七项新 nonzero enter/success 为零，不能把这些控制回归归因于 Crypto 的 1882 次新检查；真实 execute 指令投影相同也不证明整体代码、引用的数据和布局相同。`nonzero-array-recovery-gate-ledger.json` 保留全部样本与身份，目标改路和局部收益成立，当前完整净价值未通过。
