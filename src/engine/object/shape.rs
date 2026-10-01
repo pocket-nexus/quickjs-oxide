@@ -197,6 +197,26 @@ impl Shape {
         }
     }
 
+    /// Conservative direct allocation charge; excludes objects reachable through
+    /// the prototype (those are released on pool eviction or explicit GC).
+    pub(crate) fn retention_bytes(&self) -> usize {
+        let buckets = if self.lookup.capacity() == 0 {
+            0
+        } else {
+            self.lookup
+                .capacity()
+                .saturating_mul(8)
+                .div_ceil(7)
+                .next_power_of_two()
+        };
+        // Include arena/header alignment and hash control-byte padding.
+        size_of::<Self>()
+            + 64
+            + self.entries.capacity() * size_of::<ShapeEntry>()
+            + buckets * (size_of::<(AtomIdx, u32)>() + 1)
+            + 16
+    }
+
     pub(crate) const fn layout_revision(&self) -> u64 {
         self.layout_revision
     }

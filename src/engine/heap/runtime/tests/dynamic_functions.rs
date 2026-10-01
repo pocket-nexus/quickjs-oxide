@@ -988,6 +988,7 @@ fn function_constructor_failure_paths_release_temporary_graphs() {
         )
     };
 
+    runtime.run_gc().unwrap(); // Compare after optional construction-cache roots are cleared.
     let parse_baseline = live_counts();
     let parse_atom_baseline = runtime.test_atom_count();
     for _ in 0..3 {
