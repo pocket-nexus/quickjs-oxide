@@ -75,6 +75,19 @@
 
 简化与其他技术候选同时推进：普通定义和帧退休研究重复查找/借用；数字与数组路径研究表示和专门化。任何新候选先确定实际热点覆盖和旧接口支持程度，再用独立提交验收。没有通过时间控制的版本不进入累计组合。
 
+### 后续并行交付，时间待验收
+
+| 提交 | 候选与机制 | 正确性和新增成本 |
+| --- | --- | --- |
+| `7a656d2c` | 普通 Define 在一个借用内完成选择、验证、提交，own lookup 4→1；主要覆盖 Splay 的 1,018,080 次，其中 timedRun 10,080 次 | profiling/host 2,274、default 2,035、目标 7 项通过；owner/storage 计数不变；.text +2,160B，定义 helper 栈 +112B，global/raw 多一次共享验证调用 |
+| `d8b0e5ee` | 帧退休保持原槽位顺序和每个边的释放，延迟打开并复用 heap state 借用；Richards 19,128 条堆边用 12,583 次共享借用，省 6,545 次重复借用 | profiling/host 2,276、default 2,037、release 目标 9 项、trace 目标 1 项通过；解释循环不变；clear_frame +1,331B、栈 +128B，.text +1,328B |
+| `f0cf87b2` | kept receiver Array 读取复用现有 materialized own Number kernel；只有 Crypto 新命中 21,459 次，GetElement 退出同量减少 | profiling/host 2,270、default 2,031、目标 3 项通过；Query、materialization、Object copy 不变；helper +76B、栈 +16B，.text +80B，解释循环不变 |
+| `f0906245` | 现有 fused numeric comparison 直接比较两个 Int；Crypto 1,009,679 次、NavierStokes 934,807 次、Splay 525,126 次整数命中；混合/Float 使用原 binary64 比较 | 数值边界矩阵及 profiling/host 2,268 项通过；解释循环 +305B、栈不变，.text +768B；额外分支对 Float 消费者的时间影响待测 |
+
+整数比较借鉴的是 [V8 13.6 的 RelationalComparison](https://raw.githubusercontent.com/nodejs/node/v24.21.0/deps/v8/src/codegen/code-stub-assembler.cc)：Smi 双输入直接比较，混合 HeapNumber 才进入浮点比较。我们只消费已有 Number::Int 事实，既有接口已允许，不引入 V8 的指针表示或新执行架构。kept 数组读取则补齐现有接口对存储表示的覆盖；Crypto 实际读取的是 `this.array`/`w.array`，不是普通 BigInteger 数字属性，不能将此前回退归因到未经证实的普通对象探测。
+
+第二轮累计实验 `eaf23ba8` 在 `72a4de30` 上分提交加入 `977785cf`、`c3bf45e2`、`86930db6`。clean plain/profile 构建、八项逻辑 profile、库测试 2,297/2,056、focused Test262 6,844/6,844 已完成；原版性能、完整 Test262 和资源交换仍待验收。这些新交付候选尚未加入组合。
+
 `daccb30b` 的生成代码还显示解释循环栈帧增加 96 字节，新增的预算值跨整个解码循环存活并被重载。它说明非参与者确实付出了表示与寄存器成本，不能单凭汇编把 Crypto 的全部回归归因于此。下一版先恢复原解释循环，利用现有 `InstanceStep::start` 的同步 Complete 分支，重新测量收益和控制项。
 
 ### 正在验证的简化
