@@ -364,3 +364,13 @@ V8 的 [elements kinds](https://v8.dev/blog/elements-kinds) 和 [fast properties
 Map/Set `cbed0c0c` 的 CPU 2 固定矩阵也完成 144/144 有效样本：Splay −0.09%（A/A 2.64%）、EarleyBoyer +0.35%（1.71%）均未分辨，Richards +5.80%（2.78%）、Crypto +4.09%（3.10%）、RayTrace +2.19%（0.95%）、combined +1.64%（0.67%）。拒绝作为当前速度候选，未追加原版或完整 Test262。NavierStokes +2.1194% 与 A/A 2.1186% 极接近，仅据边缘差值不能强调其回归；全部样本保留在 `map-set-boxed-records-gate-ledger.json`。
 
 这个布局候选同时有预先声明的内存目标，因此单独完成同冻结 combined、CPU 2、无其他 heavy 的资源 ABBA，每二进制各两次。峰值 RSS 样本 baseline 346104/351140 KiB，candidate 323376/324836 KiB，中位数 348622→324106 KiB（−24516 KiB / −7.03%）；cycles +1.36%、instructions +0.21%、branches +0.07%、branch misses −8.17%。所有事件 running=100%，无 multiplex。这是实际整进程内存收益与执行代价的交换，不是 arena endpoint 投影，也不能替速度控制失败背书；两个资源观察不构成置信区间。`map-set-boxed-records-resources/` 保存完整身份、原始输出和 perf 字段。当前仍不进入主线，原版 Score 244 和三项领先结论不变。
+
+### 后续生产候选：机制已验证，时间分别验收
+
+`d6581882` 只将 Step 两个冷门 descriptor 字段外置，17 个构造点和两个消费点机械迁移，原 release/routing 保留。12 个目标（含八种清理场景）、2298 项 profiling/host、2057 项默认库测试通过。生产 Step 实测 184→128B，包含它的 NativeWait record 392→336B；五项观察到四个 record 的容量字节 1568→1344，其余 buffer/count 与全部既有事件、copy/retain、dispatch/callsite、opcode totals 完全相同。新增 Box 没有直接 allocation instrumentation，不能以旧计数相同宣布无新增分配。
+
+真实 release 将部分 184B memcpy 换为 128B SSE 搬运，set/get/define/resume 栈缩小；execute/ready/release_jsvalue 归一化代码保持相同。整体 .text +16608B，冷 adapter 新 malloc88B、栈增长，release_step tag 变为 qword/range/cmov，代价均保留。CPU 2 fixed 矩阵 144/144 有效：RegExp −2.46%（A/A 2.04%），其余目标和控制均在各自观察范围，combined −0.18%（1.02%）未分辨。保留实验进入原版完整 combined 复核，未采用。证据 `query-step-cold-descriptors-validation/ready-manifest.json` 与 `query-step-cold-descriptors-gate-ledger.json`。
+
+`2d23acc4` 的 Local→Return 前缀通过 10 个目标、2307 项 profiling/host、2066 项默认库测试及 clean 双构建。真实 hits 为 Richards999、DeltaBlue212、Crypto19、RayTrace25070、EarleyBoyer88048、RegExp104、Splay160、NavierStokes0，合计114612；slot moves 每项恰少两倍 hits，全部旧 copy/retain、非 move storage、其他事件/调用/static facts 保持，omissions0。Crypto1254、Splay8082 次 guard 回退的成本完整记录。execute +1312B / 栈+16B，helper 独立294B，整体 text+4632B/data+24B；ready 尺寸与栈相同但 decode 上限及 cold-block 排列变化，不能称代码完全相同。时间待测，未采用；证据 `copy-local-return-logical/`，后来的 `7b7820a2` 仅文档，不重标编译源码。
+
+`43bb502b` 的空普通对象发布候选基于含 factory 修复的实际主线 `f7759050`。只改变 Runtime::new_object 与窄 Heap helper；general allocator、Iterator、VM factory 原文保留。由内部构造负责固定 kind/payload/空 slots，动态 layout Shape 恢复三次→一次；shared object_edges（已有四条 inline）、preflight/实际 checked retain、reserve/abort/publish/debt/trace 和临时 shape 清理仍在原顺序。合法空 dictionary 仍接受。7 个新目标及既有 factory5/budget4/trace7/drain11、2309/2068 全库通过。实际匹配配置 release 及独立时间正在准备，不以旧 eaf 时间作新主线对照。RayTrace/EarleyBoyer 的构造覆盖位于运行主体；Splay 首个 Run 的 Node receiver480、普通 literal5040 与大量 Setup 创建分别记账。证据 `empty-ordinary-publication-source-research/` 和 `empty-ordinary-publication-43bb/`。
