@@ -8,6 +8,43 @@ accepted as a deviation.
 
 ## Approved target deviations
 
+### ECMASCRIPT-WEAKREF-LIFETIME-001
+
+- Status: target approved by the maintainer on 2026-09-30; kept-object execution
+  scopes implemented, ordinary argument ownership optimization follows.
+- Surface: WeakRef target liveness, FinalizationRegistry cleanup scheduling, and
+  observable argument lifetimes during function calls.
+- Authority: the maintainer explicitly directed that ECMAScript govern this
+  behavior. Pinned QuickJS remains a comparison implementation; its differing
+  weak-reference results and argv-copy conditions do not define this target.
+- Required behavior: WeakRef construction and successful dereferencing keep
+  targets alive through the current synchronous execution sequence via the
+  effect of `AddToKeptObjects`. The host schedules `ClearKeptObjects` at an
+  appropriate completed-execution boundary. Nested calls, parameter writes,
+  and explicit GC must preserve this guarantee. FinalizationRegistry cleanup
+  callbacks must not interrupt synchronous ECMAScript execution.
+- Call ownership: preserve observable arguments values, mapped bindings,
+  closure/eval access, rest values and suspended state. Ordinary calls may
+  transfer argument ownership without a second original-argument owner.
+  Neither universal retention until return nor immediate collection of dead
+  values is a language requirement.
+- Baseline evidence: pinned QuickJS and PR #73 evaluated
+  `new WeakRef({}).deref() === undefined` to `true`. The implementation now
+  returns the required `false`, with coverage for object and symbol targets,
+  explicit GC, nested execution scopes, errors, panic cleanup and job dispatch.
+  `Runtime::with_execution_turn` groups multiple embedding entries when the
+  host requires one synchronous execution sequence. Job dispatch is rejected
+  during an active turn without removing the pending FIFO entry.
+  The ordinary-frame test retaining overwritten object arguments until teardown
+  cannot serve as a universal semantic requirement.
+- Acceptance: cover construction and repeated successful dereferencing within
+  one synchronous execution, nested host re-entry and GC, permitted clearing
+  boundaries, asynchronous cleanup, and arguments/closure aliasing. Across a
+  permitted clearing boundary, ECMAScript does not require collection to occur.
+- Specification: [WeakRef](https://tc39.es/ecma262/multipage/managing-memory.html#sec-weak-ref-objects),
+  [liveness and execution](https://tc39.es/ecma262/multipage/executable-code-and-execution-contexts.html#sec-liveness),
+  [ClearKeptObjects](https://tc39.es/ecma262/multipage/executable-code-and-execution-contexts.html#sec-clear-kept-objects).
+
 ### TEST262-ANNEXB-EVAL-001
 
 - Status: approved target deviation on 2026-08-09.

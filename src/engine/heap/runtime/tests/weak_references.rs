@@ -217,7 +217,7 @@ var weakWellKnownReference = new WeakRef(Symbol.iterator);
 }
 
 #[test]
-fn weak_ref_temporaries_are_not_kept_alive_until_the_end_of_the_job() {
+fn weak_ref_temporaries_survive_the_current_execution_turn() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context();
 
@@ -230,7 +230,7 @@ fn weak_ref_temporaries_are_not_kept_alive_until_the_end_of_the_job() {
 ].join("|")"#,
             )
             .unwrap(),
-        Value::String(JsString::from_static("true|true"))
+        Value::String(JsString::from_static("false|false"))
     );
 }
 
@@ -301,6 +301,129 @@ weakRegistrationResult;
         context.eval("weakRegistrationLog").unwrap(),
         Value::String(JsString::from_static(""))
     );
+}
+
+#[test]
+fn explicit_turn_keeps_objects_and_symbols_across_calls_and_gc() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    runtime
+        .with_execution_turn(|| {
+            let _ = context
+                .eval("var wo = new WeakRef({mark:42}); var ws = new WeakRef(Symbol('kept'));")?;
+            runtime.run_gc()?;
+            runtime.with_execution_turn(|| {
+                assert_eq!(context.eval("wo.deref().mark")?, Value::Int(42));
+                assert_eq!(
+                    context.eval("typeof ws.deref() === 'symbol'")?,
+                    Value::Bool(true)
+                );
+                Ok(())
+            })?;
+            runtime.run_gc()?;
+            assert_eq!(context.eval("wo.deref().mark")?, Value::Int(42));
+            assert_eq!(runtime.0.state.borrow().kept_objects.len(), 2);
+            Ok(())
+        })
+        .unwrap();
+    assert!(runtime.0.state.borrow().kept_objects.is_empty());
+    runtime.run_gc().unwrap();
+    // Deterministic collection is an implementation check, not a JS timing guarantee.
+    assert_eq!(
+        context
+            .eval("wo.deref() === undefined && ws.deref() === undefined")
+            .unwrap(),
+        Value::Bool(true)
+    );
+}
+
+#[test]
+fn successful_deref_in_a_later_turn_reestablishes_keep_alive() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    let _ = context
+        .eval("var target={}; var weak=new WeakRef(target)")
+        .unwrap();
+    runtime
+        .with_execution_turn(|| {
+            let _ = context.eval("weak.deref(); target=null;")?;
+            runtime.run_gc()?;
+            assert_eq!(
+                context.eval("weak.deref() !== undefined")?,
+                Value::Bool(true)
+            );
+            assert_eq!(runtime.0.state.borrow().kept_objects.len(), 1);
+            Ok(())
+        })
+        .unwrap();
+    assert!(runtime.0.state.borrow().kept_objects.is_empty());
+}
+
+#[test]
+fn execution_turn_releases_kept_roots_on_error_and_host_panic() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    let result =
+        runtime.with_execution_turn(|| context.eval("var weakError = new WeakRef({}); throw 42"));
+    assert!(matches!(result, Err(RuntimeError::Exception)));
+    assert_eq!(runtime.0.execution_turn_depth.get(), 0);
+    assert!(runtime.0.state.borrow().kept_objects.is_empty());
+    let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _: Result<(), RuntimeError> = runtime.with_execution_turn(|| {
+            let _ = context.eval("var weakPanic = new WeakRef({})")?;
+            panic!("host panic");
+        });
+    }));
+    assert!(panic.is_err());
+    assert_eq!(runtime.0.execution_turn_depth.get(), 0);
+    assert!(runtime.0.state.borrow().kept_objects.is_empty());
+}
+
+#[test]
+fn pending_jobs_cannot_interrupt_a_turn_or_lose_fifo_entries() {
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context();
+    let _ = context
+        .eval("var turnLog=''; Promise.resolve().then(()=>turnLog+='p');")
+        .unwrap();
+    runtime
+        .with_execution_turn(|| {
+            let error = runtime.execute_pending_job().unwrap_err();
+            assert_eq!(error.error(), &RuntimeError::ExecutionActive);
+            assert_eq!(
+                context.eval("turnLog")?,
+                Value::String(JsString::from_static(""))
+            );
+            Ok(())
+        })
+        .unwrap();
+    runtime.execute_pending_job().unwrap();
+    assert_eq!(
+        context.eval("turnLog").unwrap(),
+        Value::String(JsString::from_static("p"))
+    );
+}
+
+#[test]
+fn kept_targets_delay_finalization_across_realms_and_nested_execution() {
+    let runtime = Runtime::new();
+    let mut first = runtime.new_context();
+    let mut second = runtime.new_context();
+    runtime.with_execution_turn(|| {
+        let _ = first.eval("var finalized=0; var registry=new FinalizationRegistry(()=>finalized++); var target={}; registry.register(target, 1); var weak=new WeakRef(target); target=null;")?;
+        // Both realms participate in the runtime's synchronous sequence.
+        let _ = second.eval("var otherWeak=new WeakRef(Symbol('other'))")?;
+        runtime.run_gc()?;
+        assert!(!runtime.is_job_pending());
+        assert_eq!(first.eval("weak.deref() !== undefined")?, Value::Bool(true));
+        assert_eq!(second.eval("typeof otherWeak.deref()")?, Value::String(JsString::from_static("symbol")));
+        Ok(())
+    }).unwrap();
+    runtime.run_gc().unwrap();
+    assert!(runtime.is_job_pending());
+    assert_eq!(first.eval("finalized").unwrap(), Value::Int(0));
+    runtime.execute_pending_job().unwrap();
+    assert_eq!(first.eval("finalized").unwrap(), Value::Int(1));
 }
 
 #[test]

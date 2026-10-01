@@ -4,6 +4,8 @@
 
 ## 文档入口
 
+- [PR #73 根因研究](receipts/pr73-root-causes-2026-09-30/README.md)：调用、布局生命周期、属性缓存和阶段测量。
+
 - [架构](../architecture.md)：模块责任、发布和执行边界。
 - [现行执行路径](roadmap.md)：数值操作、普通写入、命名属性读取和 continuation。
 - [执行不变量](principles.md)：所有权、借用、位置与可观察操作。

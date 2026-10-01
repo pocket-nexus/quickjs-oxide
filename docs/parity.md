@@ -6,6 +6,12 @@
 
 目标是用 Rust 独立重写 QuickJS，并与 **QuickJS 2026-06-04** 达成语义和产品表面的 feature parity。这里的“parity”不是“能执行一部分 JavaScript”，而是同一输入在语言语义、宿主能力、嵌入 API、命令行、模块、序列化和生命周期上具有与该版本相同的可观察行为。
 
+**WeakRef 与调用参数生命周期的目标修正（2026-09-30，维护者明确指定）：此处以
+ECMAScript 为准。** WeakRef 的保活、弱目标清除和 FinalizationRegistry 清理必须满足
+规范；普通调用的参数存活按实际可观察的绑定、arguments、闭包及执行状态确定。
+固定 QuickJS 的参数复制分支和弱引用提前失效行为仅作实现对照，不作为此处的验收
+预期。具体范围与尚未完成的实现见 [deviations.md](deviations.md#ecmascript-weakref-lifetime-001)。
+
 基线必须固定为官方 `quickjs-2026-06-04` 发布源码，而不是滚动的仓库 `master`、quickjs-ng、其他 fork 或系统里碰巧安装的 `qjs`。基线的关键锚点是：
 
 - `VERSION` 为 `2026-06-04`；
@@ -168,6 +174,16 @@ Rust-first API 可以更符合 Rust 习惯，但它不能代替 QuickJS 的嵌�
 只实现 `print` 和文件读取，或把 `std`/`os` 永久定义为“宿主自行提供”，不符合 QuickJS CLI feature parity。
 
 ## 13. GC、WeakRef 与资源门禁
+
+本节的生命周期对照受第 1 节的 ECMAScript 优先规则约束。WeakRef 构造及成功的
+解引用必须实现 `AddToKeptObjects` 的效果；宿主在同步执行序列完成后的适当边界
+执行 `ClearKeptObjects`。嵌套调用返回、形参覆盖或显式 GC 都不能提前解除该保证，
+FinalizationRegistry 清理回调不能打断同步 ECMAScript 执行。
+
+调用帧应通过转移现有持有权或借用已被可靠保活的值减少复制。对象实参不因其类型
+而一律增加保留至函数退出的副本；独立的 arguments 值、映射参数绑定、直接 eval、
+闭包、rest 和暂停状态仍须保留各自实际需要的值。测试不得以“零引用后立即可从
+WeakRef 观察消失”或“所有原始对象实参始终活到退出”作为通用语言要求。
 
 为了保持 C API ownership 和可观察的 finalization，默认生命周期模型应以 QuickJS 的引用计数加 cycle removal 为设计基准，而不是依赖 Rust 所有权自动“碰巧”释放。Rust 可以改变内部容器，但必须保留：
 
