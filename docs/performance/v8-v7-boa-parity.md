@@ -12,7 +12,7 @@
 
 ## 当前证据
 
-外部 suite 固定在 `2034d98fc8c5f8044e186267593f5d5ea5232caf`。Rust 1.88.0、普通 release、fat LTO、CGU=1 与独立 target 的回执标识时间用二进制；profiling 构建只提供机制计数。时间采样固定 CPU 2，停止并行构建、测试和其他采样。CPU governor 是 powersave，未锁频，保留 A/A 观察范围。
+外部 suite 固定在 `2034d98fc8c5f8044e186267593f5d5ea5232caf`。Rust 1.88.0、普通 release、fat LTO、CGU=1 与独立 target 的回执标识时间用二进制；profiling 构建只提供机制计数。原版分数、首两批固定筛选及原生采样固定 CPU 2，停止并行构建、测试和其他采样。回执复核发现第三批六项固定筛选及两次 wave2 累计固定比较使用默认 affinity（0–15），此前笼统写成 CPU 2 不准确。这些原始样本完整保留、按该条件解释；后续固定筛选显式绑定 CPU 2，不跨这两种条件拼接单层结论。CPU governor 是 powersave，未锁频，保留 A/A 观察范围。
 
 八项各完成一次原始 Benchmark 的 Setup/run/TearDown，全部通过完成标记校验。原生 profile 使用相同原版主体；不同引擎采用不同重复次数以获得样本，**这些不是跨引擎时间或 Score 比较**。
 
@@ -108,7 +108,22 @@
 | `7a656d2c` | Splay −0.48%（A/A 1.46%）未分辨；Crypto +2.56%（A/A 2.16%）、EarleyBoyer +2.26%（A/A 2.02%）；combined +0.15% 未分辨 | 拒绝当前版本；不因查找 4→1 而扩大共享定义抽象 |
 | `37c2aa10` 完整补丁 | Richards −4.36%（A/A 3.08%）、DeltaBlue −2.79%（A/A 1.42%）；Crypto +0.50%（A/A 1.73%）未分辨；combined −1.28%（A/A 4.00%）未分辨 | 进入 Richards/DeltaBlue 原版复核，旧版 Crypto 回归未分辨；NavierStokes −5.67% 不能归给仅 3 次新增 Object 命中 |
 
-此后暂停候选队列的编排父进程，当前 matrix 正常完成，插入累计独立控制，没有与编译、JS 或采样并行。`72a4de30`→`eaf23ba8` 的 `integrated-wave2-fixed` 144 个样本有效：Richards −5.16%（A/A 2.76%）、Splay −7.10%（A/A 5.33%）、RegExp −2.03%（A/A 1.48%）、combined −3.38%（A/A 1.91%）；未分辨其他子项回归。Crypto −4.34% 仍在 A/A 4.51% 内，NavierStokes −2.56% 仍在 A/A 2.80% 内。这证明三层累计交换有时间证据，不拆分归给每一层；整个栈相对 `3d420407` 的控制继续验证。
+此后暂停候选队列的编排父进程，当前 matrix 正常完成，插入累计独立控制，没有与编译、JS 或采样并行。`72a4de30`→`eaf23ba8` 的 `integrated-wave2-fixed` 144 个样本有效：Richards −5.16%（A/A 2.76%）、Splay −7.10%（A/A 5.33%）、RegExp −2.03%（A/A 1.48%）、combined −3.38%（A/A 1.91%）；未分辨其他子项回归。Crypto −4.34% 仍在 A/A 4.51% 内，NavierStokes −2.56% 仍在 A/A 2.80% 内。这证明三层累计交换有时间证据，不拆分归给每一层。
+
+`3d420407`→`eaf23ba8` 的 `integrated-wave2-total-fixed` 另完成 144 个有效样本：Richards −4.79%、Crypto −5.87%、RayTrace −9.34%、EarleyBoyer −27.67%、Splay −8.64%、NavierStokes −25.80%、combined −11.86%，均超出各项本轮 A/A；DeltaBlue −0.98%、RegExp −1.22% 未分辨。没有分辨出的控制回归。两次累计固定比较均为默认 affinity，证据索引 `cumulative-fixed-ledger.json`；不能拿它们与 CPU 2 的独立候选数值相减作为层收益。
+
+同一冻结 combined 负载的串行资源诊断（每二进制各两次）显示，`3d420407`→`eaf23ba8` RSS 中位数 346,216→347,502 KiB（+1,286 KiB，+0.37%）；cycles −11.84%、instructions −11.11%、branches −9.68%、branch misses −2.51%。四个计数器均有 100% running，无 multiplex；完整进程包含启动、Setup、fixed run、TearDown 与退出。这是资源诊断，不是峰值分布、置信区间或原版 Score。证据 `integrated-wave2-resources`。编译时间尚无同条件对照，不将不同构建日志的 elapsed 差异归因于实现。
+
+### 第四批已验证候选
+
+| 提交及基线 | 机制及实际覆盖 | 新增成本与状态 |
+| --- | --- | --- |
+| `a72f5a8f` / `eaf23ba8` | Number unary 与 immediate Not 在已验证栈顶原地完成；Crypto `am3` run 命中 810,765 次，slot move 删除数逐项等于命中 | execute +474B、栈 +16B；2301/2060 库测试通过，八项计数验证与 plain 完成验证通过；时间待验收 |
+| `f67e0fde` / `eaf23ba8` | Spilled 属性槽复用 `Vec` 容量，增长不显式克隆所有槽；RayTrace 重复 body 增量免重建 3,875 次、免克隆 17,323 个槽，EarleyBoyer body 增量为零 | 整体 .text +112B，execute 不变；结束时容量多约 5–19 KiB；2301/2060 库测试及八项逻辑验证通过，时间与 RSS 待验收 |
+| `fddcc56b` / `3d420407` | 两个暖缓存字段的 Object 结果在同一借用内严格比较；EarleyBoyer 136,786 次命中，每次删两次 owning promotion 与四次 operand 搬运；其余七项计数逐项不变 | 整体 .text +8,160B，execute +16B；2274/2035 库测试、trace fallback、八项逻辑验证通过；时间待验收 |
+| `adb6a969` / `eaf23ba8` | 累计试验加入 `37c2aa10` 的完整 dense Object consuming 补丁；八项差额与独立机制逐项一致 | 2301/2060 库测试通过；完整 Test262 102,037 变体冻结正文一致（80,010 pass / 80,060 eligible）；增量固定与原版时间待验收 |
+
+第四批中央计时显式 CPU 2，仅源码研究并行。新增类型或消失的 helper 不能替代时间和非参与者控制。
 
 `daccb30b` 的生成代码还显示解释循环栈帧增加 96 字节，新增的预算值跨整个解码循环存活并被重载。它说明非参与者确实付出了表示与寄存器成本，不能单凭汇编把 Crypto 的全部回归归因于此。下一版先恢复原解释循环，利用现有 `InstanceStep::start` 的同步 Complete 分支，重新测量收益和控制项。
 
