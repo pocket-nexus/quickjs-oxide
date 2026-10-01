@@ -37,6 +37,8 @@
 
 证据在仓库外 `/home/eric/.cache/oxide-v8v7-boa-campaign/`：`baseline-logical`、`baseline-native`、`original-adaptive-native` 保存机器、源码、二进制与负载身份、原始输出和 profile。`original-adaptive-native` 的所有打印分数仅作 profile 完成校验，没有作为时间验收收据。原始大文件不入库。
 
+累计版本 `eaf23ba8` 另完成原版 combined 的原生诊断 profile，约 68K cycles 样本、零 lost sample，九个输出标签完整。self 权重中 execute 18.06%、dup_jsvalue 4.88%、memmove 3.86%、release_jsvalue 2.56%、release_heap_reference 2.16%、commit_push 1.96%、select_linked_data_into 1.81%、commit_owned 1.72%、FrameSlots::push 1.60%。这些权重包含准备、warmup、timedRun、TearDown 和退出，不能相加为某项候选的可删除成本。memmove 的可见调用链部分来自 RegExp 恢复；`commit_push` 与 `FrameSlots::push` 是不同来源，不是两层重复认证。证据为外部 `integrated-wave2-native/{metadata,summary}.json` 和完整 stacks/self 报告；打印 Score 不用于时间验收。
+
 ## 独立候选
 
 | 提交 | 候选 | 机制证据 | 当前判断 |
@@ -89,6 +91,12 @@
 第二轮累计实验 `eaf23ba8` 在 `72a4de30` 上分提交加入 `977785cf`、`c3bf45e2`、`86930db6`。clean plain/profile 构建、八项逻辑 profile、库测试 2,297/2,056、focused Test262 6,844/6,844 已完成；完整 102,037 变体的冻结正文比较也已通过，仍为 80,010 pass / 80,060 eligible。资源交换仍待验收。这些新交付候选尚未加入组合。
 
 `5fdc3e54` 另行验证已注册 shape successor 的直接消费：八项新增命中逐项等于旧重复注册计数；必要 shape 生命周期测试 12 项、profiling/host 2,269、default 2,030 项通过。plain 汇编保留 full generation/checked retain，registered hit 跳过 `record_transition`，解释循环不变，.text +336B、append 栈不变。追加一次 body 重复获得 RayTrace 193,723、EarleyBoyer 542,843 次追加命中；这证明 body 覆盖，不等同冷首轮精确 timed 计数。独立时间仍待验收。
+
+此前拒绝的 dense Object 读取已缩小为 `3d420407..37c2aa10` 的独立完整补丁：同一次借用内完成 consuming 结果分类与 checked retain，删除没有覆盖的 kept Object 扩展，必要结果 owner 保留。八项 Object 命中逐项等于初版，scalar/materialized Number 计数不变，kept 新命中为零。profiling/host 2,271、default 2,032 项、clean plain/profile 和八项机制验证完成。kept helper 归一化机器指令与基线相同；consuming helper +126B、栈 +16B，整体 .text +304B，解释循环不变。最终 alias `dense-object-consume-direct`；不是只 cherry-pick 最后一提交，旧中间版本不用于验收。
+
+### 第三批独立时间筛选
+
+串行使用同一个冻结负载，继续只测变化的 Oxide 候选和所需 Oxide 基线，复用 Boa。外部索引为 `wave3-gate-ledger.json`。首个 `f0cf87b2` 的 144 个样本全部有效：Crypto 耗时 −0.069%（A/A 1.103%）未分辨，21,459 次 GetElement 退出消失没有兑现可分辨的目标时间收益。Richards −2.39%、NavierStokes −6.42%、combined −1.29% 分别超出本次观察 A/A，但这些项没有新增机制命中，归因尚未确定，不将它们归给 materialized Number 覆盖。保留实验，暂不加入累计组合；其他候选继续按独立顺序验收。
 
 `daccb30b` 的生成代码还显示解释循环栈帧增加 96 字节，新增的预算值跨整个解码循环存活并被重载。它说明非参与者确实付出了表示与寄存器成本，不能单凭汇编把 Crypto 的全部回归归因于此。下一版先恢复原解释循环，利用现有 `InstanceStep::start` 的同步 Complete 分支，重新测量收益和控制项。
 
