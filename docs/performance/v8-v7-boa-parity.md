@@ -134,6 +134,17 @@
 
 下一组独立源码实验继续覆盖不同机制：已注册 shape 后继的标量字段创建、warm 双字段 Number 算术直接消费、新建 factory owner 的直接交接，以及复用既有 `push_owned` 的 owning 结果搬运。新建对象交接单独保留 pending cleanup 的历史 retain→push→drop 边界，修正未提交 owner 的失败回收；不混入已拒绝的 literal-ready 调度变化。所有草稿先验证正确性和实际消费者，不能因预计免除协议就宣称性能能力完成。
 
+### 第五批独立实现与覆盖
+
+| 提交 / 基线 | 已验证机制和消费者 | 生成代码与资源成本 | 状态 |
+| --- | --- | --- | --- |
+| `cbf33ee5` / `eaf23ba8` | `commit_owned` 复用现有 `push_owned` 的成功转移/失败保留合同，移除 `Option` 搬运；失败 release 留在短 slots 借用之后 | helper 320→245B，静态指令 87→70，栈 56→48B；execute、普通 push、release 归一化指令相同，size 汇总 text −56B | 目标 owner/GC 测试、2298/2057 库测试通过；双回执及八项诊断通过，既有事件、VM 存储、内存分类/堆状态逐项相同；时间待验收 |
+| `e57b1fcf` / `eaf23ba8` | 仅使用已注册且仍存活的 shape 后继及 retained parent，在一次借用内创建标量字段；RayTrace 166,779、EarleyBoyer 116,886 次完成，重复 body 增量分别 166,797 / 116,184 | execute 不变；write helper 816→877B / 栈 72→88B；new helper 1362B / 栈 152B；共享 append 由内联转为 outlined，整体 .text +1472B | 新 8 项目标测试、2305/2064 库测试、双回执、八项诊断及重复 body 通过；既有协议差额精确对应完成数，内存分类/堆状态相同；时间待验收 |
+| `ef6721cc` / `eaf23ba8` | 仅 CreateArray/Object/Variable 的 fresh factory edge 直接发布；Splay 767,604 次，其中 Setup 760,000、每次 run 7,600；EarleyBoyer 仅 95 次。Richards、DeltaBlue、Crypto、NavierStokes 没有 timed body 覆盖；未观察 Variable 或 pending fallback 命中 | environment_step 11124→10523B / 栈 1672→1656B；新 helper 876B / 栈 120B；必要 pending 检查及 `into_handle` 再检查保留，整体 .text +272B；execute、ready、push_owned、release 归一化相同 | 8 项目标、2305/2064 库、trace 验证通过；双回执、八项诊断与 codegen 完成；时间待验收，不能拿完整 Environment 计数作覆盖 |
+| `345179fb` / `eaf23ba8` | Local/Arg/This 的两个 warm Number 字段在一次借用内经原有算术 kernel 直接消费；miss 保留原左字段读取 | 连续 opcode 编号，避免额外 hole 检查；实际编译形态及命中尚待测量 | 2304/2063 库及 trace 测试通过，独立 clean 提交；双构建和八项覆盖验证中 |
+
+以上仍是独立候选，没有将新的机制计数记为分数收益。第五批也只测 Oxide 候选及所需 Oxide 基线，复用 Boa。
+
 `daccb30b` 的生成代码还显示解释循环栈帧增加 96 字节，新增的预算值跨整个解码循环存活并被重载。它说明非参与者确实付出了表示与寄存器成本，不能单凭汇编把 Crypto 的全部回归归因于此。下一版先恢复原解释循环，利用现有 `InstanceStep::start` 的同步 Complete 分支，重新测量收益和控制项。
 
 ### 正在验证的简化
