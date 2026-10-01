@@ -138,12 +138,21 @@
 
 | 提交 / 基线 | 已验证机制和消费者 | 生成代码与资源成本 | 状态 |
 | --- | --- | --- | --- |
-| `cbf33ee5` / `eaf23ba8` | `commit_owned` 复用现有 `push_owned` 的成功转移/失败保留合同，移除 `Option` 搬运；失败 release 留在短 slots 借用之后 | helper 320→245B，静态指令 87→70，栈 56→48B；execute、普通 push、release 归一化指令相同，size 汇总 text −56B | 目标 owner/GC 测试、2298/2057 库测试通过；双回执及八项诊断通过，既有事件、VM 存储、内存分类/堆状态逐项相同；时间待验收 |
-| `e57b1fcf` / `eaf23ba8` | 仅使用已注册且仍存活的 shape 后继及 retained parent，在一次借用内创建标量字段；RayTrace 166,779、EarleyBoyer 116,886 次完成，重复 body 增量分别 166,797 / 116,184 | execute 不变；write helper 816→877B / 栈 72→88B；new helper 1362B / 栈 152B；共享 append 由内联转为 outlined，整体 .text +1472B | 新 8 项目标测试、2305/2064 库测试、双回执、八项诊断及重复 body 通过；既有协议差额精确对应完成数，内存分类/堆状态相同；时间待验收 |
-| `ef6721cc` / `eaf23ba8` | 仅 CreateArray/Object/Variable 的 fresh factory edge 直接发布；Splay 767,604 次，其中 Setup 760,000、每次 run 7,600；EarleyBoyer 仅 95 次。Richards、DeltaBlue、Crypto、NavierStokes 没有 timed body 覆盖；未观察 Variable 或 pending fallback 命中 | environment_step 11124→10523B / 栈 1672→1656B；新 helper 876B / 栈 120B；必要 pending 检查及 `into_handle` 再检查保留，整体 .text +272B；execute、ready、push_owned、release 归一化相同 | 8 项目标、2305/2064 库、trace 验证通过；双回执、八项诊断与 codegen 完成；时间待验收，不能拿完整 Environment 计数作覆盖 |
-| `345179fb` / `eaf23ba8` | Local/Arg/This 的两个 warm Number 字段在一次借用内经原有算术 kernel 直接消费；miss 保留原左字段读取 | 连续 opcode 编号，避免额外 hole 检查；实际编译形态及命中尚待测量 | 2304/2063 库及 trace 测试通过，独立 clean 提交；双构建和八项覆盖验证中 |
+| `cbf33ee5` / `eaf23ba8` | `commit_owned` 复用现有 `push_owned` 的成功转移/失败保留合同，移除 `Option` 搬运；失败 release 留在短 slots 借用之后 | helper 320→245B，静态指令 87→70，栈 56→48B；execute、普通 push、release 归一化指令相同，size 汇总 text −56B | 目标 owner/GC 测试、2298/2057 库测试通过；双回执及八项诊断通过，既有事件、VM 存储、内存分类/堆状态逐项相同；CPU 2 时间出现回归，拒绝当前版本 |
+| `e57b1fcf` / `eaf23ba8` | 仅使用已注册且仍存活的 shape 后继及 retained parent，在一次借用内创建标量字段；RayTrace 166,779、EarleyBoyer 116,886 次完成，重复 body 增量分别 166,797 / 116,184 | execute 不变；write helper 816→877B / 栈 72→88B；new helper 1362B / 栈 152B；共享 append 由内联转为 outlined，整体 .text +1472B | 新 8 项目标测试、2305/2064 库测试、双回执、八项诊断及重复 body 通过；既有协议差额精确对应完成数，内存分类/堆状态相同；后续饱和审查发现 receiver/key 准入不等价，当前不可采用，修复另树验证 |
+| `ef6721cc` / `eaf23ba8` | 仅 CreateArray/Object/Variable 的 fresh factory edge 直接发布；Splay 767,604 次，其中 Setup 760,000、每次 run 7,600；EarleyBoyer 仅 95 次。Richards、DeltaBlue、Crypto、NavierStokes 没有 timed body 覆盖；未观察 Variable 或 pending fallback 命中 | environment_step 11124→10523B / 栈 1672→1656B；新 helper 876B / 栈 120B；必要 pending 检查及 `into_handle` 再检查保留，整体 .text +272B；execute、ready、push_owned、release 归一化相同 | 8 项目标、2305/2064 库、trace 验证通过；双回执、八项诊断与 codegen 完成；目标时间未分辨，保留实验；不能拿完整 Environment 计数作覆盖 |
+| `345179fb` / `eaf23ba8` | Local/Arg/This 的两个 warm Number 字段在一次借用内经原有算术 kernel 直接消费；miss 保留原左字段读取 | RayTrace 148,450/148,473 个候选命中，Crypto 1,239/1,240；execute +266B、栈 +32B，整体 .text +9,104B | 2304/2063 库及 trace 测试、双回执、八项覆盖验证通过；CPU 2 时间出现多项回归，拒绝 |
 
 以上仍是独立候选，没有将新的机制计数记为分数收益。第五批也只测 Oxide 候选及所需 Oxide 基线，复用 Boa。
+
+第五批每候选完成 144 个有效 CPU 2 样本（A/A 与 ABBA–BAAB，索引 `wave5-gate-ledger.json`），以下波动范围不是置信区间：
+
+- `cbf33ee5`：Richards +5.55%（A/A 1.60%）、Crypto +7.28%（A/A 0.81%）、combined +1.86%（A/A 1.37%）。helper 缩小没有兑现时间收益，拒绝合入，不为当前版本追加原版或资源测量。
+- `345179fb`：目标 RayTrace +0.24%（A/A 1.13%）未分辨；Richards +3.12%、DeltaBlue +1.51%、Crypto +6.11%、EarleyBoyer +2.09%、Splay +1.52%、NavierStokes +8.19%、combined +1.90% 均超过各自本轮 A/A。拒绝当前字段算术融合，不扩大模式覆盖。
+- `ef6721cc`：Splay −0.99%（A/A 2.26%）、combined +0.59%（A/A 1.33%）；八项及 combined 均未分辨收益或回归。当前不作为性能收益采用，失败 push 的旧 owner 泄漏另作为正确性修复评估。
+- `e57b1fcf`：RayTrace −4.90%（A/A 3.15%），NavierStokes +1.82%（A/A 1.50%），combined +0.08%（A/A 1.17%）。即使局部时间有信号，也不能采用：旧 missing driver 对 receiver 的 checked retain 在 MAX 溢出、MAX−1 达 immortal，旧 key retain 对非 pinned MAX 溢出；新叶路径跳过了这些可观察边界。独立修复候选拒绝这些状态并保留原 fallback，验证后重新计时，原测树与回执保留。
+
+下一组同时验证不同机制：在现有 Pure 协议内直接消费 `typeof` 的 number 比较，修复已注册标量创建的饱和准入，以及根据真实汇编宽返回区研究冷错误搬运。Math 现有入口已同步完成，暂不引入 continuation 重构。
 
 `daccb30b` 的生成代码还显示解释循环栈帧增加 96 字节，新增的预算值跨整个解码循环存活并被重载。它说明非参与者确实付出了表示与寄存器成本，不能单凭汇编把 Crypto 的全部回归归因于此。下一版先恢复原解释循环，利用现有 `InstanceStep::start` 的同步 Complete 分支，重新测量收益和控制项。
 
