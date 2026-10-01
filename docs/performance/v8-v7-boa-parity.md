@@ -172,11 +172,19 @@
 
 | 候选 | 机制与正确性证据 | release 代码 / 表示成本 | 状态 |
 | --- | --- | --- | --- |
-| `e6dbf36a` 内部 release 返回 unit | 保留真实 defer/drain、诊断和 release 顺序，移除不可达错误协议；库、trace、八项逻辑及完整 Test262 冻结向量验证完成 | execute 37433→37333B，栈 1176→1016B；release 323→288B，无返回区/Ok tag 写回；native argv cleanup 489→385B，栈 136→80B；commit_owned 320→237B，栈 56→16B | 等待 CPU 2 时间 gate；不据代码缩小声称提速 |
-| `8d88151e` registered heap 字段 owner 转移（含 `e08a9416`） | mutable 输入在 unpublished 失败时保留、publication 成功或错误时立即置 Undefined；8 组新增、10 组旧目标测试及 2316/2075 库测试通过；完整身份、receiver/key/value 的旧 checked retain 饱和边界保留 | Earl heap 完成 417617、Ray 26887；Earl 新增 materialize 267195，frame authentication 净减少 267308，而非全部 534503 次 Set exit；execute +239B、栈 +16B，整体 .text +6656B | clean 双回执、八项诊断与 repeat 完成，等待整个候选相对 eaf 的 CPU 2 控制；部分内存分类相同不等于峰值 RSS 相同 |
-| `4f03cc8c` split Cell 位置缓存 | 小状态头与四个 Cell<Option<Location>>，不使用 RefCell 借用标志；保留原 guard、probe、冷却及 prefix 顺序合同；16 项目标、2299/2058 库测试通过 | 实测每 cache 240→232B、13 个 Runtime 内联缓存合计 −104B；warm read 2641→2242B，栈 600→168B；miss 4970→3288B，栈 680→184B；execute 相同，仅一条字段偏移 −104B | clean 双构建和八项诊断完成；逻辑 ledger 收尾，等待时间 gate。Option 存在性检查和 promotion 工作需由时间验收 |
+| `e6dbf36a` 内部 release 返回 unit | 保留真实 defer/drain、诊断和 release 顺序，移除不可达错误协议；库、trace、八项逻辑及完整 Test262 冻结向量验证完成 | execute 37433→37333B，栈 1176→1016B；release 323→288B，无返回区/Ok tag 写回；native argv cleanup 489→385B，栈 136→80B；commit_owned 320→237B，栈 56→16B | CPU 2 时间 gate 出现 Crypto 回归、combined 未分辨；拒绝当前整体版本，不据代码缩小声称净提速 |
+| `8d88151e` registered heap 字段 owner 转移（含 `e08a9416`） | mutable 输入在 unpublished 失败时保留、publication 成功或错误时立即置 Undefined；8 组新增、10 组旧目标测试及 2316/2075 库测试通过；完整身份、receiver/key/value 的旧 checked retain 饱和边界保留 | Earl heap 完成 417617、Ray 26887；Earl 新增 materialize 267195，frame authentication 净减少 267308，而非全部 534503 次 Set exit；execute +239B、栈 +16B，整体 .text +6656B | clean 双回执、八项诊断与 repeat 完成；CPU 2 整体控制失败，拒绝。部分内存分类相同不等于峰值 RSS 相同 |
+| `4f03cc8c` split Cell 位置缓存 | 小状态头与四个 Cell<Option<Location>>，不使用 RefCell 借用标志；保留原 guard、probe、冷却及 prefix 顺序合同；16 项目标、2299/2058 库测试通过 | 实测每 cache 240→232B、13 个 Runtime 内联缓存合计 −104B；warm read 2641→2242B，栈 600→168B；miss 4970→3288B，栈 680→184B；execute 相同，仅一条字段偏移 −104B | clean 双构建、八项诊断完成；CPU 2 combined 和控制项回归，拒绝；Option 检查及布局交换不能被代码缩小掩盖 |
 
 `8d88151e` 的计数按 `T = scalar + heap`、`M = 新增 materialize` 分开核对：Set action 减少 T，frame authentication 减少 T−M，slot authentication 减少 2T−M。此前 Set driver 已 materialize 的职责会在后续 heap Drop/Nip 等消费者处重新出现，不能把全部 Set 退出数当成净调度收益。BigInt 在 V8 八项没有实际命中，只有针对性正确性见证。八项 storage、部分内存分类与 heap states 相同，原版时间、峰值资源仍未验收。
+
+第七批 432 个样本全部有效，每候选 144 个，CPU 2 上 A/A 与 ABBA–BAAB；没有删除样本，索引 `wave7-gate-ledger.json`。下列是固定负载的耗时变化，A/A 跨度不是置信区间，也不是原版 Score：
+
+- `e6dbf36a`：EarleyBoyer −2.26%（A/A 1.60%）、RegExp −3.23%（A/A 2.28%），但 Crypto +3.57%（A/A 1.29%）；combined −1.05%（A/A 1.12%）未分辨。拒绝整体迁移作为当前性能改进；完整语义通过没有替代时间控制。普通 Number kernel、dense read/index 和比较 helper 的归一化机器码相同，尚未找到可以单独归因 Crypto 回归的新增工作。
+- `8d88151e`：RayTrace −6.07%（A/A 5.29%）、EarleyBoyer −4.91%（A/A 1.26%），但 Richards +7.66%（A/A 1.12%）、Crypto +2.79%（A/A 1.84%）、NavierStokes +3.73%（A/A 2.31%）；combined −0.16%（A/A 2.95%）未分辨。拒绝当前整个候选，不追加原版/RSS 测量为控制失败背书。
+- `4f03cc8c`：Richards +4.40%（A/A 0.77%）、RayTrace +1.35%（A/A 1.04%）、EarleyBoyer +2.47%（A/A 1.72%）、NavierStokes +4.83%（A/A 1.39%）、combined +2.83%（A/A 1.08%）。拒绝当前缓存表示。header 实际位于 offset 0xe0，与首 location 分开，是需要区分的 locality 交换；尚不能据此归因全部回归。
+
+后续源码研究分开验证两个数值机制：`Number::compact` 的 guarded safe cast 能否消除饱和转换的 clamp，以及已知 binary Opcode 能否直接选择现有 kernel。普通 Number 的 slot 读取/提交已内联，仍有一次 outlined `binary_number_result` 调用和第二张 20-entry 动态分派表；不是普通路径上两个 outlined calls。Crypto 12,534,392 次原地 Number 操作仅为逻辑覆盖，不是时间权重。数组前缀补齐后恢复 dense 表示的另一假设，仍须按同 ObjectId 与 Setup/run 阶段确认，694,066 次 materialized Number read 只是上限。
 
 `daccb30b` 的生成代码还显示解释循环栈帧增加 96 字节，新增的预算值跨整个解码循环存活并被重载。它说明非参与者确实付出了表示与寄存器成本，不能单凭汇编把 Crypto 的全部回归归因于此。下一版先恢复原解释循环，利用现有 `InstanceStep::start` 的同步 Complete 分支，重新测量收益和控制项。
 
@@ -229,7 +237,9 @@
 
 两个子项的所有新样本均高于既有 Boa 样本范围，其余六项及 combined 仍未超过。这是复用历史 Boa 的描述性比较，不是当前交错测量的单层归因；第二批三层相对 `72a4de30` 的累计独立控制仍须检查。后续只测改变的 Oxide 候选、需要的 Oxide 基线和累计组合。
 
-八层累计实现现已分提交落实到工作分支，生产 head `737410e6`。相对实验 `eaf23ba8` 的唯一文件差异是本报告；全部生产源码、manifest、lockfile 与测试源码逐项一致。对应的工作分支提交为 `ce30f34a`、`7f4722be`、`2d472ccd`、`e7e4e091`、`35ccc54e`、`b7f87c32`、`3c78a1f2`、`737410e6`。上述二进制与测量仍明确标识实验 `eaf23ba8`，没有伪造新 head 的构建回执。新的拒绝/未定候选没有混入此生产源码。
+八层累计实现已分提交落实到工作分支，首次生产 head `737410e6`。当时相对实验 `eaf23ba8` 的唯一文件差异是本报告；全部生产源码、manifest、lockfile 与测试源码逐项一致。对应的工作分支提交为 `ce30f34a`、`7f4722be`、`2d472ccd`、`e7e4e091`、`35ccc54e`、`b7f87c32`、`3c78a1f2`、`737410e6`。上述二进制与测量仍明确标识实验 `eaf23ba8`，没有伪造新 head 的构建回执。新的拒绝/未定候选没有混入此生产源码。
+
+主线随后单独接受正确性修复 `2ef2f013`（实验 `92269743`）：CreateArray/Object/Variable factory 的 raw push 被拒绝时，在原 ObjectRef Drop/drain 后释放未提交 retained edge，并返回原 push 错误。成功路径仍为 checked retain→push→Drop；不采用已拒绝的 fresh owner 转移或新增成功 guard。5 项目标测试覆盖三 factory 的成功/拒绝、共享 borrow 下 deferred release、pending zero cleanup 和 retain 失败，全部通过。现有原版分数仍对应上述 eaf 二进制；未把该修复当作性能收益或声称已测最新主线。
 
 1. 原始主体上的逻辑 profile 验证命中、删除的工作和保留的 owner。
 2. `iterate_v8.py` 对八项及 combined 固定负载执行 A/A 与交错 A/B。复用首次冻结的负载，逐样本验证身份、输出和退出状态。
