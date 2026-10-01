@@ -20,7 +20,7 @@ use crate::engine::vm::execution::RunningExecution;
 use crate::engine::vm::frame::FrameId;
 use crate::engine::vm::frames::ActiveFrameToken;
 use crate::engine::vm::stack::{
-    DirectSlot, FrameSlots, FrameTransaction, StoreProgress, copy_value,
+    DirectSlot, FrameSlots, FrameTransaction, PropertyReadProgress, StoreProgress, copy_value,
 };
 
 #[cfg(test)]
@@ -1294,15 +1294,15 @@ pub(super) fn execute_frame(
                 } else {
                     DirectSlot::Argument(base_index)
                 };
-                let value = cursor.with_slots(|slots| {
+                let selection = cursor.with_slots(|slots| {
                     if !slots.has_operand_capacity(1) {
-                        return Ok(None);
+                        return Ok(crate::engine::object::NamedDataSelection::ContinueLookup);
                     }
                     let Some(base @ JsValue::Object(_)) = slots.direct_value(base) else {
-                        return Ok(None);
+                        return Ok(crate::engine::object::NamedDataSelection::ContinueLookup);
                     };
                     let mut native = None;
-                    Ok(runtime.property_ic_read_fast(
+                    Ok(runtime.select_linked_data(
                         base,
                         executable,
                         next,
@@ -1317,10 +1317,26 @@ pub(super) fn execute_frame(
                     executable,
                     pc,
                     "borrowed_field",
-                    if value.is_some() { None } else { Some("guard") },
+                    if matches!(
+                        selection,
+                        crate::engine::object::NamedDataSelection::Data(_)
+                            | crate::engine::object::NamedDataSelection::CompleteAbsent
+                    ) {
+                        None
+                    } else {
+                        Some("guard")
+                    },
                 );
-                if let Some(value) = value {
+                if let crate::engine::object::NamedDataSelection::Data(value) = selection {
                     cursor.commit_owned(runtime, value)?;
+                    cursor.advance(decoded.operand(2) as usize);
+                    continue;
+                }
+                if matches!(
+                    selection,
+                    crate::engine::object::NamedDataSelection::CompleteAbsent
+                ) {
+                    cursor.commit_push(JsValue::Undefined)?;
                     cursor.advance(decoded.operand(2) as usize);
                     continue;
                 }
@@ -1856,7 +1872,7 @@ pub(super) fn execute_frame(
             Opcode::GetFieldCached | Opcode::GetField2Cached => {
                 let keep_receiver = decoded.opcode == Opcode::GetField2Cached;
                 let mut native = None;
-                let hit = cursor.with_slots(|slots| {
+                let progress = cursor.with_slots(|slots| {
                     slots.property_ic_read(
                         runtime,
                         executable,
@@ -1872,9 +1888,13 @@ pub(super) fn execute_frame(
                     executable,
                     pc,
                     "field_cache",
-                    if hit { None } else { Some("guard") },
+                    if matches!(progress, PropertyReadProgress::Completed) {
+                        None
+                    } else {
+                        Some("guard")
+                    },
                 );
-                if !hit {
+                if !matches!(progress, PropertyReadProgress::Completed) {
                     return Ok(VmAction::GetField {
                         index: operand,
                         keep_receiver,

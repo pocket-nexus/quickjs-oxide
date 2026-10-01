@@ -941,6 +941,7 @@ mod ordinary_storage;
 pub(crate) mod property_ic;
 
 pub(crate) use ordinary_storage::LinkedNativeSelection;
+pub(crate) use ordinary_storage::NamedDataSelection;
 
 mod ordinary;
 pub(crate) use ordinary::OrdinaryRead;

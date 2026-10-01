@@ -15,6 +15,28 @@ use crate::engine::value::JsValue;
 use crate::engine::value::Value;
 use crate::engine::value::number::operations::Number;
 
+/// One non-observable named-property selection. Data owns its promoted edge;
+/// other cases have not changed guest-visible state or consumed an input.
+pub(crate) enum NamedDataSelection {
+    Data(JsValue),
+    CompleteAbsent,
+    /// A getter selected while the receiver remains rooted in its frame slot.
+    /// The consumer must acquire owning getter/receiver edges before handoff.
+    Accessor(ObjectId),
+    ContinueLookup,
+    NeedsObservation,
+}
+
+/// Cold outcomes kept separate from the common owned-data return. The
+/// ordinary stack consumer can receive its value in the 16-byte JsValue
+/// representation without returning a wide data-or-continuation enum.
+pub(crate) enum NamedSelectionMiss {
+    CompleteAbsent,
+    Accessor(ObjectId),
+    ContinueLookup,
+    NeedsObservation,
+}
+
 /// Affine native payload fact selected together with an own property value.
 /// Its callee remains retained by the result/operand owner; consumption checks
 /// runtime and generational identity, never re-reads a property or payload.
@@ -1084,7 +1106,13 @@ fn field_in_state(
         }
         return None;
     }
-    if !is_ordinary(data) {
+    // These payloads expose their own shape slots directly. In particular,
+    // a function may first reach a lazy AutoInit slot through the canonical
+    // driver, then expose data at the same site after that initialization.
+    // The location cache can still be in its unsupported cooldown; consume
+    // the now-selected own data value here instead of replaying the driver
+    // probe and publishing the frame again.
+    if !is_ordinary(data) && !reads_are_slot_faithful(data) {
         return None;
     }
     let slot = locate(state, id, atom).ok()??;
