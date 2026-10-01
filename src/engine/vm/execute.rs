@@ -1731,6 +1731,41 @@ pub(super) fn execute_frame(
                     return Ok(action);
                 }
             }
+            Opcode::GetVarRef | Opcode::GetVarRefCheck => {
+                let index = published_u16(operand);
+                let value = if cursor.with_slots(|slots| Ok(slots.has_operand_capacity(1)))? {
+                    let root = body
+                        .owners
+                        .function
+                        .closures()
+                        .get(usize::from(index))
+                        .ok_or_else(|| {
+                            Error::internal("closure variable index is out of bounds")
+                        })?;
+                    super::bindings::try_read_captured_immediate(runtime, &root)
+                } else {
+                    None
+                };
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_execution_outcome(
+                    runtime,
+                    executable,
+                    pc,
+                    "captured_read",
+                    if value.is_some() { None } else { Some("guard") },
+                );
+                if let Some(value) = value {
+                    cursor.commit_push(value)?;
+                } else {
+                    return Ok(VmAction::Binding {
+                        source: BindingSource::Closure,
+                        index,
+                        write: false,
+                        checked: decoded.opcode == Opcode::GetVarRefCheck,
+                        keep: false,
+                    });
+                }
+            }
             Opcode::GetVar | Opcode::GetVarUndef => {
                 let index = published_u16(operand);
                 // Check space before taking the output edge. The cell keeps its
@@ -2418,6 +2453,13 @@ fn read_local<const CHECKED: bool>(
     }
     let (copied, uninitialized) = cursor.with_slots(|slots| match slots.local(index)? {
         FrameBinding::Direct(value) => copy_value(runtime, value).map(|value| (Some(value), false)),
+        FrameBinding::Captured(id) if slots.has_operand_capacity(1) => Ok((
+            super::bindings::try_read_captured_immediate(
+                runtime,
+                &crate::engine::heap::roots::VarRefView::from_frame(runtime, *id),
+            ),
+            false,
+        )),
         FrameBinding::Uninitialized => Ok((None, true)),
         _ => Ok((None, false)),
     })?;
@@ -2448,6 +2490,12 @@ fn read_arg(
     }
     let copied = cursor.with_slots(|slots| match slots.parameter(index)? {
         FrameBinding::Direct(value) => copy_value(runtime, value).map(Some),
+        FrameBinding::Captured(id) if slots.has_operand_capacity(1) => {
+            Ok(super::bindings::try_read_captured_immediate(
+                runtime,
+                &crate::engine::heap::roots::VarRefView::from_frame(runtime, *id),
+            ))
+        }
         _ => Ok(None),
     })?;
     if let Some(value) = copied {
@@ -2499,13 +2547,6 @@ fn deferred_action(
         Opcode::IsNull => VmAction::Pure(P::IsNull),
         Opcode::TypeOfIsUndefined => VmAction::Pure(P::TypeOfIsUndefined),
         Opcode::TypeOfIsFunction => VmAction::Pure(P::TypeOfIsFunction),
-        Opcode::GetVarRef | Opcode::GetVarRefCheck => VmAction::Binding {
-            source: BindingSource::Closure,
-            index: checked_u16(a)?,
-            write: false,
-            checked: opcode == Opcode::GetVarRefCheck,
-            keep: false,
-        },
         Opcode::PutVarRef | Opcode::SetVarRef | Opcode::PutVarRefCheck => VmAction::Binding {
             source: BindingSource::Closure,
             index: checked_u16(a)?,
@@ -3025,6 +3066,9 @@ fn borrowed_this_read_ready(runtime: &crate::engine::api::Runtime, base: &JsValu
             .object_strong_count(*id)
             .is_ok_and(|count| count < u32::MAX - 2)
 }
+
+#[cfg(test)]
+mod captured_read_tests;
 
 #[cfg(test)]
 mod execution_span_tests {
