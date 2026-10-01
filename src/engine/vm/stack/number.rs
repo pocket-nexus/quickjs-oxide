@@ -45,6 +45,10 @@ impl SlotStore {
         }
         #[cfg(feature = "profiling")]
         {
+            crate::engine::api::profiling::record_owned_execution_event(
+                "ordinary_store.complete_scalar",
+            );
+            crate::engine::api::profiling::record_owned_execution_event("local_completion.store");
             record_owned_storage(Cost::Move(1));
             if !keep {
                 self.live_slots -= 1;
