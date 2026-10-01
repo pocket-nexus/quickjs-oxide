@@ -18,8 +18,8 @@ use crate::engine::value::Value;
 // Only this module can authenticate or construct this witness.
 pub(in crate::engine::vm) struct OrdinaryCall {
     function: ObjectId,
-    // Callback preparation may outlive its source root. Direct slot calls keep
-    // the source operand alive until installation transfers that same edge.
+    // Callback and constructor preparation may outlive their source root.
+    // Direct slot calls keep the source operand until its edge is transferred.
     owner: Option<ObjectRef>,
     executable: PublishedFunctionSnapshot,
     closure: std::rc::Rc<[VarRefId]>,
@@ -222,13 +222,69 @@ impl OrdinaryCall {
         caller_realm: crate::engine::heap::ContextId,
         return_to: crate::engine::vm::frame::ReturnTarget,
     ) -> Result<crate::engine::vm::frame::FrameEntry, Error> {
+        let runtime = self
+            .owner
+            .as_ref()
+            .expect("callback owns its callee")
+            .runtime();
+        let input = crate::engine::vm::CallInput::new(runtime, receiver, JsValue::Undefined, None);
+        let entry = self.prepare_input(storage, input, arguments, caller_realm, return_to)?;
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "property_callback_lazy_install",
+        );
+        Ok(entry)
+    }
+
+    /// The selected Base constructor shares ordinary authentication and lazy
+    /// activation. Its receiver owns a separate edge for primitive returns.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::engine::vm) fn prepare_constructor(
+        self,
+        storage: &mut crate::engine::vm::frame::CallStorage,
+        receiver: ObjectRef,
+        new_target: JsValue,
+        arguments: Vec<JsValue>,
+        caller_realm: crate::engine::heap::ContextId,
+        return_to: crate::engine::vm::frame::ReturnTarget,
+    ) -> Result<crate::engine::vm::frame::FrameEntry, Error> {
+        let input = crate::engine::vm::CallInput::new(
+            receiver.runtime(),
+            JsValue::Object(receiver.clone().into_handle()),
+            new_target,
+            None,
+        );
+        let mut entry = self.prepare_input(storage, input, arguments, caller_realm, return_to)?;
+        entry.cold.constructor_return = Some(crate::engine::vm::frame::ConstructorReturn::Base(
+            JsValue::Object(receiver.into_handle()),
+        ));
+        Ok(entry)
+    }
+
+    fn prepare_input(
+        self,
+        storage: &mut crate::engine::vm::frame::CallStorage,
+        input: crate::engine::vm::CallInput,
+        arguments: Vec<JsValue>,
+        caller_realm: crate::engine::heap::ContextId,
+        return_to: crate::engine::vm::frame::ReturnTarget,
+    ) -> Result<crate::engine::vm::frame::FrameEntry, Error> {
         use crate::engine::vm::{
             frame::{FrameCold, FrameEntry},
-            stack::FrameStorage,
+            stack::{FrameStorage, FrameStorageGuard},
         };
-        storage.reserve()?;
-        let function = self.owner.expect("callback authentication owns its callee");
+        let function = self.owner.expect("selected ordinary call owns its callee");
         let callback_runtime = function.runtime().clone();
+        let mut frame_storage = FrameStorageGuard::new(
+            &callback_runtime,
+            FrameStorage {
+                original_arguments: arguments,
+                parameters: Vec::new(),
+                locals: Vec::new(),
+                operands: Vec::new(),
+            },
+        );
+        storage.reserve()?;
         let (flags, flag_bytes) = if self.executable.has_captured_locals {
             storage.capture_flags(self.executable.local_definitions.len())?
         } else {
@@ -240,23 +296,13 @@ impl OrdinaryCall {
             entry_guard: None,
             function: FrameFunction::shared(function, self.closure).into(),
             reusable_captured_locals: flags,
-            input: crate::engine::vm::CallInput::new(
-                &callback_runtime,
-                receiver,
-                crate::engine::value::JsValue::Undefined,
-                None,
-            )
-            .into(),
+            input: input.into(),
         });
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "property_callback_lazy_install",
-        );
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_call_storage(
             frame_bytes,
             flag_bytes,
-            arguments.capacity() * size_of::<JsValue>(),
+            frame_storage.storage_mut().original_arguments.capacity() * size_of::<JsValue>(),
         );
         #[cfg(not(feature = "profiling"))]
         let _ = (frame_bytes, flag_bytes);
@@ -268,12 +314,7 @@ impl OrdinaryCall {
             initialize_bindings: true,
             executable: self.executable,
             cold,
-            storage: FrameStorage {
-                original_arguments: arguments,
-                parameters: Vec::new(),
-                locals: Vec::new(),
-                operands: Vec::new(),
-            },
+            storage: frame_storage.take(),
         })
     }
 
