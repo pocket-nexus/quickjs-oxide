@@ -1051,9 +1051,12 @@ impl Heap {
     pub(crate) fn collection_iterator_current_indices(&self) -> CollectionIteratorCurrentIndices {
         let mut indices = CollectionIteratorCurrentIndices::default();
         for slot in &self.slots {
-            let SlotState::Live(node) = &slot.state else {
+            let SlotState::Resident(node) = &slot.state else {
                 continue;
             };
+            if node.strong.get() == 0 {
+                continue;
+            }
             match &node.data {
                 NodeData::Object(ObjectData {
                     payload:

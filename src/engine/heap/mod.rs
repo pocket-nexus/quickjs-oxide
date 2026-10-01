@@ -219,10 +219,13 @@ struct Node {
     data: NodeData,
 }
 
+// Keep ordinary objects inline: boxing would add one allocation and pointer
+// indirection to every object. The sole wide variant is dropped in place.
+#[allow(clippy::large_enum_variant)]
 enum SlotState {
     Initializing { kind: HeapNodeKind, strong: u32 },
-    Live(Node),
-    ZeroQueued(Node),
+    // Zero count means queued; changing it never moves the wide payload.
+    Resident(Node),
     Zombie { kind: HeapNodeKind, strong: u32 },
     Vacant,
     Retired,
@@ -232,7 +235,7 @@ impl SlotState {
     const fn kind(&self) -> Option<HeapNodeKind> {
         match self {
             Self::Initializing { kind, .. } | Self::Zombie { kind, .. } => Some(*kind),
-            Self::Live(node) | Self::ZeroQueued(node) => Some(node.data.kind()),
+            Self::Resident(node) => Some(node.data.kind()),
             Self::Vacant | Self::Retired => None,
         }
     }
@@ -240,7 +243,7 @@ impl SlotState {
     const fn strong(&self) -> Option<u32> {
         match self {
             Self::Initializing { strong, .. } | Self::Zombie { strong, .. } => Some(*strong),
-            Self::Live(node) | Self::ZeroQueued(node) => Some(node.strong.get()),
+            Self::Resident(node) => Some(node.strong.get()),
             Self::Vacant | Self::Retired => None,
         }
     }

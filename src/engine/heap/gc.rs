@@ -631,7 +631,9 @@ impl Heap {
         let mut scratch = CollectionScratch::new(self);
         let mut examined_nodes = 0usize;
         for (index, slot) in self.slots.iter().enumerate() {
-            if let SlotState::Live(node) = &slot.state {
+            if let SlotState::Resident(node) = &slot.state
+                && node.strong.get() != 0
+            {
                 scratch.shared_trial[index] = Some(node.strong.get());
                 examined_nodes = examined_nodes.saturating_add(1);
             }
@@ -671,7 +673,9 @@ impl Heap {
                 Ok(())
             };
             for slot in &self.slots {
-                if let SlotState::Live(node) = &slot.state {
+                if let SlotState::Resident(node) = &slot.state
+                    && node.strong.get() != 0
+                {
                     subtract_edges(node.data.edges())?;
                 }
             }
@@ -752,10 +756,10 @@ impl Heap {
         let mut candidate_nodes = 0usize;
         let mut anchors = Vec::new();
         for (index, slot) in self.slots.iter().enumerate() {
-            let SlotState::Live(node) = &slot.state else {
+            let SlotState::Resident(node) = &slot.state else {
                 continue;
             };
-            if scratch.shared_reachable[index] {
+            if node.strong.get() == 0 || scratch.shared_reachable[index] {
                 continue;
             }
             candidate_nodes = candidate_nodes.saturating_add(1);
@@ -1066,7 +1070,7 @@ impl Heap {
         }
         if !matches!(
             &slot.state,
-            SlotState::Live(Node {
+            SlotState::Resident(Node {
                 data: NodeData::Object(ObjectData {
                     payload: ObjectPayload::WeakMap { .. }
                         | ObjectPayload::WeakSet { .. }
@@ -1207,7 +1211,7 @@ impl Heap {
     fn weak_object_for_prune(&self, id: ObjectId) -> Result<&ObjectData, HeapError> {
         let index = self.weak_registry_slot_index(id)?;
         let node = match &self.slots[index].state {
-            SlotState::Live(node) | SlotState::ZeroQueued(node) => node,
+            SlotState::Resident(node) => node,
             _ => {
                 return Err(HeapError::Invariant(
                     "weak-ref pass reached an object outside its deferred lifetime",
@@ -1235,7 +1239,7 @@ impl Heap {
     fn weak_object_for_prune_mut(&mut self, id: ObjectId) -> Result<&mut ObjectData, HeapError> {
         let index = self.weak_registry_slot_index(id)?;
         let node = match &mut self.slots[index].state {
-            SlotState::Live(node) | SlotState::ZeroQueued(node) => node,
+            SlotState::Resident(node) => node,
             _ => {
                 return Err(HeapError::Invariant(
                     "weak-ref pass mutated an object outside its deferred lifetime",
@@ -1596,8 +1600,8 @@ impl Heap {
         id: RawId,
     ) -> Result<Option<bool>, HeapError> {
         // A sole live leaf has no heap/atom edges or callbacks. With no older
-        // queued work, retire it directly instead of moving the wide Node
-        // through Live -> ZeroQueued -> finish_node. Explicit string tracing
+        // queued work, retire it directly without entering the shared graph
+        // queue or snapshotting outgoing edges. Explicit string tracing
         // retains the common path; reclamation still clears the debug ledger.
         if matches!(id, RawId::String(_) | RawId::BigInt(_)) && self.zero_queue.is_empty() {
             #[cfg(debug_assertions)]
@@ -1740,7 +1744,7 @@ impl Heap {
         let Ok(index) = self.validate_slot_identity(id) else {
             return false;
         };
-        if let SlotState::Live(node) = &self.slots[index].state {
+        if let SlotState::Resident(node) = &self.slots[index].state {
             let strong = node.strong.get();
             if strong == IMMORTAL_STRONG {
                 // A saturated fast retain is immortal: the release is
@@ -1833,7 +1837,7 @@ impl Heap {
         {
             let slot = &mut self.slots[index];
             match &mut slot.state {
-                SlotState::Live(node) => {
+                SlotState::Resident(node) => {
                     if node.strong.get() == IMMORTAL_STRONG {
                         // A saturated fast retain is immortal: no decrement,
                         // no zero-queue migration.
@@ -1856,17 +1860,11 @@ impl Heap {
                             std::backtrace::Backtrace::force_capture()
                         );
                     }
-                    if node.strong.get() == 0 {
-                        let state = std::mem::replace(&mut slot.state, SlotState::Vacant);
-                        let SlotState::Live(node) = state else {
-                            return Err(HeapError::Invariant(
-                                "live node changed while entering the zero queue",
-                            ));
-                        };
-                        slot.state = SlotState::ZeroQueued(node);
-                        queue = true;
-                    }
+                    // The count is the queue-state marker. No Node or ObjectData
+                    // travels through a temporary enum during this transition.
+                    queue = node.strong.get() == 0;
                 }
+
                 SlotState::Zombie { strong, .. } => {
                     if *strong == IMMORTAL_STRONG {
                         // Symmetric with the live branch: an immortal count
@@ -1880,7 +1878,7 @@ impl Heap {
                     })?;
                     vacate_zombie = *strong == 0;
                 }
-                SlotState::Initializing { .. } | SlotState::ZeroQueued(_) => {
+                SlotState::Initializing { .. } => {
                     return Err(HeapError::Underflow {
                         kind: id.kind(),
                         index: id.index(),
@@ -2010,74 +2008,80 @@ impl Heap {
                 self.shapes.reclaim_vacant(shape_id)?;
                 continue;
             }
-            let index = self.validate_slot_identity(id)?;
-            let node = {
-                let slot = &mut self.slots[index];
-                let state = std::mem::replace(&mut slot.state, SlotState::Vacant);
-                let SlotState::ZeroQueued(node) = state else {
-                    return Err(HeapError::Invariant(
-                        "zero queue referenced a node not in ZeroQueued state",
-                    ));
-                };
-                if node.strong.get() != 0 {
-                    return Err(HeapError::Invariant(
-                        "zero queue contained a nonzero reference count",
-                    ));
-                }
-                node
-            };
-
-            // A zero-count node cannot have an incoming self-edge, so its slot
-            // can be recycled before outgoing edges are processed.
-            self.finish_node(id, node, &mut cleanup)?;
+            self.finish_resident_node(id, false, &mut cleanup)?;
             self.reclaim_vacant_slot(id.index())?;
         }
         Ok(cleanup)
     }
 
-    fn finish_node(
+    /// Snapshot only outgoing handles/atoms while the node remains resident,
+    /// then drop its payload in the arena. Cycle counts remain in the compact
+    /// Zombie marker while outgoing edges are released. No JavaScript or host
+    /// callback can run at this heap-only boundary.
+    fn finish_resident_node(
         &mut self,
         id: RawId,
-        node: Node,
+        cycle: bool,
         cleanup: &mut HeapCleanup,
     ) -> Result<(), HeapError> {
-        match node.data {
-            NodeData::Object(object) => {
-                if matches!(
-                    &object.payload,
-                    ObjectPayload::WeakMap { .. }
-                        | ObjectPayload::WeakSet { .. }
-                        | ObjectPayload::WeakRef { .. }
-                        | ObjectPayload::FinalizationRegistry(_)
-                ) {
-                    let RawId::Object(object_id) = id else {
-                        return Err(HeapError::Invariant(
-                            "weak object finalized through a non-object handle",
-                        ));
-                    };
-                    self.unlink_weak_object(object_id)?;
+        let index = self.validate_slot_identity(id)?;
+        let (strong, weak, edges) = {
+            let SlotState::Resident(node) = &self.slots[index].state else {
+                return Err(HeapError::Invariant(
+                    "finalization requires a resident payload",
+                ));
+            };
+            let strong = node.strong.get();
+            if (strong == 0) == cycle {
+                return Err(HeapError::Invariant(
+                    "finalization count disagrees with its queue/cycle state",
+                ));
+            }
+            let mut weak = false;
+            match &node.data {
+                NodeData::Object(object) => {
+                    weak = matches!(
+                        object.payload,
+                        ObjectPayload::WeakMap { .. }
+                            | ObjectPayload::WeakSet { .. }
+                            | ObjectPayload::WeakRef { .. }
+                            | ObjectPayload::FinalizationRegistry(_)
+                    );
+                    cleanup.finalized_objects = cleanup.finalized_objects.saturating_add(1);
+                    cleanup.atoms.extend(object_atoms(object));
                 }
-                cleanup.finalized_objects = cleanup.finalized_objects.saturating_add(1);
-                cleanup.atoms.extend(object_atoms(&object));
-                for edge in object_edges(&object) {
-                    self.release_raw_no_drain(edge)?;
+                NodeData::Context(context) => {
+                    cleanup.finalized_contexts = cleanup.finalized_contexts.saturating_add(1);
+                    cleanup.atoms.extend(context_atoms(context));
+                }
+                NodeData::FunctionBytecode(bytecode) => {
+                    cleanup.finalized_function_bytecodes =
+                        cleanup.finalized_function_bytecodes.saturating_add(1);
+                    cleanup.atoms.extend(function_bytecode_atoms(bytecode));
                 }
             }
-            NodeData::Context(context) => {
-                cleanup.finalized_contexts = cleanup.finalized_contexts.saturating_add(1);
-                cleanup.atoms.extend(context_atoms(&context));
-                for edge in context_edges(&context) {
-                    self.release_raw_no_drain(edge)?;
-                }
+            (strong, weak, node.data.edges())
+        };
+        if weak {
+            let RawId::Object(object) = id else {
+                return Err(HeapError::Invariant(
+                    "weak object finalized through a non-object handle",
+                ));
+            };
+            self.unlink_weak_object(object)?;
+        }
+        // Assignment drops ObjectData in place; never mem::replace the wide
+        // enum or pass Node by value. Self-edges see Zombie before decrement.
+        self.slots[index].state = if cycle {
+            SlotState::Zombie {
+                kind: id.kind(),
+                strong,
             }
-            NodeData::FunctionBytecode(bytecode) => {
-                cleanup.finalized_function_bytecodes =
-                    cleanup.finalized_function_bytecodes.saturating_add(1);
-                cleanup.atoms.extend(function_bytecode_atoms(&bytecode));
-                for edge in function_bytecode_edges(&bytecode) {
-                    self.release_raw_no_drain(edge)?;
-                }
-            }
+        } else {
+            SlotState::Vacant
+        };
+        for edge in edges {
+            self.release_raw_no_drain(edge)?;
         }
         Ok(())
     }
@@ -2150,28 +2154,7 @@ impl Heap {
                 "non-anchor node entered active cycle finalization",
             ));
         }
-        let index = self.validate_slot_identity(id)?;
-        let node = {
-            let slot = &mut self.slots[index];
-            let state = std::mem::replace(&mut slot.state, SlotState::Vacant);
-            let SlotState::Live(node) = state else {
-                return Err(HeapError::Invariant(
-                    "cycle anchor was not live when finalization began",
-                ));
-            };
-            if node.data.kind() != id.kind() {
-                return Err(HeapError::WrongKind {
-                    expected: id.kind(),
-                    actual: node.data.kind(),
-                });
-            }
-            slot.state = SlotState::Zombie {
-                kind: id.kind(),
-                strong: node.strong.get(),
-            };
-            node
-        };
-        self.finish_node(id, node, cleanup)
+        self.finish_resident_node(id, true, cleanup)
     }
 
     fn reclaim_slot(&mut self, index: u32) -> Result<(), HeapError> {
@@ -3191,7 +3174,9 @@ impl Heap {
                 if printed == 8 {
                     break;
                 }
-                if let SlotState::Live(node) = &slot.state {
+                if let SlotState::Resident(node) = &slot.state
+                    && node.strong.get() != 0
+                {
                     self.print_alloc_site(index, node.data.kind(), node.strong.get(), "");
                     printed += 1;
                 }
@@ -3288,7 +3273,9 @@ impl Heap {
     ) -> Vec<(crate::engine::heap::HeapNodeKind, usize, u32, String)> {
         let mut incoming = HashMap::<RawId, usize>::new();
         for slot in &self.slots {
-            if let SlotState::Live(node) = &slot.state {
+            if let SlotState::Resident(node) = &slot.state
+                && node.strong.get() != 0
+            {
                 for edge in node.data.edges() {
                     if !edge.is_leaf() && self.is_live(edge) {
                         let count = incoming.entry(edge).or_default();
@@ -3319,7 +3306,9 @@ impl Heap {
         }
         let mut bytecode_names = std::collections::HashMap::new();
         for (index, slot) in self.slots.iter().enumerate() {
-            if let SlotState::Live(node) = &slot.state {
+            if let SlotState::Resident(node) = &slot.state
+                && node.strong.get() != 0
+            {
                 if let NodeData::FunctionBytecode(data) = &node.data {
                     bytecode_names.insert(
                         index,
@@ -3333,7 +3322,9 @@ impl Heap {
         }
         let mut roots = Vec::new();
         for (index, slot) in self.slots.iter().enumerate() {
-            if let SlotState::Live(node) = &slot.state {
+            if let SlotState::Resident(node) = &slot.state
+                && node.strong.get() != 0
+            {
                 let strong = node.strong.get() as usize;
                 let id = shared_raw_id(node.data.kind(), index as u32, slot.generation);
                 let internal = incoming.get(&id).copied().unwrap_or(0);
@@ -3410,7 +3401,7 @@ impl Heap {
             eprintln!("[incoming] index {target_index} is out of range");
             return;
         };
-        let SlotState::Live(target) = &slot.state else {
+        let SlotState::Resident(target) = &slot.state else {
             eprintln!("[incoming] index {target_index} is not live");
             return;
         };
@@ -3425,7 +3416,9 @@ impl Heap {
         }
         let target_id = shared_raw_id(target.data.kind(), target_index as u32, slot.generation);
         for (index, slot) in self.slots.iter().enumerate() {
-            if let SlotState::Live(node) = &slot.state {
+            if let SlotState::Resident(node) = &slot.state
+                && node.strong.get() != 0
+            {
                 let mut hits = 0;
                 for edge in node.data.edges() {
                     if edge == target_id {

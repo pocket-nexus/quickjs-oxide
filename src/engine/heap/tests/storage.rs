@@ -1355,10 +1355,7 @@ fn property_slot_transaction_retains_before_publish_and_marks_cleanup_failures()
             vec![PropertySlot::Data(RawValue::Undefined)],
         ))
         .unwrap();
-    heap.live_node_mut(RawId::Object(target))
-        .unwrap()
-        .strong
-        .set(u32::MAX);
+    heap.set_strong_count_for_test(RawId::Object(target), u32::MAX);
     let failure = heap
         .replace_object_slot_with_status(object, 0, PropertySlot::Data(RawValue::Object(target)))
         .err()
@@ -1369,16 +1366,10 @@ fn property_slot_transaction_retains_before_publish_and_marks_cleanup_failures()
         PropertySlot::Data(RawValue::Int(7))
     ));
     assert_eq!(heap.object_strong_count(target), Ok(u32::MAX));
-    heap.live_node_mut(RawId::Object(target))
-        .unwrap()
-        .strong
-        .set(1);
+    heap.set_strong_count_for_test(RawId::Object(target), 1);
     heap.replace_object_slot(object, 0, PropertySlot::Data(RawValue::Object(target)))
         .unwrap();
-    heap.live_node_mut(RawId::Object(target))
-        .unwrap()
-        .strong
-        .set(0);
+    heap.set_strong_count_for_test(RawId::Object(target), 0);
     let failure = heap
         .replace_object_slot_with_status(object, 0, PropertySlot::Data(RawValue::Int(42)))
         .err()
@@ -1388,10 +1379,7 @@ fn property_slot_transaction_retains_before_publish_and_marks_cleanup_failures()
         heap.object(object).unwrap().slots[0],
         PropertySlot::Data(RawValue::Int(42))
     ));
-    heap.live_node_mut(RawId::Object(target))
-        .unwrap()
-        .strong
-        .set(1);
+    heap.set_strong_count_for_test(RawId::Object(target), 1);
     heap.release_object(target).unwrap();
     heap.release_object(object).unwrap();
     heap.release_shape(shape).unwrap();
@@ -1448,10 +1436,7 @@ fn property_slot_transaction_keeps_new_symbol_owned_after_post_publish_failure()
         let symbol_index = AtomIdx::from_raw(symbol.raw());
         state
             .heap
-            .live_node_mut(RawId::Object(old.object_id()))
-            .unwrap()
-            .strong
-            .set(0);
+            .set_strong_count_for_test(RawId::Object(old.object_id()), 0);
         assert!(
             state
                 .replace_property_slot(
@@ -1467,10 +1452,7 @@ fn property_slot_transaction_keeps_new_symbol_owned_after_post_publish_failure()
         );
         state
             .heap
-            .live_node_mut(RawId::Object(old.object_id()))
-            .unwrap()
-            .strong
-            .set(1);
+            .set_strong_count_for_test(RawId::Object(old.object_id()), 1);
         state.atoms.release(symbol).unwrap();
     }
     drop(object);
