@@ -5,6 +5,7 @@ impl Heap {
     #[must_use]
     pub const fn new() -> Self {
         Self {
+            gc_pressure: None,
             property_layout_epoch: 0,
             #[cfg(not(feature = "profiling"))]
             slots: Vec::new(),
@@ -294,6 +295,7 @@ impl Heap {
             strong: Cell::new(strong),
             data,
         });
+        self.record_cycle_allocation();
         Ok(())
     }
 

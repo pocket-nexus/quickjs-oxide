@@ -56,8 +56,10 @@ impl Runtime {
             well_known_symbols.insert(symbol, atom);
         }
         let active_frame_depth = Rc::new(Cell::new(0));
+        let gc_pressure = Rc::new(crate::engine::heap::gc_pressure::GcPressure::new());
         Self(Rc::new(RuntimeInner {
             execution_turn_depth: Cell::new(0),
+            gc_pressure: gc_pressure.clone(),
             state: RefCell::new(RuntimeState {
                 kept_objects: Default::default(),
                 atoms,
@@ -69,7 +71,8 @@ impl Runtime {
                     }
                     #[cfg(not(feature = "profiling"))]
                     Heap::new()
-                },
+                }
+                .with_gc_pressure(gc_pressure),
                 pending_exception: None,
                 pending_jobs: VecDeque::new(),
                 debug_info_mode: DebugInfoMode::Full,

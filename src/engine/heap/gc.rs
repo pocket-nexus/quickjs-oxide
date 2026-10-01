@@ -2011,6 +2011,7 @@ impl Heap {
             self.finish_resident_node(id, false, &mut cleanup)?;
             self.reclaim_vacant_slot(id.index())?;
         }
+        self.credit_cycle_reclamation(&cleanup);
         Ok(cleanup)
     }
 
