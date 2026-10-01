@@ -19,12 +19,12 @@ pub(crate) use phases::{CompilePhase, PhaseTimer, VmCallSample};
 mod sites;
 pub use sites::{
     CallsiteCost, ExecutionDispatchCost, ExecutionSiteCost, ExecutionSiteKey, ExecutionStaticCost,
-    FunctionSiteKey, SiteKey,
+    FunctionSiteKey, NumericRejectionCost, SiteKey,
 };
 #[cfg(feature = "profiling")]
 pub(crate) use sites::{
     record_callsite_callee, record_execution_dispatch, record_execution_outcome,
-    record_execution_static,
+    record_execution_static, record_numeric_rejection_visit,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -144,11 +144,16 @@ pub struct CostSnapshot {
     pub execution_dispatch: std::collections::BTreeMap<SiteKey, ExecutionDispatchCost>,
     /// Each attempted published span is recorded at its canonical starting PC.
     pub execution_sites: std::collections::BTreeMap<ExecutionSiteKey, ExecutionSiteCost>,
+    /// Diagnostic-only compiler rejection categories, including cold code.
+    pub numeric_rejection_totals: std::collections::BTreeMap<(&'static str, &'static str), u64>,
+    /// Rejected sites in functions entered during this profile interval.
+    pub numeric_rejections: std::collections::BTreeMap<SiteKey, NumericRejectionCost>,
     /// Ordinary callsite callee identity observations. No JS owner is retained.
     pub callsites: std::collections::BTreeMap<SiteKey, CallsiteCost>,
     pub omitted_execution_static_functions: u64,
     pub omitted_execution_dispatch_events: u64,
     pub omitted_execution_outcome_events: u64,
+    pub omitted_numeric_rejection_sites: u64,
     pub omitted_callsite_events: u64,
 }
 
@@ -279,6 +284,26 @@ pub(crate) fn record_compiler_storage(phase: CompilePhase, bytes: u64) {
         cost.storage_samples = cost.storage_samples.saturating_add(1);
         cost.maximum_observed_ir_capacity_bytes =
             cost.maximum_observed_ir_capacity_bytes.max(bytes);
+    }
+}
+
+#[cfg(feature = "profiling")]
+pub(crate) fn record_compiled_numeric_rejections(
+    sites: &[crate::engine::code::region::RejectedNumericSite],
+    omitted: usize,
+) {
+    if let Some(collector) = current() {
+        let mut costs = collector.borrow_mut();
+        costs.omitted_numeric_rejection_sites = costs
+            .omitted_numeric_rejection_sites
+            .saturating_add(omitted as u64);
+        for site in sites {
+            let count = costs
+                .numeric_rejection_totals
+                .entry((site.family, site.reason))
+                .or_default();
+            *count = count.saturating_add(1);
+        }
     }
 }
 

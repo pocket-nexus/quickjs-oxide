@@ -342,13 +342,20 @@ mod enabled {
             writeln!(out, "execution_static={:?}", costs.execution_static)?;
             writeln!(out, "execution_dispatch={:?}", costs.execution_dispatch)?;
             writeln!(out, "execution_sites={:?}", costs.execution_sites)?;
+            writeln!(
+                out,
+                "numeric_rejection_totals={:?}",
+                costs.numeric_rejection_totals
+            )?;
+            writeln!(out, "numeric_rejections={:?}", costs.numeric_rejections)?;
             writeln!(out, "callsites={:?}", costs.callsites)?;
             writeln!(
                 out,
-                "diagnostic_omissions: functions={} dispatch={} outcomes={} callsites={}",
+                "diagnostic_omissions: functions={} dispatch={} outcomes={} numeric_rejections={} callsites={}",
                 costs.omitted_execution_static_functions,
                 costs.omitted_execution_dispatch_events,
                 costs.omitted_execution_outcome_events,
+                costs.omitted_numeric_rejection_sites,
                 costs.omitted_callsite_events
             )?;
             return Ok(());
@@ -551,10 +558,11 @@ mod enabled {
 
         write!(
             out,
-            ",\"execution_diagnostics\":{{\"basis\":\"logical-profiled-events; no timing; executed-functions-only; max 4096 functions, 16384 sites per category, 4 callee identities per callsite\",\"callsite_scope\":\"ordinary-driver-enter-selected-only; other call and construct paths are excluded\",\"omitted\":{{\"static_functions\":{},\"dispatch_events\":{},\"outcome_events\":{},\"callsite_events\":{}}},\"functions\":[",
+            ",\"execution_diagnostics\":{{\"basis\":\"logical-profiled-events; no timing; executed-functions-only except compiler_rejections; max 4096 functions, 16384 sites per category, 4 callee identities per callsite\",\"callsite_scope\":\"ordinary-driver-enter-selected-only; other call and construct paths are excluded\",\"omitted\":{{\"static_functions\":{},\"dispatch_events\":{},\"outcome_events\":{},\"numeric_rejection_sites\":{},\"callsite_events\":{}}},\"functions\":[",
             costs.omitted_execution_static_functions,
             costs.omitted_execution_dispatch_events,
             costs.omitted_execution_outcome_events,
+            costs.omitted_numeric_rejection_sites,
             costs.omitted_callsite_events
         )?;
         for (index, (key, cost)) in costs.execution_static.iter().enumerate() {
@@ -618,6 +626,33 @@ mod enabled {
                 write!(out, ":{count}")?;
             }
             write!(out, "}}}}")?;
+        }
+        write!(out, "],\"compiler_rejections\":[")?;
+        for (index, ((family, reason), count)) in costs.numeric_rejection_totals.iter().enumerate()
+        {
+            if index != 0 {
+                write!(out, ",")?;
+            }
+            write!(out, "{{\"family\":")?;
+            string(out, family)?;
+            write!(out, ",\"reason\":")?;
+            string(out, reason)?;
+            write!(out, ",\"count\":{count}}}")?;
+        }
+        write!(out, "],\"rejections\":[")?;
+        for (index, (key, cost)) in costs.numeric_rejections.iter().enumerate() {
+            if index != 0 {
+                write!(out, ",")?;
+            }
+            write!(out, "{{")?;
+            write_function_site_key(out, &key.function, Some(key.pc))?;
+            write!(out, ",\"source_pc\":{},\"family\":", cost.source_pc)?;
+            string(out, cost.family)?;
+            write!(out, ",\"reason\":")?;
+            string(out, cost.reason)?;
+            write!(out, ",\"visits\":{},\"lowered_window\":", cost.visits)?;
+            string(out, &cost.lowered_window)?;
+            write!(out, "}}")?;
         }
         write!(out, "],\"callsites\":[")?;
         for (index, (key, cost)) in costs.callsites.iter().enumerate() {

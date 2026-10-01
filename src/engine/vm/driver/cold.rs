@@ -143,7 +143,7 @@ pub(super) fn dispatch(
             )?;
             context.step(step)
         }
-        VmAction::Numeric(kind) => {
+        VmAction::Numeric { kind, .. } => {
             let step = super::super::frame_operations::numeric(
                 context.runtime,
                 context.execution,
@@ -308,11 +308,13 @@ pub(super) fn dispatch(
         VmAction::GetField {
             index,
             keep_receiver,
-        } => get_field(&mut context, index, keep_receiver)?,
+            fallthrough,
+        } => get_field(&mut context, index, keep_receiver, fallthrough)?,
         VmAction::GetElement {
             keep_receiver,
             keep_key,
-        } => get_element(&mut context, keep_receiver, keep_key)?,
+            fallthrough,
+        } => get_element(&mut context, keep_receiver, keep_key, fallthrough)?,
         VmAction::ConvertPlus => convert(&mut context, false, false)?,
         VmAction::ConvertPropertyKey => convert(&mut context, false, true)?,
         #[cfg(all(test, feature = "profiling"))]
@@ -634,6 +636,7 @@ fn get_field(
     context: &mut Context<'_>,
     index: u32,
     keep_receiver: bool,
+    fallthrough: super::super::execute::FallthroughPc,
 ) -> Result<Disposition, Error> {
     let runtime = context.runtime;
     let execution = &mut *context.execution;
@@ -645,6 +648,7 @@ fn get_field(
         id,
         super::super::property_driver::ReadKey::Static(index),
         keep_receiver,
+        fallthrough,
     )? {
         CallStep::Entered => Ok(Disposition::Entered),
         CallStep::Complete(completion) => Ok(context.complete(completion)),
@@ -657,6 +661,7 @@ fn get_element(
     context: &mut Context<'_>,
     keep_receiver: bool,
     keep_key: bool,
+    fallthrough: super::super::execute::FallthroughPc,
 ) -> Result<Disposition, Error> {
     let runtime = context.runtime;
     let execution = &mut *context.execution;
@@ -689,6 +694,7 @@ fn get_element(
         id,
         super::super::property_driver::ReadKey::Computed { keep_key },
         keep_receiver,
+        fallthrough,
     )? {
         CallStep::Entered => Ok(Disposition::Entered),
         CallStep::Complete(completion) => Ok(context.complete(completion)),

@@ -110,6 +110,7 @@ impl Default for PublishedPrivateBindings {
 #[derive(Debug)]
 pub struct FunctionBytecodeDraft {
     pub code: Rc<[Instruction]>,
+    pub numeric_regions: Box<[crate::engine::code::region::NumericRegion]>,
     pub constants: Rc<[BytecodeConstant]>,
     pub property_key_atoms: Option<Rc<[Atom]>>,
     pub realm: ContextId,

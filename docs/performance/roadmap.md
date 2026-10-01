@@ -1,11 +1,21 @@
 # #52 起点的执行优化路线
 
-状态：设计提案，尚未实现。源码基线为 PR #52
-`996663f771afdabdc69d52c94bd4d2fb392e27b1`。当前实现见
+状态：M1 在 `3d98c0a8ee065e5c71607b46bd0059282c6d7e87`
+实现；PR #53 随后扩展了 M2 的直接目的地、数组更新和比较分支，
+并在 `6f1de9c5` 发布执行字 continuation、CFG lexical 初始化事实及
+V8 v7 数组乘积更新来源。后续又校正乘积赋值的选择/发布契约，覆盖
+`lin_solve` 的三段数组生产到目的地链，并压缩发布描述符。C1 连通同帧
+原语数值运算的 fallthrough 传递；C2 将同一已解码位置传入同帧属性读取。
+cell/shape 类型化 arena 已独立实现。延迟回复与调用等其余工作流仍是提案。
+PR #53 的直接基线是 PR #52
+`4287e8c6019933289f3a06e703aea15bf79c9f11`；更早的
+`996663f771afdabdc69d52c94bd4d2fb392e27b1` 是原设计起点。
+M1 的历史验证和测量见[收据](receipts/m1-numeric-region-2026-09-28/README.md)，
+后续覆盖与成本见[当前收据](receipts/numeric-region-followthrough-2026-09-28/README.md)。当前实现见
 [架构](../architecture.md)，设计约束见[原则](principles.md)，测量方法见
 [测量协议](measurement.md)。本页落实
 [Rust Design Patterns Examples 会话](https://chatgpt.com/c/6ab8fc22-1d2c-83ee-b108-5d89db1efba2)
-最后一轮以 #52 为新起点的建议；示例类型属于内部设计，不是已有公开 API。
+最后一轮以 #52 为新起点的建议；示例类型属于内部设计，不是公开 API。
 
 ## 1. 方向与工作流
 
@@ -15,11 +25,11 @@
 
 | 工作流 | 交付目标 | 顺序与依赖 |
 | --- | --- | --- |
-| 执行规划 | binding、effect、ownership 与局部 dataflow 决定显式操作数、目的地和执行形态 | M1 连通一个实际区域；随后扩展直接目的地和比较分支 |
-| 作用域执行 | 准入返回可消费的目的地访问；数组事实在相应借用内有效 | 与 M1 同时交付；随后扩展现有 own Number 元素更新 |
-| continuation 与调用 | 携带已知 fault/fallthrough 位置，按发布的布局安装帧，按被替换 owner 选择释放边界 | 可独立推进位置契约；调用布局基于精确 binding 事实继续扩展 |
+| 执行规划 | binding、effect、ownership 与局部 dataflow 决定显式操作数、目的地和执行形态 | 局部累加、直接目的地、数组更新、乘积赋值、比较及 `lin_solve` 中三个短区域已交付；数组乘积来源共享 producer fact，后续按实际剩余执行链扩展 |
+| 作用域执行 | 准入返回可消费的目的地访问；数组事实在相应借用内有效 | local 提交与现有 own Number 元素更新已交付；继续复用准入契约 |
+| continuation 与调用 | 携带已知 fault/fallthrough 位置，按发布的布局安装帧，按被替换 owner 选择释放边界 | 数值操作使用执行字 continuation，乘积赋值支持 scalar 替换准入；C1/C2 覆盖同帧数值和属性读取，C3 延迟回复/调用仍独立推进 |
 | 自适应操作 | 等布局 opcode family、直接 cache-site ID、有界重试、向回落传递已有 miss 事实 | 先确定操作的所有权与 continuation 契约，再接入生产适应机制 |
-| 存储 | 数值 backing 与 cell/shape 类型化 arena，保留完整身份及回收边 | 数组 backing 复用 M1 操作契约；小节点 arena 可独立推进 |
+| 存储 | 数值 backing 与 cell/shape 类型化 arena，保留完整身份及回收边 | cell/shape arena 已实现；数组 backing 仍复用 M1/M2 操作契约推进 |
 | 嵌入执行 | 有界 safepoint、activation scratch、只读 program image、明确语义的 native kernel | 扩大区域前定义中断/计费契约；冻结映像明确 linking 与自适应状态边界 |
 
 先保留中央 dispatch、通用 `JsValue`、显式帧栈和现有数组存储。
@@ -47,7 +57,7 @@
 | 13 | 有界多态与重试 | 仅参与适应的站点承担计数；限制链长、状态空间和重复失败成本 |
 | 14 | 同质数值存储 | M1 后增加 backing；显式表达 holes、descriptor 和表示转换 |
 | 15 | 紧凑值 | 先减少数值区域中的 `JsValue`；NaN boxing 留作独立表示实验 |
-| 16 | 类型化 arena/冷热分离 | cell/shape 存储按实际载荷与访问局部性拆分 |
+| 16 | 类型化 arena/冷热分离 | cell/shape 已移入独立紧凑存储，保留完整身份与回收；其他冷热拆分未实施 |
 | 17 | 借用和移动 | ownership-aware liveness；只为真实新增 owner retain，保持可观察释放 |
 | 18 | 连续帧与参数窗口 | 用发布的布局和实参用途削减安装、padding 与分类工作 |
 | 19 | Open/closed upvalue | 先用精确 capture map；另证 sibling sharing、unwind、eval、arguments 与暂停生命周期 |
@@ -68,9 +78,10 @@
 NaN boxing 不得缩短 generation；固定 256 槽帧不是嵌入式默认布局。
 Frozen/adaptive 策略在函数或 activation 边界选择，不给每条指令增加模式判断。
 
-## 3. M1：一个完整的数值区域
+## 3. M1：一个完整的数值区域（已实现）
 
-交付以下真实 JavaScript 语句从编译到提交的完整路径：
+本里程碑交付以下真实 JavaScript 语句从编译到提交的完整路径；本节保留
+设计及验收契约，实际边界以[架构](../architecture.md)和[收据](receipts/m1-numeric-region-2026-09-28/README.md)为准：
 
 ```javascript
 sum += array[i] * scale;
@@ -83,15 +94,18 @@ sum += array[i] * scale;
 发布。规划 IR 只在编译期间存在；不成为第二个运行时解释器。
 
 规划以临时值身份和 use 关系表示：读旧 sum、取 array[i]、乘 scale、相加、
-写回 sum。记录读取来源、可变目的地、临时值用途，以及可能调用 JS、分配、
-抛错、可观察释放或改变布局的效果。effects 用于选择和区域形成，不转化成
-主循环逐条执行的一组 Boolean 检查。只实现 M1 消费的分析与契约。
+写回 sum。当前 `PotentialEffects` 记录可能调用 JS、分配和抛错；M1 的
+可观察释放与布局安全来自受限指令形态和动态准入，而不是通用的 ownership
+或 layout refinement 证明。effects 用于选择和区域形成，不转化成主循环
+逐条执行的一组 Boolean 检查。扩大覆盖时应复用事实及验证契约，不能让
+每个新操作族重新构造同一份证明。
 
 M1 支持表达式结果被丢弃的语句；目的地为可写、未捕获的普通 local。
 array 来自直接 local/argument；index、scale 来自直接 local/argument 或
 数值常量。拒绝 capture、eval/dynamic environment、mapped arguments、const
 目的地及无法证明初始化/稳定存储的 binding。拒绝路径继续原有语义。
-精确 capture 与 TDZ 事实必须传到选择阶段，不能以整个函数的粗分类代替。
+capture 与 lexical/TDZ 事实传到选择阶段；存在 dynamic binding 时按
+函数级保守拒绝，不能以局部 guard 假定其存储稳定。
 
 发布契约包含显式操作数来源/目的地、generic 入口、成功 continuation、
 source/fault 映射与逻辑 stack peak/delta。编码沿用单一字流，generic 回落
@@ -135,10 +149,21 @@ slot 位置或堆引用；Copy Number 与仍在作用域内的 frame destination
 不携带该开关；内部 planner/admission 类型不改变公开 embedding API。
 测试检查发布的操作，不能只从源码形状或结果相同推断已命中。
 
-M2 在同一数据流与访问契约上扩展数组读的直接目的地、已有 writable own
-Number 的元素更新和直接比较分支；更新把读、计算、写放在一次合适的借用内。
-读资格与写资格分开，显式处理数组 alias。M3 再接适应 family 和数值 backing。
-另行推进 continuation 的已知位置传递与 cell/shape arena，不等待完整优化器。
+M2 已在同一来源、binding、准入及发布契约上扩展数组读的直接目的地、
+已有 writable own Number 的元素更新和直接比较分支。简单元素更新在一次
+可变 heap 借用内读旧值并写回；数组乘积增量先以短 shared 借用读取来源，
+再以单独的可变借用更新目标。比较的命中路径直接选择 continuation。
+已初始化、未捕获的 lexical `let` 目的地和 `const` 来源现在可由可达普通
+CFG 前驱的交集证明；不确定的异常或恢复入口及其他不确定 binding 回落普通
+指令。每种操作有精确消耗区间、独立 opcode、描述符形态及对应的原词回落入口。
+更新、比较及新短区域仍使用有限形态识别，共用静态来源与运行时准入；
+不能称为任意表达式规划。历史 M2 测量见
+[M2 收据](receipts/m2-numeric-operations-2026-09-28/README.md)，当前覆盖和成本见
+[后续收据](receipts/numeric-region-followthrough-2026-09-28/README.md)。
+读资格与写资格分开，数组 alias 的动态事实仅在借用期有效。自适应 family
+与数值 backing 仍是独立实验，不作为下一段执行链的前提。
+cell/shape arena 已独立于完整优化器完成；四种数值操作的执行字 continuation
+已在 #53 发布，通用调用布局仍可另行推进。
 扩大区域及长 kernel 前先确定精确逻辑耗尽还是块级计费、轮询上界及 root 发布点。
 
 ## 4. 验证与完成条件
@@ -152,12 +177,50 @@ Number 的元素更新和直接比较分支；更新把读、计算、写放在�
 | 生命周期 | sum/input alias、基线容量错误、guard miss 无修改、异常展开及 generator/async 区域外恢复 |
 | 执行成本 | 成功无中间 operand owner、无重复目的地解析、一次数组认证/读取、无新增 driver 退出；检查实际机器码 |
 
-按[测量协议](measurement.md)用同工具链重建 #52、Parent 和 Candidate，分别
+按[测量协议](measurement.md)用同工具链重建当前 #53 head、#52 parent 和 Candidate，分别
 记录编译/分配、固定 guest 工作量执行、冷/热/失败覆盖、字流及元数据体积、
 frame/heap/峰值内存。profiling 解释机制，plain 产物证明性能；现有整进程
 runner 含编译与退出，不能声称是隔离后的执行耗时。
 
 运行受影响测试、当前 CI feature/MSRV 矩阵及集成源码的 focused/full Test262；
-保持冻结结果正文，不为性能改动放宽语义向量。实际命令、源码和结果写入新收据。
+保持冻结结果正文，不为性能改动放宽语义向量。实际命令、源码和结果见
+[M1 收据](receipts/m1-numeric-region-2026-09-28/README.md)。
 完成条件是语句贯穿这套设计、目标工作确实消失，并有可归属的测量；仅增加
 opcode、proof wrapper、宏或测试通过均不足以宣称完成。没有预先承诺的提速倍数。
+
+## 5. C1：同帧原语数值完成（已实现）
+
+`execute_frame` 从已发布指令取得 `decoded.next_pc`，在产生 `VmAction::Numeric`
+时将它包装为 `FallthroughPc`，经 ready driver 交给原语数值运算完成器。
+成功完成在原有 stack 写入及清理顺序之后提交 `frame.resume_pc`；进入操作时
+`fault_pc` 仍指向原操作。原语路径拒绝对象操作数时，action 连同位置交给
+既有 cold fallback，且不会提前推进 PC。
+
+本次只删除该原语运算完成器为恢复 fallthrough 所作的重复 decode。
+`NumericStep` 的比较等完成路径、对象转换的后续完成、属性操作、延迟回复、
+caller return、暂停恢复与 interpreter 入口验证未迁移。特别是
+`CompareBranchStack` 的 fallback 携带比较指令的边界，不能将它误用作
+融合成功时的分支目的地。
+
+位置契约区分 fault、已解码 fallthrough 和已提交 resume：知道下一条边界
+不代表当前操作已完成。位置必须对应当前 `FrameId` 和操作；它不代替现有
+frame/slot 身份检查。失败、部分输出写入和 materialization retry 保留
+原来的提交时机与错误行为。测试和 #53 对照见
+[C1 收据](receipts/c1-continuation-positions-2026-09-28/README.md)。
+
+C2 在属性读复用这个位置契约，保留 getter、Proxy、key conversion 的
+pending-operation 身份及属性路径自身的失败状态。C3 再审计延迟回复、调用与
+暂停表示。执行入口边界检查仍需独立评估。
+
+## 6. C2：同帧属性读取（已实现）
+
+`GetField` 与 `GetElement` action 携带原指令的 `FallthroughPc`。静态字段及计算
+字段的 cache/数组快速路径未命中时也使用解码器给出的边界。ready driver 将其传给
+属性读取器；同帧完成时，linked-own 读取和一般 prepared 读取都直接消费该边界，
+无需在入口或结果发布前重新解码。暖 cache 命中仍在解释器内完成，不新增 action。
+
+属性读取仍按原有顺序发布保留的 receiver/key、更新 `resume_pc`、再推入结果。
+getter、Proxy、对象键转换、super-property 和其他等待回复保留其帧与操作身份；
+未迁移路径的恢复调用有独立入口和诊断计数。写入、调用与挂起不属于 C2。
+[C2 收据](receipts/c2-property-read-positions-2026-09-28/README.md)记录路径覆盖、
+语义验证、生成代码和测量边界。

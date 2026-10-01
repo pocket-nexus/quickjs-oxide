@@ -51,6 +51,17 @@ impl Runtime {
         state.unlink_finalized_shapes(stats.cleanup.finalized_shape_ids.iter().copied());
         state.release_atom_indices(atom_indices)?;
         state.atoms.sweep_released_strings();
+        drop(state);
+        // The operation guard drains deferred root releases. Trim only after
+        // that drain, so a release queued during collection cannot be lost.
+        drop(_operation);
+        if !self.0.deferred_references.has_pending() {
+            self.0
+                .state
+                .borrow_mut()
+                .heap
+                .trim_empty_zero_queue_after_gc();
+        }
         Ok(stats)
     }
 

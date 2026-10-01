@@ -141,6 +141,7 @@ mod eval;
 mod function_declarations;
 
 mod assignment;
+mod numeric_region;
 
 mod closures;
 

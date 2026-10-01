@@ -81,19 +81,29 @@ pub(super) fn run(
                 }
             }
 
-            VmAction::Numeric(kind) => {
+            VmAction::Numeric { kind, fallthrough } => {
                 use crate::engine::vm::frame_operations::NumericProgress;
                 let Some(progress) =
                     crate::engine::vm::frame_operations::try_complete_primitive_numeric(
-                        runtime, execution, id, kind,
+                        runtime,
+                        execution,
+                        id,
+                        kind,
+                        fallthrough,
                     )?
                 else {
+                    #[cfg(feature = "profiling")]
+                    record_event("numeric_primitive_declined");
                     return Ok(Boundary::Exit(exit));
                 };
                 match progress {
                     NumericProgress::Completed => {
                         #[cfg(feature = "profiling")]
                         record_event("numeric_completed_in_same_frame");
+                        #[cfg(feature = "profiling")]
+                        if kind.primitive_arithmetic() {
+                            record_event("numeric_completed_with_carried_fallthrough");
+                        }
                     }
                     NumericProgress::Deferred(CallStep::Entered) => return Ok(Boundary::Entered),
                     NumericProgress::Deferred(CallStep::Complete(completion)) => {
@@ -125,14 +135,25 @@ pub(super) fn run(
             VmAction::GetField {
                 index,
                 keep_receiver,
+                fallthrough,
             } => {
+                #[cfg(feature = "profiling")]
+                record_event("property_read_action_exit");
                 let progress = crate::engine::vm::property_driver::read_progress(
                     runtime,
                     execution,
                     id,
                     crate::engine::vm::property_driver::ReadKey::Static(index),
                     keep_receiver,
+                    fallthrough,
                 )?;
+                #[cfg(feature = "profiling")]
+                if matches!(
+                    progress,
+                    crate::engine::vm::property_driver::PropertyProgress::Completed
+                ) {
+                    record_event("property_read_completed_with_carried_fallthrough");
+                }
                 if let Some(boundary) = property_boundary(progress) {
                     return Ok(boundary);
                 }
@@ -140,7 +161,10 @@ pub(super) fn run(
             VmAction::GetElement {
                 keep_receiver,
                 keep_key,
+                fallthrough,
             } => {
+                #[cfg(feature = "profiling")]
+                record_event("property_read_action_exit");
                 let frame = execution.frames.current_mut(id)?;
                 if !matches!(
                     execution.slots.peek(&frame.window, 1)?,
@@ -157,7 +181,15 @@ pub(super) fn run(
                     id,
                     crate::engine::vm::property_driver::ReadKey::Computed { keep_key },
                     keep_receiver,
+                    fallthrough,
                 )?;
+                #[cfg(feature = "profiling")]
+                if matches!(
+                    progress,
+                    crate::engine::vm::property_driver::PropertyProgress::Completed
+                ) {
+                    record_event("property_read_completed_with_carried_fallthrough");
+                }
                 if let Some(boundary) = property_boundary(progress) {
                     return Ok(boundary);
                 }
@@ -253,10 +285,17 @@ fn invariant(message: &'static str) -> Error {
 #[cold]
 #[inline(never)]
 fn record_exit(result: &Result<VmAction, Error>) {
+    use crate::engine::api::profiling::record_owned_execution_layout as layout;
+    layout::<VmAction>("VmAction");
+    layout::<Result<VmAction, Error>>("Result<VmAction, Error>");
+    layout::<crate::engine::vm::frame::Frame>("Frame");
     record_event(match result {
         Ok(exit) => exit.diagnostic_name(),
         Err(_) => "execute_continuation.EngineError",
     });
+    if matches!(result, Ok(VmAction::Numeric { .. })) {
+        record_event("numeric_action_exit");
+    }
 }
 
 #[cfg(feature = "profiling")]

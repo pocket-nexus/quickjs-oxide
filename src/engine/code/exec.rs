@@ -2,6 +2,7 @@
 //! a 16-bit short operand. Wide operands occupy following 32-bit words.
 //! Compiler instructions are consumed by `encode` and never retained here.
 
+use crate::engine::heap::{BytecodeConstant, RawValue};
 use std::cell::Cell;
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -12,13 +13,38 @@ use super::bytecode::{
 };
 use super::exec_opcode::Opcode;
 use super::function::metadata::{ClosureVariableKind, VariableDefinition};
-use super::instruction::{Operand, OperandContract};
+use super::initialization::definite_initialization_entries;
+use super::instruction::{Operand, OperandContract, StackStateEffect};
+#[cfg(feature = "profiling")]
+use super::region::RejectedNumericSite;
+use super::region::{
+    ArrayProductSource, ArrayReadSource, DirectSource, NumberSource, NumericOperation,
+    NumericRegion, PublishedNumericRegion, UpdateDelta,
+};
 
 const OPCODE_MASK: u16 = 0x03ff;
 const COUNT_SHIFT: u16 = 10;
 const WIDE_FIRST: u16 = 0x1000;
 const WIDTH_SHIFT: u16 = 13;
 const RESERVED_MASK: u16 = 0x8000;
+
+#[cfg(test)]
+thread_local! {
+    static SUPPRESS_NUMERIC_REGIONS: Cell<bool> = const { Cell::new(false) };
+}
+
+#[cfg(test)]
+pub(crate) fn without_numeric_regions<T>(run: impl FnOnce() -> T) -> T {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            SUPPRESS_NUMERIC_REGIONS.set(self.0);
+        }
+    }
+    let previous = SUPPRESS_NUMERIC_REGIONS.replace(true);
+    let _restore = Restore(previous);
+    run()
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ExecCodeError {
@@ -91,6 +117,11 @@ impl PublishedDecoded<'_> {
 pub(crate) struct ExecCode {
     words: Rc<[Cell<u32>]>,
     boundaries: Rc<[u32]>,
+    regions: Option<Rc<[PublishedNumericRegion]>>,
+    product_sources: Option<Rc<[ArrayProductSource]>>,
+    copy_sources: Option<Rc<[ArrayReadSource]>>,
+    #[cfg(feature = "profiling")]
+    rejected_numeric_sites: Rc<[RejectedNumericSite]>,
     /// Compiler assertions inspect the exact prepublication IR. This field is
     /// absent from product builds and never participates in execution.
     #[cfg(test)]
@@ -110,6 +141,11 @@ impl ExecCode {
         Self {
             words: Rc::from([]),
             boundaries: Rc::from([0]),
+            regions: None,
+            product_sources: None,
+            copy_sources: None,
+            #[cfg(feature = "profiling")]
+            rejected_numeric_sites: Rc::from([]),
             #[cfg(test)]
             test_ir: Rc::from([]),
         }
@@ -120,25 +156,46 @@ impl ExecCode {
     pub(crate) fn encode_with_locals(
         code: &[Instruction],
         locals: &[VariableDefinition],
+        arguments: &[VariableDefinition],
+        regions: &[NumericRegion],
+        constants: &[BytecodeConstant],
     ) -> Result<Self, ExecCodeError> {
-        Self::encode_internal(code, Some(locals))
+        #[cfg(test)]
+        let regions = if SUPPRESS_NUMERIC_REGIONS.get() {
+            &[]
+        } else {
+            regions
+        };
+        Self::encode_internal(code, Some(locals), Some(arguments), regions, constants)
     }
 
     #[cfg(test)]
     pub(crate) fn encode(code: &[Instruction]) -> Result<Self, ExecCodeError> {
-        Self::encode_internal(code, None)
+        Self::encode_internal(code, None, None, &[], &[])
     }
 
     fn encode_internal(
         code: &[Instruction],
         locals: Option<&[VariableDefinition]>,
+        arguments: Option<&[VariableDefinition]>,
+        regions: &[NumericRegion],
+        constants: &[BytecodeConstant],
     ) -> Result<Self, ExecCodeError> {
-        let opcodes = select_opcodes(code, locals);
+        validate_region_plans(code, locals, arguments, regions, constants)?;
+        let opcodes = select_opcodes(code, locals, regions);
+        let mut region_ids = if regions.is_empty() {
+            Vec::new()
+        } else {
+            vec![None; code.len()]
+        };
+        for (id, region) in regions.iter().enumerate() {
+            region_ids[region.start as usize] = Some(id);
+        }
         let mut boundaries = Vec::with_capacity(code.len() + 1);
         let mut length = 0u32;
         for (source, &opcode) in opcodes.iter().enumerate() {
             boundaries.push(length);
-            let operands = published_operands(code, source, opcode);
+            let operands = published_operands(code, source, opcode, regions, &region_ids);
             let count = operands.len();
             if count != usize::from(opcode.operand_count()) {
                 return Err(ExecCodeError::BadOperandCount);
@@ -155,7 +212,7 @@ impl ExecCode {
         boundaries.push(length);
         let mut words = Vec::with_capacity(length as usize);
         for (source, &opcode) in opcodes.iter().enumerate() {
-            let operands = published_operands(code, source, opcode);
+            let operands = published_operands(code, source, opcode, regions, &region_ids);
             let count = operands.len();
             let first_wide = count > 0 && !operands[0].short;
             let width = 1 + count - usize::from(count != 0 && !first_wide);
@@ -183,9 +240,53 @@ impl ExecCode {
                 words.push(bits);
             }
         }
+        let mut product_sources = Vec::new();
+        let mut copy_sources = Vec::new();
+        let published_regions = (!regions.is_empty())
+            .then(|| {
+                regions
+                    .iter()
+                    .map(|region| {
+                        let mut published = publish_numeric_region(region, &boundaries)?;
+                        published.producer_index = match region.operation {
+                            NumericOperation::UpdateElement {
+                                delta: UpdateDelta::ArrayProduct(source),
+                            } => {
+                                let index = u32::try_from(product_sources.len())
+                                    .map_err(|_| ExecCodeError::InvalidTarget)?;
+                                product_sources.push(source);
+                                Some(index)
+                            }
+                            NumericOperation::CopyElement { source } => {
+                                let index = u32::try_from(copy_sources.len())
+                                    .map_err(|_| ExecCodeError::InvalidTarget)?;
+                                copy_sources.push(source);
+                                Some(index)
+                            }
+                            _ => None,
+                        };
+                        Ok(published)
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(Rc::from)
+            })
+            .transpose()?;
+        #[cfg(feature = "profiling")]
+        let (rejected_numeric_sites, omitted_numeric_sites) =
+            collect_rejected_numeric_sites(code, locals, arguments, regions, &opcodes, &boundaries);
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_compiled_numeric_rejections(
+            &rejected_numeric_sites,
+            omitted_numeric_sites,
+        );
         let result = Self {
             words: words.into_iter().map(Cell::new).collect::<Vec<_>>().into(),
             boundaries: boundaries.into(),
+            regions: published_regions,
+            product_sources: (!product_sources.is_empty()).then(|| product_sources.into()),
+            copy_sources: (!copy_sources.is_empty()).then(|| copy_sources.into()),
+            #[cfg(feature = "profiling")]
+            rejected_numeric_sites: rejected_numeric_sites.into(),
             #[cfg(test)]
             test_ir: code.to_vec().into(),
         };
@@ -218,15 +319,15 @@ impl ExecCode {
         }
         let mut operands = [0; 3];
         let mut cursor = pc.checked_add(1).ok_or(ExecCodeError::TooLong)?;
-        for index in 0..usize::from(count) {
+        for (index, slot) in operands.iter_mut().enumerate().take(usize::from(count)) {
             if index == 0 && !first_wide {
-                operands[index] = if opcode == Opcode::PushI32 {
+                *slot = if opcode == Opcode::PushI32 {
                     u32::from_ne_bytes(i32::from(word as i16).to_ne_bytes())
                 } else {
                     u32::from(word as u16)
                 };
             } else {
-                operands[index] = self
+                *slot = self
                     .words
                     .get(cursor as usize)
                     .ok_or(ExecCodeError::Truncated)?
@@ -280,6 +381,8 @@ impl ExecCode {
         }
         let mut pc = 0u32;
         let mut entries = HashSet::new();
+        let mut seen_regions =
+            vec![false; self.regions.as_ref().map_or(0, |regions| regions.len())];
         for &expected in self.boundaries.iter().take(self.boundaries.len() - 1) {
             if pc != expected {
                 return Err(ExecCodeError::InvalidBoundary);
@@ -294,6 +397,26 @@ impl ExecCode {
                 }
                 entries.insert(target);
             }
+            if is_region_opcode(decoded.opcode) {
+                let Some(seen) = seen_regions.get_mut(decoded.operand(0) as usize) else {
+                    return Err(ExecCodeError::InvalidTarget);
+                };
+                if *seen {
+                    return Err(ExecCodeError::InvalidTarget);
+                }
+                *seen = true;
+                for index in [1, 2] {
+                    let target = decoded.operand(index);
+                    if target == self.words.len() as u32
+                        || self.boundaries.binary_search(&target).is_err()
+                    {
+                        return Err(ExecCodeError::InvalidTarget);
+                    }
+                    if index == 1 {
+                        entries.insert(target);
+                    }
+                }
+            }
             if decoded.opcode == Opcode::Gosub {
                 entries.insert(decoded.next_pc);
             }
@@ -302,7 +425,13 @@ impl ExecCode {
         if pc != self.words.len() as u32 {
             return Err(ExecCodeError::InvalidBoundary);
         }
+        if seen_regions.iter().any(|seen| !seen) {
+            return Err(ExecCodeError::InvalidTarget);
+        }
         for source in 0..self.instruction_len() {
+            if self.opcode_at_source(source).is_some_and(is_region_opcode) {
+                self.verify_numeric_region(source, &entries)?;
+            }
             if self.opcode_at_source(source) == Some(Opcode::FieldAccSetDrop) {
                 let first = self.decode(self.boundaries[source])?;
                 let packed = first.operand(1);
@@ -741,6 +870,394 @@ impl ExecCode {
         Ok(())
     }
 
+    pub(crate) fn numeric_region(&self, index: u32) -> Option<&PublishedNumericRegion> {
+        self.regions.as_deref()?.get(index as usize)
+    }
+
+    pub(crate) fn product_source(&self, index: u32) -> Option<ArrayProductSource> {
+        self.product_sources
+            .as_deref()?
+            .get(index as usize)
+            .copied()
+    }
+
+    pub(crate) fn copy_source(&self, index: u32) -> Option<ArrayReadSource> {
+        self.copy_sources.as_deref()?.get(index as usize).copied()
+    }
+
+    #[cfg(feature = "profiling")]
+    pub(crate) fn rejected_numeric_sites(&self) -> &[RejectedNumericSite] {
+        &self.rejected_numeric_sites
+    }
+
+    fn verify_numeric_region(
+        &self,
+        source: usize,
+        entries: &HashSet<u32>,
+    ) -> Result<(), ExecCodeError> {
+        let first = self.decode(self.boundaries[source])?;
+        let published = self
+            .numeric_region(first.operand(0))
+            .ok_or(ExecCodeError::InvalidTarget)?;
+        let product = if first.opcode == Opcode::NumericArrayUpdateElement {
+            published
+                .producer_index
+                .map(|index| {
+                    self.product_source(index)
+                        .ok_or(ExecCodeError::InvalidTarget)
+                })
+                .transpose()?
+        } else {
+            None
+        };
+        let copy = if first.opcode == Opcode::NumericArrayCopyElement {
+            Some(
+                self.copy_source(
+                    published
+                        .producer_index
+                        .ok_or(ExecCodeError::InvalidTarget)?,
+                )
+                .ok_or(ExecCodeError::InvalidTarget)?,
+            )
+        } else {
+            None
+        };
+        if published.producer_index.is_some() && product.is_none() && copy.is_none()
+            || product.is_some() && !matches!(published.value, NumberSource::Immediate(0))
+        {
+            return Err(ExecCodeError::InvalidTarget);
+        }
+        if published.shared_update_index
+            != product.is_some_and(|product| {
+                matches!(
+                    (published.index, product.index),
+                    (NumberSource::Direct(left), NumberSource::Direct(right)) if left == right
+                )
+            })
+        {
+            return Err(ExecCodeError::InvalidTarget);
+        }
+        let start = source;
+        let end = start
+            + match first.opcode {
+                Opcode::NumericArrayAccumulate => 9,
+                Opcode::NumericArrayStoreProduct => 7,
+                Opcode::NumericArrayCopyElement => 8,
+                Opcode::NumericArrayAddPreInc => 6,
+                Opcode::NumericArrayStoreAndLocal => 4,
+                Opcode::NumericArrayUpdateElement => {
+                    if product.is_some() {
+                        12
+                    } else {
+                        8
+                    }
+                }
+                Opcode::NumericArrayCompareBranch => 6,
+                _ => return Err(ExecCodeError::InvalidTarget),
+            };
+        let operation = match first.opcode {
+            Opcode::NumericArrayAccumulate => NumericOperation::Accumulate {
+                destination: published.destination,
+                scale: published.value,
+                checked: published.checked,
+            },
+            Opcode::NumericArrayStoreProduct => NumericOperation::StoreProduct {
+                destination: published.destination,
+                scale: published.value,
+                checked: published.checked,
+            },
+            Opcode::NumericArrayCopyElement => NumericOperation::CopyElement {
+                source: copy.ok_or(ExecCodeError::InvalidTarget)?,
+            },
+            Opcode::NumericArrayAddPreInc => NumericOperation::AddPreInc,
+            Opcode::NumericArrayStoreAndLocal => NumericOperation::StoreElementAndLocal {
+                destination: published.destination,
+                checked: published.checked,
+            },
+            Opcode::NumericArrayUpdateElement => NumericOperation::UpdateElement {
+                delta: match product {
+                    Some(product) => UpdateDelta::ArrayProduct(product),
+                    None => UpdateDelta::Number(published.value),
+                },
+            },
+            Opcode::NumericArrayCompareBranch => NumericOperation::CompareBranch {
+                rhs: published.value,
+                comparison: published.comparison,
+                when_true: published.when_true,
+                target: self
+                    .source_pc(first.operand(1))
+                    .ok_or(ExecCodeError::InvalidTarget)?,
+            },
+            _ => unreachable!(),
+        };
+        let region = NumericRegion {
+            start: source as u32,
+            end: end as u32,
+            array: published.array,
+            index: published.index,
+            operation,
+            peak: published.peak,
+        };
+        let success = match region.operation {
+            NumericOperation::CompareBranch { target, .. } => self.exec_pc(target),
+            _ => self.boundaries.get(end).copied(),
+        };
+        if start != source
+            || end >= self.instruction_len()
+            || published.fallthrough_pc != self.boundaries[end]
+            || first.opcode != region_opcode(region.operation)
+            || Some(first.operand(1)) != success
+            || first.operand(2) != self.boundaries[start + 1]
+            || (start + 1..end).any(|index| entries.contains(&self.boundaries[index]))
+        {
+            return Err(ExecCodeError::InvalidTarget);
+        }
+        let mut expected = [Opcode::Nop; 12];
+        let expected_len = match region.operation {
+            NumericOperation::Accumulate {
+                destination: _,
+                scale,
+                checked,
+            } => {
+                expected[..9].copy_from_slice(&[
+                    if checked {
+                        Opcode::GetLocalCheck
+                    } else {
+                        Opcode::GetLocal
+                    },
+                    direct_opcode(region.array),
+                    number_opcode(region.index),
+                    Opcode::GetArrayEl,
+                    number_opcode(scale),
+                    Opcode::Mul,
+                    Opcode::Add,
+                    if checked {
+                        Opcode::SetLocalCheck
+                    } else {
+                        Opcode::SetLocal
+                    },
+                    Opcode::Drop,
+                ]);
+                9
+            }
+            NumericOperation::StoreProduct {
+                destination: _,
+                scale,
+                checked,
+            } => {
+                expected[..7].copy_from_slice(&[
+                    direct_opcode(region.array),
+                    number_opcode(region.index),
+                    Opcode::GetArrayEl,
+                    number_opcode(scale),
+                    Opcode::Mul,
+                    if checked {
+                        Opcode::SetLocalCheck
+                    } else {
+                        Opcode::SetLocal
+                    },
+                    Opcode::Drop,
+                ]);
+                7
+            }
+            NumericOperation::CopyElement { source } => {
+                expected[..8].copy_from_slice(&[
+                    direct_opcode(region.array),
+                    number_opcode(region.index),
+                    direct_opcode(source.array),
+                    number_opcode(source.index),
+                    Opcode::GetArrayEl,
+                    Opcode::Insert3,
+                    Opcode::PutArrayEl,
+                    Opcode::Drop,
+                ]);
+                8
+            }
+            NumericOperation::AddPreInc => {
+                let NumberSource::Direct(index) = region.index else {
+                    return Err(ExecCodeError::InvalidTarget);
+                };
+                expected[..6].copy_from_slice(&[
+                    direct_opcode(region.array),
+                    direct_opcode(index),
+                    Opcode::Inc,
+                    if matches!(index, DirectSource::CheckedLocal(_)) {
+                        Opcode::SetLocalCheck
+                    } else {
+                        Opcode::SetLocal
+                    },
+                    Opcode::GetArrayEl,
+                    Opcode::Add,
+                ]);
+                6
+            }
+            NumericOperation::StoreElementAndLocal { checked, .. } => {
+                expected[..4].copy_from_slice(&[
+                    Opcode::Insert3,
+                    Opcode::PutArrayEl,
+                    if checked {
+                        Opcode::SetLocalCheck
+                    } else {
+                        Opcode::SetLocal
+                    },
+                    Opcode::Drop,
+                ]);
+                4
+            }
+            NumericOperation::UpdateElement { delta } => match delta {
+                UpdateDelta::Number(source) => {
+                    expected[..8].copy_from_slice(&[
+                        direct_opcode(region.array),
+                        number_opcode(region.index),
+                        Opcode::GetArrayEl3,
+                        number_opcode(source),
+                        Opcode::Add,
+                        Opcode::Insert3,
+                        Opcode::PutArrayEl,
+                        Opcode::Drop,
+                    ]);
+                    8
+                }
+                UpdateDelta::ArrayProduct(product) => {
+                    expected.copy_from_slice(&[
+                        direct_opcode(region.array),
+                        number_opcode(region.index),
+                        Opcode::GetArrayEl3,
+                        number_opcode(product.scale),
+                        direct_opcode(product.array),
+                        number_opcode(product.index),
+                        Opcode::GetArrayEl,
+                        Opcode::Mul,
+                        Opcode::Add,
+                        Opcode::Insert3,
+                        Opcode::PutArrayEl,
+                        Opcode::Drop,
+                    ]);
+                    12
+                }
+            },
+            NumericOperation::CompareBranch {
+                rhs,
+                comparison,
+                when_true,
+                ..
+            } => {
+                expected[..6].copy_from_slice(&[
+                    direct_opcode(region.array),
+                    number_opcode(region.index),
+                    Opcode::GetArrayEl,
+                    number_opcode(rhs),
+                    comparison,
+                    if when_true {
+                        Opcode::IfTrue
+                    } else {
+                        Opcode::IfFalse
+                    },
+                ]);
+                6
+            }
+        };
+        if end != start + expected_len {
+            return Err(ExecCodeError::InvalidTarget);
+        }
+        for (offset, &opcode) in expected[..expected_len].iter().enumerate().skip(1) {
+            let decoded = self.decode(self.boundaries[start + offset])?;
+            if decoded.opcode != opcode {
+                return Err(ExecCodeError::InvalidTarget);
+            }
+        }
+        let (array_offset, index_offset) = match region.operation {
+            NumericOperation::Accumulate { .. } => (1, 2),
+            _ => (0, 1),
+        };
+        if !matches!(
+            region.operation,
+            NumericOperation::StoreElementAndLocal { .. }
+        ) && (array_offset != 0
+            && !verify_direct_operand(self, start + array_offset, region.array)?
+            || !verify_number_operand(self, start + index_offset, region.index)?)
+        {
+            return Err(ExecCodeError::InvalidTarget);
+        }
+        match region.operation {
+            NumericOperation::Accumulate {
+                destination, scale, ..
+            } => {
+                if self.decode(self.boundaries[start + 7])?.operand(0) != u32::from(destination)
+                    || !verify_number_operand(self, start + 4, scale)?
+                {
+                    return Err(ExecCodeError::InvalidTarget);
+                }
+            }
+            NumericOperation::StoreProduct {
+                destination, scale, ..
+            } => {
+                if self.decode(self.boundaries[start + 5])?.operand(0) != u32::from(destination)
+                    || !verify_number_operand(self, start + 3, scale)?
+                {
+                    return Err(ExecCodeError::InvalidTarget);
+                }
+            }
+            NumericOperation::CopyElement { source } => {
+                if !verify_direct_operand(self, start + 2, source.array)?
+                    || !verify_number_operand(self, start + 3, source.index)?
+                {
+                    return Err(ExecCodeError::InvalidTarget);
+                }
+            }
+            NumericOperation::AddPreInc => {
+                let NumberSource::Direct(index) = region.index else {
+                    return Err(ExecCodeError::InvalidTarget);
+                };
+                let slot = match index {
+                    DirectSource::Local(slot) | DirectSource::CheckedLocal(slot) => slot,
+                    DirectSource::Argument(_) => return Err(ExecCodeError::InvalidTarget),
+                };
+                if self.decode(self.boundaries[start + 3])?.operand(0) != u32::from(slot)
+                    || published.peak != 2
+                {
+                    return Err(ExecCodeError::InvalidTarget);
+                }
+            }
+            NumericOperation::StoreElementAndLocal {
+                destination,
+                checked: _,
+            } => {
+                if self.decode(self.boundaries[start + 2])?.operand(0) != u32::from(destination)
+                    || published.peak != 1
+                    || !matches!(published.array, DirectSource::Local(0))
+                    || !matches!(published.index, NumberSource::Immediate(0))
+                {
+                    return Err(ExecCodeError::InvalidTarget);
+                }
+            }
+            NumericOperation::UpdateElement { delta } => match delta {
+                UpdateDelta::Number(source) => {
+                    if !verify_number_operand(self, start + 3, source)? {
+                        return Err(ExecCodeError::InvalidTarget);
+                    }
+                }
+                UpdateDelta::ArrayProduct(product) => {
+                    if !verify_number_operand(self, start + 3, product.scale)?
+                        || !verify_direct_operand(self, start + 4, product.array)?
+                        || !verify_number_operand(self, start + 5, product.index)?
+                    {
+                        return Err(ExecCodeError::InvalidTarget);
+                    }
+                }
+            },
+            NumericOperation::CompareBranch { rhs, target, .. } => {
+                if !verify_number_operand(self, start + 3, rhs)?
+                    || self.decode(self.boundaries[start + 5])?.operand(0)
+                        != self.boundaries[target as usize]
+                {
+                    return Err(ExecCodeError::InvalidTarget);
+                }
+            }
+        }
+        Ok(())
+    }
+
     #[inline]
     pub(crate) fn source_pc(&self, exec_pc: u32) -> Option<u32> {
         self.boundaries
@@ -771,6 +1288,38 @@ impl ExecCode {
     #[cfg(feature = "profiling")]
     pub(crate) fn boundary_len(&self) -> usize {
         self.boundaries.len()
+    }
+
+    #[cfg(feature = "profiling")]
+    pub(crate) fn region_storage_identity(&self) -> usize {
+        self.regions.as_ref().map_or(0, |regions| {
+            Rc::as_ptr(regions) as *const PublishedNumericRegion as usize
+        })
+    }
+
+    #[cfg(feature = "profiling")]
+    pub(crate) fn region_len(&self) -> usize {
+        self.regions.as_ref().map_or(0, |regions| regions.len())
+    }
+
+    #[cfg(feature = "profiling")]
+    pub(crate) fn product_source_storage(&self) -> (usize, usize) {
+        self.product_sources.as_ref().map_or((0, 0), |sources| {
+            (
+                Rc::as_ptr(sources) as *const ArrayProductSource as usize,
+                sources.len(),
+            )
+        })
+    }
+
+    #[cfg(feature = "profiling")]
+    pub(crate) fn copy_source_storage(&self) -> (usize, usize) {
+        self.copy_sources.as_ref().map_or((0, 0), |sources| {
+            (
+                Rc::as_ptr(sources) as *const ArrayReadSource as usize,
+                sources.len(),
+            )
+        })
     }
 
     pub(crate) fn instruction_len(&self) -> usize {
@@ -1093,7 +1642,806 @@ fn field_acc_shape(
     Some((*acc, *base, field))
 }
 
-fn select_opcodes(code: &[Instruction], locals: Option<&[VariableDefinition]>) -> Vec<Opcode> {
+fn direct_opcode(source: DirectSource) -> Opcode {
+    match source {
+        DirectSource::Local(_) => Opcode::GetLocal,
+        DirectSource::CheckedLocal(_) => Opcode::GetLocalCheck,
+        DirectSource::Argument(_) => Opcode::GetArg,
+    }
+}
+
+fn direct_index(source: DirectSource) -> u32 {
+    match source {
+        DirectSource::Local(index)
+        | DirectSource::CheckedLocal(index)
+        | DirectSource::Argument(index) => u32::from(index),
+    }
+}
+
+fn number_opcode(source: NumberSource) -> Opcode {
+    match source {
+        NumberSource::Direct(source) => direct_opcode(source),
+        NumberSource::Immediate(_) => Opcode::PushI32,
+        NumberSource::Constant { .. } => Opcode::PushConst,
+    }
+}
+
+fn number_matches_raw(source: NumberSource, raw: &BytecodeConstant) -> bool {
+    let NumberSource::Constant { value, .. } = source else {
+        return false;
+    };
+    let actual = match raw {
+        BytecodeConstant::Value(RawValue::Int(value)) => f64::from(*value),
+        BytecodeConstant::Value(RawValue::Float(value)) => *value,
+        _ => return false,
+    };
+    value.float().to_bits() == actual.to_bits()
+}
+
+fn instruction_matches_number(
+    instruction: &Instruction,
+    source: NumberSource,
+    constants: &[BytecodeConstant],
+) -> bool {
+    match (instruction, source) {
+        (Instruction::GetLocal(a), NumberSource::Direct(DirectSource::Local(b)))
+        | (Instruction::GetLocalCheck(a), NumberSource::Direct(DirectSource::CheckedLocal(b)))
+        | (Instruction::GetArg(a), NumberSource::Direct(DirectSource::Argument(b))) => *a == b,
+        (Instruction::PushI32(a), NumberSource::Immediate(b)) => *a == b,
+        (Instruction::PushConst(a), NumberSource::Constant { index, .. }) => {
+            *a == index
+                && constants
+                    .get(index as usize)
+                    .is_some_and(|raw| number_matches_raw(source, raw))
+        }
+        _ => false,
+    }
+}
+
+fn instruction_matches_direct(instruction: &Instruction, source: DirectSource) -> bool {
+    matches!(
+        (instruction, source),
+        (Instruction::GetLocal(a), DirectSource::Local(b))
+            | (Instruction::GetLocalCheck(a), DirectSource::CheckedLocal(b))
+            | (Instruction::GetArg(a), DirectSource::Argument(b)) if *a == b
+    )
+}
+
+fn region_opcode(operation: NumericOperation) -> Opcode {
+    match operation {
+        NumericOperation::Accumulate { .. } => Opcode::NumericArrayAccumulate,
+        NumericOperation::StoreProduct { .. } => Opcode::NumericArrayStoreProduct,
+        NumericOperation::CopyElement { .. } => Opcode::NumericArrayCopyElement,
+        NumericOperation::AddPreInc => Opcode::NumericArrayAddPreInc,
+        NumericOperation::StoreElementAndLocal { .. } => Opcode::NumericArrayStoreAndLocal,
+        NumericOperation::UpdateElement { .. } => Opcode::NumericArrayUpdateElement,
+        NumericOperation::CompareBranch { .. } => Opcode::NumericArrayCompareBranch,
+    }
+}
+
+fn publish_numeric_region(
+    region: &NumericRegion,
+    boundaries: &[u32],
+) -> Result<PublishedNumericRegion, ExecCodeError> {
+    let fallthrough_pc = *boundaries
+        .get(region.end as usize)
+        .ok_or(ExecCodeError::InvalidTarget)?;
+    let (value, update_product, _copy_source, destination, checked, comparison, when_true) =
+        match region.operation {
+            NumericOperation::Accumulate {
+                destination,
+                scale,
+                checked,
+            }
+            | NumericOperation::StoreProduct {
+                destination,
+                scale,
+                checked,
+            } => (scale, None, None, destination, checked, Opcode::Nop, false),
+            NumericOperation::CopyElement { source } => (
+                NumberSource::Immediate(0),
+                None,
+                Some(source),
+                0,
+                false,
+                Opcode::Nop,
+                false,
+            ),
+            NumericOperation::AddPreInc => (
+                NumberSource::Immediate(0),
+                None,
+                None,
+                0,
+                false,
+                Opcode::Nop,
+                false,
+            ),
+            NumericOperation::StoreElementAndLocal {
+                destination,
+                checked,
+            } => (
+                NumberSource::Immediate(0),
+                None,
+                None,
+                destination,
+                checked,
+                Opcode::Nop,
+                false,
+            ),
+            NumericOperation::UpdateElement { delta } => match delta {
+                UpdateDelta::Number(source) => (source, None, None, 0, false, Opcode::Nop, false),
+                UpdateDelta::ArrayProduct(product) => (
+                    NumberSource::Immediate(0),
+                    Some(product),
+                    None,
+                    0,
+                    false,
+                    Opcode::Nop,
+                    false,
+                ),
+            },
+            NumericOperation::CompareBranch {
+                rhs,
+                comparison,
+                when_true,
+                ..
+            } => (rhs, None, None, 0, false, comparison, when_true),
+        };
+    let shared_update_index = update_product.is_some_and(|product| {
+        matches!(
+            (region.index, product.index),
+            (NumberSource::Direct(left), NumberSource::Direct(right)) if left == right
+        )
+    });
+    Ok(PublishedNumericRegion {
+        array: region.array,
+        index: region.index,
+        value,
+        producer_index: None,
+        shared_update_index,
+        destination,
+        checked,
+        comparison,
+        when_true,
+        fallthrough_pc,
+        peak: region.peak,
+    })
+}
+
+#[cfg(feature = "profiling")]
+fn collect_rejected_numeric_sites(
+    code: &[Instruction],
+    locals: Option<&[VariableDefinition]>,
+    arguments: Option<&[VariableDefinition]>,
+    regions: &[NumericRegion],
+    opcodes: &[Opcode],
+    boundaries: &[u32],
+) -> (Vec<RejectedNumericSite>, usize) {
+    const MAX_PER_FUNCTION: usize = 4_096;
+    let Some(locals) = locals else {
+        return (Vec::new(), 0);
+    };
+    let Some(arguments) = arguments else {
+        return (Vec::new(), 0);
+    };
+    let mut entries = vec![false; code.len()];
+    if let Some(entry) = entries.first_mut() {
+        *entry = true;
+    }
+    for (pc, instruction) in code.iter().enumerate() {
+        let control = instruction.control_effect();
+        if let Some(target) = control.target()
+            && let Some(entry) = entries.get_mut(target as usize)
+        {
+            *entry = true;
+        }
+        if control.ends_block()
+            && let Some(entry) = entries.get_mut(pc + 1)
+        {
+            *entry = true;
+        }
+    }
+    let initialization = if locals.iter().any(|local| local.is_lexical) {
+        definite_initialization_entries(code, locals.len())
+    } else {
+        vec![None; code.len()]
+    };
+    let direct = |instruction: Option<&Instruction>| match instruction {
+        Some(Instruction::GetLocal(index) | Instruction::GetLocalCheck(index)) => locals
+            .get(*index as usize)
+            .is_some_and(|local| local.kind == ClosureVariableKind::Normal),
+        Some(Instruction::GetArg(index)) => (*index as usize) < arguments.len(),
+        _ => false,
+    };
+    let number = |instruction: Option<&Instruction>| {
+        direct(instruction)
+            || matches!(
+                instruction,
+                Some(Instruction::PushI32(_) | Instruction::PushConst(_))
+            )
+    };
+    let mut sites = Vec::new();
+    let mut omitted = 0;
+    let store = |pc: usize| {
+        matches!(
+            code.get(pc),
+            Some(Instruction::SetLocal(_) | Instruction::SetLocalCheck(_))
+        )
+    };
+    let comparison = |pc: usize| {
+        matches!(
+            code.get(pc),
+            Some(
+                Instruction::Lt
+                    | Instruction::Lte
+                    | Instruction::Gt
+                    | Instruction::Gte
+                    | Instruction::Eq
+                    | Instruction::Neq
+                    | Instruction::StrictEq
+                    | Instruction::StrictNeq
+            )
+        )
+    };
+    for (array_pc, instruction) in code.iter().enumerate() {
+        // Recognize a bounded lowered operation skeleton, including a single
+        // computed-delta shape. Nearby unrelated arithmetic is not a site.
+        let (family, start, end, discarded, delta_shape) = match instruction {
+            Instruction::GetArrayEl3 if array_pc >= 2 => {
+                if matches!(code.get(array_pc + 4), Some(Instruction::GetArrayEl))
+                    && matches!(code.get(array_pc + 5), Some(Instruction::Mul))
+                    && matches!(code.get(array_pc + 6), Some(Instruction::Add))
+                    && matches!(code.get(array_pc + 7), Some(Instruction::Insert3))
+                    && matches!(code.get(array_pc + 8), Some(Instruction::PutArrayEl))
+                {
+                    (
+                        "update_element",
+                        array_pc - 2,
+                        array_pc + 10,
+                        matches!(code.get(array_pc + 9), Some(Instruction::Drop)),
+                        1,
+                    )
+                } else if matches!(code.get(array_pc + 3), Some(Instruction::Mul))
+                    && matches!(code.get(array_pc + 4), Some(Instruction::Add))
+                    && matches!(code.get(array_pc + 5), Some(Instruction::Insert3))
+                    && matches!(code.get(array_pc + 6), Some(Instruction::PutArrayEl))
+                {
+                    (
+                        "update_element",
+                        array_pc - 2,
+                        array_pc + 8,
+                        matches!(code.get(array_pc + 7), Some(Instruction::Drop)),
+                        2,
+                    )
+                } else if matches!(code.get(array_pc + 2), Some(Instruction::Add))
+                    && matches!(code.get(array_pc + 3), Some(Instruction::Insert3))
+                    && matches!(code.get(array_pc + 4), Some(Instruction::PutArrayEl))
+                {
+                    (
+                        "update_element",
+                        array_pc - 2,
+                        array_pc + 6,
+                        matches!(code.get(array_pc + 5), Some(Instruction::Drop)),
+                        0,
+                    )
+                } else {
+                    continue;
+                }
+            }
+            Instruction::GetArrayEl
+                if array_pc >= 3
+                    && matches!(code.get(array_pc + 2), Some(Instruction::Mul))
+                    && matches!(code.get(array_pc + 3), Some(Instruction::Add))
+                    && store(array_pc + 4) =>
+            {
+                (
+                    "accumulate",
+                    array_pc - 3,
+                    array_pc + 6,
+                    matches!(code.get(array_pc + 5), Some(Instruction::Drop)),
+                    0,
+                )
+            }
+            Instruction::GetArrayEl
+                if array_pc >= 2
+                    && matches!(code.get(array_pc + 2), Some(Instruction::Mul))
+                    && store(array_pc + 3) =>
+            {
+                (
+                    "store_product",
+                    array_pc - 2,
+                    array_pc + 5,
+                    matches!(code.get(array_pc + 4), Some(Instruction::Drop)),
+                    0,
+                )
+            }
+            Instruction::GetArrayEl
+                if array_pc >= 2
+                    && comparison(array_pc + 2)
+                    && matches!(
+                        code.get(array_pc + 3),
+                        Some(Instruction::IfTrue(_) | Instruction::IfFalse(_))
+                    ) =>
+            {
+                ("compare_branch", array_pc - 2, array_pc + 4, true, 0)
+            }
+            _ => continue,
+        };
+        if end > code.len() {
+            continue;
+        }
+        if regions
+            .iter()
+            .any(|region| (region.start as usize..region.end as usize).contains(&array_pc))
+        {
+            continue;
+        }
+        if sites.len() == MAX_PER_FUNCTION {
+            omitted += 1;
+            continue;
+        }
+        let source_offset = usize::from(matches!(family, "accumulate"));
+        let reason = if opcodes
+            .get(start)
+            .is_some_and(|op| *op != Opcode::from_instruction(&code[start]))
+        {
+            "overlap"
+        } else if entries[start + 1..end].iter().any(|&entry| entry) {
+            "control_flow"
+        } else if !direct(code.get(start + source_offset))
+            || !number(code.get(start + 1 + source_offset))
+        {
+            "source"
+        } else if matches!(family, "accumulate" | "store_product") {
+            let destination = code[array_pc..end].iter().find_map(|op| match op {
+                Instruction::SetLocal(index) | Instruction::SetLocalCheck(index) => Some(*index),
+                _ => None,
+            });
+            match destination
+                .and_then(|index| locals.get(index as usize).map(|local| (index, local)))
+            {
+                None => "destination",
+                Some((_, local)) if local.kind != ClosureVariableKind::Normal || local.is_const => {
+                    "binding"
+                }
+                Some((index, local))
+                    if local.is_lexical
+                        && !numeric_site_initialized(
+                            code,
+                            &entries,
+                            &initialization,
+                            start,
+                            index,
+                        ) =>
+                {
+                    "initialization"
+                }
+                Some(_) if !number(code.get(array_pc + 1)) => "source",
+                Some(_) if !discarded => "use",
+                Some(_) => "unsupported_use",
+            }
+        } else if !number(code.get(array_pc + 1))
+            || delta_shape == 1
+                && (!direct(code.get(array_pc + 2)) || !number(code.get(array_pc + 3)))
+            || delta_shape == 2 && !number(code.get(array_pc + 2))
+        {
+            "source"
+        } else if !discarded {
+            "use"
+        } else if delta_shape != 0 {
+            "computed_delta"
+        } else {
+            "unsupported_use"
+        };
+        sites.push(RejectedNumericSite {
+            pc: boundaries[start],
+            source_pc: start as u32,
+            family,
+            reason,
+            lowered_window: format!("{:?}", &code[start..end]),
+        });
+    }
+    sites.sort_by_key(|site| site.pc);
+    sites.dedup_by_key(|site| site.pc);
+    (sites, omitted)
+}
+
+#[cfg(feature = "profiling")]
+fn numeric_site_initialized(
+    code: &[Instruction],
+    entries: &[bool],
+    initialization: &[Option<Vec<bool>>],
+    start: usize,
+    index: u16,
+) -> bool {
+    let block = (0..=start).rev().find(|&pc| entries[pc]).unwrap_or(0);
+    let mut value = initialization[block]
+        .as_deref()
+        .and_then(|state| state.get(index as usize))
+        .copied()
+        .unwrap_or(false);
+    for instruction in &code[block..start] {
+        match instruction {
+            Instruction::InitializeLocal(slot) if *slot == index => value = true,
+            Instruction::SetLocalUninitialized(slot) if *slot == index => value = false,
+            _ => {}
+        }
+    }
+    value
+}
+
+fn is_region_opcode(opcode: Opcode) -> bool {
+    matches!(
+        opcode,
+        Opcode::NumericArrayAccumulate
+            | Opcode::NumericArrayStoreProduct
+            | Opcode::NumericArrayCopyElement
+            | Opcode::NumericArrayAddPreInc
+            | Opcode::NumericArrayStoreAndLocal
+            | Opcode::NumericArrayUpdateElement
+            | Opcode::NumericArrayCompareBranch
+    )
+}
+
+fn validate_region_plans(
+    code: &[Instruction],
+    locals: Option<&[VariableDefinition]>,
+    arguments: Option<&[VariableDefinition]>,
+    regions: &[NumericRegion],
+    constants: &[BytecodeConstant],
+) -> Result<(), ExecCodeError> {
+    if regions.is_empty() {
+        return Ok(());
+    }
+    let Some(locals) = locals else {
+        return Err(ExecCodeError::InvalidTarget);
+    };
+    let Some(arguments) = arguments else {
+        return Err(ExecCodeError::InvalidTarget);
+    };
+    let mut occupied_until = 0usize;
+    let mut entries = HashSet::new();
+    let mut block_starts = vec![false; code.len()];
+    if let Some(start) = block_starts.first_mut() {
+        *start = true;
+    }
+    for (pc, instruction) in code.iter().enumerate() {
+        for operand in instruction.operand_contract().0.into_iter().flatten() {
+            if let Operand::Target(target) = operand {
+                entries.insert(target as usize);
+                if let Some(start) = block_starts.get_mut(target as usize) {
+                    *start = true;
+                }
+            }
+        }
+        if matches!(instruction, Instruction::Gosub(_)) {
+            entries.insert(pc + 1);
+            if let Some(start) = block_starts.get_mut(pc + 1) {
+                *start = true;
+            }
+        }
+        if instruction.control_effect().ends_block()
+            && let Some(start) = block_starts.get_mut(pc + 1)
+        {
+            *start = true;
+        }
+    }
+    let mut initialized = vec![false; locals.len()];
+    let initialization_entries = if locals.iter().any(|local| local.is_lexical) {
+        definite_initialization_entries(code, locals.len())
+    } else {
+        vec![None; code.len()]
+    };
+    let mut scanned = 0usize;
+    for region in regions {
+        let start = region.start as usize;
+        let end = region.end as usize;
+        let Some(span) = code.get(start..end) else {
+            return Err(ExecCodeError::InvalidTarget);
+        };
+        if start >= code.len() || end >= code.len() || start < occupied_until {
+            return Err(ExecCodeError::InvalidTarget);
+        }
+        for pc in scanned..=start {
+            if block_starts[pc] {
+                if let Some(state) = initialization_entries[pc].as_deref() {
+                    initialized.copy_from_slice(state);
+                } else {
+                    initialized.fill(false);
+                }
+            }
+            if pc == start {
+                break;
+            }
+            match code[pc] {
+                Instruction::InitializeLocal(index) => {
+                    if let Some(value) = initialized.get_mut(index as usize) {
+                        *value = true;
+                    }
+                }
+                Instruction::SetLocalUninitialized(index) => {
+                    if let Some(value) = initialized.get_mut(index as usize) {
+                        *value = false;
+                    }
+                }
+                _ => {}
+            }
+        }
+        scanned = start + 1;
+        if (start + 1..end).any(|pc| entries.contains(&pc))
+            || !matches!(
+                region.operation,
+                NumericOperation::StoreElementAndLocal { .. }
+            ) && (!valid_direct_source(region.array, locals, arguments, &initialized)
+                || !valid_number_source(region.index, locals, arguments, &initialized))
+        {
+            return Err(ExecCodeError::InvalidTarget);
+        }
+        let shape = match region.operation {
+            NumericOperation::Accumulate {
+                destination,
+                scale,
+                checked,
+            } => {
+                span.len() == 9
+                    && valid_numeric_destination(destination, checked, locals, &initialized)
+                    && valid_number_source(scale, locals, arguments, &initialized)
+                    && matches_local_read(&span[0], destination, checked)
+                    && instruction_matches_direct(&span[1], region.array)
+                    && instruction_matches_number(&span[2], region.index, constants)
+                    && matches!(span[3], Instruction::GetArrayEl)
+                    && instruction_matches_number(&span[4], scale, constants)
+                    && matches!(span[5], Instruction::Mul)
+                    && matches!(span[6], Instruction::Add)
+                    && matches_local_write(&span[7], destination, checked)
+                    && matches!(span[8], Instruction::Drop)
+            }
+            NumericOperation::StoreProduct {
+                destination,
+                scale,
+                checked,
+            } => {
+                span.len() == 7
+                    && valid_numeric_destination(destination, checked, locals, &initialized)
+                    && valid_number_source(scale, locals, arguments, &initialized)
+                    && instruction_matches_direct(&span[0], region.array)
+                    && instruction_matches_number(&span[1], region.index, constants)
+                    && matches!(span[2], Instruction::GetArrayEl)
+                    && instruction_matches_number(&span[3], scale, constants)
+                    && matches!(span[4], Instruction::Mul)
+                    && matches_local_write(&span[5], destination, checked)
+                    && matches!(span[6], Instruction::Drop)
+            }
+            NumericOperation::CopyElement { source } => {
+                span.len() == 8
+                    && valid_direct_source(source.array, locals, arguments, &initialized)
+                    && valid_number_source(source.index, locals, arguments, &initialized)
+                    && instruction_matches_direct(&span[0], region.array)
+                    && instruction_matches_number(&span[1], region.index, constants)
+                    && instruction_matches_direct(&span[2], source.array)
+                    && instruction_matches_number(&span[3], source.index, constants)
+                    && matches!(span[4], Instruction::GetArrayEl)
+                    && matches!(span[5], Instruction::Insert3)
+                    && matches!(span[6], Instruction::PutArrayEl)
+                    && matches!(span[7], Instruction::Drop)
+            }
+            NumericOperation::AddPreInc => {
+                let (slot, checked) = match region.index {
+                    NumberSource::Direct(DirectSource::Local(slot)) => (slot, false),
+                    NumberSource::Direct(DirectSource::CheckedLocal(slot)) => (slot, true),
+                    _ => return Err(ExecCodeError::InvalidTarget),
+                };
+                span.len() == 6
+                    && valid_numeric_destination(slot, checked, locals, &initialized)
+                    && instruction_matches_direct(&span[0], region.array)
+                    && matches_local_read(&span[1], slot, checked)
+                    && matches!(span[2], Instruction::Inc)
+                    && matches_local_write(&span[3], slot, checked)
+                    && matches!(span[4], Instruction::GetArrayEl)
+                    && matches!(span[5], Instruction::Add)
+            }
+            NumericOperation::StoreElementAndLocal {
+                destination,
+                checked,
+            } => {
+                span.len() == 4
+                    && valid_numeric_destination(destination, checked, locals, &initialized)
+                    && matches!(region.array, DirectSource::Local(0))
+                    && matches!(region.index, NumberSource::Immediate(0))
+                    && matches!(span[0], Instruction::Insert3)
+                    && matches!(span[1], Instruction::PutArrayEl)
+                    && matches_local_write(&span[2], destination, checked)
+                    && matches!(span[3], Instruction::Drop)
+            }
+            NumericOperation::UpdateElement { delta } => {
+                let base = instruction_matches_direct(&span[0], region.array)
+                    && instruction_matches_number(&span[1], region.index, constants)
+                    && matches!(span[2], Instruction::GetArrayEl3);
+                base && match delta {
+                    UpdateDelta::Number(source) => {
+                        span.len() == 8
+                            && valid_number_source(source, locals, arguments, &initialized)
+                            && instruction_matches_number(&span[3], source, constants)
+                            && matches!(span[4], Instruction::Add)
+                            && matches!(span[5], Instruction::Insert3)
+                            && matches!(span[6], Instruction::PutArrayEl)
+                            && matches!(span[7], Instruction::Drop)
+                    }
+                    UpdateDelta::ArrayProduct(product) => {
+                        span.len() == 12
+                            && valid_number_source(product.scale, locals, arguments, &initialized)
+                            && valid_direct_source(product.array, locals, arguments, &initialized)
+                            && valid_number_source(product.index, locals, arguments, &initialized)
+                            && instruction_matches_number(&span[3], product.scale, constants)
+                            && instruction_matches_direct(&span[4], product.array)
+                            && instruction_matches_number(&span[5], product.index, constants)
+                            && matches!(span[6], Instruction::GetArrayEl)
+                            && matches!(span[7], Instruction::Mul)
+                            && matches!(span[8], Instruction::Add)
+                            && matches!(span[9], Instruction::Insert3)
+                            && matches!(span[10], Instruction::PutArrayEl)
+                            && matches!(span[11], Instruction::Drop)
+                    }
+                }
+            }
+            NumericOperation::CompareBranch {
+                rhs,
+                comparison,
+                when_true,
+                target,
+            } => {
+                span.len() == 6
+                    && valid_number_source(rhs, locals, arguments, &initialized)
+                    && (target as usize <= start || target as usize >= end)
+                    && (target as usize) < code.len()
+                    && matches!(
+                        comparison,
+                        Opcode::Lt
+                            | Opcode::Lte
+                            | Opcode::Gt
+                            | Opcode::Gte
+                            | Opcode::Eq
+                            | Opcode::Neq
+                            | Opcode::StrictEq
+                            | Opcode::StrictNeq
+                    )
+                    && instruction_matches_direct(&span[0], region.array)
+                    && instruction_matches_number(&span[1], region.index, constants)
+                    && matches!(span[2], Instruction::GetArrayEl)
+                    && instruction_matches_number(&span[3], rhs, constants)
+                    && Opcode::from_instruction(&span[4]) == comparison
+                    && (matches!(span[5], Instruction::IfTrue(value) if when_true && value == target)
+                        || matches!(span[5], Instruction::IfFalse(value) if !when_true && value == target))
+            }
+        };
+        let (inputs, outputs) = match region.operation {
+            NumericOperation::AddPreInc => (1, 1),
+            NumericOperation::StoreElementAndLocal { .. } => (3, 0),
+            _ => (0, 0),
+        };
+        if !shape || !region_stack_contract(span, region.peak, inputs, outputs) {
+            return Err(ExecCodeError::InvalidTarget);
+        }
+        occupied_until = end;
+    }
+    Ok(())
+}
+
+fn valid_direct_source(
+    source: DirectSource,
+    locals: &[VariableDefinition],
+    arguments: &[VariableDefinition],
+    initialized: &[bool],
+) -> bool {
+    match source {
+        DirectSource::Local(index) | DirectSource::CheckedLocal(index) => {
+            locals.get(index as usize).is_some_and(|definition| {
+                definition.kind == ClosureVariableKind::Normal
+                    && definition.is_lexical == matches!(source, DirectSource::CheckedLocal(_))
+                    && (!definition.is_lexical
+                        || initialized.get(index as usize).copied().unwrap_or(false))
+            })
+        }
+        DirectSource::Argument(index) => (index as usize) < arguments.len(),
+    }
+}
+
+fn valid_number_source(
+    source: NumberSource,
+    locals: &[VariableDefinition],
+    arguments: &[VariableDefinition],
+    initialized: &[bool],
+) -> bool {
+    match source {
+        NumberSource::Direct(source) => valid_direct_source(source, locals, arguments, initialized),
+        NumberSource::Immediate(_) | NumberSource::Constant { .. } => true,
+    }
+}
+
+fn valid_numeric_destination(
+    index: u16,
+    checked: bool,
+    locals: &[VariableDefinition],
+    initialized: &[bool],
+) -> bool {
+    locals.get(index as usize).is_some_and(|definition| {
+        definition.kind == ClosureVariableKind::Normal
+            && !definition.is_const
+            && definition.is_lexical == checked
+            && (!checked || initialized.get(index as usize).copied().unwrap_or(false))
+    })
+}
+
+fn matches_local_read(instruction: &Instruction, index: u16, checked: bool) -> bool {
+    matches!(instruction, Instruction::GetLocal(value) if !checked && *value == index)
+        || matches!(instruction, Instruction::GetLocalCheck(value) if checked && *value == index)
+}
+
+fn matches_local_write(instruction: &Instruction, index: u16, checked: bool) -> bool {
+    matches!(instruction, Instruction::SetLocal(value) if !checked && *value == index)
+        || matches!(instruction, Instruction::SetLocalCheck(value) if checked && *value == index)
+}
+
+fn region_stack_contract(
+    span: &[Instruction],
+    expected_peak: u16,
+    input_depth: usize,
+    output_depth: usize,
+) -> bool {
+    let mut depth = input_depth;
+    let mut peak = input_depth;
+    for instruction in span {
+        let effect = instruction.stack_contract();
+        if effect.state != StackStateEffect::Ordinary {
+            return false;
+        }
+        let Some(next) = depth
+            .checked_sub(effect.popped)
+            .and_then(|depth| depth.checked_add(effect.pushed))
+        else {
+            return false;
+        };
+        depth = next;
+        peak = peak.max(depth);
+    }
+    depth == output_depth && peak - input_depth == usize::from(expected_peak)
+}
+
+fn verify_number_operand(
+    code: &ExecCode,
+    source: usize,
+    value: NumberSource,
+) -> Result<bool, ExecCodeError> {
+    let decoded = code.decode(code.boundaries[source])?;
+    Ok(match value {
+        NumberSource::Direct(direct) => {
+            decoded.opcode == direct_opcode(direct) && decoded.operand(0) == direct_index(direct)
+        }
+        NumberSource::Immediate(value) => {
+            decoded.opcode == Opcode::PushI32 && decoded.signed_operand(0) == value
+        }
+        NumberSource::Constant { index, .. } => {
+            decoded.opcode == Opcode::PushConst && decoded.operand(0) == index
+            // The linked constant and its range were checked before
+            // encoding; the word verifier checks immutable identity.
+        }
+    })
+}
+
+fn verify_direct_operand(
+    code: &ExecCode,
+    source: usize,
+    value: DirectSource,
+) -> Result<bool, ExecCodeError> {
+    let decoded = code.decode(code.boundaries[source])?;
+    Ok(decoded.opcode == direct_opcode(value) && decoded.operand(0) == direct_index(value))
+}
+
+fn select_opcodes(
+    code: &[Instruction],
+    locals: Option<&[VariableDefinition]>,
+    regions: &[NumericRegion],
+) -> Vec<Opcode> {
     let mut entries = HashSet::new();
     for (pc, instruction) in code.iter().enumerate() {
         for operand in instruction.operand_contract().0.into_iter().flatten() {
@@ -1104,6 +2452,9 @@ fn select_opcodes(code: &[Instruction], locals: Option<&[VariableDefinition]>) -
         if matches!(instruction, Instruction::Gosub(_)) {
             entries.insert(pc + 1);
         }
+    }
+    for region in regions {
+        entries.insert(region.start as usize);
     }
     let direct_source = |instruction: &Instruction| match instruction {
         Instruction::GetLocal(index) => locals.is_none_or(|definitions| {
@@ -1384,6 +2735,17 @@ fn select_opcodes(code: &[Instruction], locals: Option<&[VariableDefinition]>) -
             _ => {}
         }
     }
+    for region in regions {
+        let start = region.start as usize;
+        let end = region.end as usize;
+        // Region starts are entries for the other selectors, so no selected
+        // operation can consume across this boundary. Preserve the exact
+        // generic interval without erasing an adjacent selection.
+        for pc in start..end {
+            opcodes[pc] = Opcode::from_instruction(&code[pc]);
+        }
+        opcodes[start] = region_opcode(region.operation);
+    }
     opcodes
 }
 
@@ -1396,7 +2758,37 @@ fn encoded_operands(contract: OperandContract) -> Vec<EncodedOperand> {
         .collect()
 }
 
-fn published_operands(code: &[Instruction], source: usize, opcode: Opcode) -> Vec<EncodedOperand> {
+fn published_operands(
+    code: &[Instruction],
+    source: usize,
+    opcode: Opcode,
+    regions: &[NumericRegion],
+    region_ids: &[Option<usize>],
+) -> Vec<EncodedOperand> {
+    if is_region_opcode(opcode) {
+        let index = region_ids[source].expect("planned region has no descriptor");
+        let region = &regions[index];
+        return vec![
+            EncodedOperand {
+                bits: index as u32,
+                short: index <= usize::from(u16::MAX),
+                target: false,
+            },
+            EncodedOperand {
+                bits: match region.operation {
+                    NumericOperation::CompareBranch { target, .. } => target,
+                    _ => region.end,
+                },
+                short: false,
+                target: true,
+            },
+            EncodedOperand {
+                bits: region.start + 1,
+                short: false,
+                target: true,
+            },
+        ];
+    }
     let mut operands = encoded_operands(code[source].operand_contract());
     if opcode == Opcode::FieldAccSetDrop {
         let (base, field) = match (&code[source + 1], &code[source + 2]) {
@@ -1707,7 +3099,12 @@ mod tests {
         assert_eq!(code.decode(4).unwrap().signed_operand(0), -1);
         assert_eq!(code.source_pc(3), None);
         code.verify().unwrap();
-        assert!(code.disassemble().unwrap().contains("PushConst"));
+        assert!(
+            code.disassemble()
+                .unwrap()
+                .lines()
+                .any(|line| { line.split_whitespace().any(|word| word == "PushConst") })
+        );
         let header = code.words[0].get();
         code.words[0].set(header ^ (1 << (16 + WIDTH_SHIFT)));
         assert_eq!(code.verify(), Err(ExecCodeError::InvalidHeader));
@@ -2084,13 +3481,13 @@ mod tests {
         let normal = [local(ClosureVariableKind::Normal, false)];
         let special = [local(ClosureVariableKind::FunctionName, false)];
         assert_eq!(
-            ExecCode::encode_with_locals(&read, &normal)
+            ExecCode::encode_with_locals(&read, &normal, &[], &[], &[])
                 .unwrap()
                 .opcode_at_source(0),
             Some(Opcode::NumberLocalInc)
         );
         assert_eq!(
-            ExecCode::encode_with_locals(&read, &special)
+            ExecCode::encode_with_locals(&read, &special, &[], &[], &[])
                 .unwrap()
                 .opcode_at_source(0),
             Some(Opcode::GetLocal)
@@ -2107,17 +3504,244 @@ mod tests {
         let writable = [normal[0], local(ClosureVariableKind::Normal, false)];
         let constant = [normal[0], local(ClosureVariableKind::Normal, true)];
         assert_eq!(
-            ExecCode::encode_with_locals(&update, &writable)
+            ExecCode::encode_with_locals(&update, &writable, &[], &[], &[])
                 .unwrap()
                 .opcode_at_source(0),
             Some(Opcode::DensePreUpdateLocal)
         );
         assert_eq!(
-            ExecCode::encode_with_locals(&update, &constant)
+            ExecCode::encode_with_locals(&update, &constant, &[], &[], &[])
                 .unwrap()
                 .opcode_at_source(0),
             Some(Opcode::GetLocal)
         );
+    }
+
+    #[test]
+    fn numeric_region_publication_rejects_invalid_descriptors_and_entries() {
+        let local = VariableDefinition {
+            name: None,
+            is_lexical: false,
+            is_const: false,
+            is_parameter_initializer: false,
+            kind: ClosureVariableKind::Normal,
+        };
+        let code = [
+            Instruction::GetLocal(0),
+            Instruction::GetArg(0),
+            Instruction::PushI32(0),
+            Instruction::GetArrayEl,
+            Instruction::PushI32(2),
+            Instruction::Mul,
+            Instruction::Add,
+            Instruction::SetLocal(0),
+            Instruction::Drop,
+            Instruction::ReturnUndefined,
+        ];
+        let region = NumericRegion {
+            start: 0,
+            end: 9,
+            array: DirectSource::Argument(0),
+            index: NumberSource::Immediate(0),
+            operation: NumericOperation::Accumulate {
+                destination: 0,
+                scale: NumberSource::Immediate(2),
+                checked: false,
+            },
+            peak: 3,
+        };
+        let published =
+            ExecCode::encode_with_locals(&code, &[local], &[local], &[region], &[]).unwrap();
+        assert_eq!(
+            published.opcode_at_source(0),
+            Some(Opcode::NumericArrayAccumulate)
+        );
+        let first = published.decode(0).unwrap();
+        assert_eq!(published.source_pc(first.operand(1)), Some(9));
+        assert_eq!(published.source_pc(first.operand(2)), Some(1));
+        for source in 1..9 {
+            let pc = published.exec_pc(source).unwrap();
+            assert_eq!(published.source_pc(pc), Some(source));
+        }
+        published.words[2].set(published.exec_pc(3).unwrap());
+        assert_eq!(published.verify(), Err(ExecCodeError::InvalidTarget));
+        let mut malformed = region;
+        malformed.peak = 2;
+        assert_eq!(
+            ExecCode::encode_with_locals(&code, &[local], &[local], &[malformed], &[]).unwrap_err(),
+            ExecCodeError::InvalidTarget
+        );
+        let mut entered = vec![Instruction::Goto(4)];
+        entered.extend(code);
+        let shifted = NumericRegion {
+            start: 1,
+            end: 10,
+            ..region
+        };
+        assert_eq!(
+            ExecCode::encode_with_locals(&entered, &[local], &[local], &[shifted], &[])
+                .unwrap_err(),
+            ExecCodeError::InvalidTarget
+        );
+    }
+
+    #[test]
+    fn m2_region_publication_checks_shapes_entries_and_branch_targets() {
+        let local = VariableDefinition {
+            name: None,
+            is_lexical: false,
+            is_const: false,
+            is_parameter_initializer: false,
+            kind: ClosureVariableKind::Normal,
+        };
+        let cases = [
+            (
+                vec![
+                    Instruction::GetArg(0),
+                    Instruction::PushI32(0),
+                    Instruction::GetArrayEl,
+                    Instruction::PushI32(2),
+                    Instruction::Mul,
+                    Instruction::SetLocal(0),
+                    Instruction::Drop,
+                    Instruction::ReturnUndefined,
+                ],
+                NumericOperation::StoreProduct {
+                    destination: 0,
+                    scale: NumberSource::Immediate(2),
+                    checked: false,
+                },
+                2,
+                Opcode::NumericArrayStoreProduct,
+            ),
+            (
+                vec![
+                    Instruction::GetArg(0),
+                    Instruction::PushI32(0),
+                    Instruction::GetArrayEl3,
+                    Instruction::PushI32(2),
+                    Instruction::Add,
+                    Instruction::Insert3,
+                    Instruction::PutArrayEl,
+                    Instruction::Drop,
+                    Instruction::ReturnUndefined,
+                ],
+                NumericOperation::UpdateElement {
+                    delta: UpdateDelta::Number(NumberSource::Immediate(2)),
+                },
+                4,
+                Opcode::NumericArrayUpdateElement,
+            ),
+            (
+                vec![
+                    Instruction::GetArg(0),
+                    Instruction::PushI32(0),
+                    Instruction::GetArrayEl3,
+                    Instruction::GetLocal(0),
+                    Instruction::GetArg(0),
+                    Instruction::PushI32(0),
+                    Instruction::GetArrayEl,
+                    Instruction::Mul,
+                    Instruction::Add,
+                    Instruction::Insert3,
+                    Instruction::PutArrayEl,
+                    Instruction::Drop,
+                    Instruction::ReturnUndefined,
+                ],
+                NumericOperation::UpdateElement {
+                    delta: UpdateDelta::ArrayProduct(super::super::region::ArrayProductSource {
+                        array: DirectSource::Argument(0),
+                        index: NumberSource::Immediate(0),
+                        scale: NumberSource::Direct(DirectSource::Local(0)),
+                    }),
+                },
+                6,
+                Opcode::NumericArrayUpdateElement,
+            ),
+            (
+                vec![
+                    Instruction::GetArg(0),
+                    Instruction::PushI32(0),
+                    Instruction::GetArrayEl,
+                    Instruction::PushI32(2),
+                    Instruction::Lt,
+                    Instruction::IfFalse(7),
+                    Instruction::ReturnUndefined,
+                    Instruction::ReturnUndefined,
+                ],
+                NumericOperation::CompareBranch {
+                    rhs: NumberSource::Immediate(2),
+                    comparison: Opcode::Lt,
+                    when_true: false,
+                    target: 7,
+                },
+                2,
+                Opcode::NumericArrayCompareBranch,
+            ),
+        ];
+        for (code, operation, peak, opcode) in cases {
+            let region = NumericRegion {
+                start: 0,
+                end: (code.len()
+                    - if opcode == Opcode::NumericArrayCompareBranch {
+                        2
+                    } else {
+                        1
+                    }) as u32,
+                array: DirectSource::Argument(0),
+                index: NumberSource::Immediate(0),
+                operation,
+                peak,
+            };
+            let published =
+                ExecCode::encode_with_locals(&code, &[local], &[local], &[region], &[]).unwrap();
+            assert_eq!(published.opcode_at_source(0), Some(opcode));
+            published.verify().unwrap();
+            if matches!(
+                operation,
+                NumericOperation::UpdateElement {
+                    delta: UpdateDelta::ArrayProduct(_)
+                }
+            ) {
+                let mut malformed_payload = published.clone();
+                let mut descriptors = malformed_payload.regions.as_ref().unwrap().to_vec();
+                descriptors[0].value = NumberSource::Immediate(1);
+                malformed_payload.regions = Some(Rc::from(descriptors));
+                assert_eq!(
+                    malformed_payload.verify(),
+                    Err(ExecCodeError::InvalidTarget)
+                );
+            }
+            let mut malformed = region;
+            malformed.peak -= 1;
+            assert_eq!(
+                ExecCode::encode_with_locals(&code, &[local], &[local], &[malformed], &[])
+                    .unwrap_err(),
+                ExecCodeError::InvalidTarget
+            );
+            let terminal = NumericRegion {
+                start: code.len() as u32,
+                end: code.len() as u32,
+                ..region
+            };
+            assert_eq!(
+                ExecCode::encode_with_locals(&code, &[local], &[local], &[terminal], &[])
+                    .unwrap_err(),
+                ExecCodeError::InvalidTarget
+            );
+            let mut entered = vec![Instruction::Goto(3)];
+            entered.extend(code.iter().cloned());
+            let shifted = NumericRegion {
+                start: 1,
+                end: region.end + 1,
+                ..region
+            };
+            assert_eq!(
+                ExecCode::encode_with_locals(&entered, &[local], &[local], &[shifted], &[])
+                    .unwrap_err(),
+                ExecCodeError::InvalidTarget
+            );
+        }
     }
 
     #[test]

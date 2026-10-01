@@ -172,6 +172,7 @@ impl Runtime {
     ) -> Result<FunctionBytecodeRef, RuntimeError> {
         let PublishFrame {
             code,
+            numeric_regions,
             remaining: _remaining,
             linked_constants,
             atom_string_constants,
@@ -383,6 +384,7 @@ impl Runtime {
             let owned_atoms = auxiliary_atoms.clone();
             let bytecode = FunctionBytecodeDraft {
                 code: code.into(),
+                numeric_regions: numeric_regions.into_boxed_slice(),
                 constants: linked_constants.into(),
                 property_key_atoms: (!property_key_atoms.is_empty())
                     .then(|| property_key_atoms.into()),
@@ -473,6 +475,21 @@ impl Runtime {
     }
 
     #[cfg(test)]
+    pub(crate) fn test_function_exec_opcodes(
+        &self,
+        function: &FunctionBytecodeRef,
+    ) -> Result<Vec<crate::engine::code::exec_opcode::Opcode>, RuntimeError> {
+        if !function.belongs_to(self) {
+            return Err(RuntimeError::WrongRuntime("function bytecode"));
+        }
+        let state = self.0.state.borrow();
+        let exec = &state.heap.function_bytecode(function.bytecode_id())?.exec;
+        Ok((0..exec.instruction_len())
+            .filter_map(|source| exec.opcode_at_source(source))
+            .collect())
+    }
+
+    #[cfg(test)]
     pub fn test_function_name(
         &self,
         function: &FunctionBytecodeRef,
@@ -549,6 +566,7 @@ impl Runtime {
 
 struct PublishFrame<'a> {
     code: Vec<crate::engine::code::bytecode::Instruction>,
+    numeric_regions: Vec<crate::engine::code::region::NumericRegion>,
     remaining: std::vec::IntoIter<UnlinkedConstant>,
     linked_constants: Vec<BytecodeConstant>,
     /// Atom-string constants deferred until canonicalization: the slot index
@@ -577,6 +595,7 @@ impl PublishFrame<'_> {
         let linked_constants = Vec::with_capacity(constants.len());
         Self {
             code: parts.code,
+            numeric_regions: parts.numeric_regions,
             remaining: constants.into_iter(),
             linked_constants,
             atom_string_constants: Vec::new(),

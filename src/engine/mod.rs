@@ -8,6 +8,7 @@ pub(crate) mod heap;
 pub(crate) mod host;
 pub(crate) mod jobs;
 pub(crate) mod modules;
+pub(crate) mod numeric_region_miss;
 pub(crate) mod object;
 pub(crate) mod realm;
 pub(crate) mod value;

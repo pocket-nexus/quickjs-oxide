@@ -1,6 +1,50 @@
 use super::*;
 
 #[test]
+fn explicit_gc_caps_empty_zero_queue_but_ordinary_releases_reuse_it() {
+    let runtime = Runtime::new();
+    let baseline = runtime.heap_counts();
+    let roots: Vec<_> = (0..32).map(|_| runtime.new_object(None).unwrap()).collect();
+    let retained_capacity = {
+        let mut state = runtime.0.state.borrow_mut();
+        state.heap.zero_queue.reserve(8192);
+        state.heap.zero_queue.capacity()
+    };
+    assert!(retained_capacity > 4096);
+
+    drop(roots);
+    assert_eq!(runtime.heap_counts().object_nodes, baseline.object_nodes);
+    assert_eq!(
+        runtime.0.state.borrow().heap.zero_queue.capacity(),
+        retained_capacity
+    );
+
+    runtime.run_gc().unwrap();
+    let state = runtime.0.state.borrow();
+    assert!(state.heap.zero_queue.is_empty());
+    assert!(state.heap.zero_queue.capacity() <= 4096);
+}
+
+#[test]
+fn explicit_gc_drains_deferred_release_before_trimming_zero_queue() {
+    let runtime = Runtime::new();
+    let baseline = runtime.heap_counts();
+    let object = runtime.new_object(None).unwrap();
+    let mut state = runtime.0.state.borrow_mut();
+    state.heap.zero_queue.reserve(8192);
+    drop(object);
+    assert!(runtime.0.deferred_references.has_pending());
+    drop(state);
+
+    runtime.run_gc().unwrap();
+    assert_eq!(runtime.heap_counts().object_nodes, baseline.object_nodes);
+    assert!(!runtime.0.deferred_references.has_pending());
+    let state = runtime.0.state.borrow();
+    assert!(state.heap.zero_queue.is_empty());
+    assert!(state.heap.zero_queue.capacity() <= 4096);
+}
+
+#[test]
 fn object_property_cycle_is_collected_only_by_explicit_gc() {
     let runtime = Runtime::new();
     let object = runtime.new_object(None).unwrap();
@@ -13,6 +57,30 @@ fn object_property_cycle_is_collected_only_by_explicit_gc() {
     let stats = runtime.run_gc().unwrap();
     assert_eq!(stats.cleanup.finalized_objects, 1);
     assert_eq!(runtime.heap_counts().object_nodes, 0);
+}
+
+#[test]
+fn shape_prototype_property_cycle_keeps_external_root_then_collects() {
+    let runtime = Runtime::new();
+    let baseline = runtime.heap_counts();
+    let prototype = runtime.new_object(None).unwrap();
+    let object = runtime.new_object(Some(&prototype)).unwrap();
+    let back = runtime.intern_property_key("back").unwrap();
+    assert!(set_property(&runtime, &prototype, &back, Value::Object(object.clone())).unwrap());
+    drop(prototype);
+
+    runtime.run_gc().unwrap();
+    let rooted = runtime.heap_counts();
+    assert!(rooted.object_nodes >= baseline.object_nodes + 2);
+    assert!(rooted.shape_nodes >= baseline.shape_nodes + 2);
+
+    drop(object);
+    let stats = runtime.run_gc().unwrap();
+    assert!(stats.cleanup.finalized_objects >= 2);
+    assert!(stats.cleanup.finalized_shapes >= 2);
+    let collected = runtime.heap_counts();
+    assert_eq!(collected.object_nodes, baseline.object_nodes);
+    assert_eq!(collected.shape_nodes, baseline.shape_nodes);
 }
 
 #[test]
