@@ -1,21 +1,24 @@
-# 数值／数组跨度：冻结的实施规格 v1
+# 数值／数组跨度：已完成候选的实施规格 v1
+
+> 后续编码修订（2026-09-26）：现行 flag 3/4 专门表示后缀／前缀 `++`，14/15 表示对应 `--`；内部种类为 `ReadPostInc`、`ReadPreInc`、`ReadPostDec`、`ReadPreDec`。方向在发布时认证，执行期从 kind 取得，不再读取更新 opcode 选择方向。13 种语义形态及 profiling 的 post/pre 聚合名称保持，legacy update 的 bit 16 与上述值不冲突。以下表格保留原候选的历史编码；现行实现与验证见[后续收据](receipts/cost-follow-up-2026-09-26/README.md)。
 
 > 设计基线：`6f09205c51f8b34e3c7a90ce406739fe1dd07c48`（PR #6，生产源码与 R0 `f531f605` 相同）。
-> 本文取代 implementation.md 原 B0–B7 中“再选形态／意向接口”的部分。白名单、签名、接线位置和提交协议在此冻结；启用仍须通过测量门禁。
-> 本次核对了编译器、发布器及 VM 源码，**没有运行 Rust 编译或取得四个完整函数的真实 dump**。下面的符号序列是匹配器规范／源码推导，不伪装成带真实 PC 的输出。随文提供使用现有内部 API 的完整发布后 dump 探针；未运行的动态覆盖和性能验收不能标成通过。
+> 本文记录 #42 候选实施时采用的白名单、签名、接线位置和提交协议；当前生产代码已实现全部 13 种形态。这些约束用于解释和复核该候选，不是后续优化的永久架构边界。新的覆盖与成本证据可以改变内部表示、接口和执行入口，但必须保持可观察的 JS 语义、所有权与错误顺序，并重新验证新方案。
+> 后续方案可以删除或替换本文限定的 `FusionPlan` 编码、13 种跨度白名单、旧 helper 与 S1–S4 接线位置。遇到旧边界迫使热路径重复验证、额外派发或维护两套执行状态时，应把删除该边界列为候选，而不必继续在外围加一层。历史规格保留在此供结果复核，不充当新代码的设计审查清单。
+> 已用 Rust 1.94.1 编译完整真实内核并取得四个目标函数的[发布后 dump 与 25 个站点 manifest](receipts/all-dense-6db6bfb0/README.md)。下面的符号序列仍是匹配器规范／源码推导，真实 PC 以 manifest 为准。静态站点不是动态覆盖或性能验收。
 
-## 1. 已确定的产品边界
+## 1. 该候选的实施边界
 
-不重写 `Instruction`，不修改 canonical 指令、PC、异常表或恢复 ABI；`FusionPlan` 保持 `Option<Rc<[u8]>>`。只新增下表 13 种短跨度，最长 9 条。不引入每 PC descriptor、可变 QuickOp、通用 register IR、TOS facade 或 adaptive counter。
+该候选没有重写 `Instruction`、canonical 指令、PC、异常表或恢复 ABI；`FusionPlan` 保持 `Option<Rc<[u8]>>`。它只新增下表 13 种短跨度，最长 9 条，没有引入每 PC descriptor、可变 QuickOp、通用 register IR、TOS facade 或 adaptive counter。这是当次对照实验的范围，不预先排除后续方案。
 
-P2 实施 R0–R3；P3 实施 R4、A0–A3；P4 实施 W0–W3。这些是冻结的分批白名单，不是待实现者自由选择的方向。真实程序不命中时收窄／停止投入，不自动扩大语法；增加形态必须独立改规格、测试和 A/B。`this`、closure/global producer 本版明确不支持；B4 只记录其覆盖缺口，不安排未设计的 captured 写入。
+P2 实施 R0–R3；P3 实施 R4、A0–A3；P4 实施 W0–W3。这是该候选的白名单。四函数里 A0–A3、W2、W3 静态站点为零，已记录而未在当次实验扩大语法；后续增加形态需要新的规格、测试和 A/B。`this`、closure/global producer 在该候选中未支持；B4 当时只记录其覆盖缺口。
 
 ### 1.1 Operand 的精确定义
 
 | 记号 | 允许的 canonical 指令 | 发布期要求 | 运行期要求 |
 | --- | --- | --- | --- |
 | `L(x)` | `GetLocal(x)` 或 `GetLocalCheck(x)` | x 在 locals 内，`kind == Normal` | `FrameBinding::Direct`，拒绝 Captured/Uninitialized/空槽 |
-| `P(x)` | `GetArg(x)` | 原发布验证器负责参数索引合法性 | 同样为 Direct；不能绕过现有 captured 参数臂 |
+| `P(x)` | `GetArg(x)` | 编译器绑定解析产生参数索引；matcher 不单独证明其范围 | 同样为 Direct，按实际帧窗口检查范围；不能绕过现有 captured 参数臂 |
 | `B(x)` | `L(x)` 或 `P(x)` | 同上 | 值为当前 Runtime 的 Object，进一步要求普通 dense Array |
 | `K` | `PushI32(v)`；或 `PushConst(k)` 且 constants[k] 为 `Value(Int/Float)` | 常量索引及数值种类已验证 | 读取原 Int/Float 表示，不将 String/BigInt 当 Number |
 | `N` | `L(x)`、`P(x)` 或 `K` | 同上 | `Number::Int/Float`；不做 ToPrimitive/ToNumber |
@@ -30,7 +33,7 @@ P2 实施 R0–R3；P3 实施 R4、A0–A3；P4 实施 W0–W3。这些是冻结
 
 本版不接受 `GetVarRef/GetVarRefCheck/PushThis/GetVar/GetField` 作为 producer，不跨 `Nop` 扫描，不包含 Call、getter、Proxy、ToPropKey、branch、catch、yield、await。`GetArrayEl2` 不在白名单；`GetArrayEl3` 仅允许 W3 的固定位置。
 
-### 1.2 冻结的 flags、长度和栈契约
+### 1.2 该候选的 flags、长度和栈契约
 
 S 是进入首 PC 时已有的操作数前缀，下表不会读取或修改 S。peak 是 canonical 相对 S 的最高额外深度，不能只检查融合后净增长。
 
@@ -82,13 +85,13 @@ python3 docs/performance/probes/run_dump.py \
   --toolchain 1.94.1
 ```
 
-探针代码本次做了 API 对照，未做 Rust 编译验证；入口脚本不会虚构输出或将失败标成成功。接纳时必须附 probe receipt 和四份实际函数内容（crypto/navier 文件中合计恰有 am3/project/lin_solve/advect 四个目标），再运行实际生产 matcher 生成 site manifest。manifest 固定字段：source/function path、canonical 首末 PC、flag、所有 slot/constant 编号、每条 opcode、peak/delta、拒绝原因。不得由 JS 正则推算 manifest。
+探针已完成 Rust 编译和真实运行；[覆盖总结](receipts/all-dense-6db6bfb0/README.md)记录四个目标函数的 flag、首末 PC 和拒绝分类。完整生成 dump 与 manifest 保留在本机测量目录，不提交到 PR。manifest 原始字段包括 source/function path、canonical 首末 PC、flag、slot/constant 编号、每条 opcode、peak/delta；不得由 JS 正则推算。
 
-**B0 不再承担选设计的工作。**它验证上述冻结设计在真实输入上的实际覆盖；不匹配就报告具体断点并停止扩大，不把“先 dump 再决定 API”重新留给下一位实现者。
+**该候选的 B0 用于核对已选设计的真实覆盖。**这个顺序只描述当次实施；后续方案应允许发布后 dump、动态覆盖和性能测量推翻候选形态与 API，不应把验证降为固定规格的验收。
 
 ## 3. 类型与 API：完整声明及所有权
 
-下面是本片要新增的准确契约，不声称基线已经拥有它们。生产代码不得使用 `...` 参数或另造未定义的 Value/NextPc。现有 `Number` 直接复用 `engine::value::number::operations::Number`，它是 `Copy` 的 Int/Float enum；通过既有 `From<Number> for JsValue` 写回，不新造数值表示。
+下面是本片已经实现的接口契约；设计基线没有这些新接口。生产代码没有另造未定义的 Value/NextPc。现有 `Number` 直接复用 `engine::value::number::operations::Number`，它是 `Copy` 的 Int/Float enum；通过既有 `From<Number> for JsValue` 写回，不新造数值表示。
 
 ### 3.1 编译期类型（code/fusion/dense.rs）
 
@@ -189,7 +192,7 @@ impl Runtime {
 }
 ```
 
-peek 的实现主体冻结如下（导入复用该模块已有类型）：
+当次 peek 的实现主体如下（导入复用该模块已有类型）：
 
 ```rust
 let JsValue::Object(id) = base else { return None; };
@@ -245,9 +248,11 @@ match source {
 
 `index_from_number` 只做 `Number::Int(i) if i >= 0 => Some(i as u32)`，其余 None。`apply_number_binary` 精确复用 Number::add/sub/mul/div/int32；BitAnd/Or/Xor 用 int32 结果；Shl 用 i32::wrapping_shl(rhs.int32() as u32 & 31)，Sar 用有符号右移，Shr 先转 u32 再右移、以 `Number::compact(f64::from(result))` 返回。其余指令 None。禁止饱和 ToInt32、f64::mul_add 或重关联。不要把该 helper 注入旧 binary/S1–S4，避免给非目标指令改 codegen。
 
-## 4. 逐函数改造与发布认证
+## 4. 当次逐函数改造与发布认证
 
-| 函数／文件 | 唯一允许的改动 |
+下表复原这次候选用于隔离变量的修改范围，不限制新方案重新划分执行核心或改变内部接口。
+
+| 函数／文件 | 当次候选的改动范围 |
 | --- | --- |
 | `code/fusion.rs::FusionPlan::build` | 签名仍为 `(code, locals, constants)`；调用新 dense::candidate，优先选择已通过 entry 检查的候选；原 matcher/编码保留 |
 | `code/fusion/dense.rs::candidate` | 实现 §1 表，最长优先；对每个候选检查整个 `entries[1..len]`，失败继续找更短候选 |
@@ -273,7 +278,7 @@ let candidate = dense_candidate.or(old_candidate);
 
 新 matcher 内对每个长度执行 `entries.get(1..length)?` 检查后才返回；外层既有 entry 检查仍可保留，新 flags 不享受 flag34 的特殊处理。NumericSource/DirectSlot 的解码只匹配表内固定位置的 Instruction enum 字段，无位域 word 解码，无通用 bytecode evaluator。
 
-构建器优先级冻结为：A3/A2/A1/A0 → W1/W2/W3/W0 → R4 → R2/R3/R1 → R0 → 原候选链。先验证一个长候选的 entries，再考虑选择，**不能先 `.or` 选中长候选、最后检查失败就把同 PC 可行的短候选丢掉**。只有旧 S1 flag34 的 Goto 保留原有特殊 entry 豁免；新跨度无任何豁免。
+当次构建器优先级为：A3/A2/A1/A0 → W1/W2/W3/W0 → R4 → R2/R3/R1 → R0 → 原候选链。先验证一个长候选的 entries，再考虑选择，**不能先 `.or` 选中长候选、最后检查失败就把同 PC 可行的短候选丢掉**。只有旧 S1 flag34 的 Goto 保留原有特殊 entry 豁免；新跨度无任何豁免。
 
 发布期以 `Instruction::stack_contract()` 从相对深度 0 执行每个候选，断言无下溢、peak/delta 与 §1.2 一致；任何失败不发布新 flag。写 target 的 local metadata 必须可写 Normal；参数写仅来自已验证 PutArg/SetArg 并在运行期拒绝 Captured。构建阶段不猜类型、不执行用户程序。
 
@@ -340,7 +345,7 @@ PutArrayEl 在 run 中原本递增 property_generation；融合跳过 opcode 不
 
 read/acc/update 的所有 mutable slot 操作都在唯一 commit 内；W 的唯一 heap 提交之后再无可失败步骤。新形态不得跨越已提交状态后重新从跨度首 PC 回落。需要多次 store 或捕获写的长块不在本版范围。
 
-## 7. 必须落实到测试名称的验收
+## 7. 当次落实到测试名称的验收
 
 | 测试 | 必须断言 |
 | --- | --- |
@@ -359,7 +364,7 @@ read/acc/update 的所有 mutable slot 操作都在唯一 commit 内；W 的唯�
 
 测试模式增加 canonical-only 对照只控制新候选的生成，不能改 JS body；保留旧融合用于 Base/Parent 比较。生产构建不保留每操作调试 toggle。
 
-P2 起步先 R0，再 R1，再 R2/R3，各片独立提交和撤回；P3 先 R4 再 acc；P4 四种 store 分开。所有启用继续遵守 [测量协议](measurement.md)：累计不回退、真实 V8 覆盖、codegen 与失败成本。第一片 real-kernel manifest 不命中是停止信号，不是扩大到任意“numeric block”的理由。
+原分片计划要求 P2 先 R0、再 R1、再 R2/R3，P3 后接 R4 与 acc，P4 最后接 store。当前实现已在全部 handler 完成后发布 13 个 flag；[真实 manifest](receipts/all-dense-6db6bfb0/README.md)记录零覆盖形态。[四方正式测量](receipts/fourway-2026-09-25/README.md)记录动态命中和净效果。性能未过门或不命中只记录和归因，不扩大到任意“numeric block”。
 
 ## 8. 固定源码入口与本次验证
 
@@ -371,8 +376,8 @@ P2 起步先 R0，再 R1，再 R2/R3，各片独立提交和撤回；P3 先 R4 �
 - [现有数组叶路径](https://github.com/Eric-Song-Nop/quickjs-oxide/blob/6f09205c51f8b34e3c7a90ce406739fe1dd07c48/src/engine/object/ordinary_storage.rs)、[dense 前缀存储](https://github.com/Eric-Song-Nop/quickjs-oxide/blob/6f09205c51f8b34e3c7a90ce406739fe1dd07c48/src/engine/heap/object_storage.rs)、[run 接线](https://github.com/Eric-Song-Nop/quickjs-oxide/blob/6f09205c51f8b34e3c7a90ce406739fe1dd07c48/src/engine/vm/run.rs)。
 - [完整 Crypto 源码](https://github.com/ahaoboy/js-engine-benchmark/blob/2034d98fc8c5f8044e186267593f5d5ea5232caf/v8-v7/crypto.js)、[完整 NavierStokes 源码](https://github.com/ahaoboy/js-engine-benchmark/blob/2034d98fc8c5f8044e186267593f5d5ea5232caf/v8-v7/navier-stokes.js)。尤其 project 使用的是前缀索引更新，不应把等价手写 `row±1` 当原始语料。
 
-### 本次设计验证与剩余实测
+### 设计时验证记录与实施结果
 
-已核对源代码接口、符号序列的发射规则、flags 冲突、13 行独立栈代数和父 PR 身份。Python runner 通过语法／help 检查，以及模拟编译器的完整输出、零匹配、缺目标、编译失败四种工作流测试；四种均检查临时 worktree 清理和原工作区不变。这不是生产 stack_contract 测试或真实 Rust capture；Rust 探针只做源码 API 对照。本环境无 cargo/rustc，未执行 probe、Rust signature compile、Test262、性能或完整四函数 dump。
+最初设计稿核对了源代码接口、符号序列的发射规则、flags 冲突、13 行独立栈代数和父 PR 身份。Python runner 当时通过语法／help 检查，以及模拟编译器的完整输出、零匹配、缺目标、编译失败四种工作流测试；这些只是设计阶段证据。随后完成的真实 Rust capture、四函数 manifest、Test262 和性能测量分别见[发布后收据](receipts/all-dense-6db6bfb0/README.md)与[四方测量收据](receipts/fourway-2026-09-25/README.md)。
 
-因此本版关闭的是“白名单／API／函数级改造待决定”，不是把不存在的运行结果填进计划。真实 dump、生产 matcher manifest、签名编译测试和每片 A/B 仍是精确、可执行的验收工件；不得以本文档替代这些工件。
+本文记录这个已完成候选的设计与验证身份。后续优化须用新的真实负载证据决定实现形态；本规格不能代替新方案的测试和测量。

@@ -587,8 +587,9 @@ impl RuntimeState {
         let shape_cleanup = self.heap.release_shape(shape)?;
         self.apply_cleanup(layout_cleanup)?;
         self.apply_cleanup(shape_cleanup)?;
-        // Preserve QuickJS's slow-form flag, but do not keep rebuilding every
-        // property after a middle deletion or a non-default descriptor.
+        // Use dictionary storage while slow, so middle deletions and special
+        // descriptors do not keep rebuilding every property. A later complete
+        // reverse fill may recover dense storage at its mutation boundary.
         self.ensure_dictionary_layout(object)
     }
 

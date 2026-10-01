@@ -870,12 +870,11 @@ impl<T: TestConstant> DetachedBytecode<T> {
     }
 }
 
-/// Verify immutable bytecode parts before they enter the runtime heap.
+/// Verify immutable bytecode parts during compiler lowering and detached tests.
 ///
 /// Constant kinds are runtime-owned after linking, but control-flow validation
-/// only needs the pool length. Keeping this verifier representation-neutral
-/// lets publication validate child-function constants without manufacturing
-/// temporary public engine `Value`s.
+/// only needs the pool length. Publication no longer invokes this general
+/// verifier; its remaining checks cover selected published metadata.
 pub fn verify_parts(
     code: &[Instruction],
     constant_count: usize,
@@ -898,10 +897,10 @@ fn verify_parts_with_visits<V: VerificationVisits>(
         return Err(Error::internal("bytecode function has no instructions"));
     }
 
-    // Publication is a trust boundary. Validate representation operands for
-    // every instruction, including dead code, before the reachability walk.
-    // Later kind-specific verification may then index the constant pool
-    // without letting malformed unreachable bytecode panic the runtime.
+    // Validate representation operands for every instruction, including dead
+    // code, before the reachability walk. Later kind-specific verification may
+    // then index the constant pool without malformed unreachable bytecode
+    // panicking the verifier.
     for (pc, instruction) in code.iter().enumerate() {
         match instruction {
             Instruction::PushAtomValueIndex(index)

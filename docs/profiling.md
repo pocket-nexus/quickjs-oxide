@@ -123,6 +123,97 @@ are described below; total call allocations, total retain/release activity and
 compiler peak memory remain unavailable.
 Without the `profiling` feature, compiler and interpreter hooks are compiled out.
 
+### 普通调用分段抽样
+
+`bytecode.prepare` 只覆盖通用／owned 参数准备，不能代表普通直接调用。
+直接入口按伪随机序列约抽取 1/64 的调用，同一次入口的子阶段共享抽样决定，
+重入退出后恢复外层决定。`owned_execution_events["direct_timing.calls"]` 和
+`owned_execution_events["direct_timing.sampled_calls"]` 是实际观察到的全量入口数及被选入口数。
+`vm_phases` 中带 `.sampled` 后缀的 attempts 和纳秒总量只包含抽中阶段，
+不能当作所有调用的总耗时；每阶段最多保留 4096 对原始纳秒样本，
+超出部分仍累计 attempts 和时间，并增加 omitted_samples。
+
+| 阶段 | 覆盖范围 |
+| --- | --- |
+| `direct.prepare.sampled` | 直接入口内的选择、验证和认证；也可能选择 General／Native 或提前失败。 |
+| `direct.select.sampled` | 根据当前 callee 选择入口。 |
+| `ordinary.validate.sampled` | 普通调用操作数窗口和参数分类。 |
+| `ordinary.authenticate.sampled` | 普通 callee 认证，包含缓存命中检查。 |
+| `ordinary.install.sampled` | 普通帧安装。 |
+| `ordinary.install.slots.sampled` | 安装内部的操作数／局部变量窗口准备，是 install 的子阶段。实验提交 `dcc334aa`／`5e3dedc9` 曾将 receiver owner 转移纳入此阶段；该性能候选已撤回，跨版本比较须保留这个边界变化。 |
+
+准备、认证和安装的适用路径不同，attempts 不能直接互作分母。
+上述阶段不覆盖进入直接入口之前的派发，也不完整覆盖准备与安装之间的工作；
+不得相加后称为“完整调用成本”，不得与 plain 总耗时直接相除得到收益上界。
+抽样仍会扰动代码和被抽中调用，用于定位候选，性能准入使用 plain A/A 与 A/B。
+`ordinary_install.method/function` 与 `ordinary_install.args0/args1/args2/args3/args4plus`
+是全量安装尝试入口事件（包括后续安装失败），分别提供接收者形式和参数数量分布；
+不能把它们当作成功安装数。
+
+### 候选跨度与调用点逻辑诊断
+
+`oxide-compile-vm-cost-v1.fusion_diagnostics` 是逻辑事件计数，不采样耗时。
+`functions` 仅登记该收集区间**实际进入执行帧**的已发布函数，并不枚举所有
+编译或发布的函数。`runtime_id` 与 `bytecode_id`（槽位及发布代数）共同标识
+一次 Runtime 内的不可变函数；再加规范字节码 `pc` 才是候选或调用点位置。
+这些数字不能跨独立运行直接当作相同函数的 ID。函数清单还复制源码
+`function_name`、`filename` 与零基定义行列；剥离 debug 数据、匿名函数或
+诊断时暂时无法借用 Runtime 时，对应字段为 `null`。这些文本是独立副本，
+不保留 JS 字符串、Atom 或字节码 owner。
+
+| 字段 | 口径 |
+| --- | --- |
+| `functions[].unfused_read_sites` | 已执行函数中，静态没有任何 fusion flag 的直接 local/argument 读取 PC 数；每个函数登记一次。 |
+| `functions[].dense_candidate_sites` / `dense_noncandidate_read_sites` | 直接读取 PC 中发布了 dense span / 未发布 dense span 的静态数量。后者可以仍有其他 fusion 候选。 |
+| `dispatch[].visits` / `static_noncandidate_visits` | 每个直接读取 PC 的动态访问次数，及其中静态 fusion flag 为零的访问次数；用于量化查询无候选位置的频率。捕获参数的 `GetArg` 在提前处理分支也计入 dispatch。 |
+| `sites[].attempts`, `hits`, `misses` | 每个已发布候选起始 PC **实际进入候选处理器**的尝试、完成和未完成结果；保留的记录满足 `attempts = hits + sum(misses)`。捕获参数的 `GetArg` 在提前处理分支只计 dispatch，不进入 dense 候选，因此不计入这里的 attempts。普通 `guard` 和 dense 的动态失败均回到规范指令起点。`error` 是候选执行时的异常终止，**不表示回退**。 |
+| `callsites[]` | 仅覆盖普通驱动器 `enter_selected` 入口观察到的 callee；不是所有 call、construct 或 native 再入口的总账。`callee_identity_changes` 只比较连续的 Object callee 身份，非 Object 会断开连续序列。 |
+
+Dense 失败标签只描述**先前 leaf 失败后、再次只读观察到的首个不满足条件**，
+不声称它是唯一原因，也不改变规范执行。`source` 指发布形状或常量不可用；
+`binding` 指直接槽不可读；`non_number` 指数值源类型；`index` 指索引不是
+非负 Int。数组探针进一步区分 `base_not_object`、`not_array`、
+`array_materialized.*`（Array 已转普通属性表示）、`outside_dense_prefix_in_length`
+（逻辑 length 内但不在连续 dense 前缀）、`beyond_array_length`、
+`dense_non_number` 与读写借用不可用。`room` 指虚拟操作数峰值无法容纳。
+诊断探针的观察时间晚于原始失败；若状态不再吻合，则报告
+`dense_ready_after_failure` 或较保守的 `commit`/`generation` 等标签。
+`array_materialized.*` 在同一次借用内进一步只读查询当前 own slot：
+`own_default_number`、`own_nondefault_descriptor`、`own_non_number`、
+`own_accessor`、`own_special_slot`、`missing_own_index`。超出 immediate atom
+范围或布局不可读分别记为 `index_not_immediate`、`layout_unavailable`，不为诊断
+创建 atom。它不调用 getter、不查原型、不扫描整张数组，也不解释整个数组为什么
+仍为普通表示。与旧收据的 `array_materialized` 比较时，应汇总此前缀下所有标签；
+每次失败仍只记一个标签，不能把聚合值再次加到 attempts。
+顺序填充通常保留 dense 前缀，反向从高索引填充会转成普通属性表示；完整的默认
+索引集合若在新增索引 0 时符合恢复策略，可以重新转回 dense。
+两者不能合并归因为“缓存未命中”。
+
+`owned_execution_events` 还记录数组表示变化：
+
+- `array_storage_dense_materialization` 只在 dense→ordinary 布局提交成功后增加，
+  已为 ordinary 的早退和失败事务不计入。后缀 `_gap_write`、`_descriptor_path`、
+  `_interior_delete` 区分三个调用位置；descriptor 路径也可能处理跳跃写入，
+  不能把它解释成“全部由非默认属性标志导致”。
+- `array_storage_dense_recovery_enter` 只计实际调用恢复函数的次数；
+  `array_storage_dense_recovery` 计成功恢复。`_reject_*` 是该次检查首先确定的
+  拒绝原因：非普通 Array、短 length、槽数上限、槽数不足、索引／命名表分配失败、
+  越界索引、非默认 descriptor、非 data 槽、缺失索引或 shape 分配失败。
+  `_heap_declined` 保留堆接口 `Ok(None)` 的未细分含义；错误返回不计为普通拒绝。
+
+这些是事件次数，不是对象去重计数，也没有提供转换发生的 VM PC。
+恢复只在已接线的新增索引 0 边界尝试：没有 enter 事件不能证明对象不符合恢复条件。
+保留的命名属性本身不阻止恢复；单槽 `own_default_number` 也不证明全数组没有孔。
+
+每类 per-PC map 最多记录 16384 个位置，函数清单最多 4096 项，
+`omitted` 分别计数超限事件。其中 `omitted.static_functions` 计数函数清单
+满额后被拒绝的**登记尝试**；同一未登记函数每次进入帧都可能再次增加，
+不能将它解释为不同函数数目。每个调用点只保存最近 callee 身份及最多
+四个不同的非 owning ObjectId；`distinct_callees_observed` 在四个以内精确，
+`distinct_overflow=true` 后仅是下界。没有任何 callee owner 被诊断保留。
+此构建的额外 map、分类借用和 JSON 写入会影响运行时间；正式性能比较
+应使用无 `profiling` 特性的 plain 构建及独立 A/B 测量。
+
 ## Disable and measure overhead
 
 Remove `-d/-T` to disable collection. For a binary with the feature compiled out:

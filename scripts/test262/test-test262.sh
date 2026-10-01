@@ -21,7 +21,6 @@ usage() {
 die() { echo "error: $*" >&2; exit 1; }
 
 vm_configuration=stack-vm
-vm_features=()
 mode=check
 spec_arg=$default_spec
 mode_seen=false
@@ -502,7 +501,7 @@ build_host=$(rustc -vV | awk '$1=="host:" { print $2; found++ } END { if (found!
 QUICKJS_OXIDE_TEST262_ENGINE_SEMANTICS_SHA256=$workspace_engine_semantics_sha256 \
     cargo build --locked --release --target "$build_host" \
     --target-dir "$target_dir" -p quickjs-oxide-test262 --bin run-test262 \
-    "${vm_features[@]}" --message-format json-render-diagnostics > "$tmp/runner-build.jsonl"
+    --message-format json-render-diagnostics > "$tmp/runner-build.jsonl"
 python3 - "$tmp/runner-build.jsonl" "$vm_configuration" <<'PY_BUILD'
 import json, sys
 artifacts = [r for line in open(sys.argv[1]) if (r := json.loads(line)).get("reason") == "compiler-artifact" and r.get("target", {}).get("name") == "run-test262"]

@@ -123,13 +123,7 @@ pub(super) fn read_progress_selected(
                 // Base has moved outside the slot window. The result and
                 // receiver need two slots; decline fusion before any literal
                 // pushes if the verified capacity cannot hold the whole span.
-                let count = candidate.filter(|count| {
-                    slots.has_operand_capacity(count + 2)
-                        && super::method_arguments::available(
-                            slots,
-                            &executable.code[frame.fault_pc + 1..frame.fault_pc + count + 1],
-                        )
-                });
+                let count = candidate.filter(|count| slots.has_operand_capacity(count + 2));
                 publish_read_result(
                     slots,
                     &mut frame.resume_pc,
@@ -151,11 +145,16 @@ pub(super) fn read_progress_selected(
                         // the RunSlots borrow has ended below.
                         frame.fault_pc = start + offset + 1;
                         frame.resume_pc = frame.fault_pc;
-                        let literal = super::method_arguments::argument(
+                        let Some(literal) = super::method_arguments::argument(
                             runtime,
                             slots,
                             &executable.code[frame.fault_pc],
-                        )?;
+                        )?
+                        else {
+                            // The completed read and earlier arguments stay
+                            // installed; canonical execution resumes here.
+                            return Ok(());
+                        };
                         slots.push(literal)?;
                         #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_owned_instruction(depth + offset + 1);

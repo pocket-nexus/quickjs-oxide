@@ -469,6 +469,7 @@ pub(crate) mod profiling;
 
 mod realm_storage;
 
+mod array_recovery;
 mod dictionary_storage;
 mod object_storage;
 

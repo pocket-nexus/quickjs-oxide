@@ -72,11 +72,23 @@ impl std::ops::Deref for PublishedFunctionSnapshot {
 impl PublishedFunctionSnapshot {
     /// Borrow every static binding classification from this rooted owner.
     pub(crate) fn frame_layout(&self) -> crate::engine::code::function::layout::FrameLayout<'_> {
+        #[cfg(test)]
+        let plain_local_initializers = if self.bytecode.is_none() {
+            // Synthetic snapshots are mutable in unit tests. Derive this fact
+            // from their current definitions rather than a stale test default.
+            self.metadata.function_name_local.is_none()
+                && self.local_definitions.iter().all(|local| !local.is_lexical)
+        } else {
+            self.data.plain_local_initializers
+        };
+        #[cfg(not(test))]
+        let plain_local_initializers = self.data.plain_local_initializers;
         crate::engine::code::function::layout::FrameLayout::new(
             &self.metadata,
             &self.argument_definitions,
             &self.local_definitions,
             &self.closure_variables,
+            plain_local_initializers,
         )
     }
 
@@ -161,6 +173,7 @@ impl PublishedFunctionSnapshot {
             data: Rc::new(PublishedFunctionData {
                 has_captured_locals: true,
                 observes_arguments: true,
+                plain_local_initializers: true,
 
                 fusion: Default::default(),
 
@@ -199,6 +212,7 @@ impl std::ops::DerefMut for PublishedFunctionSnapshot {
 pub(crate) struct PublishedFunctionData {
     pub(crate) has_captured_locals: bool,
     pub(crate) observes_arguments: bool,
+    pub(crate) plain_local_initializers: bool,
 
     pub(crate) fusion: crate::engine::code::fusion::FusionPlan,
 
@@ -261,6 +275,11 @@ impl Runtime {
                             | crate::engine::code::bytecode::Instruction::ApplyEval { .. }
                     )
                 }),
+                plain_local_initializers: bytecode.metadata.function_name_local.is_none()
+                    && bytecode
+                        .local_definitions
+                        .iter()
+                        .all(|local| !local.is_lexical),
 
                 fusion: bytecode.fusion.clone(),
 
@@ -311,7 +330,7 @@ impl Runtime {
 mod tests {
     use super::*;
     use crate::engine::code::bytecode::Instruction;
-    use crate::engine::code::function::UnlinkedFunction;
+    use crate::engine::code::function::{UnlinkedFunction, UnlinkedVariableDefinition};
 
     fn publish(runtime: &Runtime, realm: ContextId) -> FunctionBytecodeRef {
         runtime
@@ -353,6 +372,57 @@ mod tests {
             [Instruction::PushI32(42), Instruction::Return]
         ));
         assert!(runtime.0.state.borrow().heap.function_bytecode(id).is_ok());
+    }
+
+    #[test]
+    fn published_local_initializer_fact_is_shared_and_rejects_lexical_bindings() {
+        let runtime = Runtime::new();
+        let context = runtime.new_context();
+        let metadata = FunctionMetadata {
+            local_count: 2,
+            max_stack: 1,
+            ..FunctionMetadata::default()
+        };
+        let plain = runtime
+            .publish_unlinked_function(
+                context.realm,
+                UnlinkedFunction::fixture(
+                    vec![Instruction::PushI32(42), Instruction::Return],
+                    vec![],
+                    metadata,
+                ),
+            )
+            .unwrap();
+        let plain_snapshot = runtime.snapshot_function_bytecode(&plain).unwrap();
+        let shared = runtime.snapshot_function_bytecode(&plain).unwrap();
+        assert!(Rc::ptr_eq(&plain_snapshot.data, &shared.data));
+        assert!(plain_snapshot.frame_layout().plain_local_initializers());
+        assert!(shared.frame_layout().plain_local_initializers());
+
+        let lexical = runtime
+            .publish_unlinked_function(
+                context.realm,
+                UnlinkedFunction::fixture(
+                    vec![Instruction::PushI32(42), Instruction::Return],
+                    vec![],
+                    metadata,
+                )
+                .with_fixture_definitions(
+                    vec![],
+                    vec![
+                        UnlinkedVariableDefinition::ordinary(None),
+                        UnlinkedVariableDefinition::lexical(None, false),
+                    ],
+                ),
+            )
+            .unwrap();
+        assert!(
+            !runtime
+                .snapshot_function_bytecode(&lexical)
+                .unwrap()
+                .frame_layout()
+                .plain_local_initializers()
+        );
     }
 
     #[test]

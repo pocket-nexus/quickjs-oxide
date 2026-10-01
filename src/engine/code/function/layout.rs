@@ -12,6 +12,9 @@ pub(crate) struct FrameLayout<'a> {
     arguments: &'a [VariableDefinition],
     locals: &'a [VariableDefinition],
     closures: &'a [ClosureVariable],
+    // Published once with the executable. No local can require TDZ or a
+    // function-name owner when this is true.
+    plain_local_initializers: bool,
 }
 
 impl<'a> FrameLayout<'a> {
@@ -20,12 +23,14 @@ impl<'a> FrameLayout<'a> {
         arguments: &'a [VariableDefinition],
         locals: &'a [VariableDefinition],
         closures: &'a [ClosureVariable],
+        plain_local_initializers: bool,
     ) -> Self {
         Self {
             metadata,
             arguments,
             locals,
             closures,
+            plain_local_initializers,
         }
     }
 
@@ -47,6 +52,14 @@ impl<'a> FrameLayout<'a> {
 
     pub(crate) fn locals(&self) -> &'a [VariableDefinition] {
         self.locals
+    }
+
+    pub(crate) fn plain_local_initializers(&self) -> bool {
+        self.plain_local_initializers
+    }
+
+    pub(crate) fn function_name_local(&self) -> Option<u16> {
+        self.metadata.function_name_local
     }
 
     pub(crate) fn closures(&self) -> &'a [ClosureVariable] {

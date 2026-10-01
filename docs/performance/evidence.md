@@ -1,14 +1,13 @@
 # 性能证据账本：issues #41–#44
 
-> 整理日期：2026-09-25。当前主仓快照 R0：`f531f6052cb497ce4707f01c276e8642e5e26788`。
-> 下列“实测”均指链接中的维护者实验；本次文档 PR 未独立执行这些实验。
-> 证据用来裁决下一步，不把 issue 标题、计划目标或局部计数包装为已取得的 V8 总分。
+> 原账本整理日期：2026-09-25；历史主仓快照 R0：`f531f6052cb497ce4707f01c276e8642e5e26788`。下列 E41–E44 的旧表格保留原维护者实验身份，不冒充当前组合版测量。
+> 实施更新：#41 已以新身份 `04bb1a74` 恢复并合入当前集成分支；13 种数值数组跨度已全部实现。[#41 复验](receipts/gates-2026-09-25/README.md)、[四函数 25 站点 manifest](receipts/all-dense-6db6bfb0/README.md)及[四方正式 benchmark／profile](receipts/fourway-2026-09-25/README.md)分别记录独立门禁、静态覆盖和组合实测。组合版八项隔离几何平均相对 R0 为 +12.1%，原版 combined 为 +13.0%；不等于原计划 3–4 倍目标已达成。
 
 ## E0. 版本与证据可取得性
 
 | 记录 | 被测版本／环境 | 可以支持什么 | 仍缺什么 |
 | --- | --- | --- | --- |
-| [E41] | 报告候选 `0cd4acee`，`fix/issue-41`；fat LTO、CGU=1；评论未给性能编译器完整版本／二进制完整 hash | 宽错误载体改小后真实 codegen 及固定指令下降 | 候选与完整报告在本次主仓读取中不可取得；空载 cycles、RSS、分配数未关闭 |
+| [E41] | 历史报告候选 `0cd4acee`；新恢复候选 `04bb1a74` 另见[复验](receipts/gates-2026-09-25/README.md) | 宽错误载体改小后的 ABI 和固定指令变化；新复验发现 cycles／错误分配／RSS 回退；[四方 V8](receipts/fourway-2026-09-25/README.md)另见完整 Score | 第二次独立正式轮和当前四方固定微负载矩阵未测 |
 | [E42] | `8a4b89d4` → `f531f605`，Rust 1.88.0；固定 10M 轮，CPU 2、5 样本中位 | 数组路径剩余工作明显多于其他三个循环 | 四探针原来未入库；V8 captured miss 未测；无总分增益结果 |
 | [E43] | `8a4b89d4` → `f531f605`，Rust 1.94.1；release perf 自时间与独立 profiling 计数 | 四个真实 V8 子项上的调用路径不是主要高倍数来源 | 上游 checkout 为 `2034d98`，不是旧文档的 pin；仅四子项，无完整调用点类型分布 |
 | [E44] | `f531f605`；同机串行 release A/B；固定指令重复一致 | 便宜 guard 前移的候选在所测分布上净亏 | 更大 V8 语料的失败比例仍未知；wall 受共享主机影响 |
@@ -17,10 +16,10 @@ R0 已合入 PR #48 的无状态 Test262 gate。#41 评论提到“合并后晋�
 
 `3341ac456ea2719858fd6173e8dcd9123ad9e660` 是 [PR #37] 的真实 head（文档／receipt 提交），不是一个虚构基线；只是不能把它说成实现提交。PR #37 的 merge 为 `26a5726a19efb0088c59d0325f6c3db3699b7048`，最终写回调整包含 `2fa370a7`。#42 报告指出 R0 与 PR #40 `fd9b4eac` 的引擎源码相同。新实验仍需记录完整源码与构建身份，不用这些关系替代 receipt。
 
-本次能访问四条 issue 评论，但 `docs/reports/issue-41-error-carrier.md` 在报告提交 `0cd4acee` 的主仓读取返回“没有该 ref”；#44 报告与原始样本说明保留在验证工作树。不能把这些本地路径写成新 checkout 已有的可运行输入。P0 应补齐原始文本、补丁、完整 hash 与可访问的产物位置。
+原整理时 `0cd4acee` 不可解析，因此未把旧 hash 冒充当前实验。现已独立恢复 `04bb1a74`，本仓只保留 R0 复验的[结果总结](receipts/gates-2026-09-25/README.md)；原始样本与构建文件不进入 PR。#44 的历史报告仍按其原身份阅读。
 
 <a id="e41"></a>
-## E41. 紧凑错误载体：机制已验证，接纳尚有条件
+## E41. 紧凑错误载体：历史机制与当前负结果
 
 [E41] 的候选是约 60 行、两个源文件的 `Error(Box<ErrorData>)`，不是全仓库 API 重构。记录如下。
 
@@ -47,11 +46,11 @@ R0 已合入 PR #48 的无状态 Test262 gate。#41 评论提到“合并后晋�
 | bigint256 | −4.31% | throw_catch | −1.20% |
 | tdz_catch | −0.79% | | |
 
-报告中的 instructions A/A 为 0.00%；cycles A/A 却为 −3.4%～+10.5%，`prop_write` 候选约 +13% cycles 尚待空载复测。错误 payload 加 Box 可能多一次分配，错误密集负载的分配与 RSS 未测。**不能以指令下降抵消尚未排除的时间回退。**
+原报告中的 instructions A/A 为 0.00%；cycles A/A 却为 −3.4%～+10.5%。当前 R0 复验已补上两轮配对：`prop_write` cycles 中位数 +10.87%，`string_build1` +4.09%；每 100,000 次错误构造／传播由 100,000 次／1.3 MB 分配升至 200,000 次／9.3 MB，保留模式 RSS HWM 中位数增加 2,340 KiB。[复验总结](receipts/gates-2026-09-25/README.md)记录方法和结果，原始样本不入库。**不能以指令下降抵消已测得的时间和错误路径成本。**
 
-报告称 14 个错误场景、CLI 输出／退出码、3009 workspace tests、2048 test262-host tests、完整 Test262 80010/80060 等通过。这是该候选的历史验证记录，不是本次文档 PR 的验证记录，也不替代候选合入当前基线后的重放。
+报告称 14 个错误场景、CLI 输出／退出码、3009 workspace tests、2048 test262-host tests、完整 Test262 80010/80060 等通过。这是原候选的历史验证记录，不替代恢复版或组合版的重放；恢复版的独立验证见[#41 报告](../reports/issue-41-error-carrier.md)。
 
-裁决：收尾已有小实验，补齐证据后单独接纳；不要重新开发同一个装箱方案，也不要据此批准广泛“删除 Result”工程。
+原门禁据此拒绝单独接纳 #41；当前用户要求继续完成全部代码并记录未达门禁的结果，故它已进入集成分支。组合版表现须重新测量，不能用历史正结果或单独负结果直接替代。
 
 <a id="e42"></a>
 ## E42. 数组差距：已复现，但不能外推为总分
@@ -145,9 +144,9 @@ B2.2 的旧上界实验只把 `prop_read` 从 752→632 指令／轮（约 1.19 
 3. computed assignment 包含 Insert3/PutArrayEl；写跨度要保住原栈契约、尾部 Drop 和 run 的 property_generation 更新，不能仅写 heap 后跳 PC。
 4. 数组 canonical 叶仍做 release-readiness 与可变 Runtime 借用；新 Number-only 读明确使用短期共享借用，不能把通用事务包进新 API。
 
-[冻结规格](numeric-array-spans.md) §8 给出固定源码链接；13 种序列及栈代数来自这些规则。对 pin 上游源码另核对：project 实际使用 `u[++nextValue]` 等前缀更新，advect 的原顺序是 `d0[i0 + row1]`，不能以等价手写表达式冒充原始程序。
+[当时实施规格](numeric-array-spans.md) §8 给出固定源码链接；13 种序列及栈代数来自这些规则。对 pin 上游源码另核对：project 实际使用 `u[++nextValue]` 等前缀更新，advect 的原顺序是 `d0[i0 + row1]`，不能以等价手写表达式冒充原始程序。
 
-本次没有 cargo/rustc，没有取得真实函数 PC/slot 编号或动态覆盖；随附的 [捕获入口](probes/run_dump.py) 和 [test-only 探针](probes/dump_numeric_spans.rs) 是新增诊断源码，不是已跑成功的 receipt。完整函数发布后的 dump、生产 matcher manifest、Rust 编译和每片 A/B 仍须执行，不填造静态站点数或加速数字。
+最初整理本文时尚无 Rust 编译或真实函数 PC。后续已用[捕获入口](probes/run_dump.py)和[test-only 探针](probes/dump_numeric_spans.rs)取得[发布覆盖总结](receipts/all-dense-6db6bfb0/README.md)，并完成[四方 V8 与 profile 总结](receipts/fourway-2026-09-25/README.md)。生成文件只保留在本机测量目录，不作为 PR 附件。
 
 ## 来源
 
