@@ -344,3 +344,17 @@ Crypto、RegExp、NavierStokes 的所有新样本均超过历史 Boa 全部样�
 V8 的 [elements kinds](https://v8.dev/blog/elements-kinds) 和 [fast properties](https://v8.dev/blog/fast-properties) 说明表示专门化与连续访问的实现机会；这些是机制参考。V8 一般 holey 转换有单向限制，2025 年增加 `Array.prototype.fill` 例外，不能把它描述为任意写入后都会重建 packed 表示。我们的候选仍按当前实现的完整 own-data 证明和实际覆盖决定，不迁移 V8 的整个表示系统。
 
 本页是进行中的实验记录；没有原版 Score 的新数据时，不更新历史分数为新结论。
+
+### 本轮继续：拒绝结果与新的执行证据
+
+`f9befc96` 已完成 CPU 2 的 144/144 有效固定样本：目标 Richards 耗时 +2.08%（A/A 0.84%），DeltaBlue +5.51%（1.85%），Splay +1.52%（1.19%）；combined +1.48%（1.75%）未分辨。拒绝该完整候选，不扩展同一 Prepared 表示，不追加原版、资源或完整 Test262 为失败控制背书。Crypto 的 A/A 跨度 31.01%，其中较长样本完整保留，不删样本再宣布结论。实际逐指令执行减少成立，反复识别、一般安装新增调用和 ready 栈增长属于需要区分的成本；尚未单独归因时间回归。证据为 `scalar-ordinary-leaf-gate-ledger.json` 与 `scalar-ordinary-leaf-validation/formal-rejection.json`。
+
+当前 `f7759050` PGO 二进制的原版完整 combined 原生诊断已完成：56,591 个 cycles 样本、零 lost sample，DWARF capture 8192B。self 权重为 ready 30.34%、memmove 6.19%、FrameSlots::push 3.01%、dup_jsvalue 2.68%、RegExp standard_replace 2.29%、property_write dispatch 2.23%。PGO 改变了 inline 和符号边界，这些百分比不能跨版本相减或相加为可删除成本；采样包含启动、编译、Setup、warmup、timedRun、TearDown 和退出。打印分数只校验诊断运行，不替代已验收的四轮原版分数。证据 `heldout-pgo-integrated-root-native/` 保存原始 self/stacks、输出及身份。
+
+新的三个机制分别处理存储表示、通用状态宽度与本地返回交接：
+
+- 数组候选 `dc39cf80` 保持原 zero 触发和恢复算法，新增 nonzero 定义只复用已经存活、完整身份匹配且 count 有余量的缓存 shape。8 项目标及 2305 项 profiling/host 库测试通过；默认 Array/shape 目标 13/12 项通过。Crypto 新进入 1882 次、成功 5 次，1877 次在既有 insufficient-slots 检查早退；成功数不是对象数。实际 materialized Number reads 694066→3072，generic indexed write attempts 412764→0、dense scalar writes 451654→864418；materialization 66→68 的新增成本保留。其他七项既有逻辑 sections 相同。独立时间待验收，尚未采用。
+- Map/Set 候选 `cbed0c0c` 只外置两个 records 成员。非测试 release 布局与 DWARF 实测 ObjectPayload 136→104B、ArenaSlot 272→240B，每槽少 32B（11.76%），替代早先的 24B 预测。目标 3、profiling/host 2300、默认 2059 项通过，八项原逻辑及 heap counts 相同。Map/Set 仍新增 128B Box 分配和 indirection；旧 memory category 未计这块 offheap storage，Splay arena capacity endpoint 少 32MiB 不是 RSS/峰值结论。真实 live-node stride 272→240，整体 .text +7648B，Map/Set constructor 栈各 +48B。时间与资源待验收。
+- 独立非测试 Step 布局诊断保留真实枚举，shadow 仅将两个冷门 DefinitionInput 外置；真实 Step 184B，shadow 128B，Resume 32B、NativeStep 64B。此前实际代码中的部分 memcpy 传递 184B Step，但并非所有 memmove 都来自它。下一实验只改变这两个生产字段，包含 Box 分配、错误与 abandon 的交换，不扩展通用执行架构。诊断宽度下降尚未证明生产代码或时间收益。
+
+本地返回的另一独立实验保留 canonical owner 复制和源绑定，仅研究在已发布的 GetLocal/GetLocalCheck 紧邻普通 Return 时减少临时 operand 搬运。GetArg、标量与需 callback/词法读取的分支保留原消费者路径；正确性和真实命中尚待验证。上述新候选均不更新当前主线的 Score 244 或三项领先的验收状态。
