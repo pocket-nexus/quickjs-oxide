@@ -203,6 +203,18 @@
 
 这些候选均未进入采用的八层性能实现，且没有为已失败的完整控制继续追加原版或资源测量。下一窗口先验证独立数值算法与静态 kernel 的语义和 release 代码，再决定是否值得计时。Return owner 方向先有仅 profiling 的实际 published-tail/type 诊断草稿，尚未宣称 owner 转移能力；PGO 已有旧工具，但必须先补齐 versioned profile、训练、构建证据合同并显式区分 build technique，不能把旧 v1 PGO 标为 plain 绕过 gate。
 
+### 数值算法、静态分派与真实消费者
+
+`a64920fd` 的 guarded safe-cast compaction 完成目标 9、profiling/host 2,301、默认库 2,059 项测试和 clean plain 回执。真实算术 join 仍保留 `maxsd/minsd/cvttsd2si` 与 NaN select，预定的饱和转换删除机制未兑现，停止，不追加 profile 或计时。bit equality 确实替换了原 equality/negative-zero 检查，不能称它完全没有改变代码，也不能未经计时宣称变慢。helper 3337→3463B，整体 .text +1328B；证据在 `crypto-raytrace-next-mechanisms/guarded-number-codegen/mechanism-ledger.json`。
+
+`eda47fab` 静态 Number opcode 专门化通过目标 2、profiling/host 2,299、默认库 2,058 项及 clean plain/profile 构建。真实 ordinary 路径的动态 `binary_number_result` 调用 1→0、第二分派消失；LLVM 将原 inline 选槽和固定 kernel outline 为 18 个专门化 helper，另保留原动态 fallback。全 candidate .text +11,392B、execute +1,550B / 栈 +16B；新增成功 `Result<bool, Error>` 返回检查，不能称删除分派没有代价。八项新增 static opcode successes 之和逐项精确等于旧 `binary_number_in_place`，原事件、storage/layout/call/dispatch/omitted 计数均相同。计数包含初始化、Setup/run/TearDown 和 driver，不是 timed 权重。固定时间启动前发现候选回执多了 `CARGO_BUILD_JOBS=2`，校验拒绝、没有计时样本；保留失败日志，用相同环境 fresh target 重建后再比较，不编辑回执或放松 gate。
+
+另一独立候选只替换 `Number::compact`：通过 binary64 指数、fraction 和 sign 恢复精确 i32，无 FP→integer cast。K=E.wrapping_sub(1023) 在 0..30 时两次 shift 分别限于 12..42 / 22..52，其他情况只有 positive-zero/MIN 例外；拒绝返回原 Float bits。旧 ToInt32 没有修改。目标 9 项已通过，库测试、真实 release codegen 和时间尚待完成；变量 shift/依赖与全部旧消费者的成本仍需接受验收。
+
+`82946f63` 只 profiling 的真实 Return 邻接诊断完成目标 2、profiling/host 2,299、clean profile 与八项一次逻辑运行。direct Object 标签：Richards 4,010、DeltaBlue 1,016、Crypto 18、RayTrace 25,073、EarleyBoyer 89,314、RegExp 104、Splay 160、NavierStokes 0。EarleyBoyer 的 `sc_term_12` 是 78,781 次 Object，另一 term 返回是 15,284 次 String；不能混算。它只证明已发布 GetLocal/GetArg 紧接 Return 时的当前类型，不证明 full generation/count/cleanup 准入、所有权转移或时间收益。plain 无新增调用/检查，没有 owner 优化。证据 `direct-binding-return-logical/joint-coverage-ledger.json`。
+
+PGO 另在独立 `perf/v8v7-heldout-pgo` 工具实验中推进：保持 Rust 1.88、匹配 LLVM 20.1.5，计划用通用 scaling scripts 训练、原版 V8 v7 留作验收。构建模式、真实 flags、profile merge/训练输出/源码回执必须完整，显式 build-technique 比较不能伪装 plain source 比较。目前只完成工具校验测试，没有 PGO 二进制、训练或时间收益。
+
 ### 简化方向的累计取舍
 
 - 普通写入在同一次存储借用内完成选槽和提交，移除中间选择状态、第二次借用和重复查找；已有路径几乎都同步完成，不把它描述成消除了通用 continuation。
