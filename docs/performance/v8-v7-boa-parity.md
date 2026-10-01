@@ -311,4 +311,36 @@ Crypto、RegExp、NavierStokes 的四个 PGO 样本均高于历史 Boa 全部样
 
 工具工作流已分提交采用为 `e96a7f7f`。主线包含 factory 正确性修复，接下来用当前 clean source fresh generate→44 个通用训练脚本→merge→use/none，重新确认累计性能；旧实验 profile 不复用于新源码，也不把旧 Score 245 标为最新主线测量。
 
+### 主线 fresh PGO 的累计验收
+
+实际主线 clean `f7759050` 包含 factory 正确性修复，独立完成 generate→44 个通用训练进程→merge→use/none；没有复用 `17c6c883` 的 profile。训练回执 SHA `5f4c6606…f8da4`、merged SHA `333a004f…d15ec`、PGO CLI SHA `fe7265b9…2b8e`、匹配 none SHA `7a5e91ad…705aa` 固定该次构建。
+
+CPU 2 fresh pilot/冻结负载下 144/144 固定样本有效。Richards/DeltaBlue/Crypto/RayTrace/EarleyBoyer/RegExp/Splay/NavierStokes 耗时分别下降 28.73% / 29.07% / 28.79% / 23.98% / 24.19% / 12.63% / 17.83% / 20.80%，combined −21.47%，均超出各自 A/A 筛选跨度。该矩阵与首个 PGO 实验的冻结次数不同，不跨矩阵相减。
+
+四轮当前主线 PGO-only 原版完整 combined 全部正常，九个标签均来自完整运行，主体 hash `777f2c2e…d9946`、CPU 2、无并行构建/测试/采样；Boa 仍复用既有三轮，没有重跑。当前 Score 是累计证据，未重新跑 none 原版作本层 Score 归因；首个实验的匹配 none/PGO 归因独立保留。
+
+| 子项 | 当前主线 PGO 中位数（四轮范围） | 既有 Boa 中位数 | 我们 / Boa |
+| --- | ---: | ---: | ---: |
+| Richards | 124（124–125） | 225 | 55.1% |
+| DeltaBlue | 136.5（136–137） | 206 | 66.3% |
+| Crypto | 270（264–275） | 242 | 111.6% |
+| RayTrace | 207（206–208） | 398 | 52.0% |
+| EarleyBoyer | 287.5（286–288） | 502 | 57.3% |
+| RegExp | 103（102–103） | 67.6 | 152.4% |
+| Splay | 631.5（629–632） | 833 | 75.8% |
+| NavierStokes | 714（699–720） | 520 | 137.3% |
+| Combined | 244（243–245） | 300 | 81.3% |
+
+Crypto、RegExp、NavierStokes 的所有新样本均超过历史 Boa 全部样本，仍有五项和 combined 未超过。`heldout-pgo-integrated-root-original-summary.json` 保留全部原始输出身份及范围，未挑样本。旧 Score 245 的平衡实验与当前 244 的累计测量不能用于归因 factory 修复或时间阶段变化。
+
+固定 combined 整进程资源 ABBA 各两次：峰值 RSS 中位数 347,372→347,038 KiB（−334 KiB），cycles −21.56%、instructions −14.47%、branches −15.87%、branch-misses −24.58%，四类计数 running=100%，无 multiplex。实际当前二进制 .text −214,320B、.rodata +52,440B；ready/execute 所选栈尺寸与首个实验相同。完整主线 PGO Test262 的 102,037 变体冻结正文完全一致，80,010/80,060 eligible 通过，源码和 profile 前后不变，实际 runner flags/target 逐项记录。接受该显式 PGO 构建技术；普通 Cargo release 配置未自动变成 PGO。
+
+### 并行的下一组机制实验
+
+- `f9befc96` 的有限标量谓词候选保留原槽位准备、checked owner、窗口/帧 generation 和清理边界，只跳过无回调 body 的 child header/Cold 使用和逐指令执行。目标/库测试、clean plain/profile 构建与八项逻辑对账完成：Richards 实际完成 10,670 次，frames_pushed、Cold reused、child Complete、direct retirement 各少同量；call_preparation 全部保持。其他七项既有事件完全相同，但真实 ready 栈 +48B、一般安装新增 outlined helper 调用，仍须完整计时控制，不采用为性能层。
+- `8d36373a` 仅诊断 Crypto 的已完整化 full-identity cohort。3 个身份的后续 Number 成功读取上界 690,994/694,066（99.557%），generic indexed write attempts 上界 412,764/412,764；不是恢复命中、episode 或 Number 写成功。旧计数和 10 个完整边界观察完全相同。下一候选复用共享恢复算法扩大可选触发，新增非zero路径须独立审查 shape 缓存、近 MAX 的 checked retain、失败和发布合同。
+- `8aec89a8` 的非测试、无 JS 布局诊断和 DWARF 字段测量证明 Map/Set 的 128B records 将 ObjectPayload 撑到 136B、ArenaSlot 撑到 272B。外置这两个成员预测每槽少 24B，必须测实际新布局和时间/RSS；Map/Set 新 Box 分配及 clone/GC 回滚是交换，不把 arena endpoint 容量投影当作峰值 RSS。窄候选不改普通对象、数组、函数或 arena 架构。QuickJS 2026-06-04 的 JSObject 保存独立 JSMapState 指针是实现参考，不能替 Rust 候选验收。
+
+V8 的 [elements kinds](https://v8.dev/blog/elements-kinds) 和 [fast properties](https://v8.dev/blog/fast-properties) 说明表示专门化与连续访问的实现机会；这些是机制参考。V8 一般 holey 转换有单向限制，2025 年增加 `Array.prototype.fill` 例外，不能把它描述为任意写入后都会重建 packed 表示。我们的候选仍按当前实现的完整 own-data 证明和实际覆盖决定，不迁移 V8 的整个表示系统。
+
 本页是进行中的实验记录；没有原版 Score 的新数据时，不更新历史分数为新结论。

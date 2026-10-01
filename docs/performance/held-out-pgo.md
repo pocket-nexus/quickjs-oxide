@@ -1,10 +1,12 @@
 # PGO with V8 v7 held out
 
-Status: the held-out experiment completed fixed timing, original Scores,
-resources and full frozen Test262. Its engine code is `eaf23ba8`; root tooling
-commit `e96a7f7f` adopts the verified workflow. The root includes a later factory
-correctness fix and requires fresh training and acceptance before claiming its
-PGO performance. Source-specific profiles are never reused across that change.
+Status: the held-out experiment and the integrated root both completed fixed
+timing, original Scores, resources and full frozen Test262. The first experiment
+uses engine code `eaf23ba8`; tooling commit `e96a7f7f` adopts the verified
+workflow. Integrated source `f7759050` includes the factory correctness fix and
+was trained and built afresh. Its PGO build technique is accepted; ordinary
+Cargo release still uses the ordinary build configuration. Source-specific
+profiles are never reused across that change.
 The Rust 1.88 toolchain is unchanged. Its matching `llvm-tools` component
 provides LLVM 20.1.5 `llvm-profdata`; tools from LLVM 21/22 are not used.
 
@@ -87,6 +89,44 @@ Artifacts are external under `oxide-v8v7-boa-campaign/heldout-pgo-*`; see
 `heldout-pgo-original-summary.json`, `heldout-pgo-resources/summary.json`,
 `heldout-pgo-test262/result.json` and `heldout-pgo-stack-regressions/results.json`.
 Actual source/target/profile/binary hashes remain in their original receipts.
+
+## Accepted integrated root build
+
+Clean `f7759050` independently completed all 44 general training processes.
+Training receipt SHA `5f4c6606…f8da4`, merged profile SHA `333a004f…d15ec`
+and PGO CLI SHA `fe7265b9…2b8e` identify this build. The matching ordinary
+CLI SHA is `7a5e91ad…705aa`; profiles or binaries from the first experiment
+were not substituted.
+
+CPU 2 fixed A/A and A/B completed 144/144 samples. All eight cases and combined
+improved beyond their observed A/A span; combined elapsed time fell 21.47%.
+Four candidate-only original complete combined runs produced Score
+244 (243–245). Crypto, RegExp and NavierStokes exceeded all three unchanged
+historical Boa samples; five sub-scores and combined remain below Boa.
+These current-source Scores are cumulative evidence, not a new matched
+ordinary-versus-PGO Score attribution. The first experiment's balanced
+ordinary/PGO attribution remains separate.
+
+Whole-process fixed resources gave cycles -21.56%, instructions -14.47%,
+branches -15.87% and branch misses -24.58%, all running 100% without multiplex.
+Peak RSS medians were 347,372 versus 347,038 KiB (-334 KiB); this small exchange
+is not a confidence interval or a pause measurement. Actual integrated `.text`
+fell 214,320 bytes and `.rodata` grew 52,440 bytes. The selected ready/execute
+native frame sizes and inlining arrangement match the first experiment.
+
+The integrated PGO conformance runner passed the complete frozen vector:
+102,037 result variants, 80,010 passes among 80,060 eligible variants. Source,
+profile and actual observed rustc flags/target were verified before and after;
+the TSV/JSONL body hashes match the original frozen bodies. It is a separately
+identified host runner, not the timed CLI.
+
+Current artifacts: `heldout-pgo-integrated-root/`,
+`heldout-pgo-integrated-root-fixed/`,
+`heldout-pgo-integrated-root-original-summary.json`,
+`heldout-pgo-integrated-root-resources/summary.json` and
+`heldout-pgo-integrated-root-test262/result.json`, under the same external
+campaign directory. Acceptance covers this explicitly generated PGO release;
+it does not relabel an ordinary release binary or complete the Boa parity goal.
 
 Primary source guidance: the pinned
 [Rust 1.88 PGO documentation](https://raw.githubusercontent.com/rust-lang/rust/1.88.0/src/doc/rustc/src/profile-guided-optimization.md)
