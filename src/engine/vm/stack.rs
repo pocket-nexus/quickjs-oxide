@@ -227,11 +227,18 @@ mod transfer;
 mod window;
 pub(in crate::engine::vm) use transfer::StoreProgress;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::engine::vm) enum PropertyReadProgress {
     Completed,
-    ContinueLookup,
     NeedsObservation,
+    Driver,
+    Selected(crate::engine::heap::ObjectId),
+}
+
+#[derive(Clone, Copy)]
+pub(in crate::engine::vm) struct NamedReadOperation {
+    pub site: usize,
+    pub key_index: u32,
+    pub keep_receiver: bool,
 }
 pub(in crate::engine::vm) use window::{
     CheckedOrdinaryCallOperands, DirectSlot, FrameSlots, FrameTransaction, LinkedReadCompletion,
@@ -247,16 +254,14 @@ impl SlotStore {
         window: &mut FrameWindow,
         runtime: &Runtime,
         executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
-        pc: usize,
-        key_index: u32,
-        keep_receiver: bool,
+        operation: NamedReadOperation,
         native: &mut Option<crate::engine::object::LinkedNativeSelection>,
     ) -> Result<PropertyReadProgress, Error> {
-        let output_index = if keep_receiver {
+        let output_index = if operation.keep_receiver {
             // Canonical get can have effects before an output-capacity error;
             // declining here preserves that order without promoting a root.
             let Ok(index) = self.operand_push_index(window) else {
-                return Ok(PropertyReadProgress::ContinueLookup);
+                return Ok(PropertyReadProgress::Driver);
             };
             Some(index)
         } else {
@@ -266,19 +271,18 @@ impl SlotStore {
         let value = match runtime.select_linked_data(
             base,
             executable,
-            pc,
-            key_index,
-            keep_receiver,
+            operation.site,
+            operation.key_index,
+            operation.keep_receiver,
             native,
         ) {
             crate::engine::object::NamedDataSelection::Data(value) => value,
             crate::engine::object::NamedDataSelection::CompleteAbsent => JsValue::Undefined,
             crate::engine::object::NamedDataSelection::Accessor(getter) => {
-                let _ = getter;
-                return Ok(PropertyReadProgress::ContinueLookup);
+                return Ok(PropertyReadProgress::Selected(getter));
             }
             crate::engine::object::NamedDataSelection::ContinueLookup => {
-                return Ok(PropertyReadProgress::ContinueLookup);
+                return Ok(PropertyReadProgress::Driver);
             }
             crate::engine::object::NamedDataSelection::NeedsObservation => {
                 return Ok(PropertyReadProgress::NeedsObservation);
@@ -1802,14 +1806,23 @@ mod tests {
             .heap
             .object_strong_count(value_object.object_id())
             .unwrap();
-        assert_eq!(
+        assert!(matches!(
             slots
                 .borrow_frame_slots(&mut window)
                 .unwrap()
-                .property_ic_read(&runtime, &code, pc, key, true, &mut native)
+                .property_ic_read(
+                    &runtime,
+                    &code,
+                    super::NamedReadOperation {
+                        site: pc,
+                        key_index: key,
+                        keep_receiver: true,
+                    },
+                    &mut native,
+                )
                 .unwrap(),
-            super::PropertyReadProgress::ContinueLookup
-        );
+            super::PropertyReadProgress::Driver
+        ));
         assert_eq!(
             runtime
                 .0
@@ -1822,14 +1835,23 @@ mod tests {
         );
         assert_eq!(window.depth, 1);
         assert_eq!(to_public(&runtime, slots.peek(&window, 0).unwrap()), base);
-        assert_eq!(
+        assert!(matches!(
             slots
                 .borrow_frame_slots(&mut window)
                 .unwrap()
-                .property_ic_read(&runtime, &code, pc, key, false, &mut native)
+                .property_ic_read(
+                    &runtime,
+                    &code,
+                    super::NamedReadOperation {
+                        site: pc,
+                        key_index: key,
+                        keep_receiver: false,
+                    },
+                    &mut native,
+                )
                 .unwrap(),
             super::PropertyReadProgress::Completed
-        );
+        ));
         assert_eq!(window.depth, 1);
         assert_eq!(to_public(&runtime, slots.peek(&window, 0).unwrap()), value);
         slots.clear_frame(&runtime, window).unwrap();
@@ -1840,17 +1862,68 @@ mod tests {
         slots
             .push(&mut window, into_internal(&runtime, base.clone()))
             .unwrap();
-        assert_eq!(
+        assert!(matches!(
             slots
                 .borrow_frame_slots(&mut window)
                 .unwrap()
-                .property_ic_read(&runtime, &code, pc, key, true, &mut native)
+                .property_ic_read(
+                    &runtime,
+                    &code,
+                    super::NamedReadOperation {
+                        site: pc,
+                        key_index: key,
+                        keep_receiver: true,
+                    },
+                    &mut native,
+                )
                 .unwrap(),
             super::PropertyReadProgress::Completed
-        );
+        ));
         assert_eq!(window.depth, 2);
         assert_eq!(to_public(&runtime, slots.peek(&window, 0).unwrap()), value);
         assert_eq!(to_public(&runtime, slots.peek(&window, 1).unwrap()), base);
+        slots.clear_frame(&runtime, window).unwrap();
+
+        // A consumed last-owner receiver cannot be released inside the local
+        // read. Observation must leave its operand and depth intact.
+        owner.metadata.max_stack = 1;
+        let mut window = slots
+            .push_frame(&runtime, &owner.frame_layout(), empty_storage())
+            .unwrap();
+        let lone = into_internal(&runtime, context.eval("({x:1})").unwrap());
+        let JsValue::Object(lone_id) = lone else {
+            panic!("object")
+        };
+        slots.push(&mut window, JsValue::Object(lone_id)).unwrap();
+        assert!(matches!(
+            slots
+                .borrow_frame_slots(&mut window)
+                .unwrap()
+                .property_ic_read(
+                    &runtime,
+                    &code,
+                    super::NamedReadOperation {
+                        site: pc,
+                        key_index: key,
+                        keep_receiver: false,
+                    },
+                    &mut native,
+                )
+                .unwrap(),
+            super::PropertyReadProgress::NeedsObservation
+        ));
+        assert_eq!(window.depth, 1);
+        assert!(matches!(slots.peek(&window, 0), Ok(JsValue::Object(id)) if *id == lone_id));
+        assert_eq!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(lone_id)
+                .unwrap(),
+            1
+        );
         slots.clear_frame(&runtime, window).unwrap();
     }
 

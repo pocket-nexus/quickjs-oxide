@@ -22,5 +22,5 @@ shape 的槽不携带对象专用的 weak-link 状态；循环回收仍跟踪它
 对象、Context 和 FunctionBytecode 锚点触发不可达循环的清理。设计及测量
 见[类型化 arena](../../../docs/performance/typed-arenas.md)。
 显式 GC 成功并完成延迟 root 释放后，空 zero queue 最多保留 4,096 个 ID 槽；
-普通引用释放仍保留队列容量供复用。该策略及重复 burst 的分配代价见
-[zero-queue 收据](../../../docs/performance/receipts/zero-queue-retention-2026-09-28/README.md)。
+普通引用释放仍保留队列容量供复用。容量与回收行为由
+`src/engine/heap/runtime/tests/gc.rs` 的测试覆盖。

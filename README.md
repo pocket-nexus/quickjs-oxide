@@ -52,20 +52,16 @@ The file loader follows QuickJS policy: `.json` is strict JSON,
 file without that attribute remains a JavaScript module. Main files and
 dependencies are read as explicitly sized byte buffers.
 
-QuickJS bytecode is a version-bound cache rather than a portable interface, so
-the engine does not read or write upstream BC5 images; the previous narrow
-`read_trusted_*` APIs were removed. See the [bytecode compatibility contract](docs/parity.md#bytecode-compatibility)
-and [current compiler/publication checks](docs/architecture.md).
+The compiler publishes a verified `ExecCode` stream for the engine's stack VM.
+See the [execution architecture](docs/architecture.md).
 
 ## Status
 
 - [Engine module responsibilities](docs/architecture.md)
 - [Current implementation status](docs/status.md)
-- [Primitive VM: historical results and provenance](docs/primitive-vm.md)
-- [Performance principles, measurement and receipts](docs/performance/README.md)
-- [Optimization roadmap from #52](docs/performance/roadmap.md)
+- [Execution and performance](docs/performance/README.md)
+- [Current execution paths](docs/performance/roadmap.md)
 - [Profiling and external benchmarks](docs/profiling.md)
-- [Compiler front-end baseline and profiling](docs/compile-benchmark.md)
 - [Pinned Test262 baseline and metric definitions](docs/test262.md)
 - [Parity acceptance contract](docs/parity.md)
 - [Playground build and trust boundary](docs/playground.md)

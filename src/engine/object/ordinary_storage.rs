@@ -1173,6 +1173,20 @@ impl Runtime {
             },
         )
     }
+
+    /// Promote a getter selected under a protected property-cache traversal.
+    /// The original receiver still owns the slot while both edges are acquired.
+    pub(crate) fn prepare_selected_linked_getter(
+        &self,
+        base: &JsValue,
+        getter: ObjectId,
+    ) -> Result<crate::engine::object::OrdinaryRead, RuntimeError> {
+        let getter = crate::engine::object::CallableRef::from_validated_object(
+            ObjectRef::from_borrowed_handle(self.clone(), getter)?,
+        );
+        let receiver = self.dup_jsvalue(base)?;
+        Ok(crate::engine::object::OrdinaryRead::Call { getter, receiver })
+    }
     /// Only an existing writable own scalar slot reaches the ordinary Set
     /// replacement transaction. There are no callback or owner-bearing edges.
     #[cfg(test)]

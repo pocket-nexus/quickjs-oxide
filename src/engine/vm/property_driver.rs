@@ -31,6 +31,47 @@ pub(super) enum PropertyProgress {
     Deferred(CallStep),
 }
 
+/// A static read selected while the frame transaction was still active.
+/// The read owns its getter/receiver or result until the driver consumes it.
+pub(super) enum SelectedNamedRead {
+    Read(OrdinaryRead),
+    LookupError(Error),
+}
+
+impl SelectedNamedRead {
+    pub(super) fn release(self, runtime: &Runtime) {
+        if let Self::Read(read) = self {
+            read.release(runtime);
+        }
+    }
+}
+
+struct SelectedReadGuard<'a> {
+    runtime: &'a Runtime,
+    read: Option<OrdinaryRead>,
+}
+
+struct NamedHandoffGuard<'a> {
+    runtime: &'a Runtime,
+    selected: Option<SelectedNamedRead>,
+}
+
+impl Drop for NamedHandoffGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(selected) = self.selected.take() {
+            selected.release(self.runtime);
+        }
+    }
+}
+
+impl Drop for SelectedReadGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(read) = self.read.take() {
+            read.release(self.runtime);
+        }
+    }
+}
+
 impl PropertyProgress {
     pub(super) fn into_call_step(self) -> CallStep {
         match self {
@@ -86,12 +127,45 @@ pub(super) fn read_progress(
     keep_receiver: bool,
     fallthrough: FallthroughPc,
 ) -> Result<PropertyProgress, Error> {
+    read_progress_selected(
+        runtime,
+        execution,
+        id,
+        key_kind,
+        keep_receiver,
+        fallthrough,
+        None,
+    )
+}
+
+pub(super) fn read_progress_selected(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    id: FrameId,
+    key_kind: ReadKey,
+    keep_receiver: bool,
+    fallthrough: FallthroughPc,
+    selected: Option<SelectedNamedRead>,
+) -> Result<PropertyProgress, Error> {
+    let mut selected = NamedHandoffGuard { runtime, selected };
     let frame = execution.frames.current_mut(id)?;
     let computed = matches!(key_kind, ReadKey::Computed { .. });
     let realm = frame.executable.realm;
     let next_pc = fallthrough.index();
-    let mut selected_read = None;
-    if let ReadKey::Static(index) = key_kind {
+    let selected_read = match selected.selected.take() {
+        Some(SelectedNamedRead::Read(read)) => Some(read),
+        Some(SelectedNamedRead::LookupError(error)) => {
+            return throw_error(runtime, realm, error).map(PropertyProgress::Deferred);
+        }
+        None => None,
+    };
+    let mut selected_read = SelectedReadGuard {
+        runtime,
+        read: selected_read,
+    };
+    if let ReadKey::Static(index) = key_kind
+        && selected_read.read.is_none()
+    {
         use super::stack::LinkedReadCompletion;
         let body = &mut *frame.cold;
         let executable = &*body.executable;
@@ -130,7 +204,13 @@ pub(super) fn read_progress(
                 }
                 return Ok(PropertyProgress::Completed);
             }
-            Ok(LinkedReadCompletion::Pending(read)) => selected_read = Some(read),
+            Ok(LinkedReadCompletion::Pending(read)) => {
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "property_lookup_handoff_selected",
+                );
+                selected_read.read = Some(read);
+            }
             Ok(LinkedReadCompletion::Declined) => {}
             Ok(LinkedReadCompletion::LookupError(error)) => {
                 return throw_error(runtime, realm, error).map(PropertyProgress::Deferred);
@@ -238,7 +318,7 @@ pub(super) fn read_progress(
     };
     // Lookup borrows the original rooted operand. Only a pending callback
     // needs a second receiver owner; completed reads move this slot directly.
-    let read = match selected_read.map(Ok).unwrap_or_else(|| {
+    let read = match selected_read.read.take().map(Ok).unwrap_or_else(|| {
         runtime.prepare_value_property_read_selected_jsvalue(
             realm,
             base,
@@ -260,6 +340,53 @@ pub(super) fn read_progress(
     } else {
         None
     };
+    #[cfg(feature = "profiling")]
+    if matches!(key_kind, ReadKey::Static(_)) && matches!(read, OrdinaryRead::Complete(_)) {
+        use crate::engine::heap::ObjectKind;
+        use crate::engine::heap::SlotReleaseReadiness;
+        let kind = match base {
+            JsValue::Object(_) => "driver_named_complete.object",
+            JsValue::String(_) => "driver_named_complete.string",
+            JsValue::Null | JsValue::Undefined => "driver_named_complete.nullish",
+            _ => "driver_named_complete.primitive",
+        };
+        crate::engine::api::profiling::record_owned_execution_event(kind);
+        if let JsValue::Object(id) = base
+            && let Ok(state) = runtime.0.state.try_borrow()
+            && let Ok(object) = state.heap.object(*id)
+        {
+            let kind = match object.kind {
+                ObjectKind::Array => "driver_named_complete.kind_array",
+                ObjectKind::NativeFunction
+                | ObjectKind::BoundFunction
+                | ObjectKind::BytecodeFunction => "driver_named_complete.kind_function",
+                ObjectKind::Ordinary => "driver_named_complete.kind_ordinary",
+                _ => "driver_named_complete.kind_other",
+            };
+            crate::engine::api::profiling::record_owned_execution_event(kind);
+        }
+        if keep_receiver {
+            crate::engine::api::profiling::record_owned_execution_event(
+                "driver_named_complete.keep_receiver",
+            );
+        }
+        if !keep_receiver {
+            let readiness = match runtime.slot_value_release_readiness_jsvalue(base) {
+                Ok(SlotReleaseReadiness::Ready) => "driver_named_complete.release_ready",
+                Ok(SlotReleaseReadiness::QueueCapacity) => {
+                    "driver_named_complete.release_queue_capacity"
+                }
+                Ok(SlotReleaseReadiness::Drain) => "driver_named_complete.release_drain",
+                Ok(SlotReleaseReadiness::Deferred) => "driver_named_complete.release_deferred",
+                Ok(SlotReleaseReadiness::Borrowed) => "driver_named_complete.release_borrowed",
+                Ok(SlotReleaseReadiness::PrimitiveStorage) => {
+                    "driver_named_complete.release_primitive_storage"
+                }
+                Err(_) => "driver_named_complete.release_error",
+            };
+            crate::engine::api::profiling::record_owned_execution_event(readiness);
+        }
+    }
     match read {
         OrdinaryRead::Complete(value) => complete_read(
             runtime,
@@ -895,6 +1022,122 @@ mod read_completion_tests {
             .unwrap_or_else(|| panic!("fixture missing {opcode:?}: {published:?}"))
             as usize;
         (execution, id)
+    }
+
+    #[test]
+    fn getterless_named_read_finishes_in_the_active_frame_scope() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let Value::Object(object) = context
+            .eval("globalThis.localRead = {}; Object.defineProperty(localRead, 'x', {get: undefined}); localRead")
+            .unwrap()
+        else {
+            panic!("object");
+        };
+        let _other_owner = object.clone();
+        let (mut execution, id) = read_fixture(
+            &runtime,
+            &mut context,
+            "(function(o){return o.x})",
+            Opcode::GetFieldCached,
+        );
+        let frame = execution.frames.current_mut(id).unwrap();
+        execution
+            .slots
+            .push(&mut frame.window, JsValue::Object(object.into_handle()))
+            .unwrap();
+        assert!(matches!(
+            execute_frame(&mut execution, id).unwrap(),
+            VmAction::Complete
+        ));
+        assert!(execution.selected_named_read.is_none());
+    }
+
+    #[test]
+    fn selected_named_getter_survives_the_frame_scope_handoff() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let Value::Object(object) = context
+            .eval("globalThis.pendingRead = {get x(){ return 7 }}; pendingRead")
+            .unwrap()
+        else {
+            panic!("object");
+        };
+        let _other_owner = object.clone();
+        let (mut execution, id) = read_fixture(
+            &runtime,
+            &mut context,
+            "(function(o){return o.x})",
+            Opcode::GetFieldCached,
+        );
+        let frame = execution.frames.current_mut(id).unwrap();
+        execution
+            .slots
+            .push(&mut frame.window, JsValue::Object(object.into_handle()))
+            .unwrap();
+        assert!(matches!(
+            execute_frame(&mut execution, id).unwrap(),
+            VmAction::GetField { .. }
+        ));
+        assert!(matches!(
+            execution.selected_named_read,
+            Some(SelectedNamedRead::Read(OrdinaryRead::Call { .. }))
+        ));
+    }
+
+    #[test]
+    fn unresolved_named_read_uses_the_existing_driver() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let Value::Object(object) = context
+            .eval("globalThis.generalRead = new Proxy({x:7}, {get(t,k,r){return Reflect.get(t,k,r)}}); generalRead")
+            .unwrap()
+        else {
+            panic!("object");
+        };
+        let _other_owner = object.clone();
+        let (mut execution, id) = read_fixture(
+            &runtime,
+            &mut context,
+            "(function(o){return o.x})",
+            Opcode::GetFieldCached,
+        );
+        let frame = execution.frames.current_mut(id).unwrap();
+        execution
+            .slots
+            .push(&mut frame.window, JsValue::Object(object.into_handle()))
+            .unwrap();
+        assert!(matches!(
+            execute_frame(&mut execution, id).unwrap(),
+            VmAction::GetField { .. }
+        ));
+        assert!(execution.selected_named_read.is_none());
+    }
+
+    #[test]
+    fn selected_accessors_and_general_reads_run_their_effects_once() {
+        for (source, expected) in [
+            (
+                "(function(){let n=0;let o={get x(){return ++n}};function read(o){return o.x}let a=read(o),b=read(o);return a*100+b*10+n})()",
+                122,
+            ),
+            (
+                "(function(){let n=0;let o={get x(){return ++n}};function read(o){let r=o;return r.x}let a=read(o),b=read(o);return a*100+b*10+n})()",
+                122,
+            ),
+            (
+                "(function(){let n=0;let o={x:4};function read(o){return o.x}let a=read(o);Object.defineProperty(o,'x',{get(){n++;return 7}});let b=read(o);return a*100+b*10+n})()",
+                471,
+            ),
+            (
+                "(function(){let n=0;let o=new Proxy({x:7},{get(t,k,r){n++;return Reflect.get(t,k,r)}});function read(o){return o.x}let a=read(o),b=read(o);return a*100+b*10+n})()",
+                772,
+            ),
+        ] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context();
+            assert_eq!(context.eval(source).unwrap(), Value::Int(expected));
+        }
     }
 
     #[test]

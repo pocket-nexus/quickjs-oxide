@@ -135,6 +135,10 @@ impl SlotStore {
         window: &'a mut FrameWindow,
     ) -> Result<FrameTransaction<'a>, Error> {
         self.check_current(window)?;
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "frame_authentication.transaction",
+        );
         Ok(FrameTransaction {
             store: self,
             window,
@@ -190,9 +194,60 @@ impl SlotStore {
             };
         match selected {
             Some(OrdinaryRead::Complete(value)) => {
+                #[cfg(feature = "profiling")]
+                {
+                    use crate::engine::heap::ObjectKind;
+                    use crate::engine::heap::SlotReleaseReadiness;
+                    if let JsValue::Object(id) = base
+                        && let Ok(state) = runtime.0.state.try_borrow()
+                        && let Ok(object) = state.heap.object(*id)
+                    {
+                        let kind = match object.kind {
+                            ObjectKind::Array => "linked_read_completed.kind_array",
+                            ObjectKind::NativeFunction
+                            | ObjectKind::BoundFunction
+                            | ObjectKind::BytecodeFunction => "linked_read_completed.kind_function",
+                            ObjectKind::Map
+                            | ObjectKind::Set
+                            | ObjectKind::WeakMap
+                            | ObjectKind::WeakSet
+                            | ObjectKind::MapIterator
+                            | ObjectKind::SetIterator => "linked_read_completed.kind_collection",
+                            ObjectKind::Ordinary => "linked_read_completed.kind_ordinary",
+                            _ => "linked_read_completed.kind_other",
+                        };
+                        crate::engine::api::profiling::record_owned_execution_event(kind);
+                    }
+                    let reason = if matches!(base, JsValue::Object(_)) {
+                        match runtime.slot_value_release_readiness_jsvalue(base) {
+                            Ok(SlotReleaseReadiness::Ready) => {
+                                "linked_read_completed.receiver_ready"
+                            }
+                            Ok(SlotReleaseReadiness::QueueCapacity) => {
+                                "linked_read_completed.receiver_queue_capacity"
+                            }
+                            Ok(SlotReleaseReadiness::Drain) => {
+                                "linked_read_completed.receiver_drain"
+                            }
+                            Ok(SlotReleaseReadiness::Deferred) => {
+                                "linked_read_completed.receiver_deferred"
+                            }
+                            Ok(SlotReleaseReadiness::Borrowed) => {
+                                "linked_read_completed.receiver_borrowed"
+                            }
+                            Ok(SlotReleaseReadiness::PrimitiveStorage) => {
+                                "linked_read_completed.receiver_primitive_storage"
+                            }
+                            Err(_) => "linked_read_completed.receiver_error",
+                        }
+                    } else {
+                        "linked_read_completed.non_object_receiver"
+                    };
+                    crate::engine::api::profiling::record_owned_execution_event(reason);
+                }
                 // This owner stays outside the output window even on failure.
                 let mut value = Some(value.unwrap_or(JsValue::Undefined));
-                {
+                let result = {
                     let mut slots = FrameSlots {
                         store: self,
                         window,
@@ -201,8 +256,14 @@ impl SlotStore {
                     crate::engine::api::profiling::record_owned_execution_event(
                         "linked_read_output_attempt",
                     );
-                    complete(&mut slots, &mut value)?;
+                    complete(&mut slots, &mut value)
+                };
+                if let Some(value) = value {
+                    runtime
+                        .release_jsvalue(value)
+                        .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
                 }
+                result?;
                 #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_owned_execution_event(
                     "linked_read_output_completed",
@@ -440,20 +501,11 @@ impl FrameSlots<'_> {
         &mut self,
         runtime: &Runtime,
         executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
-        pc: usize,
-        key_index: u32,
-        keep_receiver: bool,
+        operation: super::NamedReadOperation,
         native: &mut Option<crate::engine::object::LinkedNativeSelection>,
     ) -> Result<super::PropertyReadProgress, Error> {
-        self.store.property_ic_read_current(
-            self.window,
-            runtime,
-            executable,
-            pc,
-            key_index,
-            keep_receiver,
-            native,
-        )
+        self.store
+            .property_ic_read_current(self.window, runtime, executable, operation, native)
     }
 
     pub(in crate::engine::vm) fn has_operand_capacity(&self, extra: usize) -> bool {

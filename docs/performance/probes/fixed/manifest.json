@@ -2,35 +2,35 @@
   "metadata": {
     "suite": "project-authored-fixed-vm-diagnostics",
     "generator": "docs/performance/probes/build_fixed_matrix.py",
-    "generator_sha256": "d444b8d1d950cf0f6140c5b12ae1974e922937304f8a9b984726bc67f1d3686b",
+    "generator_sha256": "0cfeac72c95c83d9b27f8f00a10f4beb782cfeed6e965166043f0ab54ec6e286",
     "smoke": false,
     "workloads": {
       "workloads": [
         {
-          "case": "fusion_hit",
+          "case": "numeric_local_loop",
           "size": 3000000,
-          "path": "docs/performance/probes/fixed/fusion_hit.js",
+          "path": "docs/performance/probes/fixed/numeric_local_loop.js",
           "sha256": "39776e22973eb2e5ce15c1fb197a6b10c8487235a788f86b56783c564ef66422",
           "expected": "3000000\n"
         },
         {
-          "case": "fusion_dynamic_miss",
+          "case": "numeric_coercion_loop",
           "size": 180000,
-          "path": "docs/performance/probes/fixed/fusion_dynamic_miss.js",
+          "path": "docs/performance/probes/fixed/numeric_coercion_loop.js",
           "sha256": "46e9223f9d0aedb1b0900f317e419e3ac813e77b26768d28d954ff9b7ef21876",
           "expected": "180000\n"
         },
         {
-          "case": "fusion_flag0",
+          "case": "local_read_with_setup",
           "size": 3000000,
-          "path": "docs/performance/probes/fixed/fusion_flag0.js",
+          "path": "docs/performance/probes/fixed/local_read_with_setup.js",
           "sha256": "92df3e1420dafee42a615e883679737deb0021eb081e2bc05aafd63ec45829f1",
           "expected": "41\n"
         },
         {
-          "case": "fusion_no_plan",
+          "case": "local_read",
           "size": 3000000,
-          "path": "docs/performance/probes/fixed/fusion_no_plan.js",
+          "path": "docs/performance/probes/fixed/local_read.js",
           "sha256": "b4eeccb8624c086b664f7cb26741e82a946ca155fb2e738fbba46e372f172b7c",
           "expected": "41\n"
         },

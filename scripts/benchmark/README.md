@@ -65,7 +65,7 @@ python3 scripts/benchmark/build.py --jobs 2
 
 This builds ordinary and profiling release CLIs in separate target directories.
 Use `--plain-only` or `--profile-only` when only one is needed. To build a
-historical clean worktree with the current tooling, pass `--repo` and a distinct
+selected clean worktree with the current tooling, pass `--repo` and a distinct
 target directory, such as `--plain-target /tmp/oxide-base-build`. The receipt
 records source and tooling identities separately, snapshots the build/runner
 scripts, and rejects a build whose source or tool scripts change while Cargo
@@ -98,10 +98,8 @@ rebuilds from existing raw profiles. Ordinary release builds also take
 `lto = "fat"` and `codegen-units = 1` from `[profile.release]`; comparisons
 must use the same flags on both sides.
 
-The current source identities, build protocol, A/A and A/B design, and cumulative
-regression rules live in [the performance measurement protocol](../../docs/performance/measurement.md).
-Older stage A/post-E/pre-A series have their own historical identity; do not
-combine their absolute measurements with the current B37/R0/Parent series.
+The source identities, build protocol and A/A and A/B design are in
+[the performance measurement guide](../../docs/performance/measurement.md).
 
 ## External V8 v7 suite
 
@@ -274,9 +272,8 @@ requires exactly one `compile_ns:`/`parse_ns:` line on stdout with empty stderr,
 rotates engine order, and never derives a ratio from a partial matrix. `--metric
 parse` admits only Boa and V8; Oxide and QuickJS expose no public parse-only entry.
 Use `--corpus` with any flat directory of `.js` files, or with a manifest produced
-by `compile_workloads.py`. Third-party bundles (for example the primitive-vm S07
-workloads) stay outside the repository. Results, ratios and caveats are described
-in [docs/compile-benchmark.md](../../docs/compile-benchmark.md).
+by `compile_workloads.py`. Third-party bundles stay outside the repository.
+The runner records raw samples and per-case ratios in its output directory.
 
 ## Profiler collection and overhead
 
@@ -327,7 +324,7 @@ Scaling workloads also cover Array/TypedArray integer reads and writes, repeated
 
 ## Replay the fixed-work matrix
 
-`fixed.py` replays the workload manifest in the final data-structure report.
+`fixed.py` replays a workload manifest.
 It checks every source hash before measuring, rotates engine order by default,
 and accepts the same balanced `--order` modes as `run.py`. It retains raw
 outputs and rejects nonempty stderr. `--workload-dir` relocates existing files;
@@ -341,12 +338,13 @@ the program's stdout/stderr and the raw time output.
 
 ```sh
 python3 scripts/benchmark/fixed.py \
-  --manifest docs/reports/data-structure-fixed-final.json \
+  --manifest docs/performance/probes/fixed/manifest.json \
+  --workload-dir docs/performance/probes/fixed \
   --engine before=/absolute/baseline/qjs --engine after=/absolute/changed/qjs \
   --repeat 5 --cpu 2 --output target/published-fixed
 ```
 
-Omitting `--case` covers all 58 manifest entries. Repeated `--case` options are
+Omitting `--case` covers every manifest entry. Repeated `--case` options are
 for step-level experiments only. All times include the whole process; these are
 not adaptive harness scores. Preserve build receipts separately and do not run
 benchmarks alongside builds, tests or architecture canaries.
@@ -410,5 +408,4 @@ and receipts. The front-end allocation counter
 (`scripts/benchmark/probes/compile_alloc_probe.rs`) is built that way and reports
 alloc/realloc/dealloc calls and bytes around the same compile window; its
 `--version` deliberately matches no matrix magic, so `compile_matrix.py` rejects
-it. Baseline numbers and reproduction commands live in
-`docs/compile-benchmark.md` §9.
+it. The probe records its allocation counts alongside the compile window.
