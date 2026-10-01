@@ -130,6 +130,9 @@
 - `a72f5a8f`：Crypto +5.38%（A/A 2.08%）、NavierStokes +3.25%（A/A 1.40%），其他项及 combined 未分辨收益。拒绝当前版本，不继续增加原位模式。
 - `f67e0fde`：RayTrace −0.59%（A/A 2.03%）、Splay +0.04%（A/A 1.22%）目标未分辨；Richards +4.06%（A/A 2.42%）。Crypto −1.97%（A/A 1.67%）不足以替目标覆盖及 Richards 回归背书，拒绝加入累计。
 - `fddcc56b`：EarleyBoyer −0.23%（A/A 3.01%）、combined −0.81%（A/A 3.29%）未分辨；NavierStokes −4.15%、RegExp −2.35% 超出各自 A/A，但没有新增命中，归因未定。保留能力实验，暂不作为性能收益采用。
+- `adb6a969` 相对 `eaf23ba8`：EarleyBoyer −2.25%（A/A 1.26%），但 Crypto +5.71%（A/A 1.87%）；Richards +2.96%、DeltaBlue −2.64% 各在约 9% 的 A/A 范围内，combined +0.65%（A/A 1.34%）未分辨。拒绝累计加入当前 dense Object consuming 补丁。旧基线上的局部收益没有在该累计组合通过控制；不继续跑原版或资源测量替它背书。
+
+下一组独立源码实验继续覆盖不同机制：已注册 shape 后继的标量字段创建、warm 双字段 Number 算术直接消费、新建 factory owner 的直接交接，以及复用既有 `push_owned` 的 owning 结果搬运。新建对象交接单独保留 pending cleanup 的历史 retain→push→drop 边界，修正未提交 owner 的失败回收；不混入已拒绝的 literal-ready 调度变化。所有草稿先验证正确性和实际消费者，不能因预计免除协议就宣称性能能力完成。
 
 `daccb30b` 的生成代码还显示解释循环栈帧增加 96 字节，新增的预算值跨整个解码循环存活并被重载。它说明非参与者确实付出了表示与寄存器成本，不能单凭汇编把 Crypto 的全部回归归因于此。下一版先恢复原解释循环，利用现有 `InstanceStep::start` 的同步 Complete 分支，重新测量收益和控制项。
 
