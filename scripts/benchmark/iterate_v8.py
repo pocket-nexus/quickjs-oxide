@@ -34,10 +34,13 @@ def require(condition, message):
         raise ValueError(message)
 
 
-def tooling_identity():
+def tooling_identity(comparison="source"):
     directory = Path(__file__).resolve().parent
+    names = ("iterate_v8.py", "profile_v8.py", "run.py", "fixed.py")
+    if comparison == "build-technique":
+        names += ("pgo_validation.py",)
     return {name: {"path": str(directory / name), "sha256": digest(directory / name)}
-            for name in ("iterate_v8.py", "profile_v8.py", "run.py", "fixed.py")}
+            for name in names}
 
 
 def verify_tooling(identity):
@@ -51,6 +54,10 @@ def require_plain_engine(binary):
     require(isinstance(build, dict), f"plain release build receipt required: {binary}")
     require(build.get("mode") == "plain" and build.get("features") == [],
             f"not a plain release build: {binary}")
+    require(build.get("optimization", {}).get("kind", "none") == "none"
+            and not any(option in build["release_profile"]["qjs_rustc_invocation"]["codegen"]
+                        for option in ("profile-generate", "profile-use")),
+            f"PGO is not an ordinary source comparison: {binary}")
     require("--release" in build.get("command", []) and build.get("exit_code") == 0,
             f"not a successful release build: {binary}")
     require(build.get("source", {}).get("status", {}).get("stdout") == "",
@@ -301,6 +308,8 @@ def main():
     parser.add_argument("--source", type=Path, required=True, help="external pinned V8-v7 checkout")
     parser.add_argument("--baseline", type=Path, required=True, help="plain release qjs for pilot and A/A")
     parser.add_argument("--candidate", type=Path, required=True, help="plain release qjs for A/B")
+    parser.add_argument("--comparison", choices=("source", "build-technique"), default="source",
+                        help="build-technique permits declared PGO use only, for identical engine source")
     parser.add_argument("--output", type=Path, required=True, help="new directory outside both repositories")
     parser.add_argument("--plan", type=Path,
                         help="reuse a prior freeze-plan.json; skip pilot and regenerate byte-identical work")
@@ -333,10 +342,16 @@ def main():
         baseline_path = args.baseline.resolve()
         candidate_path = args.candidate.resolve()
         require(baseline_path != candidate_path, "candidate must be a distinct binary path")
-        baseline = require_plain_engine(baseline_path)
-        candidate = require_plain_engine(candidate_path)
-        require_comparable_builds(baseline, candidate)
-        identity = tooling_identity()
+        if args.comparison == "source":
+            baseline = require_plain_engine(baseline_path)
+            candidate = require_plain_engine(candidate_path)
+            require_comparable_builds(baseline, candidate)
+        else:
+            from pgo_validation import require_build_technique
+            baseline = require_plain_engine(baseline_path)
+            candidate = binary_metadata(candidate_path)
+            require_build_technique(baseline, candidate)
+        identity = tooling_identity(args.comparison)
     except (OSError, ValueError) as error:
         parser.error(str(error))
     output = args.output.resolve()
@@ -349,6 +364,7 @@ def main():
     final_dir = output / "generated" / "final"
     final_dir.mkdir()
     metadata = {"schema": "oxide-v8-fixed-iteration-v1", "scope": METRIC,
+                "comparison": args.comparison,
                 "not_original_v8_score": True, "source": source,
                 "rng_contract": "pinned base.js initializes deterministic Math.random once per process; no ResetRNG symbol",
                 "baseline": baseline, "candidate": candidate, "machine": machine_metadata(),
