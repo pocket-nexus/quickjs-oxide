@@ -792,7 +792,11 @@ impl ExecCode {
             }
             if matches!(
                 self.opcode_at_source(source),
-                Some(Opcode::BorrowedFieldLocal | Opcode::BorrowedFieldArg)
+                Some(
+                    Opcode::BorrowedFieldLocal
+                        | Opcode::BorrowedFieldArg
+                        | Opcode::BorrowedFieldThis
+                )
             ) {
                 let first = self.decode(self.boundaries[source])?;
                 let end = *self
@@ -800,6 +804,7 @@ impl ExecCode {
                     .get(source + 2)
                     .ok_or(ExecCodeError::InvalidBoundary)?;
                 if first.operand(2) != end
+                    || (first.opcode == Opcode::BorrowedFieldThis && first.operand(0) != 0)
                     || entries.contains(&self.boundaries[source + 1])
                     || self.opcode_at_source(source + 1) != Some(Opcode::GetFieldCached)
                     || self.decode(self.boundaries[source + 1])?.operand(0) != first.operand(1)
@@ -2616,6 +2621,12 @@ fn select_opcodes(
                         Opcode::DenseReadArg
                     }
                 }
+                Instruction::PushThis
+                    if matches!(code.get(pc + 1), Some(Instruction::GetField(_)))
+                        && !entries.contains(&(pc + 1)) =>
+                {
+                    Opcode::BorrowedFieldThis
+                }
                 Instruction::GetLocal(_) | Instruction::GetArg(_)
                     if matches!(code.get(pc + 1), Some(Instruction::GetField(_)))
                         && !entries.contains(&(pc + 1)) =>
@@ -2963,8 +2974,15 @@ fn published_operands(
         ];
     } else if matches!(
         opcode,
-        Opcode::BorrowedFieldLocal | Opcode::BorrowedFieldArg
+        Opcode::BorrowedFieldLocal | Opcode::BorrowedFieldArg | Opcode::BorrowedFieldThis
     ) {
+        if opcode == Opcode::BorrowedFieldThis {
+            operands.push(EncodedOperand {
+                bits: 0,
+                short: true,
+                target: false,
+            });
+        }
         let Instruction::GetField(index) = code[source + 1] else {
             unreachable!("borrowed field selected without static field read")
         };
@@ -3254,6 +3272,37 @@ mod tests {
 
         code.words[1].set(1 | (3 << 16));
         assert_eq!(code.verify(), Err(ExecCodeError::InvalidTarget));
+    }
+
+    #[test]
+    fn borrowed_this_field_has_verified_continuation_and_generic_fallback() {
+        let code = ExecCode::encode(&[
+            Instruction::PushThis,
+            Instruction::GetField(0x1_0000),
+            Instruction::Return,
+        ])
+        .unwrap();
+        let first = code.decode(0).unwrap();
+        assert_eq!(first.opcode, Opcode::BorrowedFieldThis);
+        assert_eq!(first.operand(0), 0);
+        assert_eq!(first.operand(1), 0x1_0000);
+        assert_eq!(first.operand(2), code.exec_pc(2).unwrap());
+        code.verify().unwrap();
+        let entered = ExecCode::encode(&[
+            Instruction::Goto(2),
+            Instruction::PushThis,
+            Instruction::GetField(1),
+            Instruction::Return,
+        ])
+        .unwrap();
+        assert_eq!(entered.opcode_at_source(1), Some(Opcode::PushThis));
+        let method = ExecCode::encode(&[
+            Instruction::PushThis,
+            Instruction::GetField2(1),
+            Instruction::Return,
+        ])
+        .unwrap();
+        assert_eq!(method.opcode_at_source(0), Some(Opcode::PushThis));
     }
 
     #[test]

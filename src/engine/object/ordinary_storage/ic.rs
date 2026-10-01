@@ -17,6 +17,7 @@ fn record_selection(_result: &NamedDataSelection) {
         NamedDataSelection::CompleteAbsent => "property_selection.absent",
         NamedDataSelection::Accessor(_) => "property_selection.accessor",
         NamedDataSelection::ContinueLookup => "property_selection.general",
+        #[cfg(test)]
         NamedDataSelection::NeedsObservation => "property_selection.observe",
     });
 }
@@ -148,7 +149,7 @@ impl Runtime {
     /// String prototype slot, without ending the heap borrow before promotion.
     /// A declined read claims no owner and leaves special storage to the
     /// canonical driver.
-    #[inline]
+    #[cfg(test)]
     pub(crate) fn select_linked_data(
         &self,
         base: &JsValue,
@@ -322,6 +323,7 @@ impl Runtime {
                 None
             }
             NamedDataSelection::ContinueLookup => None,
+            #[cfg(test)]
             NamedDataSelection::NeedsObservation => {
                 *miss = NamedSelectionMiss::NeedsObservation;
                 None

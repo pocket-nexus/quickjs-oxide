@@ -465,12 +465,63 @@ pub(super) fn execute_frame(
                     ));
                 }
             },
-            Opcode::PushThis => {
+            Opcode::PushThis | Opcode::BorrowedFieldThis => {
                 let normalized = body
                     .owners
                     .rare
                     .get()
                     .and_then(|rare| rare.normalized_this.as_ref());
+                if decoded.opcode == Opcode::BorrowedFieldThis {
+                    let base = normalized.unwrap_or(&body.owners.input.this_value);
+                    // Capture only the field key: capturing PublishedDecoded here
+                    // duplicates its aggregate in the shared dispatch loop.
+                    let field_index = decoded.operand(1);
+                    let selected = cursor.with_slots(|slots| {
+                        if !slots.has_operand_capacity(1)
+                            || !borrowed_this_read_ready(runtime, base)
+                        {
+                            return Ok(None);
+                        }
+                        let mut miss = crate::engine::object::NamedSelectionMiss::ContinueLookup;
+                        let value = runtime.select_linked_data_into(
+                            base,
+                            executable,
+                            next,
+                            field_index,
+                            true,
+                            &mut None,
+                            &mut miss,
+                        );
+                        Ok(value.or_else(|| {
+                            matches!(
+                                miss,
+                                crate::engine::object::NamedSelectionMiss::CompleteAbsent
+                            )
+                            .then_some(JsValue::Undefined)
+                        }))
+                    })?;
+                    #[cfg(feature = "profiling")]
+                    crate::engine::api::profiling::record_execution_outcome(
+                        runtime,
+                        executable,
+                        pc,
+                        "borrowed_this_field",
+                        if selected.is_some() {
+                            None
+                        } else {
+                            Some("guard")
+                        },
+                    );
+                    if let Some(value) = selected {
+                        cursor.commit_owned(runtime, value)?;
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_owned_execution_event(
+                            "local_completion.borrowed_this_read",
+                        );
+                        cursor.advance(decoded.operand(2) as usize);
+                        continue;
+                    }
+                }
                 let value = if let Some(value) = normalized {
                     cursor.copy_owned(runtime, value)?
                 } else if executable.metadata.strict
@@ -1391,59 +1442,56 @@ pub(super) fn execute_frame(
                 } else {
                     DirectSlot::Argument(base_index)
                 };
+                let mut miss = crate::engine::object::NamedSelectionMiss::ContinueLookup;
+                // Keep the shared decoder out of this closure as well.
+                let field_index = decoded.operand(1);
                 let selection = cursor.with_slots(|slots| {
                     if !slots.has_operand_capacity(1) {
-                        return Ok(crate::engine::object::NamedDataSelection::ContinueLookup);
+                        return Ok(None);
                     }
                     let Some(base @ JsValue::Object(_)) = slots.direct_value(base) else {
-                        return Ok(crate::engine::object::NamedDataSelection::ContinueLookup);
+                        return Ok(None);
                     };
-                    let mut native = None;
-                    Ok(runtime.select_linked_data(
+                    Ok(runtime.select_linked_data_into(
                         base,
                         executable,
                         next,
-                        decoded.operand(1),
+                        field_index,
                         true,
-                        &mut native,
+                        &mut None,
+                        &mut miss,
                     ))
                 })?;
+                let selection = selection.or_else(|| {
+                    matches!(
+                        miss,
+                        crate::engine::object::NamedSelectionMiss::CompleteAbsent
+                    )
+                    .then_some(JsValue::Undefined)
+                });
                 #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_execution_outcome(
                     runtime,
                     executable,
                     pc,
                     "borrowed_field",
-                    if matches!(
-                        selection,
-                        crate::engine::object::NamedDataSelection::Data(_)
-                            | crate::engine::object::NamedDataSelection::CompleteAbsent
-                    ) {
+                    if selection.is_some() {
                         None
                     } else {
                         Some("guard")
                     },
                 );
-                match selection {
-                    crate::engine::object::NamedDataSelection::Data(value) => {
-                        cursor.commit_owned(runtime, value)?;
-                        #[cfg(feature = "profiling")]
-                        crate::engine::api::profiling::record_owned_execution_event(
-                            "local_completion.borrowed_named_read",
-                        );
-                        cursor.advance(decoded.operand(2) as usize);
-                        continue;
-                    }
-                    crate::engine::object::NamedDataSelection::CompleteAbsent => {
-                        cursor.commit_push(JsValue::Undefined)?;
-                        #[cfg(feature = "profiling")]
-                        crate::engine::api::profiling::record_owned_execution_event(
-                            "local_completion.borrowed_named_read",
-                        );
-                        cursor.advance(decoded.operand(2) as usize);
-                        continue;
-                    }
-                    crate::engine::object::NamedDataSelection::Accessor(getter) => {
+                if let Some(value) = selection {
+                    cursor.commit_owned(runtime, value)?;
+                    #[cfg(feature = "profiling")]
+                    crate::engine::api::profiling::record_owned_execution_event(
+                        "local_completion.borrowed_named_read",
+                    );
+                    cursor.advance(decoded.operand(2) as usize);
+                    continue;
+                }
+                match miss {
+                    crate::engine::object::NamedSelectionMiss::Accessor(getter) => {
                         let selected = cursor.with_slots(|slots| {
                             let receiver = slots.direct_value(base).ok_or_else(|| {
                                 Error::internal("selected borrowed receiver disappeared")
@@ -1480,8 +1528,11 @@ pub(super) fn execute_frame(
                             }
                         }
                     }
-                    crate::engine::object::NamedDataSelection::NeedsObservation
-                    | crate::engine::object::NamedDataSelection::ContinueLookup => {}
+                    crate::engine::object::NamedSelectionMiss::NeedsObservation
+                    | crate::engine::object::NamedSelectionMiss::ContinueLookup => {}
+                    crate::engine::object::NamedSelectionMiss::CompleteAbsent => {
+                        unreachable!("absence completed above")
+                    }
                 }
                 if decoded.opcode == Opcode::BorrowedFieldLocal {
                     if let Some(action) = read_local::<false>(&mut cursor, runtime, base_index)? {
@@ -2271,8 +2322,17 @@ pub(super) fn execute_frame(
             }
             Opcode::Throw => return Ok(VmAction::Throw),
             _ => {
-                return deferred_action(decoded, executable.metadata.strict)?
-                    .ok_or_else(|| Error::internal("published opcode has no execution handler"));
+                // Materialize only the fallback operands here. Passing the whole
+                // decoder makes its aggregate spill on every dispatch iteration.
+                return deferred_action(
+                    decoded.opcode,
+                    operand,
+                    decoded.operand_or_zero(1),
+                    decoded.operand_or_zero(2),
+                    FallthroughPc::from_decoded(decoded),
+                    executable.metadata.strict,
+                )?
+                .ok_or_else(|| Error::internal("published opcode has no execution handler"));
             }
         }
         cursor.advance(next);
@@ -2404,14 +2464,17 @@ fn read_arg(
 /// Operations requiring observable semantics leave the frame window untouched.
 /// The action carries operands decoded from the one published word stream;
 /// there is no execution-time `Instruction` reconstruction or alternate loop.
-fn deferred_action(decoded: PublishedDecoded<'_>, strict: bool) -> Result<Option<VmAction>, Error> {
+fn deferred_action(
+    opcode: Opcode,
+    a: u32,
+    b: u32,
+    c: u32,
+    fallthrough: FallthroughPc,
+    strict: bool,
+) -> Result<Option<VmAction>, Error> {
     use super::environment_driver::{Operation as E, WriteTarget};
     use super::iterator_driver::{Operation as I, suspension::Operation as S};
     use super::pure_operations::PureOperation as P;
-    let opcode = decoded.opcode;
-    let a = decoded.operand(0);
-    let b = decoded.operand_or_zero(1);
-    let c = decoded.operand_or_zero(2);
     let action = match opcode {
         Opcode::PushAtomValueIndex => VmAction::Pure(P::AtomValue(a)),
         Opcode::RegExp => VmAction::Pure(P::RegExp(a)),
@@ -2563,12 +2626,12 @@ fn deferred_action(decoded: PublishedDecoded<'_>, strict: bool) -> Result<Option
         Opcode::GetField | Opcode::GetField2 => VmAction::GetField {
             index: a,
             keep_receiver: opcode == Opcode::GetField2,
-            fallthrough: FallthroughPc::from_decoded(decoded),
+            fallthrough,
         },
         Opcode::GetArrayEl | Opcode::GetArrayEl2 | Opcode::GetArrayEl3 => VmAction::GetElement {
             keep_receiver: opcode != Opcode::GetArrayEl,
             keep_key: opcode == Opcode::GetArrayEl3,
-            fallthrough: FallthroughPc::from_decoded(decoded),
+            fallthrough,
         },
         Opcode::PutField => VmAction::SetProperty(Some(a)),
         Opcode::PutArrayEl => VmAction::SetProperty(None),
@@ -2942,9 +3005,111 @@ pub(super) fn strict_comparison(
     Ok(())
 }
 
+// Removing the temporary this owner must not remove a checked-retain failure,
+// immortal transition, or cleanup checkpoint. Leave room for an aliasing result.
+fn borrowed_this_read_ready(runtime: &crate::engine::api::Runtime, base: &JsValue) -> bool {
+    let JsValue::Object(id) = base else {
+        return false;
+    };
+    if runtime.0.deferred_references.has_pending() {
+        return false;
+    }
+    let Ok(state) = runtime.0.state.try_borrow() else {
+        return false;
+    };
+    !state.heap.has_pending_zero_cleanup()
+        && state
+            .heap
+            .object_strong_count(*id)
+            .is_ok_and(|count| count < u32::MAX - 2)
+}
+
 #[cfg(test)]
 mod execution_span_tests {
     use crate::engine::api::{Runtime, Value};
+
+    #[test]
+    fn borrowed_this_field_handles_aliases_prototypes_accessors_and_primitives() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        assert_eq!(
+            context
+                .eval(
+                    r#"(() => {
+            function read() { return this.x; }
+            let proto = {x: 3}, obj = Object.create(proto), calls = 0;
+            for(let i=0;i<20;i++) if(read.call(obj)!==3) return false;
+            proto.x=4;
+            if(read.call(obj)!==4) return false;
+            obj.x=obj;
+            if(read.call(obj)!==obj) return false;
+            delete obj.x;
+            Object.defineProperty(proto,'x',{configurable:true,get(){calls++;return this;}});
+            if(read.call(obj)!==obj || calls!==1) return false;
+            let proxy=new Proxy(obj,{get(t,k,r){calls++;return 9;}});
+            if(read.call(proxy)!==9 || calls!==2) return false;
+            delete proto.x;
+            if(read.call(obj)!==undefined) return false;
+            function length(){return this.length;}
+            if(length.call('abc')!==3) return false;
+            function strict(){'use strict';return this.x;}
+            try{strict.call(null);return false;}catch(e){if(!(e instanceof TypeError))return false;}
+            globalThis.x=42;
+            if(read.call(null)!==42) return false;
+            delete globalThis.x;
+            return true;
+        })()"#
+                )
+                .unwrap(),
+            Value::Bool(true)
+        );
+        let Value::Object(function) = context.eval("(function(){return this.x})").unwrap() else {
+            panic!("function");
+        };
+        let callable = runtime.as_callable(&function).unwrap().unwrap();
+        let crate::engine::vm::call::CallableExecution::Bytecode { bytecode, .. } =
+            runtime.bytecode_for_callable(&callable).unwrap()
+        else {
+            panic!("bytecode");
+        };
+        let executable = runtime.snapshot_function_bytecode(&bytecode).unwrap();
+        assert!(
+            (0..executable.exec.instruction_len()).any(|pc| executable.exec.opcode_at_source(pc)
+                == Some(crate::engine::code::exec_opcode::Opcode::BorrowedFieldThis))
+        );
+    }
+
+    #[test]
+    fn borrowed_this_admission_keeps_count_and_cleanup_boundaries() {
+        use crate::engine::{heap::RawId, value::JsValue};
+        let runtime = Runtime::new();
+        let object = runtime.new_object(None).unwrap();
+        let id = object.object_id();
+        let value = JsValue::Object(id);
+        assert!(super::borrowed_this_read_ready(&runtime, &value));
+        for count in [u32::MAX - 2, u32::MAX - 1, u32::MAX] {
+            runtime
+                .0
+                .state
+                .borrow_mut()
+                .heap
+                .set_strong_count_for_test(RawId::Object(id), count);
+            assert!(!super::borrowed_this_read_ready(&runtime, &value));
+        }
+        runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .set_strong_count_for_test(RawId::Object(id), 1);
+        let pending = runtime.new_object(None).unwrap();
+        {
+            let _borrow = runtime.0.state.borrow();
+            drop(pending);
+        }
+        assert!(!super::borrowed_this_read_ready(&runtime, &value));
+        assert!(runtime.0.deferred_references.has_pending());
+    }
 
     #[test]
     fn strict_local_completion_preserves_all_value_kinds() {
