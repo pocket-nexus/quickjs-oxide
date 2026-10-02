@@ -392,3 +392,29 @@ push 内联 `a7acd8c4` 的53项既有 stack 正确性检查通过，strict nativ
 独立 snapshot-only 诊断 `5cfec1d8` 的两个 ignored audit 已实际 await/exit0，158条 JSON 保留，源码/负载前后哈希相同。canonical run 中 Richards10671、Ray dot19596次，Setup/TearDown目标调用均0；实际 argc/closure/maxStack分别0/2/2与1/0/3，observed峰值匹配。Ray采样实际存在this==arg0，不能忽略别名；current Number/RC/cleanup/vacancy准入仍待生产验证。Mono read 不因 backoff非零拒绝，预检必须按真实 State/read 语义，不能凭推测添加新backoff gate。记录 `publication-scalar-snapshot-validation/snapshot-5cfec1d8/`。新 marker、同借用 DirectRef 提交与 packed weak links 正在不同 source 分支准备，尚无收益交付。
 
 空普通对象 `43bb502b` 已完成自己的 fresh pilot/冻结矩阵，CPU2、144/144 有效。EarleyBoyer 耗时 −2.25%（A/A1.04%）、Splay −1.51%（1.29%），支持进入原版完整 combined 配对复核。Richards +0.72%（4.69%）、RayTrace −0.99%（1.98%）、RegExp −0.13%（1.77%）、NavierStokes +0.79%（1.75%）未分辨。DeltaBlue −2.25%（1.62%）、Crypto −2.94%（2.39%）虽越过观察跨度，但这些负载中的新 factory 覆盖很少，不能将全部变化归因于空对象发布。Combined −1.11%（1.08%）极接近筛选边缘，不强调净收益。Splay 固定负载包含大量 Setup，尚不能据此宣布原版 timedRun Score 改善。证据 `empty-ordinary-publication-gate-ledger.json` 保留全部样本和构建身份；候选未采用，主线累计 Score244 和三项领先结论保持。
+
+### 用户要求停下时的最终记录（2026-10-02）
+
+完成已在运行的空普通对象原版验收后停止，没有开启下一批构建、测试或优化实验。CPU2、plain release、ABBA–BAAB 各四轮、8/8 有效；完整 combined 输出的九个标签和主体/二进制哈希逐项校验，进程实际 await/exit0。下面是严格匹配的 f775 none 与43bb plain 独立比较，不是 PGO 主线累计更新，也没有重跑 Boa。
+
+| 原版 Score | 基线中位数（范围） | 候选中位数（范围） | 中位数变化 |
+| --- | ---: | ---: | ---: |
+| Richards | 92.85（91.6–94.2） | 92.35（89.7–92.4） | −0.54% |
+| DeltaBlue | 101（99.1–103） | 103.5（100–105） | +2.48% |
+| Crypto | 194（191–196） | 202（200–203） | +4.12% |
+| RayTrace | 157（155–158） | 158（156–160） | +0.64% |
+| EarleyBoyer | 212.5（211–214） | 215.5（215–216） | +1.41% |
+| RegExp | 89.9（88.1–90.5） | 89.3（88.1–89.9） | −0.67% |
+| Splay | 476.5（476–477） | 479（474–485） | +0.52% |
+| NavierStokes | 573（572–575） | 568.5（567–574） | −0.79% |
+| Combined | 187（186–188） | 188.5（187–189） | +0.80% |
+
+目标 EarleyBoyer 的四个候选观察均高于全部基线观察；Crypto 也如此，但其 factory 覆盖很少，不把全部分数变化归因于目标机制。其他各项及 combined 范围相交，四轮观察不是置信区间。保留43bb独立实验，资源与集成后的 fresh PGO/累计原版验收未运行，不作采用结论。证据 `/home/eric/.cache/oxide-v8v7-boa-campaign/empty-ordinary-publication-original-summary.json` 与同目录 fixed gate ledger 保存原始输出、范围及身份。
+
+其余三个分支停止在以下边界，未并入主线：
+
+- Packed weak links：clean `011e7c6a`（初版986c，另修test import），六个目标、2308项profiling/host、2067项默认库测试通过；严格匹配f775的实际 plain 槽步长272→264B，prev240/8B、next248/8B、generation256/4B。热reserve无新增weak解码，完整generation检查和两邻居commit复查仍在；实际text+912B，乘法寻址/register/spill变化保留。Profile/all8、时间和RSS未运行。账本 `packed-weak-links-986c/static-validation-ledger.json`。
+- Direct Local/Arg reference publication：clean `f6ba7cd0`（生产0002，两个fixture修复单独保留），八目标及2305项profiling/host库测试通过，strict native plain与eaf配置匹配。成功helper349B/111条/局部栈32B，caller跳过旧closure owning输出/重打包/commit_owned；16B copy结果仍在helper栈，retain与最终owner未删。execute+3200B/462条/局部栈16B，text+3708B。Profile/all8和时间未运行。账本 `direct-ref-read-publication-validation/validation-ledger.json`。
+- Publication scalar markers：clean源码 `65f77b64`，10个Rust文件及合同文档、八个准备测试。保留原安装/Prepared/frame/Return/退休，动态全身份/This MAX/peak/cleanup准入后每实际字段执行一次原cache.read；失败前无适配。格式化、编译、测试、汇编、Profile与时间全部未执行。真实元数据snapshot的两个诊断测试此前通过；不能把诊断通过当生产草稿通过。清单 `publication-scalar-markers-source/source-freeze-65f77b64.json`。
+
+局部NumberPair复核确认旧345179fb已因控制回归及目标时间未兑现被拒，新的单RHS消费只保留合同；直接绑定借用branch与constructor字段消费者只作当前源码研究，不开始实现。停止时主线运行时仍为已验收f775，当前累计PGO Combined244（243–245），三项领先历史Boa；五项及combined仍未达到目标。全部候选保持独立源码和失败记录，后续继续需要用户恢复任务。
