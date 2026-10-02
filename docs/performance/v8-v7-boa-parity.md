@@ -418,3 +418,9 @@ push 内联 `a7acd8c4` 的53项既有 stack 正确性检查通过，strict nativ
 - Publication scalar markers：clean源码 `65f77b64`，10个Rust文件及合同文档、八个准备测试。保留原安装/Prepared/frame/Return/退休，动态全身份/This MAX/peak/cleanup准入后每实际字段执行一次原cache.read；失败前无适配。格式化、编译、测试、汇编、Profile与时间全部未执行。真实元数据snapshot的两个诊断测试此前通过；不能把诊断通过当生产草稿通过。清单 `publication-scalar-markers-source/source-freeze-65f77b64.json`。
 
 局部NumberPair复核确认旧345179fb已因控制回归及目标时间未兑现被拒，新的单RHS消费只保留合同；直接绑定借用branch与constructor字段消费者只作当前源码研究，不开始实现。停止时主线运行时仍为已验收f775，当前累计PGO Combined244（243–245），三项领先历史Boa；五项及combined仍未达到目标。全部候选保持独立源码和失败记录，后续继续需要用户恢复任务。
+
+### 四个候选已丢弃（2026-10-02）
+
+用户随后明确要求“这四个都丢了”。该决定取代上一节的保留/待续状态：空对象发布43bb、弱链接压缩011e、DirectRef f6ba、publication scalar markers65f7全部丢弃，不再作为待验收候选。四个干净工作树及其对应本地分支均已删除；没有建立替代归档分支，也不继续这些实现的测试或优化。
+
+四项从未并入主线，所以没有运行时代码需要回滚。主线运行时及已验收PGO分数不变。已有原始测量、失败日志、编译回执和源码清单保留；结果不会因为丢弃实现而被改写成性能失败。操作与证据哈希记录在 `/home/eric/.cache/oxide-v8v7-boa-campaign/discarded-four-candidates-2026-10-02.json`。
