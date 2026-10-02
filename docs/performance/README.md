@@ -10,7 +10,8 @@
 - [类型化存储](typed-arenas.md)：捕获变量、形状和回收。
 - [测量方法](measurement.md)：构建身份、固定工作量、profile 与资源成本。
 - [当前 V8 v7 测量摘要](current-measurement.md)：main 与 PR #84 的八项原版 Score、combined 和配对变化区间。
-- [V8 v7 实现简化验收](v8-v7-structural-simplification.md)：2026-10-02 并行候选的采纳与拒绝、无 PGO 原版成绩及历史 Boa 对照。
+- [V8 v7 已采纳优化](v8-v7-boa-parity.md)：当前实现的提交、机制与组合验证。
+- [RegExpSplit 简化验收](v8-v7-structural-simplification.md)：2026-10-02 普通 release 原版成绩、机制与历史 Boa 对照。
 - [诊断工具](../profiling.md)与 [benchmark 工具](../../scripts/benchmark/README.md)：可运行的命令和输出契约。
 
 性能结论以受测源码、二进制、负载和原始样本为单位。改动执行路径时，同时核对语义、局部操作成本、完整程序时间、编译成本和内存生命周期。

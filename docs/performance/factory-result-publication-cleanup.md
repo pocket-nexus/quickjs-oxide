@@ -1,18 +1,12 @@
-# Cleanup of a rejected factory result publication
+# Cleanup after a failed factory result publication
 
 Base: `eaf23ba800cd8dd5d2a1005431a5b42e5139c5c6`.
 Branch: `fix/vm-factory-result-publication-cleanup`.
 Status: the five targeted tests passed. This is an independent correctness
 repair, with no performance improvement claim.
 
-The independent fresh factory ownership-transfer experiment did not establish
-an original benchmark improvement and is not adopted. Its fixed CPU 2 matrix
-had 144 valid samples, with every change inside the observed AA spans: Splay
-elapsed time -0.987% versus a 2.260% AA span, Combined +0.592% versus 1.332%.
-Results: `/home/eric/.cache/oxide-v8v7-boa-campaign/fresh-factory-owner-transfer-fixed/results.json`.
-
-That experiment exposed a separate rejected-publication leak in the original
-CreateArray, CreateObject and CreateVariable leaves. Each factory returns a
+The original CreateArray, CreateObject and CreateVariable leaves leaked an owner
+when result publication failed. Each factory returns a
 rooted ObjectRef; the leaf obtains a second checked raw owner before pushing
 the raw JsValue to the operand slot. On push failure the ObjectRef drops, but
 the uncommitted raw JsValue has no Drop and its retained edge remains.
