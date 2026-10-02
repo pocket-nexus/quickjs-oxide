@@ -179,87 +179,81 @@ impl SplitState {
         .map_err(|_| RuntimeError::Invariant("advanced split index did not fit usize"))?;
         Ok(())
     }
+}
+impl RegExpSplitResume {
+    // The driver has taken the previous request's fields before delivering its
+    // reply. Keep this allocation through the split loop; the guest input and
+    // limit have already moved to their original owners before these methods.
     fn next(
         mut self,
+        mut state: SplitState,
         runtime: &Runtime,
-        realm: ContextId,
     ) -> Result<RegExpSplitStep, RuntimeError> {
-        if self.q >= self.input.len() {
+        debug_assert!(self.0.step_pending.is_empty());
+        if state.q >= state.input.len() {
             let value = Value::String(
-                self.input
-                    .sub_string(self.p.min(self.input.len()), self.input.len()),
+                state
+                    .input
+                    .sub_string(state.p.min(state.input.len()), state.input.len()),
             );
-            self.append(runtime, runtime.into_jsvalue(value)?)?;
-            return Ok(self.complete());
+            state.append(runtime, runtime.into_jsvalue(value)?)?;
+            return Ok(state.complete());
         }
-        let value = JsValue::Int(i32::try_from(self.q).map_err(|_| {
+        let value = JsValue::Int(i32::try_from(state.q).map_err(|_| {
             RuntimeError::Invariant("RegExp split index exceeded signed String range")
         })?);
-        Ok(RegExpSplitStep::make_set(
-            self.splitter.clone(),
-            runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?,
-            value,
-            RegExpSplitResume(Box::new(RegExpSplitResumeState {
-                limit_value: JsValue::Undefined,
-                input_value: JsValue::Undefined,
-                step_pending: RegExpSplitStepPending::new(runtime),
-                realm,
-                phase: Phase::Set(self),
-            })),
-        ))
+        let object = state.splitter.clone();
+        let key =
+            runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
+        self.0.phase = Phase::Set(state);
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("regexp_split.next_box_reused");
+        Ok(RegExpSplitStep::make_set(object, key, value, self))
     }
     fn execute(
-        self,
+        mut self,
+        state: SplitState,
         runtime: &Runtime,
-        realm: ContextId,
         empty: bool,
     ) -> Result<RegExpSplitStep, RuntimeError> {
-        let input = runtime.dup_jsvalue(&self.input_value)?;
-        let regexp = JsValue::Object(self.splitter.clone().into_handle());
-        Ok(RegExpSplitStep::make_exec(
-            regexp,
-            input,
-            RegExpSplitResume(Box::new(RegExpSplitResumeState {
-                limit_value: JsValue::Undefined,
-                input_value: JsValue::Undefined,
-                step_pending: RegExpSplitStepPending::new(runtime),
-                realm,
-                phase: if empty {
-                    Phase::Empty(self)
-                } else {
-                    Phase::Exec(self)
-                },
-            })),
-        ))
+        debug_assert!(self.0.step_pending.is_empty());
+        let input = runtime.dup_jsvalue(&state.input_value)?;
+        let regexp = JsValue::Object(state.splitter.clone().into_handle());
+        self.0.phase = if empty {
+            Phase::Empty(state)
+        } else {
+            Phase::Exec(state)
+        };
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("regexp_split.exec_box_reused");
+        Ok(RegExpSplitStep::make_exec(regexp, input, self))
     }
     fn captures(
         mut self,
+        mut state: SplitState,
         runtime: &Runtime,
-        realm: ContextId,
         matched: ObjectRef,
         index: u64,
         count: u64,
     ) -> Result<RegExpSplitStep, RuntimeError> {
+        debug_assert!(self.0.step_pending.is_empty());
         if index >= count {
-            self.q = self.p;
-            return self.next(runtime, realm);
+            state.q = state.p;
+            return self.next(state, runtime);
         }
-        Ok(RegExpSplitStep::make_read(
-            matched.clone(),
-            runtime.intern_property_key(&index.to_string())?,
-            RegExpSplitResume(Box::new(RegExpSplitResumeState {
-                limit_value: JsValue::Undefined,
-                input_value: JsValue::Undefined,
-                step_pending: RegExpSplitStepPending::new(runtime),
-                realm,
-                phase: Phase::Capture {
-                    state: self,
-                    matched,
-                    index,
-                    count,
-                },
-            })),
-        ))
+        let object = matched.clone();
+        let key = runtime.intern_property_key(&index.to_string())?;
+        self.0.phase = Phase::Capture {
+            state,
+            matched,
+            index,
+            count,
+        };
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "regexp_split.capture_box_reused",
+        );
+        Ok(RegExpSplitStep::make_read(object, key, self))
     }
 }
 impl RegExpSplitStep {
@@ -292,6 +286,8 @@ impl RegExpSplitStep {
 }
 impl RegExpSplitResume {
     fn new(runtime: &Runtime, realm: ContextId, phase: Phase) -> Self {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("regexp_split.resident_box");
         Self(Box::new(RegExpSplitResumeState {
             step_pending: RegExpSplitStepPending::new(runtime),
             realm,
@@ -496,7 +492,7 @@ impl RegExpSplitResume {
                     q: 0,
                 };
                 if matches!(self.0.limit_value, JsValue::Undefined) {
-                    return Self::after_limit(state, runtime, realm);
+                    return self.after_limit(state, runtime);
                 }
                 let value = std::mem::replace(&mut self.0.limit_value, JsValue::Undefined);
                 self.0.phase = Phase::Limit(state);
@@ -514,7 +510,7 @@ impl RegExpSplitResume {
                     }
                 };
                 state.limit = Runtime::to_uint32_number(number);
-                Self::after_limit(state, runtime, realm)
+                self.after_limit(state, runtime)
             }
             Phase::Empty(mut state) => {
                 let value = self.0.step_pending.value.take().unwrap();
@@ -534,12 +530,12 @@ impl RegExpSplitResume {
             }
             Phase::Set(state) => {
                 runtime.release_jsvalue(self.0.step_pending.value.take().unwrap())?;
-                state.execute(runtime, realm, false)
+                self.execute(state, runtime, false)
             }
             Phase::Exec(mut state) => match self.0.step_pending.value.take().unwrap() {
                 JsValue::Null => {
                     state.advance()?;
-                    state.next(runtime, realm)
+                    self.next(state, runtime)
                 }
                 JsValue::Object(id) => {
                     let matched = ObjectRef::from_owned_handle(runtime.clone(), id);
@@ -578,7 +574,7 @@ impl RegExpSplitResume {
                 .map_err(|_| RuntimeError::Invariant("split end index did not fit usize"))?;
                 if end == state.p {
                     state.advance()?;
-                    return state.next(runtime, realm);
+                    return self.next(state, runtime);
                 }
                 let part = runtime
                     .into_jsvalue(Value::String(state.input.sub_string(state.p, state.q)))?;
@@ -609,9 +605,9 @@ impl RegExpSplitResume {
                         return Ok(RegExpSplitStep::Complete(Completion::Throw(value)));
                     }
                 };
-                state.captures(
+                self.captures(
+                    state,
                     runtime,
-                    realm,
                     matched,
                     1,
                     Runtime::length_from_number(number),
@@ -627,7 +623,7 @@ impl RegExpSplitResume {
                 if state.length == state.limit {
                     return Ok(state.complete());
                 }
-                state.captures(runtime, realm, matched, index + 1, count)
+                self.captures(state, runtime, matched, index + 1, count)
             }
             Phase::Species { .. } | Phase::Vacant => Err(RuntimeError::Invariant(
                 "RegExp split completion in species phase",
@@ -635,20 +631,20 @@ impl RegExpSplitResume {
         }
     }
     fn after_limit(
+        self,
         state: SplitState,
         runtime: &Runtime,
-        realm: ContextId,
     ) -> Result<RegExpSplitStep, RuntimeError> {
         if state.limit == 0 {
             return Ok(state.complete());
         }
         if state.input.is_empty() {
-            return state.execute(runtime, realm, true);
+            return self.execute(state, runtime, true);
         }
         // Preserve key allocation before the first observable splitter write.
         runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
         runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
-        state.next(runtime, realm)
+        self.next(state, runtime)
     }
 }
 fn finish(
@@ -738,6 +734,17 @@ pub(crate) struct RegExpSplitStepPending {
     input: Option<JsValue>,
 }
 impl RegExpSplitStepPending {
+    fn is_empty(&self) -> bool {
+        self.value.is_none()
+            && self.hint.is_none()
+            && self.object.is_none()
+            && self.key.is_none()
+            && self.regexp.is_none()
+            && self.constructor.is_none()
+            && self.arguments.is_none()
+            && self.exec_regexp.is_none()
+            && self.input.is_none()
+    }
     fn new(runtime: &Runtime) -> Self {
         Self {
             runtime: runtime.clone(),
@@ -913,6 +920,9 @@ impl RegExpSplitResume {
 }
 
 const _: () = assert!(std::mem::size_of::<RegExpSplitStep>() <= 64);
+
+#[cfg(test)]
+mod tests;
 
 // S11 all-domain protocol bound; inline completion stays allocation-free.
 const _: () = assert!(std::mem::size_of::<RegExpSplitStep>() <= 64);
