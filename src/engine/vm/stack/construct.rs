@@ -8,6 +8,7 @@ impl SlotStore {
     /// edge; this transaction consumes that edge only after every checked copy
     /// and allocation has succeeded. The separate return receiver stays guarded
     /// until the complete child frame is installed.
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub(in crate::engine::vm) fn push_constructor_frame_in_state(
         &mut self,
@@ -36,6 +37,37 @@ impl SlotStore {
                 "constructor operands changed after selection",
             ));
         }
+        self.push_current_constructor_frame_in_state(
+            runtime,
+            state,
+            layout,
+            parent,
+            count,
+            function,
+            observes_arguments,
+            receiver,
+        )
+    }
+
+    /// The private frame transaction supplies unchanged preflighted inputs.
+    /// The shared initializer completes all fallible work before their edges
+    /// move into the newly published window.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn push_current_constructor_frame_in_state(
+        &mut self,
+        runtime: &Runtime,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        layout: &FrameLayout<'_>,
+        parent: &mut FrameWindow,
+        count: usize,
+        function: crate::engine::heap::ObjectId,
+        observes_arguments: bool,
+        receiver: &mut Option<JsValue>,
+    ) -> Result<InstalledOrdinaryFrame, Error> {
+        let consumed = count
+            .checked_add(2)
+            .filter(|count| *count <= parent.depth)
+            .ok_or_else(|| Error::internal("constructor exceeds caller operands"))?;
         let prepared = self.prepare_ordinary_window_in_state(
             runtime,
             state,

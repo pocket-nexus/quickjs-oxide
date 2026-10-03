@@ -101,33 +101,30 @@ fn try_ordinary_base(
     )
 }
 
-/// Select and install one Base bytecode constructor through the current state.
-/// A miss leaves every caller operand in place; prototype callbacks stay in the
-/// canonical constructor protocol. No argument vector or public root is created.
-pub(super) fn try_ordinary_base_in_state(
+/// Select a Base constructor through the admitted caller transaction.
+/// Prototype callbacks/exotics decline with every source owner untouched;
+/// this selection executes no JavaScript and creates no temporary public root.
+pub(super) fn prepare_ordinary_base_in_state(
     runtime: &Runtime,
-    state: &mut crate::engine::heap::runtime::RuntimeState,
-    execution: &mut RunningExecution,
-    id: FrameId,
+    state: &crate::engine::heap::runtime::RuntimeState,
+    transaction: &super::stack::FrameTransaction<'_>,
     count: usize,
-    fallthrough: super::execute::FallthroughPc,
-) -> Result<bool, Error> {
+) -> Result<
+    Option<(
+        super::call::ordinary::OrdinaryCall,
+        crate::engine::heap::ObjectId,
+    )>,
+    Error,
+> {
     use crate::engine::{
         code::function::metadata::{ConstructorKind, FunctionKind},
-        heap::runtime::owned_values::OwnedValueGuard,
-        heap::{ObjectData, ObjectKind, ObjectPayload, PropertySlot, RawId, RawValue},
+        heap::{ObjectKind, ObjectPayload, PropertySlot, RawId, RawValue},
         vm::call::ordinary::{DirectSelection, OrdinaryCall},
     };
-    if !execution.frames.can_push_with_continuations(0) || runtime.bytecode_call_would_overflow() {
-        return Ok(false);
-    }
-    let frame = execution.frames.current_mut(id)?;
-    #[cfg(feature = "profiling")]
-    let observed_depth = execution.slots.depth(&frame.window);
-    let target = execution.slots.peek(&frame.window, count + 1)?;
-    let new_target = execution.slots.peek(&frame.window, count)?;
+    let target = transaction.peek(count + 1)?;
+    let new_target = transaction.peek(count)?;
     let (JsValue::Object(target_id), JsValue::Object(new_target_id)) = (target, new_target) else {
-        return Ok(false);
+        return Ok(None);
     };
     let prototype = {
         let target = state
@@ -135,10 +132,10 @@ pub(super) fn try_ordinary_base_in_state(
             .object(*target_id)
             .map_err(super::exception::heap_error_to_vm_error)?;
         if !target.is_constructor {
-            return Ok(false);
+            return Ok(None);
         }
         let ObjectPayload::BytecodeFunction { bytecode, .. } = &target.payload else {
-            return Ok(false);
+            return Ok(None);
         };
         let data = state
             .heap
@@ -147,7 +144,7 @@ pub(super) fn try_ordinary_base_in_state(
         if data.metadata.function_kind != FunctionKind::Normal
             || data.metadata.constructor_kind != ConstructorKind::Base
         {
-            return Ok(false);
+            return Ok(None);
         }
         let new_target = state
             .heap
@@ -161,7 +158,7 @@ pub(super) fn try_ordinary_base_in_state(
                 ObjectKind::BytecodeFunction | ObjectKind::Ordinary
             )
         {
-            return Ok(false);
+            return Ok(None);
         }
         let atom = state
             .pinned_atoms
@@ -171,17 +168,17 @@ pub(super) fn try_ordinary_base_in_state(
             .shape(new_target.shape)
             .map_err(super::exception::heap_error_to_vm_error)?;
         let Some(slot) = shape.find(crate::engine::atom::AtomIdx::from_raw(atom.raw())) else {
-            return Ok(false);
+            return Ok(None);
         };
         if shape.entries()[slot as usize].flags.storage
             != crate::engine::object::shape::PropertyStorageKind::Data
         {
-            return Ok(false);
+            return Ok(None);
         }
         let Some(PropertySlot::Data(RawValue::Object(prototype))) =
             new_target.slots.get(slot as usize)
         else {
-            return Ok(false);
+            return Ok(None);
         };
         // The canonical query keeps additional transient owners. Keep its
         // overflow and immortal transition behavior near saturation, including
@@ -223,11 +220,11 @@ pub(super) fn try_ordinary_base_in_state(
                 .map_err(super::exception::heap_error_to_vm_error)?
                 >= u32::MAX - 4
         {
-            return Ok(false);
+            return Ok(None);
         }
         for offset in (0..count).rev() {
-            if !ready(execution.slots.peek(&frame.window, offset)?)? {
-                return Ok(false);
+            if !ready(transaction.peek(offset)?)? {
+                return Ok(None);
             }
         }
         *prototype
@@ -238,25 +235,30 @@ pub(super) fn try_ordinary_base_in_state(
         DirectSelection::Ordinary(selected) => selected
             .authenticate_slot_in_state(runtime, state)
             .map_err(runtime_error_to_vm_error)?,
-        _ => return Ok(false),
+        _ => return Ok(None),
     };
-    // Allocation requests GC but cannot collect until all receiver edges and
-    // the child frame have been published. The caller still owns all inputs.
-    let receiver = state
-        .allocate_object_with_layout(Some(prototype), &[], Vec::new(), ObjectData::ordinary)
-        .map_err(runtime_error_to_vm_error)?;
-    let mut receiver = OwnedValueGuard::new(state, &runtime.0.poisoned, JsValue::Object(receiver));
-    let (state, receiver) = receiver.parts();
-    call.install_constructor_in_state(runtime, state, execution, id, count, fallthrough, receiver)?;
-    #[cfg(feature = "profiling")]
-    {
-        crate::engine::api::profiling::record_owned_instruction(observed_depth);
-        crate::engine::api::profiling::record_owned_execution_event(
-            "constructor_base_lazy_install",
-        );
-        crate::engine::api::profiling::record_owned_execution_event("constructor_argv_elided");
-    }
-    Ok(true)
+    Ok(Some((call, prototype)))
+}
+
+/// Synthetic legacy entry authenticates its supplied frame/window once. Real
+/// bytecode construction enters through the existing exclusive execution lease.
+#[cfg(test)]
+fn try_ordinary_base_in_state(
+    runtime: &Runtime,
+    state: &mut crate::engine::heap::runtime::RuntimeState,
+    execution: &mut RunningExecution,
+    id: FrameId,
+    count: usize,
+    fallthrough: super::execute::FallthroughPc,
+) -> Result<bool, Error> {
+    let count = u16::try_from(count)
+        .map_err(|_| Error::internal("constructor argument count exceeds bytecode range"))?;
+    super::stack::FrameExecution::admit(execution, id)?.enter_constructor(
+        runtime,
+        state,
+        count,
+        fallthrough,
+    )
 }
 
 pub(super) fn enter_default_derived(

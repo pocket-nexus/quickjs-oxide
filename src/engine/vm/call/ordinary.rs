@@ -1,5 +1,4 @@
 //! Authenticated direct ordinary calls. No wrapper dispatch or materialized argv.
-use crate::engine::vm::exception::runtime_error_to_vm_error;
 use crate::engine::{
     api::{Error, runtime::Runtime, runtime_error::RuntimeError},
     code::{
@@ -304,92 +303,6 @@ impl OrdinaryCall {
             "slot installation transfers its source owner"
         );
         (self.function, self.executable, self.closure)
-    }
-}
-
-impl OrdinaryCall {
-    /// Install a selected Base constructor without building an argument vector.
-    /// Caller operands and both receiver guards remain owning until the shared
-    /// window initializer completes; publication then transfers them exactly once.
-    #[allow(clippy::too_many_arguments)]
-    pub(in crate::engine::vm) fn install_constructor_in_state(
-        self,
-        runtime: &Runtime,
-        state: &mut crate::engine::heap::runtime::RuntimeState,
-        execution: &mut crate::engine::vm::execution::RunningExecution,
-        parent: crate::engine::vm::frame::FrameId,
-        count: usize,
-        fallthrough: crate::engine::vm::execute::FallthroughPc,
-        receiver: &mut Option<JsValue>,
-    ) -> Result<(), Error> {
-        use crate::engine::{
-            heap::runtime::owned_values::OwnedValueGuard,
-            vm::frame::{ConstructorReturn, Frame, ReturnOwner, ReturnTarget, ReturnValue},
-        };
-        debug_assert!(
-            self.owner.is_none(),
-            "constructor transfers its callee slot"
-        );
-        let this_value = state
-            .dup_jsvalue(receiver.as_ref().expect("guarded constructor receiver"))
-            .map_err(runtime_error_to_vm_error)?;
-        let mut this_value = OwnedValueGuard::new(state, &runtime.0.poisoned, this_value);
-        let (state, this_value) = this_value.parts();
-        let depth = execution.frames.depth() + 1;
-        execution.call_storage.reserve_depth(depth)?;
-        let caller_realm = execution.frames.current_mut(parent)?.executable.realm;
-        let (flags, flag_bytes) = if self.executable.has_captured_locals {
-            execution
-                .call_storage
-                .capture_flags(self.executable.local_definitions.len())?
-        } else {
-            (Vec::new(), 0)
-        };
-        let mut prepared = execution.frames.prepare_push()?;
-        let frame = prepared.current_mut(parent)?;
-        let installed = execution.slots.push_constructor_frame_in_state(
-            runtime,
-            state,
-            &self.executable.frame_layout(),
-            &mut frame.window,
-            count,
-            self.function,
-            self.executable.observes_arguments,
-            this_value,
-        )?;
-        frame.resume_pc = fallthrough.index();
-        let (mut cold, frame_bytes) = execution.call_storage.vacant(caller_realm);
-        cold.return_to = Some(ReturnTarget {
-            value_use: ReturnValue::Push,
-            owner: ReturnOwner::Frame(parent),
-            tail: false,
-            operation: None,
-        });
-        cold.entry_guard = None;
-        cold.function = FrameFunction::shared(runtime, installed.function, self.closure).into();
-        cold.reusable_captured_locals = flags;
-        cold.input = installed.input.into();
-        cold.constructor_return = Some(ConstructorReturn::Base(
-            receiver
-                .take()
-                .expect("guarded constructor return receiver"),
-        ));
-        cold.executable = self.executable.into();
-        cold.window = installed.window.into();
-        prepared.install(Frame {
-            property_generation: 0,
-            iterator_generation: 0,
-            caller_realm,
-            active_frame: crate::engine::vm::frames::ActiveFrameToken::unmaterialized(),
-            fault_pc: 0,
-            resume_pc: 0,
-            cold,
-        });
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_call_storage(frame_bytes, flag_bytes, 0);
-        #[cfg(not(feature = "profiling"))]
-        let _ = (frame_bytes, flag_bytes);
-        Ok(())
     }
 }
 

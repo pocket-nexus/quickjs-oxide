@@ -124,6 +124,7 @@ fn constructor_gc_services_published_inputs_inside_the_execution_segment() {
     .unwrap();
     let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
     let parent = crate::engine::vm::driver::push_frame(&runtime, &mut execution, entry).unwrap();
+    let runtime_owners = std::rc::Rc::strong_count(&runtime.0);
     runtime.0.gc_pressure.remaining.set(1);
     #[cfg(feature = "profiling")]
     let profile = crate::engine::api::profiling::CostProfile::start();
@@ -138,6 +139,7 @@ fn constructor_gc_services_published_inputs_inside_the_execution_segment() {
         assert!(state.heap.object(marker).is_ok());
         assert!(state.heap.object(garbage).is_err());
         assert!(runtime.0.gc_pressure.remaining.get() > 0);
+        assert_eq!(std::rc::Rc::strong_count(&runtime.0), runtime_owners);
         assert!(!runtime.0.deferred_references.has_pending());
     }
     #[cfg(feature = "profiling")]
@@ -145,6 +147,8 @@ fn constructor_gc_services_published_inputs_inside_the_execution_segment() {
         let events = profile.snapshot().owned_execution_events;
         assert_eq!(events.get("core.frame_executor_entry"), Some(&1));
         assert_eq!(events.get("core.pc_authentication"), Some(&1));
+        assert_eq!(events.get("core.window_authentication"), Some(&1));
+        assert_eq!(events.get("slot_authentication"), Some(&1));
         assert_eq!(events.get("core.internal_construct"), Some(&1));
         assert_eq!(events.get("core.internal_return"), Some(&1));
     }
