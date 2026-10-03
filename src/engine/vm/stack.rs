@@ -15,6 +15,7 @@ use crate::engine::vm::exception::runtime_error_to_vm_error;
 use std::ops::Range;
 use std::rc::Rc;
 mod call;
+mod construct;
 
 pub(in crate::engine::vm) struct SlotStore {
     // Initialized high-water backing. Inactive slots are always None; only

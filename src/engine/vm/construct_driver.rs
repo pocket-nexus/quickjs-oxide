@@ -42,12 +42,26 @@ pub(super) fn enter(
     let new_target = runtime
         .dup_jsvalue(execution.slots.peek(&frame.window, count)?)
         .map_err(runtime_error_to_vm_error)?;
-    let mut arguments = Vec::new();
+    let mut input = super::protocol::CallInputGuard::new(
+        runtime,
+        super::CallInput::new(runtime, JsValue::Undefined, new_target, None),
+    );
+    let mut arguments = super::stack::FrameStorageGuard::new(
+        runtime,
+        super::stack::FrameStorage {
+            original_arguments: Vec::new(),
+            parameters: Vec::new(),
+            locals: Vec::new(),
+            operands: Vec::new(),
+        },
+    );
     arguments
+        .storage_mut()
+        .original_arguments
         .try_reserve_exact(count)
         .map_err(|_| Error::internal("construct arguments allocation failed"))?;
     for offset in (0..count).rev() {
-        arguments.push(
+        arguments.storage_mut().original_arguments.push(
             runtime
                 .dup_jsvalue(execution.slots.peek(&frame.window, offset)?)
                 .map_err(runtime_error_to_vm_error)?,
@@ -58,38 +72,58 @@ pub(super) fn enter(
         execution,
         id,
         constructor,
-        new_target,
-        arguments,
+        std::mem::replace(&mut input.new_target, JsValue::Undefined),
+        arguments.take().original_arguments,
         count + 2,
     )
 }
 
-/// Admit one synchronous constructor prefix while its operands are still
-/// rooted. A miss performs no observable work and preserves the query protocol.
+/// Compatibility entry while constructor opcodes move into the state-held loop.
 fn try_ordinary_base(
     runtime: &Runtime,
     execution: &mut RunningExecution,
     id: FrameId,
     count: usize,
 ) -> Result<bool, Error> {
+    let _unwind = runtime.unwind_guard();
+    let frame = execution.frames.current_mut(id)?;
+    let decoded = frame
+        .executable
+        .exec
+        .decode_published(frame.fault_pc as u32)
+        .map_err(|_| Error::internal("constructor PC is not a published instruction"))?;
+    let fallthrough = super::execute::FallthroughPc::from_decoded(decoded);
+    try_ordinary_base_in_state(
+        runtime,
+        &mut runtime.0.state.borrow_mut(),
+        execution,
+        id,
+        count,
+        fallthrough,
+    )
+}
+
+/// Select and install one Base bytecode constructor through the current state.
+/// A miss leaves every caller operand in place; prototype callbacks stay in the
+/// canonical constructor protocol. No argument vector or public root is created.
+pub(super) fn try_ordinary_base_in_state(
+    runtime: &Runtime,
+    state: &mut crate::engine::heap::runtime::RuntimeState,
+    execution: &mut RunningExecution,
+    id: FrameId,
+    count: usize,
+    fallthrough: super::execute::FallthroughPc,
+) -> Result<bool, Error> {
     use crate::engine::{
         code::function::metadata::{ConstructorKind, FunctionKind},
-        heap::{ObjectKind, ObjectPayload, PropertySlot, RawId, RawValue},
-        object::ObjectRef,
-        vm::{
-            call::ordinary::{DirectSelection, OrdinaryCall},
-            frame::{Frame, ReturnOwner, ReturnValue},
-            stack::{FrameStorage, FrameStorageGuard},
-        },
+        heap::runtime::owned_values::OwnedValueGuard,
+        heap::{ObjectData, ObjectKind, ObjectPayload, PropertySlot, RawId, RawValue},
+        vm::call::ordinary::{DirectSelection, OrdinaryCall},
     };
-    if runtime.0.deferred_references.has_pending()
-        || !execution.frames.can_push_with_continuations(0)
-        || runtime.bytecode_call_would_overflow()
-    {
+    if !execution.frames.can_push_with_continuations(0) || runtime.bytecode_call_would_overflow() {
         return Ok(false);
     }
     let frame = execution.frames.current_mut(id)?;
-    let realm = frame.executable.realm;
     #[cfg(feature = "profiling")]
     let observed_depth = execution.slots.depth(&frame.window);
     let target = execution.slots.peek(&frame.window, count + 1)?;
@@ -98,10 +132,6 @@ fn try_ordinary_base(
         return Ok(false);
     };
     let prototype = {
-        let state = runtime.0.state.borrow();
-        if state.heap.has_pending_zero_cleanup() {
-            return Ok(false);
-        }
         let target = state
             .heap
             .object(*target_id)
@@ -204,114 +234,29 @@ fn try_ordinary_base(
         }
         *prototype
     };
-    let call: OrdinaryCall = match DirectSelection::select_jsvalue(runtime, target)
+    let call: OrdinaryCall = match DirectSelection::select_in_state(runtime, state, *target_id)
         .map_err(runtime_error_to_vm_error)?
     {
         DirectSelection::Ordinary(selected) => selected
-            .authenticate(runtime)
+            .authenticate_slot_in_state(runtime, state)
             .map_err(runtime_error_to_vm_error)?,
         _ => return Ok(false),
     };
-    let prototype = ObjectRef::from_borrowed_handle(runtime.clone(), prototype)
-        .map_err(super::exception::heap_error_to_vm_error)?;
-    // Preserve the old outgoing argument ownership protocol. The independent
-    // owners make retiring each original operand non-observing; no borrowed
-    // heap fact survives allocation or child installation.
-    let new_target = runtime
-        .dup_jsvalue(new_target)
+    // Allocation requests GC but cannot collect until all receiver edges and
+    // the child frame have been published. The caller still owns all inputs.
+    let receiver = state
+        .allocate_object_with_layout(Some(prototype), &[], Vec::new(), ObjectData::ordinary)
         .map_err(runtime_error_to_vm_error)?;
-    let mut input = super::protocol::CallInputGuard::new(
-        runtime,
-        super::CallInput::new(runtime, JsValue::Undefined, new_target, None),
-    );
-    let mut arguments = FrameStorageGuard::new(
-        runtime,
-        FrameStorage {
-            original_arguments: Vec::new(),
-            parameters: Vec::new(),
-            locals: Vec::new(),
-            operands: Vec::new(),
-        },
-    );
-    arguments
-        .storage_mut()
-        .original_arguments
-        .try_reserve_exact(count)
-        .map_err(|_| Error::internal("construct arguments allocation failed"))?;
-    for offset in (0..count).rev() {
-        arguments.storage_mut().original_arguments.push(
-            runtime
-                .dup_jsvalue(execution.slots.peek(&frame.window, offset)?)
-                .map_err(runtime_error_to_vm_error)?,
-        );
-    }
-    let resume = frame.next_pc()?;
-    let receiver = runtime
-        .new_object(Some(&prototype))
-        .map_err(runtime_error_to_vm_error)?;
-    let entry = call.prepare_constructor(
-        runtime,
-        &mut execution.call_storage,
-        receiver,
-        std::mem::replace(&mut input.new_target, JsValue::Undefined),
-        arguments.take().original_arguments,
-        realm,
-        ReturnTarget {
-            owner: ReturnOwner::Frame(id),
-            value_use: ReturnValue::Push,
-            tail: false,
-            operation: None,
-        },
-    )?;
-    let mut entry = super::frame::FrameEntryGuard::new(runtime, entry);
-    let mut owned_storage = FrameStorageGuard::new(
-        runtime,
-        std::mem::replace(
-            &mut entry.storage,
-            FrameStorage {
-                original_arguments: Vec::new(),
-                parameters: Vec::new(),
-                locals: Vec::new(),
-                operands: Vec::new(),
-            },
-        ),
-    );
-    execution
-        .call_storage
-        .reserve_depth(execution.frames.depth() + 1)?;
-    let mut prepared = execution.frames.prepare_push()?;
-    let parent = prepared.current_mut(id)?;
-    for _ in 0..count + 2 {
-        runtime
-            .release_jsvalue(execution.slots.pop(&mut parent.window)?)
-            .map_err(runtime_error_to_vm_error)?;
-    }
-    parent.resume_pc = resume;
-    let window = execution.slots.push_initialized_frame(
-        runtime,
-        &entry.executable.frame_layout(),
-        owned_storage.take(),
-        entry.cold.function.object_id(),
-        entry.executable.metadata.function_name_local,
-    )?;
-    let mut entry = entry.take();
-    entry.cold.executable = entry.executable.into();
-    entry.cold.window = window.into();
-    prepared.install(Frame {
-        property_generation: 0,
-        iterator_generation: 0,
-        caller_realm: realm,
-        active_frame: entry.active_frame,
-        cold: entry.cold,
-        fault_pc: 0,
-        resume_pc: 0,
-    });
+    let mut receiver = OwnedValueGuard::new(state, &runtime.0.poisoned, JsValue::Object(receiver));
+    let (state, receiver) = receiver.parts();
+    call.install_constructor_in_state(runtime, state, execution, id, count, fallthrough, receiver)?;
     #[cfg(feature = "profiling")]
     {
         crate::engine::api::profiling::record_owned_instruction(observed_depth);
         crate::engine::api::profiling::record_owned_execution_event(
             "constructor_base_lazy_install",
         );
+        crate::engine::api::profiling::record_owned_execution_event("constructor_argv_elided");
     }
     Ok(true)
 }
@@ -1056,7 +1001,7 @@ mod ordinary_constructor_tests {
     }
 
     #[test]
-    fn constructor_admission_preserves_pending_cleanup_and_depth_misses() {
+    fn constructor_admission_preserves_depth_misses() {
         let runtime = Runtime::new();
         let mut context = runtime.new_context().expect("create context");
         let Value::Object(target) = context
@@ -1073,25 +1018,6 @@ mod ordinary_constructor_tests {
             ExecutionLimits::default(),
         );
         let call_pc = execution.frames.current_mut(id).unwrap().resume_pc;
-        let pending = runtime.new_object(None).unwrap().into_handle();
-        runtime
-            .0
-            .state
-            .borrow_mut()
-            .heap
-            .queue_release_for_test(RawId::Object(pending))
-            .unwrap();
-        assert!(!super::try_ordinary_base(&runtime, &mut execution, id, 0).unwrap());
-        assert!(runtime.0.state.borrow().heap.has_pending_zero_cleanup());
-        drop(runtime.new_object(None).unwrap());
-        let pending = runtime.new_object(None).unwrap();
-        {
-            let _borrow = runtime.0.state.borrow();
-            drop(pending);
-        }
-        assert!(!super::try_ordinary_base(&runtime, &mut execution, id, 0).unwrap());
-        assert!(runtime.0.deferred_references.has_pending());
-        runtime.drain_deferred_references().unwrap();
         execution.frames.materialize(&runtime).unwrap();
         let previous = runtime.0.host_stack_top.replace(Some(0));
         assert!(!super::try_ordinary_base(&runtime, &mut execution, id, 0).unwrap());
@@ -1107,6 +1033,125 @@ mod ordinary_constructor_tests {
         assert_eq!(context.eval("function C(n){if(n)new C(n-1)}void C.prototype;try{new C(Infinity);'missing'}catch(e){e.name+':'+e.message}").unwrap(), Value::String(crate::engine::value::JsString::from_static("InternalError:stack overflow")));
         assert_eq!(context.eval("new C(1);6*7").unwrap(), Value::Int(42));
         assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[test]
+    fn constructor_current_state_admission_leaves_external_cleanup_to_boundary() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().expect("create context");
+        let Value::Object(target) = context
+            .eval("(function(){function C(a){this.a=a}void C.prototype;return C})()")
+            .unwrap()
+        else {
+            panic!("constructor")
+        };
+        let (mut execution, id) = operands(
+            &runtime,
+            &mut context,
+            &target,
+            vec![JsValue::Int(42)],
+            ExecutionLimits::default(),
+        );
+        let frame = execution.frames.current_mut(id).unwrap();
+        let fallthrough = super::super::execute::FallthroughPc::from_decoded(
+            frame
+                .executable
+                .exec
+                .decode_published(frame.fault_pc as u32)
+                .unwrap(),
+        );
+        let garbage = runtime.new_object(None).unwrap();
+        let garbage_id = garbage.object_id();
+        {
+            let mut state = runtime.0.state.borrow_mut();
+            drop(garbage);
+            assert!(runtime.0.deferred_references.has_pending());
+            assert!(
+                super::try_ordinary_base_in_state(
+                    &runtime,
+                    &mut state,
+                    &mut execution,
+                    id,
+                    1,
+                    fallthrough,
+                )
+                .unwrap()
+            );
+            assert!(runtime.0.deferred_references.has_pending());
+            assert!(state.heap.object(garbage_id).is_ok());
+            assert_eq!(execution.frames.depth(), 2);
+            assert_ne!(execution.frames.current_id(), Some(id));
+        }
+        runtime.drain_deferred_references().unwrap();
+        assert!(runtime.0.state.borrow().heap.object(garbage_id).is_err());
+        drop(execution);
+        assert!(!runtime.is_poisoned());
+    }
+
+    #[test]
+    fn generic_constructor_retain_failure_releases_earlier_argument_and_new_target_edges() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().expect("create context");
+        let Value::Object(target) = context.eval("Object").unwrap() else {
+            panic!("native constructor")
+        };
+        let first = runtime.new_object(None).unwrap();
+        let first_id = first.object_id();
+        let blocked = runtime.new_object(None).unwrap();
+        let blocked_id = blocked.object_id();
+        let (mut execution, id) = operands(
+            &runtime,
+            &mut context,
+            &target,
+            vec![
+                JsValue::Object(first.into_handle()),
+                JsValue::Object(blocked.into_handle()),
+            ],
+            ExecutionLimits::default(),
+        );
+        let (target_owners, first_owners, blocked_owners) = {
+            let state = runtime.0.state.borrow();
+            (
+                state.heap.object_strong_count(target.object_id()).unwrap(),
+                state.heap.object_strong_count(first_id).unwrap(),
+                state.heap.object_strong_count(blocked_id).unwrap(),
+            )
+        };
+        runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .set_strong_count_for_test(RawId::Object(blocked_id), u32::MAX);
+        let failed = super::enter(&runtime, &mut execution, id, 2, 0);
+        runtime
+            .0
+            .state
+            .borrow_mut()
+            .heap
+            .set_strong_count_for_test(RawId::Object(blocked_id), blocked_owners);
+        let error = failed
+            .err()
+            .expect("later checked argument retain must fail");
+        assert!(error.message().contains("retaining a heap reference"));
+        assert!(!runtime.is_poisoned());
+        let state = runtime.0.state.borrow();
+        assert_eq!(
+            state.heap.object_strong_count(target.object_id()),
+            Ok(target_owners)
+        );
+        assert_eq!(state.heap.object_strong_count(first_id), Ok(first_owners));
+        assert_eq!(
+            state.heap.object_strong_count(blocked_id),
+            Ok(blocked_owners)
+        );
+        drop(state);
+        let frame = execution.frames.current_mut(id).unwrap();
+        assert_eq!(execution.slots.depth(&frame.window), 4);
+        assert_eq!(frame.resume_pc, 0);
+        drop(execution);
+        assert!(runtime.0.state.borrow().heap.object(first_id).is_err());
+        assert!(runtime.0.state.borrow().heap.object(blocked_id).is_err());
     }
 
     #[test]
@@ -1150,7 +1195,7 @@ mod ordinary_constructor_tests {
         assert!(error.to_string().contains("execution slot limit exceeded"));
         assert_eq!(execution.frames.depth(), 1);
         let frame = execution.frames.current_mut(id).unwrap();
-        assert_eq!(execution.slots.depth(&frame.window), 0);
+        assert_eq!(execution.slots.depth(&frame.window), 5);
         runtime.run_gc().unwrap();
         assert_eq!(
             runtime.heap_counts().expect("runtime state").object_nodes,
@@ -1163,7 +1208,7 @@ mod ordinary_constructor_tests {
                 .borrow()
                 .heap
                 .object_strong_count(target.object_id()),
-            Ok(target_count - 2)
+            Ok(target_count)
         );
         assert_eq!(
             runtime
@@ -1172,7 +1217,7 @@ mod ordinary_constructor_tests {
                 .borrow()
                 .heap
                 .object_strong_count(marker.object_id()),
-            Ok(marker_count - 3)
+            Ok(marker_count)
         );
         drop(execution);
         assert!(runtime.0.state.borrow().active_frames.is_empty());

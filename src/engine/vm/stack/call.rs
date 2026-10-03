@@ -5,6 +5,25 @@ pub(in crate::engine::vm) struct InstalledOrdinaryFrame {
     pub function: crate::engine::heap::ObjectId,
     pub input: crate::engine::vm::CallInput,
 }
+
+/// Unpublished initialized ranges. Every fallible owner-producing operation has
+/// completed; callers immediately move their inputs and publish this window.
+#[must_use]
+pub(super) struct PreparedOrdinaryWindow {
+    pub(super) window: FrameWindow,
+    pub(super) start: usize,
+    next_window: u64,
+    #[cfg(feature = "profiling")]
+    before: usize,
+    #[cfg(feature = "profiling")]
+    initialized: usize,
+    #[cfg(feature = "profiling")]
+    keep_originals: bool,
+    #[cfg(feature = "profiling")]
+    roots: usize,
+    #[cfg(feature = "profiling")]
+    function_name: bool,
+}
 impl SlotStore {
     #[cfg(test)]
     pub(in crate::engine::vm) fn push_ordinary_frame(
@@ -51,6 +70,58 @@ impl SlotStore {
             .checked_add(1 + usize::from(method))
             .filter(|n| *n <= parent.depth)
             .ok_or_else(|| Error::internal("outgoing call exceeds caller operands"))?;
+        let prepared = self.prepare_ordinary_window_in_state(
+            runtime,
+            state,
+            layout,
+            parent,
+            count,
+            function,
+            observes_arguments,
+        )?;
+        let start = prepared.start;
+        let base = prepared.window.base;
+        for index in 0..count {
+            self.slots[base + index] = self.slots[start + index].take();
+        }
+        // All fallible work has completed. Transfer these roots directly from
+        // caller operands; no retain/release round trip or JS re-entry occurs.
+        let Some(FrameBinding::Direct(JsValue::Object(callee))) = self.slots[start - 1].take()
+        else {
+            unreachable!("authenticated ordinary callee is an object")
+        };
+        let receiver = if method {
+            let Some(FrameBinding::Direct(receiver)) = self.slots[start - 2].take() else {
+                unreachable!("checked receiver is direct")
+            };
+            receiver
+        } else {
+            JsValue::Undefined
+        };
+        let function = callee;
+        let input = crate::engine::vm::CallInput::new(runtime, receiver, JsValue::Undefined, None);
+        let window = self.publish_ordinary_window(parent, consumed, prepared);
+        Ok(InstalledOrdinaryFrame {
+            function,
+            input,
+            window,
+        })
+    }
+
+    /// Prepare the unpublished parameter/local suffix while the caller owns
+    /// all operands. Ordinary calls and Base constructors share this initializer;
+    /// their distinct input owners move only after all fallible work succeeds.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn prepare_ordinary_window_in_state(
+        &mut self,
+        runtime: &Runtime,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        layout: &FrameLayout<'_>,
+        parent: &FrameWindow,
+        count: usize,
+        function: crate::engine::heap::ObjectId,
+        observes_arguments: bool,
+    ) -> Result<PreparedOrdinaryWindow, Error> {
         let start = parent.operands().start + parent.depth - count;
         // Only language-visible original arguments need a second owner.
         // WeakRef liveness belongs to the enclosing execution turn.
@@ -152,40 +223,73 @@ impl SlotStore {
                 self.slots[parameters_end + index] = Some(binding);
             }
         }
-        for index in 0..count {
-            self.slots[base + index] = self.slots[start + index].take();
-        }
-        // All fallible work has completed. Transfer these roots directly from
-        // caller operands; no retain/release round trip or JS re-entry occurs.
-        let Some(FrameBinding::Direct(JsValue::Object(callee))) = self.slots[start - 1].take()
-        else {
-            unreachable!("authenticated ordinary callee is an object")
-        };
-        let receiver = if method {
-            let Some(FrameBinding::Direct(receiver)) = self.slots[start - 2].take() else {
-                unreachable!("checked receiver is direct")
-            };
-            receiver
-        } else {
-            JsValue::Undefined
-        };
-        let function = callee;
-        let input = crate::engine::vm::CallInput::new(runtime, receiver, JsValue::Undefined, None);
+        Ok(PreparedOrdinaryWindow {
+            start,
+            next_window,
+            window: FrameWindow {
+                owner: self.owner.clone(),
+                id: self.next_window,
+                base,
+                original_end,
+                parameters_end,
+                locals_end,
+                end,
+                depth: 0,
+                actual_count: count,
+            },
+            #[cfg(feature = "profiling")]
+            before,
+            #[cfg(feature = "profiling")]
+            initialized,
+            #[cfg(feature = "profiling")]
+            keep_originals,
+            #[cfg(feature = "profiling")]
+            roots,
+            #[cfg(feature = "profiling")]
+            function_name: function_name.is_some(),
+        })
+    }
+
+    /// Publish a prepared window after its caller edges have moved. There is
+    /// no allocation, checked retain, cleanup or callback after that transfer.
+    #[inline]
+    pub(super) fn publish_ordinary_window(
+        &mut self,
+        parent: &mut FrameWindow,
+        consumed: usize,
+        prepared: PreparedOrdinaryWindow,
+    ) -> FrameWindow {
+        let PreparedOrdinaryWindow {
+            window,
+            next_window,
+            ..
+        } = &prepared;
+        #[cfg(feature = "profiling")]
+        let count = window.actual_count;
+        #[cfg(feature = "profiling")]
+        let base = window.base;
+        let end = window.end;
+        #[cfg(feature = "profiling")]
+        let originals = window.original_arguments().len();
+        #[cfg(feature = "profiling")]
+        let parameter_count = window.parameters().len();
+        #[cfg(feature = "profiling")]
+        let local_count = window.locals().len();
         parent.depth -= consumed;
         self.active_end = end;
         let id = self.next_window;
-        self.next_window = next_window;
+        self.next_window = *next_window;
         self.windows.push(id);
         #[cfg(feature = "profiling")]
         {
             self.live_slots -= consumed;
             self.live_slots += originals + parameter_count + local_count;
             record_owned_storage(Cost::SlotCapacity {
-                before,
+                before: prepared.before,
                 after: self.slots.capacity(),
             });
             record_owned_storage(Cost::NoneInitialization {
-                count: self.slots.len() - initialized,
+                count: self.slots.len() - prepared.initialized,
                 high_water: self.slots.len(),
             });
             record_owned_storage(Cost::Clear(consumed - count));
@@ -197,9 +301,9 @@ impl SlotStore {
                 0,
                 local_count,
                 0,
-                if keep_originals { count } else { 0 },
-                roots,
-                usize::from(function_name.is_some()),
+                if prepared.keep_originals { count } else { 0 },
+                prepared.roots,
+                usize::from(prepared.function_name),
             );
             crate::engine::api::profiling::record_owned_execution_event(
                 "call_bindings_initialized_in_window",
@@ -207,25 +311,11 @@ impl SlotStore {
             crate::engine::api::profiling::record_owned_execution_event(
                 "call_outgoing_tail_transferred",
             );
-            if !keep_originals {
+            if !prepared.keep_originals {
                 crate::engine::api::profiling::record_owned_execution_event("ordinary_argv_elided");
             }
         }
-        Ok(InstalledOrdinaryFrame {
-            function,
-            input,
-            window: FrameWindow {
-                owner: self.owner.clone(),
-                id,
-                base,
-                original_end,
-                parameters_end,
-                locals_end,
-                end,
-                depth: 0,
-                actual_count: count,
-            },
-        })
+        prepared.window
     }
     fn clear_unpublished_owned_in_state(
         &mut self,

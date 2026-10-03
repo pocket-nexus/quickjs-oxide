@@ -18,7 +18,7 @@ use crate::engine::value::Value;
 // Only this module can authenticate or construct this witness.
 pub(in crate::engine::vm) struct OrdinaryCall {
     function: ObjectId,
-    // Callback and constructor preparation may outlive their source root.
+    // Callback preparation may outlive its source root.
     // Direct slot calls keep the source operand until its edge is transferred.
     owner: Option<ObjectRef>,
     executable: PublishedFunctionSnapshot,
@@ -217,56 +217,6 @@ impl OrdinaryCall {
         Ok(entry)
     }
 
-    /// The selected Base constructor shares ordinary authentication and lazy
-    /// activation. Its receiver owns a separate edge for primitive returns.
-    #[allow(clippy::too_many_arguments)]
-    pub(in crate::engine::vm) fn prepare_constructor(
-        self,
-        runtime: &Runtime,
-        storage: &mut crate::engine::vm::frame::CallStorage,
-        receiver: ObjectRef,
-        new_target: JsValue,
-        arguments: Vec<JsValue>,
-        caller_realm: crate::engine::heap::ContextId,
-        return_to: crate::engine::vm::frame::ReturnTarget,
-    ) -> Result<crate::engine::vm::frame::FrameEntry, Error> {
-        let mut input = crate::engine::vm::protocol::CallInputGuard::new(
-            runtime,
-            crate::engine::vm::CallInput::new(runtime, JsValue::Undefined, new_target, None),
-        );
-        let mut arguments = crate::engine::vm::stack::FrameStorageGuard::new(
-            runtime,
-            crate::engine::vm::stack::FrameStorage {
-                original_arguments: arguments,
-                parameters: Vec::new(),
-                locals: Vec::new(),
-                operands: Vec::new(),
-            },
-        );
-        if !receiver.belongs_to(runtime) {
-            return Err(runtime_error_to_vm_error(RuntimeError::WrongRuntime(
-                "constructor receiver",
-            )));
-        }
-        // Keep newTarget and arguments guarded through this checked retain.
-        // The receiver's return edge is transferred after preparation succeeds.
-        input.this_value = runtime
-            .dup_jsvalue(&JsValue::Object(receiver.object_id()))
-            .map_err(runtime_error_to_vm_error)?;
-        let mut entry = self.prepare_input(
-            runtime,
-            storage,
-            input.take(),
-            arguments.take().original_arguments,
-            caller_realm,
-            return_to,
-        )?;
-        entry.cold.constructor_return = Some(crate::engine::vm::frame::ConstructorReturn::Base(
-            JsValue::Object(receiver.into_execution_handle()),
-        ));
-        Ok(entry)
-    }
-
     fn prepare_input(
         self,
         runtime: &Runtime,
@@ -448,6 +398,92 @@ impl OrdinaryCall {
         {
             crate::engine::api::profiling::record_owned_call_storage(frame_bytes, flag_bytes, 0);
         }
+        #[cfg(not(feature = "profiling"))]
+        let _ = (frame_bytes, flag_bytes);
+        Ok(())
+    }
+}
+
+impl OrdinaryCall {
+    /// Install a selected Base constructor without building an argument vector.
+    /// Caller operands and both receiver guards remain owning until the shared
+    /// window initializer completes; publication then transfers them exactly once.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::engine::vm) fn install_constructor_in_state(
+        self,
+        runtime: &Runtime,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        execution: &mut crate::engine::vm::execution::RunningExecution,
+        parent: crate::engine::vm::frame::FrameId,
+        count: usize,
+        fallthrough: crate::engine::vm::execute::FallthroughPc,
+        receiver: &mut Option<JsValue>,
+    ) -> Result<(), Error> {
+        use crate::engine::{
+            heap::runtime::owned_values::OwnedValueGuard,
+            vm::frame::{ConstructorReturn, Frame, ReturnOwner, ReturnTarget, ReturnValue},
+        };
+        debug_assert!(
+            self.owner.is_none(),
+            "constructor transfers its callee slot"
+        );
+        let this_value = state
+            .dup_jsvalue(receiver.as_ref().expect("guarded constructor receiver"))
+            .map_err(runtime_error_to_vm_error)?;
+        let mut this_value = OwnedValueGuard::new(state, &runtime.0.poisoned, this_value);
+        let (state, this_value) = this_value.parts();
+        let depth = execution.frames.depth() + 1;
+        execution.call_storage.reserve_depth(depth)?;
+        let caller_realm = execution.frames.current_mut(parent)?.executable.realm;
+        let (flags, flag_bytes) = if self.executable.has_captured_locals {
+            execution
+                .call_storage
+                .capture_flags(self.executable.local_definitions.len())?
+        } else {
+            (Vec::new(), 0)
+        };
+        let mut prepared = execution.frames.prepare_push()?;
+        let frame = prepared.current_mut(parent)?;
+        let installed = execution.slots.push_constructor_frame_in_state(
+            runtime,
+            state,
+            &self.executable.frame_layout(),
+            &mut frame.window,
+            count,
+            self.function,
+            self.executable.observes_arguments,
+            this_value,
+        )?;
+        frame.resume_pc = fallthrough.index();
+        let (mut cold, frame_bytes) = execution.call_storage.vacant(caller_realm);
+        cold.return_to = Some(ReturnTarget {
+            value_use: ReturnValue::Push,
+            owner: ReturnOwner::Frame(parent),
+            tail: false,
+            operation: None,
+        });
+        cold.entry_guard = None;
+        cold.function = FrameFunction::shared(runtime, installed.function, self.closure).into();
+        cold.reusable_captured_locals = flags;
+        cold.input = installed.input.into();
+        cold.constructor_return = Some(ConstructorReturn::Base(
+            receiver
+                .take()
+                .expect("guarded constructor return receiver"),
+        ));
+        cold.executable = self.executable.into();
+        cold.window = installed.window.into();
+        prepared.install(Frame {
+            property_generation: 0,
+            iterator_generation: 0,
+            caller_realm,
+            active_frame: crate::engine::vm::frames::ActiveFrameToken::unmaterialized(),
+            fault_pc: 0,
+            resume_pc: 0,
+            cold,
+        });
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_call_storage(frame_bytes, flag_bytes, 0);
         #[cfg(not(feature = "profiling"))]
         let _ = (frame_bytes, flag_bytes);
         Ok(())
