@@ -279,6 +279,10 @@ pub(super) enum VmAction {
     Object {
         fallthrough: FallthroughPc,
     },
+    ArrayFrom {
+        count: u16,
+        fallthrough: FallthroughPc,
+    },
     GetSuper,
     Predicate(super::predicate_driver::Kind),
     HomeObject,
@@ -360,6 +364,7 @@ impl VmAction {
             Self::DefineProperty { .. } => "execute.action.define_property",
             Self::Environment(_) => "execute.action.environment",
             Self::Object { .. } => "execute.action.object",
+            Self::ArrayFrom { .. } => "execute.action.array_from",
             Self::GetSuper => "execute.action.get_super",
             Self::Predicate(_) => "execute.action.predicate",
             Self::HomeObject => "execute.action.home_object",
@@ -589,6 +594,12 @@ pub(super) fn execute_frame_in_state(
                     }
                     Opcode::Object => {
                         break 'dispatch Ok(VmAction::Object {
+                            fallthrough: FallthroughPc::from_decoded(decoded),
+                        });
+                    }
+                    Opcode::ArrayFrom => {
+                        break 'dispatch Ok(VmAction::ArrayFrom {
+                            count: published_u16(operand),
                             fallthrough: FallthroughPc::from_decoded(decoded),
                         });
                     }
@@ -2616,6 +2627,58 @@ pub(super) fn execute_frame_in_state(
                 crate::engine::api::profiling::record_owned_execution_event("core.internal_object");
                 continue;
             }
+            VmAction::ArrayFrom { count, fallthrough } => {
+                segment.materialize_in_state(state)?;
+                {
+                    let FrameTurn {
+                        executable,
+                        transaction,
+                        fault_pc,
+                        resume_pc,
+                        ..
+                    } = segment.frame();
+                    #[cfg(feature = "profiling")]
+                    let depth = transaction.operand_depth();
+                    let mut cursor =
+                        FrameCursor::new(transaction, fault_pc, resume_pc, &runtime.0.poisoned);
+                    let mut values = Vec::new();
+                    values
+                        .try_reserve_exact(usize::from(count))
+                        .map_err(|_| Error::internal("array elements allocation failed"))?;
+                    let mut values_owner =
+                        crate::engine::heap::runtime::owned_values::OwnedValuesGuard::new(
+                            state,
+                            &runtime.0.poisoned,
+                            values,
+                        );
+                    let (state, values) = values_owner.parts();
+                    for _ in 0..count {
+                        values.push(cursor.move_owned()?);
+                    }
+                    values.reverse();
+                    let array = state
+                        .new_array_from_values_jsvalue(
+                            &runtime.0.poisoned,
+                            executable.realm,
+                            std::mem::take(values),
+                        )
+                        .map_err(runtime_error_to_vm_error)?;
+                    cursor.commit_owned(state, JsValue::Object(array))?;
+                    cursor.advance(fallthrough.index());
+                    #[cfg(feature = "profiling")]
+                    crate::engine::api::profiling::record_owned_instruction(depth);
+                }
+                // Every element and the result owner are published before the
+                // original allocation checkpoint can observe this Array.
+                state
+                    .collect_if_requested(&runtime.0.gc_pressure, &runtime.0.poisoned)
+                    .map_err(runtime_error_to_vm_error)?;
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "core.internal_array_from",
+                );
+                continue;
+            }
             VmAction::Call {
                 arguments,
                 method,
@@ -2938,7 +3001,6 @@ fn deferred_action(
             name: b,
         }),
         Opcode::VariableEnvironment => VmAction::Environment(E::CreateVariable),
-        Opcode::ArrayFrom => VmAction::Environment(E::CreateArray(checked_u16(a)?)),
         Opcode::DefineArrayEl => VmAction::Environment(E::DefineArrayElement),
         Opcode::Append => VmAction::Environment(E::Append),
 
@@ -3678,3 +3740,6 @@ mod execution_span_tests {
 
 #[cfg(all(test, feature = "profiling"))]
 mod named_native_fact_tests;
+
+#[cfg(test)]
+mod array_allocation_tests;

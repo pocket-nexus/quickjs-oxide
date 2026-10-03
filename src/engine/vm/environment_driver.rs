@@ -28,7 +28,6 @@ pub(super) enum Operation {
         strict: bool,
     },
     CreateVariable,
-    CreateArray(u16),
     DefineArrayElement,
     Append,
     Iterator(super::iterator_driver::Operation),
@@ -347,25 +346,6 @@ pub(super) fn step(
                         request = Some((getter, receiver, Vec::new(), ReturnValue::Push));
                     }
                 }
-            }
-            Operation::CreateArray(count) => {
-                let mut values = Vec::new();
-                values
-                    .try_reserve_exact(usize::from(count))
-                    .map_err(|_| Error::internal("array elements allocation failed"))?;
-                for _ in 0..count {
-                    values.push(execution.slots.pop(&mut frame.window)?);
-                }
-                values.reverse();
-                let array = runtime
-                    .new_array_from_values_jsvalue(realm, values)
-                    .map_err(runtime_error_to_vm_error)?;
-                push_retained_factory_result(
-                    runtime,
-                    &mut execution.slots,
-                    &mut frame.window,
-                    array,
-                )?;
             }
             Operation::CreateVariable => {
                 if frame
