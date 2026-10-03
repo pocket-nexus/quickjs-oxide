@@ -35,6 +35,7 @@ impl ActiveFrames {
     pub(crate) fn len(&self) -> usize {
         self.records.len() + usize::from(self.pending_native.is_some())
     }
+    #[cfg(test)]
     pub(crate) fn is_empty(&self) -> bool {
         self.len() == 0
     }
