@@ -20,10 +20,7 @@ use crate::engine::heap::{AutoInitProperty, ContextId, PropertySlot};
 use crate::engine::host::HostServices;
 use crate::engine::object::operations::{InternalSetResult, PropertySetRejection};
 use crate::engine::object::shape::PropertyFlags;
-use crate::engine::object::{
-    CallableRef, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey,
-    WellKnownSymbol,
-};
+use crate::engine::object::{CallableRef, ObjectRef, PropertyKey, WellKnownSymbol};
 use crate::engine::realm::bindings::GlobalBindingCreationMode;
 use crate::engine::value::conversion::NativeConversion;
 

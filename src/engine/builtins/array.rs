@@ -4,6 +4,9 @@ use crate::engine::api::error::{Error, ErrorKind, NativeErrorKind};
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::atom::AtomIdx;
+use crate::engine::heap::runtime::{RuntimeState, owned_values::OwnedValueGuard};
+use crate::engine::heap::{ObjectId, RawValue};
+use std::cell::Cell;
 
 use crate::engine::builtins::native::{
     ArrayFindKind, ArrayFlattenKind, ArrayIterationKind, ArrayIteratorKind, ArrayJoinKind,
@@ -508,50 +511,6 @@ impl Runtime {
             AutoInitProperty::ArrayUnscopables { realm },
         ));
         state.replace_layout(object_id, prototype, &entries, slots)
-    }
-
-    pub(crate) fn instantiate_array_unscopables(
-        &self,
-        realm: ContextId,
-    ) -> Result<ObjectRef, RuntimeError> {
-        self.0.state.borrow().heap.context(realm)?;
-        let object = self.new_object(None)?;
-        for name in [
-            "at",
-            "copyWithin",
-            "entries",
-            "fill",
-            "find",
-            "findIndex",
-            "findLast",
-            "findLastIndex",
-            "flat",
-            "flatMap",
-            "includes",
-            "keys",
-            "toReversed",
-            "toSorted",
-            "toSpliced",
-            "values",
-        ] {
-            let key = self.intern_property_key(name)?;
-            if !self.define_own_property(
-                &object,
-                &key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(Value::Bool(true)),
-                    writable: DescriptorField::Present(true),
-                    enumerable: DescriptorField::Present(true),
-                    configurable: DescriptorField::Present(true),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )? {
-                return Err(RuntimeError::Invariant(
-                    "Array unscopables property definition was rejected",
-                ));
-            }
-        }
-        Ok(object)
     }
 
     pub(crate) fn call_array_constructor(
@@ -1360,3 +1319,70 @@ impl Runtime {
 
 #[cfg(test)]
 mod tests;
+
+impl RuntimeState {
+    pub(crate) fn instantiate_array_unscopables(
+        &mut self,
+        poisoned: &Cell<bool>,
+        realm: ContextId,
+    ) -> Result<ObjectId, RuntimeError> {
+        self.heap.context(realm)?;
+        let object = self.allocate_object_with_layout(
+            poisoned,
+            None,
+            &[],
+            Vec::new(),
+            ObjectData::ordinary,
+        )?;
+        let mut result_owner = OwnedValueGuard::new(self, poisoned, JsValue::Object(object));
+        let (state, result_owner) = result_owner.parts();
+        for name in [
+            "at",
+            "copyWithin",
+            "entries",
+            "fill",
+            "find",
+            "findIndex",
+            "findLast",
+            "findLastIndex",
+            "flat",
+            "flatMap",
+            "includes",
+            "keys",
+            "toReversed",
+            "toSorted",
+            "toSpliced",
+            "values",
+        ] {
+            let key = state.intern_property_key_js_string(&JsString::try_from_utf8(name)?)?;
+            let defined = state.define_raw_property_with_poison(
+                poisoned,
+                object,
+                key,
+                &crate::engine::object::property::PropertyDescriptor {
+                    value: Some(RawValue::Bool(true)),
+                    writable: Some(true),
+                    enumerable: Some(true),
+                    configurable: Some(true),
+                    ..crate::engine::object::property::PropertyDescriptor::new()
+                },
+            );
+            if !poisoned.get()
+                && let Err(error) = state.atoms.release(key)
+            {
+                poisoned.set(true);
+                return defined.map(|_| object).and(Err(error.into()));
+            }
+            if !defined? {
+                return Err(RuntimeError::Invariant(
+                    "Array unscopables property definition was rejected",
+                ));
+            }
+        }
+        let JsValue::Object(object) = result_owner.take().expect("unscopables factory result")
+        else {
+            unreachable!("unscopables factory allocated an object")
+        };
+        Ok(object)
+    }
+}

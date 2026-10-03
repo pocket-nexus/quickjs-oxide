@@ -8,14 +8,17 @@
 
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
+use crate::engine::heap::runtime::{RuntimeState, owned_values::OwnedValueGuard};
+use crate::engine::heap::{ObjectId, RawValue};
+use std::cell::Cell;
 
 use crate::engine::builtins::native::{JsonNativeKind, NativeFunctionId};
 use crate::engine::heap::{AutoInitProperty, ContextId, PropertySlot};
 use crate::engine::object::shape::PropertyFlags;
-use crate::engine::object::{
-    DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey, WellKnownSymbol,
-};
-use crate::engine::value::{JsString, Value};
+use crate::engine::object::{ObjectRef, WellKnownSymbol};
+#[cfg(test)]
+use crate::engine::value::Value;
+use crate::engine::value::{JsString, JsValue};
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{NativeArguments, NativeInvocation};
 
@@ -41,55 +44,6 @@ impl Runtime {
             PropertyFlags::data(true, false, true),
             PropertySlot::auto_init(AutoInitProperty::Json { realm }),
         )
-    }
-
-    /// Materialize the complete pinned `js_json_funcs` property table.
-    ///
-    /// Stringify and Raw JSON keep honest typed frontiers until their bounded
-    /// milestones land, but their callable identities are reserved now so the
-    /// final object graph and own-key order need no migration.
-    pub(crate) fn instantiate_json_intrinsic(
-        &self,
-        realm: ContextId,
-    ) -> Result<ObjectRef, RuntimeError> {
-        self.0.state.borrow().heap.context(realm)?;
-        let json = self.new_ordinary_object_in_realm(realm)?;
-        for (kind, name, length) in [
-            (JsonNativeKind::IsRawJson, "isRawJSON", 1),
-            (JsonNativeKind::Parse, "parse", 2),
-            (JsonNativeKind::RawJson, "rawJSON", 1),
-            (JsonNativeKind::Stringify, "stringify", 3),
-        ] {
-            self.define_native_builtin_auto_init(
-                &json,
-                realm,
-                NativeFunctionId::Json(kind),
-                name,
-                length,
-                length,
-            )?;
-        }
-
-        let to_string_tag = PropertyKey::from(
-            self.well_known_symbol(WellKnownSymbol::ToStringTag)
-                .expect("well-known symbol"),
-        );
-        if !self.define_own_property(
-            &json,
-            &to_string_tag,
-            &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(Value::String(JsString::from_static("JSON"))),
-                writable: DescriptorField::Present(false),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )? {
-            return Err(RuntimeError::Invariant(
-                "JSON toStringTag definition was rejected",
-            ));
-        }
-        Ok(json)
     }
 
     pub(crate) fn call_json_native(
@@ -122,3 +76,67 @@ pub(crate) use reviver::{ParseResume as JsonParseResume, ParseStep as JsonParseS
 pub(crate) use stringify::{
     StringifyResume as JsonStringifyResume, StringifyStep as JsonStringifyStep,
 };
+
+impl RuntimeState {
+    /// Materialize the complete pinned `js_json_funcs` property table.
+    ///
+    /// Stringify and Raw JSON keep honest typed frontiers until their bounded
+    /// milestones land, but their callable identities are reserved now so the
+    /// final object graph and own-key order need no migration.
+    pub(crate) fn instantiate_json_intrinsic(
+        &mut self,
+        poisoned: &Cell<bool>,
+        realm: ContextId,
+    ) -> Result<ObjectId, RuntimeError> {
+        let json = self.new_ordinary_object_in_realm(poisoned, realm)?;
+        let mut result_owner = OwnedValueGuard::new(self, poisoned, JsValue::Object(json));
+        let (state, result_owner) = result_owner.parts();
+        for (kind, name, length) in [
+            (JsonNativeKind::IsRawJson, "isRawJSON", 1),
+            (JsonNativeKind::Parse, "parse", 2),
+            (JsonNativeKind::RawJson, "rawJSON", 1),
+            (JsonNativeKind::Stringify, "stringify", 3),
+        ] {
+            state.define_native_builtin_auto_init(
+                poisoned,
+                json,
+                realm,
+                NativeFunctionId::Json(kind),
+                name,
+                length,
+                length,
+            )?;
+        }
+
+        let to_string_tag = state.well_known_symbols[&WellKnownSymbol::ToStringTag];
+        {
+            let string = state.heap.allocate_string(JsString::from_static("JSON"))?;
+            let mut producer = OwnedValueGuard::new(state, poisoned, JsValue::String(string));
+            let (state, producer) = producer.parts();
+            if !state.define_raw_property_with_poison(
+                poisoned,
+                json,
+                to_string_tag,
+                &crate::engine::object::property::PropertyDescriptor {
+                    value: Some(RawValue::String(string)),
+                    writable: Some(false),
+                    enumerable: Some(false),
+                    configurable: Some(true),
+                    ..crate::engine::object::property::PropertyDescriptor::new()
+                },
+            )? {
+                return Err(RuntimeError::Invariant(
+                    "JSON toStringTag definition was rejected",
+                ));
+            }
+            state.release_owned_jsvalue(
+                poisoned,
+                producer.take().expect("intrinsic tag producer"),
+            )?;
+        }
+        let JsValue::Object(object) = result_owner.take().expect("intrinsic factory result") else {
+            unreachable!("intrinsic factory allocated an object")
+        };
+        Ok(object)
+    }
+}
