@@ -70,28 +70,14 @@ impl Runtime {
         kind: NativeErrorKind,
         message: NativeErrorMessage,
     ) -> Result<JsValue, RuntimeError> {
-        let value =
-            self.new_native_error_without_backtrace_from_message_jsvalue(realm, kind, message)?;
-        let capture_now = self
-            .0
-            .state
-            .borrow()
-            .active_frames
-            .last()
-            .is_none_or(|frame| matches!(frame.kind, ActiveFrameKind::Native { .. }));
-        if capture_now {
-            let JsValue::Object(_) = &value else {
-                let _ = self.release_jsvalue(value);
-                return Err(RuntimeError::Invariant(
-                    "native Error construction did not produce an object",
-                ));
-            };
-            if let Err(error) = self.ensure_error_backtrace_jsvalue(&value, false, None) {
-                let _ = self.release_jsvalue(value);
-                return Err(error);
-            }
-        }
-        Ok(value)
+        let _operation = self.operation()?;
+        let object = self.0.state.borrow_mut().new_native_error_from_message(
+            &self.0.poisoned,
+            realm,
+            kind,
+            message,
+        )?;
+        Ok(JsValue::Object(object))
     }
 
     pub(crate) fn new_native_error_from_message(
@@ -100,18 +86,15 @@ impl Runtime {
         kind: NativeErrorKind,
         message: NativeErrorMessage,
     ) -> Result<Value, RuntimeError> {
-        let value = self.new_native_error_without_backtrace_from_message(realm, kind, message)?;
-        let capture_now = self
-            .0
-            .state
-            .borrow()
-            .active_frames
-            .last()
-            .is_none_or(|frame| matches!(frame.kind, ActiveFrameKind::Native { .. }));
-        if capture_now {
-            self.ensure_error_backtrace(&value, false, None)?;
-        }
-        Ok(value)
+        let JsValue::Object(object) =
+            self.new_native_error_from_message_jsvalue(realm, kind, message)?
+        else {
+            unreachable!("native Error factory allocated an object")
+        };
+        Ok(Value::Object(ObjectRef::from_owned_handle(
+            self.clone(),
+            object,
+        )))
     }
 
     #[cfg(test)]
@@ -161,6 +144,7 @@ impl Runtime {
         Ok(JsValue::Object(object))
     }
 
+    #[cfg(test)]
     pub(crate) fn new_native_error_without_backtrace_from_message(
         &self,
         realm: ContextId,
@@ -209,6 +193,33 @@ impl Runtime {
 }
 
 impl RuntimeState {
+    /// Build the native Error and capture immediately only when the already
+    /// materialized frame registry permits the existing native/no-frame rule.
+    /// Bytecode callers still complete the fault frame before later capture.
+    pub(crate) fn new_native_error_from_message(
+        &mut self,
+        poisoned: &Cell<bool>,
+        realm: ContextId,
+        kind: NativeErrorKind,
+        message: NativeErrorMessage,
+    ) -> Result<ObjectId, RuntimeError> {
+        let object =
+            self.new_native_error_without_backtrace_from_message(poisoned, realm, kind, message)?;
+        let mut result_owner = OwnedValueGuard::new(self, poisoned, JsValue::Object(object));
+        let (state, result_owner) = result_owner.parts();
+        let capture_now = state
+            .active_frames
+            .last()
+            .is_none_or(|frame| matches!(frame.kind, ActiveFrameKind::Native { .. }));
+        if capture_now {
+            state.complete_fresh_native_error_backtrace(poisoned, object, false, None)?;
+        }
+        let JsValue::Object(object) = result_owner.take().expect("native Error result") else {
+            unreachable!("native Error factory allocated an object")
+        };
+        Ok(object)
+    }
+
     /// Construct a fresh native Error message without callbacks or public roots.
     /// The returned ObjectId owns one edge; backtrace completion remains outside
     /// this state access so the executing fault frame can first be materialized.
@@ -380,5 +391,129 @@ mod state_factory_tests {
         }
         assert!(!runtime.0.poisoned.get());
         assert!(!runtime.0.deferred_references.has_pending());
+    }
+
+    #[test]
+    fn native_error_state_consumer_captures_materialized_native_frame_and_owns_stack() {
+        use crate::engine::builtins::native::NativeFunctionId;
+        let runtime = Runtime::new();
+        let context = runtime.new_context().unwrap();
+        let function = runtime
+            .new_bound_native_function(
+                &context.function_prototype().unwrap(),
+                context.realm,
+                NativeFunctionId::ActiveFrameProbe,
+                0,
+            )
+            .unwrap();
+        runtime
+            .define_function_data_property(
+                function.as_object(),
+                "name",
+                Value::String(
+                    crate::engine::value::JsString::try_from_utf16([0xd800, 0, u16::from(b'x')])
+                        .unwrap(),
+                ),
+                false,
+                true,
+            )
+            .unwrap();
+        let frame = runtime
+            .push_native_active_frame(
+                function.as_object().try_clone().unwrap(),
+                context.realm,
+                NativeFunctionId::ActiveFrameProbe,
+                0,
+                0,
+            )
+            .unwrap();
+        {
+            let mut state = runtime.0.state.borrow_mut();
+            let object = state
+                .new_native_error_from_message(
+                    &runtime.0.poisoned,
+                    context.realm,
+                    NativeErrorKind::Type,
+                    NativeErrorMessage::from_utf8("message"),
+                )
+                .unwrap();
+            assert_eq!(state.heap.object_strong_count(object).unwrap(), 1);
+            let data = state.heap.object(object).unwrap();
+            let shape = state.heap.shape(data.shape).unwrap();
+            let stack_slot = shape
+                .find(AtomIdx::from_raw(
+                    state.pinned_atoms.get(PinnedAtom::Stack).raw(),
+                ))
+                .unwrap() as usize;
+            let PropertySlot::Data(RawValue::String(stack)) = data.slots[stack_slot] else {
+                panic!("stack string")
+            };
+            let expected = crate::engine::value::JsString::try_from_utf16(
+                "    at "
+                    .encode_utf16()
+                    .chain([0xd800])
+                    .chain(" (native)\n".encode_utf16()),
+            )
+            .unwrap();
+            assert_eq!(state.heap.string(stack).unwrap(), &expected);
+            assert_eq!(state.heap.strong_count(RawId::String(stack)).unwrap(), 1);
+            assert_eq!(data.slots.len(), 2);
+            state
+                .release_owned_jsvalue(&runtime.0.poisoned, JsValue::Object(object))
+                .unwrap();
+            assert!(state.heap.string(stack).is_err());
+            assert!(state.heap.object(object).is_err());
+            assert!(!runtime.0.deferred_references.has_pending());
+            assert!(!runtime.0.poisoned.get());
+        }
+        frame.finish().unwrap();
+    }
+
+    #[test]
+    fn native_error_state_consumer_defers_capture_for_existing_bytecode_frame() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let bytecode = context
+            .compile_with_filename("void 0;", "deferred.js")
+            .unwrap();
+        let function = runtime
+            .new_bytecode_closure(context.realm, &bytecode)
+            .unwrap();
+        let frame = runtime
+            .push_bytecode_active_frame(
+                function.as_object().try_clone().unwrap(),
+                bytecode,
+                context.realm,
+                false,
+            )
+            .unwrap();
+        {
+            let mut state = runtime.0.state.borrow_mut();
+            let object = state
+                .new_native_error_from_message(
+                    &runtime.0.poisoned,
+                    context.realm,
+                    NativeErrorKind::Type,
+                    NativeErrorMessage::from_utf8("message"),
+                )
+                .unwrap();
+            let data = state.heap.object(object).unwrap();
+            let shape = state.heap.shape(data.shape).unwrap();
+            assert!(
+                shape
+                    .find(AtomIdx::from_raw(
+                        state.pinned_atoms.get(PinnedAtom::Stack).raw()
+                    ))
+                    .is_none()
+            );
+            assert_eq!(data.slots.len(), 1);
+            assert_eq!(state.heap.object_strong_count(object).unwrap(), 1);
+            state
+                .release_owned_jsvalue(&runtime.0.poisoned, JsValue::Object(object))
+                .unwrap();
+            assert!(!runtime.0.deferred_references.has_pending());
+            assert!(!runtime.0.poisoned.get());
+        }
+        frame.finish().unwrap();
     }
 }
