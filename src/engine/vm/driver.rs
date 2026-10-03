@@ -8273,12 +8273,32 @@ mod tests {
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
             let frame = push_frame(&runtime, &mut execution, entry).unwrap();
-            let VmAction::Call {
-                arguments, tail, ..
-            } = execute_frame(&runtime, &mut execution, frame).unwrap()
-            else {
-                panic!("call")
+            // Enter the published call directly with its verified operands;
+            // the continuous executor now consumes ordinary Call actions.
+            let current = execution.frames.current_mut(frame).unwrap();
+            let mut pc = 0;
+            let (arguments, tail) = loop {
+                let decoded = current.executable.exec.decode_published(pc).unwrap();
+                if matches!(
+                    decoded.opcode,
+                    crate::engine::code::exec_opcode::Opcode::Call
+                        | crate::engine::code::exec_opcode::Opcode::TailCall
+                ) {
+                    break (
+                        decoded.operand(0) as u16,
+                        decoded.opcode == crate::engine::code::exec_opcode::Opcode::TailCall,
+                    );
+                }
+                pc = decoded.next_pc;
             };
+            current.fault_pc = pc as usize;
+            current.resume_pc = pc as usize;
+            let callee = runtime.dup_jsvalue(&JsValue::Object(object_id)).unwrap();
+            execution.slots.push(&mut current.window, callee).unwrap();
+            execution
+                .slots
+                .push(&mut current.window, JsValue::Int(42))
+                .unwrap();
             // The actual call has [callee, argument], so requesting a method
             // receiver must fail the unchanged leading range check first.
             super::ordinary::enter(&runtime, &mut execution, frame, arguments, true, tail)

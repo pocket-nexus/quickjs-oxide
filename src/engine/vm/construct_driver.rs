@@ -856,6 +856,18 @@ mod ordinary_constructor_tests {
             .unwrap();
         let id = crate::engine::vm::driver::push_frame(runtime, &mut execution, entry).unwrap();
         let frame = execution.frames.current_mut(id).unwrap();
+        // Synthetic operands represent the outgoing Construct. Its consumer
+        // can now return and continue this parent within the same segment.
+        let mut pc = 0;
+        loop {
+            let decoded = frame.executable.exec.decode_published(pc).unwrap();
+            if decoded.opcode == crate::engine::code::exec_opcode::Opcode::Construct {
+                frame.fault_pc = pc as usize;
+                frame.resume_pc = pc as usize;
+                break;
+            }
+            pc = decoded.next_pc;
+        }
         for value in [
             JsValue::Object(target.try_clone().expect("duplicate root").into_handle()),
             JsValue::Object(target.try_clone().expect("duplicate root").into_handle()),
@@ -987,6 +999,7 @@ mod ordinary_constructor_tests {
                 arguments,
                 ExecutionLimits::default(),
             );
+            let call_pc = execution.frames.current_mut(id).unwrap().resume_pc;
             let roles = {
                 let state = runtime.0.state.borrow();
                 let data = state.heap.object(target.object_id()).unwrap();
@@ -1029,7 +1042,7 @@ mod ordinary_constructor_tests {
                     assert_eq!(runtime.0.state.borrow().heap.strong_count(role), Ok(count));
                     let frame = execution.frames.current_mut(id).unwrap();
                     assert_eq!(execution.slots.depth(&frame.window), 4);
-                    assert_eq!(frame.resume_pc, 0);
+                    assert_eq!(frame.resume_pc, call_pc);
                     assert_eq!(execution.frames.depth(), 1);
                 }
                 runtime
@@ -1059,6 +1072,7 @@ mod ordinary_constructor_tests {
             Vec::new(),
             ExecutionLimits::default(),
         );
+        let call_pc = execution.frames.current_mut(id).unwrap().resume_pc;
         let pending = runtime.new_object(None).unwrap().into_handle();
         runtime
             .0
@@ -1084,7 +1098,7 @@ mod ordinary_constructor_tests {
         runtime.0.host_stack_top.set(previous);
         let frame = execution.frames.current_mut(id).unwrap();
         assert_eq!(execution.slots.depth(&frame.window), 2);
-        assert_eq!(frame.resume_pc, 0);
+        assert_eq!(frame.resume_pc, call_pc);
         drop(execution);
 
         runtime

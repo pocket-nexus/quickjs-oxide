@@ -21,8 +21,8 @@ use crate::engine::vm::execution::RunningExecution;
 use crate::engine::vm::frame::FrameId;
 use crate::engine::vm::frames::ActiveFrameToken;
 use crate::engine::vm::stack::{
-    DirectSlot, FrameSlots, FrameTransaction, NamedReadOperation, PropertyReadProgress,
-    StoreProgress, copy_value_in_state,
+    DirectSlot, FrameExecution, FrameSlots, FrameTransaction, FrameTurn, NamedReadOperation,
+    PropertyReadProgress, StoreProgress, copy_value_in_state,
 };
 
 #[cfg(test)]
@@ -407,2036 +407,2216 @@ pub(super) fn execute_frame_in_state(
 ) -> Result<VmAction, Error> {
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_execution_event("core.frame_executor_entry");
-    let frame = execution.frames.current_mut(id)?;
-    let body = &mut *frame.cold;
-    let executable = &*body.executable;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_execution_static_in_state(runtime, state, executable);
-    let mut cursor = FrameCursor::new(
-        execution.slots.frame_transaction(&mut body.window)?,
-        &mut frame.fault_pc,
-        &mut frame.resume_pc,
-        &runtime.0.poisoned,
-    );
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_execution_event("core.pc_authentication");
-    if !executable.exec.is_boundary(cursor.resume) {
-        return Err(Error::internal(
-            "execution entry PC is not an instruction boundary",
-        ));
-    }
+    let mut segment = FrameExecution::admit(execution, id)?;
     loop {
-        let pc = cursor.begin();
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_numeric_rejection_visit(runtime, executable, pc);
-        let decoded = executable
-            .exec
-            .decode_published(pc as u32)
-            .map_err(|_| Error::internal("published execution word is invalid"))?;
-        let mut next = decoded.next_pc as usize;
-        let operand = decoded.operand(0);
-        match decoded.opcode {
-            Opcode::Nop | Opcode::MarkSuperCall => {}
-            Opcode::PushI32 => {
-                let value = if decoded.next_pc == pc as u32 + 1 {
-                    i32::from(operand as i16)
-                } else {
-                    operand as i32
-                };
-                cursor.commit_push(JsValue::Int(value))?;
-            }
-            Opcode::Undefined => cursor.commit_push(JsValue::Undefined)?,
-            Opcode::Null => cursor.commit_push(JsValue::Null)?,
-            Opcode::PushFalse => cursor.commit_push(JsValue::Bool(false))?,
-            Opcode::PushTrue => cursor.commit_push(JsValue::Bool(true))?,
-            Opcode::PushConst => match executable.constant(operand) {
-                Some(BytecodeConstant::Value(RawValue::Int(value))) => {
-                    cursor.commit_push(JsValue::Int(*value))?
-                }
-                Some(BytecodeConstant::Value(RawValue::Float(value))) => {
-                    cursor.commit_push(JsValue::Float(*value))?
-                }
-                Some(BytecodeConstant::Value(RawValue::Undefined)) => {
-                    cursor.commit_push(JsValue::Undefined)?
-                }
-                Some(BytecodeConstant::Value(RawValue::Null)) => {
-                    cursor.commit_push(JsValue::Null)?
-                }
-                Some(BytecodeConstant::Value(RawValue::Bool(value))) => {
-                    cursor.commit_push(JsValue::Bool(*value))?
-                }
-                Some(BytecodeConstant::Value(RawValue::ShortBigInt(value))) => {
-                    cursor.commit_push(JsValue::ShortBigInt(*value))?
-                }
-                Some(BytecodeConstant::Value(RawValue::String(value))) => {
-                    let owned = cursor.copy_owned(state, &JsValue::String(*value))?;
-                    cursor.commit_owned(state, owned)?;
-                }
-                Some(BytecodeConstant::Value(RawValue::BigInt(value))) => {
-                    let owned = cursor.copy_owned(state, &JsValue::BigInt(*value))?;
-                    cursor.commit_owned(state, owned)?;
-                }
-                _ => {
-                    return Ok(VmAction::Pure(
-                        super::pure_operations::PureOperation::Constant(operand),
-                    ));
-                }
-            },
-            Opcode::PushThis | Opcode::BorrowedFieldThis => {
-                let normalized = body
-                    .owners
-                    .rare
-                    .get()
-                    .and_then(|rare| rare.normalized_this.as_ref());
-                if decoded.opcode == Opcode::BorrowedFieldThis {
-                    let base = normalized.unwrap_or(&body.owners.input.this_value);
-                    // Capture only the field key: capturing PublishedDecoded here
-                    // duplicates its aggregate in the shared dispatch loop.
-                    let field_index = decoded.operand(1);
-                    let selected = cursor.with_slots(|slots| {
-                        if !slots.has_operand_capacity(1)
-                            || !borrowed_this_read_ready_in_state(state, base)
-                        {
-                            return Ok(None);
-                        }
-                        let mut miss = crate::engine::object::NamedSelectionMiss::ContinueLookup;
-                        let value = state.select_linked_data_into(
-                            runtime.domain_id(),
-                            base,
-                            executable,
-                            next,
-                            field_index,
-                            true,
-                            &mut None,
-                            &mut miss,
-                        );
-                        Ok(value.or_else(|| {
-                            matches!(
-                                miss,
-                                crate::engine::object::NamedSelectionMiss::CompleteAbsent
-                            )
-                            .then_some(JsValue::Undefined)
-                        }))
-                    })?;
-                    #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_execution_outcome(
-                        runtime,
-                        executable,
-                        pc,
-                        "borrowed_this_field",
-                        if selected.is_some() {
-                            None
-                        } else {
-                            Some("guard")
-                        },
-                    );
-                    if let Some(value) = selected {
-                        cursor.commit_owned(state, value)?;
-                        #[cfg(feature = "profiling")]
-                        crate::engine::api::profiling::record_owned_execution_event(
-                            "local_completion.borrowed_this_read",
-                        );
-                        cursor.advance(decoded.operand(2) as usize);
-                        continue;
-                    }
-                }
-                let value = if let Some(value) = normalized {
-                    cursor.copy_owned(state, value)?
-                } else if executable.metadata.strict
-                    || matches!(body.owners.input.this_value, JsValue::Object(_))
-                {
-                    cursor.copy_owned(state, &body.owners.input.this_value)?
-                } else if matches!(
-                    body.owners.input.this_value,
-                    JsValue::Undefined | JsValue::Null
-                ) {
-                    let global = body
-                        .owners
-                        .input
-                        .callee_global_in_state(state, executable.realm)?;
-                    cursor.copy_owned(state, &JsValue::Object(global))?
-                } else {
-                    return Ok(VmAction::NormalizeThis);
-                };
-                cursor.commit_owned(state, value)?;
-            }
-            Opcode::PushNewTarget => {
-                let value = cursor.copy_owned(state, &body.owners.input.new_target)?;
-                cursor.commit_owned(state, value)?;
-            }
-            Opcode::PushActiveFunction => {
-                let object = body.owners.function.object_id();
-                state
-                    .heap
-                    .retain_object(object)
-                    .map_err(|error| Error::internal(error.to_string()))?;
-                cursor.commit_owned(state, JsValue::Object(object))?;
-            }
-            Opcode::CheckCtor => {
-                if matches!(body.owners.input.new_target, JsValue::Undefined) {
-                    return Ok(VmAction::Pure(
-                        super::pure_operations::PureOperation::ConstructorWithoutNew,
-                    ));
-                }
-            }
-            Opcode::NumberLocalInc => {
-                let index = published_u16(operand);
+        let action = {
+            let FrameTurn {
+                property_generation,
+                active_frame,
+                owners,
+                executable,
+                transaction,
+                fault_pc,
+                resume_pc,
+                pending,
+                selected_named_read,
+                selected_native,
+                ..
+            } = segment.frame();
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_execution_static_in_state(
+                runtime, state, executable,
+            );
+            let mut cursor =
+                FrameCursor::new(transaction, fault_pc, resume_pc, &runtime.0.poisoned);
+            // End the actual current frame projection before installing or
+            // retiring a frame; all opcodes share this one dispatch loop.
+            'dispatch: loop {
+                let pc = cursor.begin();
                 #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_dispatch(
-                    runtime, executable, pc, true,
+                crate::engine::api::profiling::record_numeric_rejection_visit(
+                    runtime, executable, pc,
                 );
-                let result = cursor.with_slots(|slots| {
-                    let Some(value) = slots.immediate_local(index) else {
-                        return Ok(None);
-                    };
-                    if !slots.has_operand_capacity(2) {
-                        return Ok(None);
-                    }
-                    Ok(Some(value.add(Number::Int(1))))
-                })?;
-                if let Some(value) = result {
-                    #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_execution_outcome(
-                        runtime,
-                        executable,
-                        pc,
-                        "number_local_inc",
-                        None,
-                    );
-                    cursor.commit_push(number_value(value))?;
-                    cursor.advance(next + 2);
-                    continue;
-                }
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_outcome(
-                    runtime,
-                    executable,
-                    pc,
-                    "number_local_inc",
-                    Some("guard"),
-                );
-                if let Some(action) = read_local::<false>(&mut cursor, state, index)? {
-                    return Ok(action);
-                }
-            }
-            Opcode::NumericArrayAccumulate
-            | Opcode::NumericArrayStoreProduct
-            | Opcode::NumericArrayCopyElement
-            | Opcode::NumericArrayAddPreInc
-            | Opcode::NumericArrayStoreAndLocal
-            | Opcode::NumericArrayUpdateElement
-            | Opcode::NumericArrayCompareBranch => {
-                let region = executable
+                let decoded = executable
                     .exec
-                    .numeric_region(operand)
-                    .ok_or_else(|| Error::internal("published numeric region is missing"))?;
-                #[cfg(test)]
-                NUMERIC_REGION_ATTEMPTS.set(NUMERIC_REGION_ATTEMPTS.get() + 1);
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_dispatch(
-                    runtime, executable, pc, true,
-                );
-                let mut miss_reason = None;
-                let hit = match decoded.opcode {
-                    Opcode::NumericArrayAccumulate | Opcode::NumericArrayStoreProduct => {
-                        match cursor.with_slots(|slots| {
-                            Ok(numeric_local_array_region(
-                                slots,
-                                state,
-                                region,
-                                decoded.opcode == Opcode::NumericArrayAccumulate,
-                            ))
-                        })? {
-                            Ok(()) => true,
-                            Err(reason) => {
-                                miss_reason = Some(reason);
-                                false
-                            }
-                        }
+                    .decode_published(pc as u32)
+                    .map_err(|_| Error::internal("published execution word is invalid"))?;
+                let mut next = decoded.next_pc as usize;
+                let operand = decoded.operand(0);
+                match decoded.opcode {
+                    Opcode::Nop | Opcode::MarkSuperCall => {}
+                    Opcode::PushI32 => {
+                        let value = if decoded.next_pc == pc as u32 + 1 {
+                            i32::from(operand as i16)
+                        } else {
+                            operand as i32
+                        };
+                        cursor.commit_push(JsValue::Int(value))?;
                     }
-                    Opcode::NumericArrayUpdateElement => {
-                        let generation = frame.property_generation.checked_add(1);
-                        let result = cursor.with_slots(|slots| {
-                            if generation.is_none() {
-                                return Ok(Err(Miss::PropertyGenerationOverflow));
-                            }
-                            if !slots.has_operand_capacity(region.peak as usize) {
-                                return Ok(Err(Miss::OperandCapacity));
-                            }
-                            let Some(index) =
-                                region_number(slots, region.index).and_then(array_index)
-                            else {
-                                return Ok(Err(Miss::IndexNotNumericInteger));
-                            };
-                            let delta = if let Some(producer) = region.producer_index {
-                                let product = executable
-                                    .exec
-                                    .product_source(producer)
-                                    .expect("verified product payload");
-                                let Some(scale) = region_number(slots, product.scale) else {
-                                    return Ok(Err(Miss::ScaleNotNumber));
-                                };
-                                let product_index = if region.shared_update_index {
-                                    index
-                                } else {
-                                    let Some(product_index) =
-                                        region_number(slots, product.index).and_then(array_index)
-                                    else {
-                                        return Ok(Err(Miss::IndexNotNumericInteger));
-                                    };
-                                    product_index
-                                };
-                                let Some(product_base) =
-                                    slots.direct_value(region_direct_slot(product.array))
-                                else {
-                                    return Ok(Err(Miss::ReceiverBindingUnavailable));
-                                };
-                                let element = match state
-                                    .peek_dense_number_result(product_base, product_index)
-                                {
-                                    Ok(value) => value,
-                                    Err(reason) => return Ok(Err(reason)),
-                                };
-                                element.mul(scale)
-                            } else {
-                                let Some(delta) = region_number(slots, region.value) else {
-                                    return Ok(Err(Miss::DeltaNotNumber));
-                                };
-                                delta
-                            };
-                            let Some(base) = slots.direct_value(region_direct_slot(region.array))
-                            else {
-                                return Ok(Err(Miss::ReceiverBindingUnavailable));
-                            };
-                            Ok(state.try_add_array_own_number(base, index, delta))
-                        })?;
-                        match result {
-                            Ok(()) => {
-                                frame.property_generation = generation.unwrap();
-                                true
-                            }
-                            Err(reason) => {
-                                miss_reason = Some(reason);
-                                false
-                            }
+                    Opcode::Undefined => cursor.commit_push(JsValue::Undefined)?,
+                    Opcode::Null => cursor.commit_push(JsValue::Null)?,
+                    Opcode::PushFalse => cursor.commit_push(JsValue::Bool(false))?,
+                    Opcode::PushTrue => cursor.commit_push(JsValue::Bool(true))?,
+                    Opcode::PushConst => match executable.constant(operand) {
+                        Some(BytecodeConstant::Value(RawValue::Int(value))) => {
+                            cursor.commit_push(JsValue::Int(*value))?
                         }
-                    }
-                    Opcode::NumericArrayCopyElement => {
-                        let generation = frame.property_generation.checked_add(1);
-                        let result = cursor.with_slots(|slots| {
-                            if generation.is_none() {
-                                return Ok(Err(Miss::PropertyGenerationOverflow));
-                            }
-                            if !slots.has_operand_capacity(region.peak as usize) {
-                                return Ok(Err(Miss::OperandCapacity));
-                            }
-                            let Some(index) =
-                                region_number(slots, region.index).and_then(array_index)
-                            else {
-                                return Ok(Err(Miss::IndexNotNumericInteger));
-                            };
-                            let source = executable
-                                .exec
-                                .copy_source(
-                                    region.producer_index.expect("verified copy payload index"),
-                                )
-                                .expect("verified copy payload");
-                            let Some(source_index) =
-                                region_number(slots, source.index).and_then(array_index)
-                            else {
-                                return Ok(Err(Miss::IndexNotNumericInteger));
-                            };
-                            let Some(source_base) =
-                                slots.direct_value(region_direct_slot(source.array))
-                            else {
-                                return Ok(Err(Miss::ReceiverBindingUnavailable));
-                            };
-                            let value =
-                                match state.peek_dense_number_result(source_base, source_index) {
-                                    Ok(value) => value,
-                                    Err(reason) => return Ok(Err(reason)),
-                                };
-                            let Some(target_base) =
-                                slots.direct_value(region_direct_slot(region.array))
-                            else {
-                                return Ok(Err(Miss::ReceiverBindingUnavailable));
-                            };
-                            Ok(state.try_replace_array_own_number(target_base, index, value))
-                        })?;
-                        match result {
-                            Ok(()) => {
-                                frame.property_generation = generation.unwrap();
-                                true
-                            }
-                            Err(reason) => {
-                                miss_reason = Some(reason);
-                                false
-                            }
+                        Some(BytecodeConstant::Value(RawValue::Float(value))) => {
+                            cursor.commit_push(JsValue::Float(*value))?
                         }
-                    }
-                    Opcode::NumericArrayAddPreInc => {
-                        let result = cursor.with_slots(|slots| {
-                            if !slots.has_operand_capacity(region.peak as usize) {
-                                return Ok(Err(Miss::OperandCapacity));
-                            }
-                            let Some(accumulator) =
-                                slots.peek(0).ok().and_then(JsValue::as_number_repr)
-                            else {
-                                return Ok(Err(Miss::AccumulatorNotNumber));
-                            };
-                            let index_slot = match region.index {
-                                NumberSource::Direct(DirectSource::Local(slot))
-                                | NumberSource::Direct(DirectSource::CheckedLocal(slot)) => slot,
-                                _ => unreachable!("verified preincrement index"),
-                            };
-                            let Some(old_index) = slots.immediate_local(index_slot) else {
-                                return Ok(Err(Miss::IndexNotNumber));
-                            };
-                            let updated_index = old_index.add(Number::Int(1));
-                            let Some(index) = array_index(updated_index) else {
-                                return Ok(Err(Miss::IndexNotNumericInteger));
-                            };
-                            let Some(base) = slots.direct_value(region_direct_slot(region.array))
-                            else {
-                                return Ok(Err(Miss::ReceiverBindingUnavailable));
-                            };
-                            let element = match state.peek_dense_number_result(base, index) {
-                                Ok(value) => value,
-                                Err(reason) => return Ok(Err(reason)),
-                            };
-                            slots.commit_number_local_and_top(
-                                index_slot,
-                                updated_index,
-                                accumulator.add(element),
-                            )?;
-                            Ok(Ok(()))
-                        })?;
-                        match result {
-                            Ok(()) => true,
-                            Err(reason) => {
-                                miss_reason = Some(reason);
-                                false
-                            }
+                        Some(BytecodeConstant::Value(RawValue::Undefined)) => {
+                            cursor.commit_push(JsValue::Undefined)?
                         }
-                    }
-                    Opcode::NumericArrayStoreAndLocal => {
-                        cursor.publish_fault(state, frame.active_frame)?;
-                        let generation = frame.property_generation.checked_add(1);
-                        let result = cursor.with_slots(|slots| {
-                            if generation.is_none() {
-                                return Ok(Err(Miss::PropertyGenerationOverflow));
-                            }
-                            if !slots.has_operand_capacity(region.peak as usize) {
-                                return Ok(Err(Miss::OperandCapacity));
-                            }
-                            let Some(value) = slots.peek(0)?.as_number_repr() else {
-                                return Ok(Err(Miss::DeltaNotNumber));
-                            };
-                            let Some(index) = slots.peek(1)?.as_number_repr().and_then(array_index)
-                            else {
-                                return Ok(Err(Miss::IndexNotNumericInteger));
-                            };
-                            let eligible = matches!(
-                                slots.local(region.destination)?,
-                                FrameBinding::Direct(
-                                    JsValue::Undefined
-                                        | JsValue::Null
-                                        | JsValue::Bool(_)
-                                        | JsValue::Int(_)
-                                        | JsValue::Float(_)
-                                )
-                            );
-                            if !eligible {
-                                return Ok(Err(Miss::DestinationOrReceiverUnavailable));
-                            }
-                            let base = slots.peek(2)?;
-                            if let Err(reason) =
-                                state.try_replace_array_own_number(base, index, value)
-                            {
-                                return Ok(Err(reason));
-                            }
-                            let old = slots.replace_local(
-                                region.destination,
-                                FrameBinding::Direct(number_value(value)),
-                            )?;
-                            debug_assert!(matches!(
-                                old,
-                                FrameBinding::Direct(
-                                    JsValue::Undefined
-                                        | JsValue::Null
-                                        | JsValue::Bool(_)
-                                        | JsValue::Int(_)
-                                        | JsValue::Float(_)
-                                )
+                        Some(BytecodeConstant::Value(RawValue::Null)) => {
+                            cursor.commit_push(JsValue::Null)?
+                        }
+                        Some(BytecodeConstant::Value(RawValue::Bool(value))) => {
+                            cursor.commit_push(JsValue::Bool(*value))?
+                        }
+                        Some(BytecodeConstant::Value(RawValue::ShortBigInt(value))) => {
+                            cursor.commit_push(JsValue::ShortBigInt(*value))?
+                        }
+                        Some(BytecodeConstant::Value(RawValue::String(value))) => {
+                            let owned = cursor.copy_owned(state, &JsValue::String(*value))?;
+                            cursor.commit_owned(state, owned)?;
+                        }
+                        Some(BytecodeConstant::Value(RawValue::BigInt(value))) => {
+                            let owned = cursor.copy_owned(state, &JsValue::BigInt(*value))?;
+                            cursor.commit_owned(state, owned)?;
+                        }
+                        _ => {
+                            break 'dispatch Ok(VmAction::Pure(
+                                super::pure_operations::PureOperation::Constant(operand),
                             ));
-                            let _value = slots.pop()?;
-                            let _index = slots.pop()?;
-                            Ok(Ok(slots.pop()?))
-                        })?;
-                        match result {
-                            Ok(base) => {
-                                frame.property_generation = generation.unwrap();
-                                state
-                                    .release_owned_jsvalue(&runtime.0.poisoned, base)
-                                    .map_err(runtime_error_to_vm_error)?;
-                                true
-                            }
-                            Err(reason) => {
-                                miss_reason = Some(reason);
-                                false
-                            }
                         }
-                    }
-                    Opcode::NumericArrayCompareBranch => {
-                        let result = cursor.with_slots(|slots| {
-                            if !slots.has_operand_capacity(region.peak as usize) {
-                                return Ok(Err(Miss::OperandCapacity));
-                            }
-                            let Some(index) =
-                                region_number(slots, region.index).and_then(array_index)
-                            else {
-                                return Ok(Err(Miss::IndexNotNumericInteger));
-                            };
-                            let Some(rhs) = region_number(slots, region.value) else {
-                                return Ok(Err(Miss::RhsNotNumber));
-                            };
-                            let Some(base) = slots.direct_value(region_direct_slot(region.array))
-                            else {
-                                return Ok(Err(Miss::ReceiverBindingUnavailable));
-                            };
-                            Ok(state.peek_dense_number_result(base, index).map(|left| {
-                                compare_direct_numbers(region.comparison as u16, left, rhs)
-                            }))
-                        })?;
-                        if let Ok(decision) = result {
+                    },
+                    Opcode::PushThis | Opcode::BorrowedFieldThis => {
+                        let normalized = owners
+                            .rare
+                            .get()
+                            .and_then(|rare| rare.normalized_this.as_ref());
+                        if decoded.opcode == Opcode::BorrowedFieldThis {
+                            let base = normalized.unwrap_or(&owners.input.this_value);
+                            // Capture only the field key: capturing PublishedDecoded here
+                            // duplicates its aggregate in the shared dispatch loop.
+                            let field_index = decoded.operand(1);
+                            let selected = cursor.with_slots(|slots| {
+                                if !slots.has_operand_capacity(1)
+                                    || !borrowed_this_read_ready_in_state(state, base)
+                                {
+                                    return Ok(None);
+                                }
+                                let mut miss =
+                                    crate::engine::object::NamedSelectionMiss::ContinueLookup;
+                                let value = state.select_linked_data_into(
+                                    runtime.domain_id(),
+                                    base,
+                                    executable,
+                                    next,
+                                    field_index,
+                                    true,
+                                    &mut None,
+                                    &mut miss,
+                                );
+                                Ok(value.or_else(|| {
+                                    matches!(
+                                        miss,
+                                        crate::engine::object::NamedSelectionMiss::CompleteAbsent
+                                    )
+                                    .then_some(JsValue::Undefined)
+                                }))
+                            })?;
                             #[cfg(feature = "profiling")]
                             crate::engine::api::profiling::record_execution_outcome(
                                 runtime,
                                 executable,
                                 pc,
-                                "numeric_array_compare_branch",
+                                "borrowed_this_field",
+                                if selected.is_some() {
+                                    None
+                                } else {
+                                    Some("guard")
+                                },
+                            );
+                            if let Some(value) = selected {
+                                cursor.commit_owned(state, value)?;
+                                #[cfg(feature = "profiling")]
+                                crate::engine::api::profiling::record_owned_execution_event(
+                                    "local_completion.borrowed_this_read",
+                                );
+                                cursor.advance(decoded.operand(2) as usize);
+                                continue;
+                            }
+                        }
+                        let value = if let Some(value) = normalized {
+                            cursor.copy_owned(state, value)?
+                        } else if executable.metadata.strict
+                            || matches!(owners.input.this_value, JsValue::Object(_))
+                        {
+                            cursor.copy_owned(state, &owners.input.this_value)?
+                        } else if matches!(
+                            owners.input.this_value,
+                            JsValue::Undefined | JsValue::Null
+                        ) {
+                            let global = owners
+                                .input
+                                .callee_global_in_state(state, executable.realm)?;
+                            cursor.copy_owned(state, &JsValue::Object(global))?
+                        } else {
+                            break 'dispatch Ok(VmAction::NormalizeThis);
+                        };
+                        cursor.commit_owned(state, value)?;
+                    }
+                    Opcode::PushNewTarget => {
+                        let value = cursor.copy_owned(state, &owners.input.new_target)?;
+                        cursor.commit_owned(state, value)?;
+                    }
+                    Opcode::PushActiveFunction => {
+                        let object = owners.function.object_id();
+                        state
+                            .heap
+                            .retain_object(object)
+                            .map_err(|error| Error::internal(error.to_string()))?;
+                        cursor.commit_owned(state, JsValue::Object(object))?;
+                    }
+                    Opcode::CheckCtor => {
+                        if matches!(owners.input.new_target, JsValue::Undefined) {
+                            break 'dispatch Ok(VmAction::Pure(
+                                super::pure_operations::PureOperation::ConstructorWithoutNew,
+                            ));
+                        }
+                    }
+                    Opcode::NumberLocalInc => {
+                        let index = published_u16(operand);
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_dispatch(
+                            runtime, executable, pc, true,
+                        );
+                        let result = cursor.with_slots(|slots| {
+                            let Some(value) = slots.immediate_local(index) else {
+                                return Ok(None);
+                            };
+                            if !slots.has_operand_capacity(2) {
+                                return Ok(None);
+                            }
+                            Ok(Some(value.add(Number::Int(1))))
+                        })?;
+                        if let Some(value) = result {
+                            #[cfg(feature = "profiling")]
+                            crate::engine::api::profiling::record_execution_outcome(
+                                runtime,
+                                executable,
+                                pc,
+                                "number_local_inc",
                                 None,
                             );
+                            cursor.commit_push(number_value(value))?;
+                            cursor.advance(next + 2);
+                            continue;
+                        }
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_outcome(
+                            runtime,
+                            executable,
+                            pc,
+                            "number_local_inc",
+                            Some("guard"),
+                        );
+                        if let Some(action) = read_local::<false>(&mut cursor, state, index)? {
+                            break 'dispatch Ok(action);
+                        }
+                    }
+                    Opcode::NumericArrayAccumulate
+                    | Opcode::NumericArrayStoreProduct
+                    | Opcode::NumericArrayCopyElement
+                    | Opcode::NumericArrayAddPreInc
+                    | Opcode::NumericArrayStoreAndLocal
+                    | Opcode::NumericArrayUpdateElement
+                    | Opcode::NumericArrayCompareBranch => {
+                        let region = executable.exec.numeric_region(operand).ok_or_else(|| {
+                            Error::internal("published numeric region is missing")
+                        })?;
+                        #[cfg(test)]
+                        NUMERIC_REGION_ATTEMPTS.set(NUMERIC_REGION_ATTEMPTS.get() + 1);
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_dispatch(
+                            runtime, executable, pc, true,
+                        );
+                        let mut miss_reason = None;
+                        let hit = match decoded.opcode {
+                            Opcode::NumericArrayAccumulate | Opcode::NumericArrayStoreProduct => {
+                                match cursor.with_slots(|slots| {
+                                    Ok(numeric_local_array_region(
+                                        slots,
+                                        state,
+                                        region,
+                                        decoded.opcode == Opcode::NumericArrayAccumulate,
+                                    ))
+                                })? {
+                                    Ok(()) => true,
+                                    Err(reason) => {
+                                        miss_reason = Some(reason);
+                                        false
+                                    }
+                                }
+                            }
+                            Opcode::NumericArrayUpdateElement => {
+                                let generation = property_generation.checked_add(1);
+                                let result = cursor.with_slots(|slots| {
+                                    if generation.is_none() {
+                                        return Ok(Err(Miss::PropertyGenerationOverflow));
+                                    }
+                                    if !slots.has_operand_capacity(region.peak as usize) {
+                                        return Ok(Err(Miss::OperandCapacity));
+                                    }
+                                    let Some(index) =
+                                        region_number(slots, region.index).and_then(array_index)
+                                    else {
+                                        return Ok(Err(Miss::IndexNotNumericInteger));
+                                    };
+                                    let delta = if let Some(producer) = region.producer_index {
+                                        let product = executable
+                                            .exec
+                                            .product_source(producer)
+                                            .expect("verified product payload");
+                                        let Some(scale) = region_number(slots, product.scale)
+                                        else {
+                                            return Ok(Err(Miss::ScaleNotNumber));
+                                        };
+                                        let product_index = if region.shared_update_index {
+                                            index
+                                        } else {
+                                            let Some(product_index) =
+                                                region_number(slots, product.index)
+                                                    .and_then(array_index)
+                                            else {
+                                                return Ok(Err(Miss::IndexNotNumericInteger));
+                                            };
+                                            product_index
+                                        };
+                                        let Some(product_base) =
+                                            slots.direct_value(region_direct_slot(product.array))
+                                        else {
+                                            return Ok(Err(Miss::ReceiverBindingUnavailable));
+                                        };
+                                        let element = match state
+                                            .peek_dense_number_result(product_base, product_index)
+                                        {
+                                            Ok(value) => value,
+                                            Err(reason) => return Ok(Err(reason)),
+                                        };
+                                        element.mul(scale)
+                                    } else {
+                                        let Some(delta) = region_number(slots, region.value) else {
+                                            return Ok(Err(Miss::DeltaNotNumber));
+                                        };
+                                        delta
+                                    };
+                                    let Some(base) =
+                                        slots.direct_value(region_direct_slot(region.array))
+                                    else {
+                                        return Ok(Err(Miss::ReceiverBindingUnavailable));
+                                    };
+                                    Ok(state.try_add_array_own_number(base, index, delta))
+                                })?;
+                                match result {
+                                    Ok(()) => {
+                                        *property_generation = generation.unwrap();
+                                        true
+                                    }
+                                    Err(reason) => {
+                                        miss_reason = Some(reason);
+                                        false
+                                    }
+                                }
+                            }
+                            Opcode::NumericArrayCopyElement => {
+                                let generation = property_generation.checked_add(1);
+                                let result = cursor.with_slots(|slots| {
+                                    if generation.is_none() {
+                                        return Ok(Err(Miss::PropertyGenerationOverflow));
+                                    }
+                                    if !slots.has_operand_capacity(region.peak as usize) {
+                                        return Ok(Err(Miss::OperandCapacity));
+                                    }
+                                    let Some(index) =
+                                        region_number(slots, region.index).and_then(array_index)
+                                    else {
+                                        return Ok(Err(Miss::IndexNotNumericInteger));
+                                    };
+                                    let source = executable
+                                        .exec
+                                        .copy_source(
+                                            region
+                                                .producer_index
+                                                .expect("verified copy payload index"),
+                                        )
+                                        .expect("verified copy payload");
+                                    let Some(source_index) =
+                                        region_number(slots, source.index).and_then(array_index)
+                                    else {
+                                        return Ok(Err(Miss::IndexNotNumericInteger));
+                                    };
+                                    let Some(source_base) =
+                                        slots.direct_value(region_direct_slot(source.array))
+                                    else {
+                                        return Ok(Err(Miss::ReceiverBindingUnavailable));
+                                    };
+                                    let value = match state
+                                        .peek_dense_number_result(source_base, source_index)
+                                    {
+                                        Ok(value) => value,
+                                        Err(reason) => return Ok(Err(reason)),
+                                    };
+                                    let Some(target_base) =
+                                        slots.direct_value(region_direct_slot(region.array))
+                                    else {
+                                        return Ok(Err(Miss::ReceiverBindingUnavailable));
+                                    };
+                                    Ok(state.try_replace_array_own_number(
+                                        target_base,
+                                        index,
+                                        value,
+                                    ))
+                                })?;
+                                match result {
+                                    Ok(()) => {
+                                        *property_generation = generation.unwrap();
+                                        true
+                                    }
+                                    Err(reason) => {
+                                        miss_reason = Some(reason);
+                                        false
+                                    }
+                                }
+                            }
+                            Opcode::NumericArrayAddPreInc => {
+                                let result =
+                                    cursor.with_slots(|slots| {
+                                        if !slots.has_operand_capacity(region.peak as usize) {
+                                            return Ok(Err(Miss::OperandCapacity));
+                                        }
+                                        let Some(accumulator) =
+                                            slots.peek(0).ok().and_then(JsValue::as_number_repr)
+                                        else {
+                                            return Ok(Err(Miss::AccumulatorNotNumber));
+                                        };
+                                        let index_slot = match region.index {
+                                            NumberSource::Direct(DirectSource::Local(slot))
+                                            | NumberSource::Direct(DirectSource::CheckedLocal(
+                                                slot,
+                                            )) => slot,
+                                            _ => unreachable!("verified preincrement index"),
+                                        };
+                                        let Some(old_index) = slots.immediate_local(index_slot)
+                                        else {
+                                            return Ok(Err(Miss::IndexNotNumber));
+                                        };
+                                        let updated_index = old_index.add(Number::Int(1));
+                                        let Some(index) = array_index(updated_index) else {
+                                            return Ok(Err(Miss::IndexNotNumericInteger));
+                                        };
+                                        let Some(base) =
+                                            slots.direct_value(region_direct_slot(region.array))
+                                        else {
+                                            return Ok(Err(Miss::ReceiverBindingUnavailable));
+                                        };
+                                        let element =
+                                            match state.peek_dense_number_result(base, index) {
+                                                Ok(value) => value,
+                                                Err(reason) => return Ok(Err(reason)),
+                                            };
+                                        slots.commit_number_local_and_top(
+                                            index_slot,
+                                            updated_index,
+                                            accumulator.add(element),
+                                        )?;
+                                        Ok(Ok(()))
+                                    })?;
+                                match result {
+                                    Ok(()) => true,
+                                    Err(reason) => {
+                                        miss_reason = Some(reason);
+                                        false
+                                    }
+                                }
+                            }
+                            Opcode::NumericArrayStoreAndLocal => {
+                                cursor.publish_fault(state, active_frame)?;
+                                let generation = property_generation.checked_add(1);
+                                let result = cursor.with_slots(|slots| {
+                                    if generation.is_none() {
+                                        return Ok(Err(Miss::PropertyGenerationOverflow));
+                                    }
+                                    if !slots.has_operand_capacity(region.peak as usize) {
+                                        return Ok(Err(Miss::OperandCapacity));
+                                    }
+                                    let Some(value) = slots.peek(0)?.as_number_repr() else {
+                                        return Ok(Err(Miss::DeltaNotNumber));
+                                    };
+                                    let Some(index) =
+                                        slots.peek(1)?.as_number_repr().and_then(array_index)
+                                    else {
+                                        return Ok(Err(Miss::IndexNotNumericInteger));
+                                    };
+                                    let eligible = matches!(
+                                        slots.local(region.destination)?,
+                                        FrameBinding::Direct(
+                                            JsValue::Undefined
+                                                | JsValue::Null
+                                                | JsValue::Bool(_)
+                                                | JsValue::Int(_)
+                                                | JsValue::Float(_)
+                                        )
+                                    );
+                                    if !eligible {
+                                        return Ok(Err(Miss::DestinationOrReceiverUnavailable));
+                                    }
+                                    let base = slots.peek(2)?;
+                                    if let Err(reason) =
+                                        state.try_replace_array_own_number(base, index, value)
+                                    {
+                                        return Ok(Err(reason));
+                                    }
+                                    let old = slots.replace_local(
+                                        region.destination,
+                                        FrameBinding::Direct(number_value(value)),
+                                    )?;
+                                    debug_assert!(matches!(
+                                        old,
+                                        FrameBinding::Direct(
+                                            JsValue::Undefined
+                                                | JsValue::Null
+                                                | JsValue::Bool(_)
+                                                | JsValue::Int(_)
+                                                | JsValue::Float(_)
+                                        )
+                                    ));
+                                    let _value = slots.pop()?;
+                                    let _index = slots.pop()?;
+                                    Ok(Ok(slots.pop()?))
+                                })?;
+                                match result {
+                                    Ok(base) => {
+                                        *property_generation = generation.unwrap();
+                                        state
+                                            .release_owned_jsvalue(&runtime.0.poisoned, base)
+                                            .map_err(runtime_error_to_vm_error)?;
+                                        true
+                                    }
+                                    Err(reason) => {
+                                        miss_reason = Some(reason);
+                                        false
+                                    }
+                                }
+                            }
+                            Opcode::NumericArrayCompareBranch => {
+                                let result = cursor.with_slots(|slots| {
+                                    if !slots.has_operand_capacity(region.peak as usize) {
+                                        return Ok(Err(Miss::OperandCapacity));
+                                    }
+                                    let Some(index) =
+                                        region_number(slots, region.index).and_then(array_index)
+                                    else {
+                                        return Ok(Err(Miss::IndexNotNumericInteger));
+                                    };
+                                    let Some(rhs) = region_number(slots, region.value) else {
+                                        return Ok(Err(Miss::RhsNotNumber));
+                                    };
+                                    let Some(base) =
+                                        slots.direct_value(region_direct_slot(region.array))
+                                    else {
+                                        return Ok(Err(Miss::ReceiverBindingUnavailable));
+                                    };
+                                    Ok(state.peek_dense_number_result(base, index).map(|left| {
+                                        compare_direct_numbers(region.comparison as u16, left, rhs)
+                                    }))
+                                })?;
+                                if let Ok(decision) = result {
+                                    #[cfg(feature = "profiling")]
+                                    crate::engine::api::profiling::record_execution_outcome(
+                                        runtime,
+                                        executable,
+                                        pc,
+                                        "numeric_array_compare_branch",
+                                        None,
+                                    );
+                                    #[cfg(test)]
+                                    NUMERIC_REGION_HITS.set(NUMERIC_REGION_HITS.get() + 1);
+                                    let target = if decision == region.when_true {
+                                        decoded.operand(1) as usize
+                                    } else {
+                                        region.fallthrough_pc as usize
+                                    };
+                                    cursor.advance(target);
+                                    continue;
+                                }
+                                miss_reason = result.err();
+                                false
+                            }
+                            _ => unreachable!("numeric region opcode was already selected"),
+                        };
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_outcome(
+                            runtime,
+                            executable,
+                            pc,
+                            match decoded.opcode {
+                                Opcode::NumericArrayAccumulate => "numeric_array_accumulate",
+                                Opcode::NumericArrayStoreProduct => "numeric_array_store_product",
+                                Opcode::NumericArrayCopyElement => "numeric_array_copy_element",
+                                Opcode::NumericArrayAddPreInc => "numeric_array_add_preinc",
+                                Opcode::NumericArrayStoreAndLocal => {
+                                    "numeric_array_store_and_local"
+                                }
+                                Opcode::NumericArrayUpdateElement => "numeric_array_update_element",
+                                Opcode::NumericArrayCompareBranch => "numeric_array_compare_branch",
+                                _ => unreachable!(),
+                            },
+                            if hit {
+                                None
+                            } else {
+                                miss_reason.map(Miss::name)
+                            },
+                        );
+                        #[cfg(not(feature = "profiling"))]
+                        let _ = miss_reason;
+                        if hit {
                             #[cfg(test)]
                             NUMERIC_REGION_HITS.set(NUMERIC_REGION_HITS.get() + 1);
-                            let target = if decision == region.when_true {
+                            cursor.advance(decoded.operand(1) as usize);
+                            continue;
+                        }
+                        #[cfg(test)]
+                        NUMERIC_REGION_MISSES.set(NUMERIC_REGION_MISSES.get() + 1);
+                        let first = match decoded.opcode {
+                            Opcode::NumericArrayStoreAndLocal => {
+                                cursor.with_slots(|slots| {
+                                    slots.peek(2)?;
+                                    slots.insert_copy_in_state(state, 0, 3)
+                                })?;
+                                None
+                            }
+                            Opcode::NumericArrayAccumulate => {
+                                if region.checked {
+                                    read_local::<true>(&mut cursor, state, region.destination)?
+                                } else {
+                                    read_local::<false>(&mut cursor, state, region.destination)?
+                                }
+                            }
+                            _ => match region.array {
+                                DirectSource::Local(index) => {
+                                    read_local::<false>(&mut cursor, state, index)?
+                                }
+                                DirectSource::CheckedLocal(index) => {
+                                    read_local::<true>(&mut cursor, state, index)?
+                                }
+                                DirectSource::Argument(index) => {
+                                    read_arg(&mut cursor, state, index)?
+                                }
+                            },
+                        };
+                        if let Some(action) = first {
+                            break 'dispatch Ok(action);
+                        }
+                        cursor.advance(decoded.operand(2) as usize);
+                        continue;
+                    }
+                    Opcode::UpdateLocalDiscard | Opcode::UpdateLocalDiscardCheck => {
+                        let index = published_u16(operand & 0x1fff);
+                        let descriptor = operand >> 13;
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_dispatch(
+                            runtime, executable, pc, true,
+                        );
+                        let hit = cursor.with_slots(|slots| {
+                            if !slots.has_operand_capacity(if descriptor & 2 != 0 { 2 } else { 1 })
+                            {
+                                return Ok(false);
+                            }
+                            let Some(old) = slots
+                                .direct_value(DirectSlot::Local(index))
+                                .and_then(JsValue::as_number_repr)
+                            else {
+                                return Ok(false);
+                            };
+                            slots.commit_number_local_discard(
+                                index,
+                                old.update(descriptor & 1 != 0),
+                            )?;
+                            Ok(true)
+                        })?;
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_outcome(
+                            runtime,
+                            executable,
+                            pc,
+                            "update_local_discard",
+                            if hit { None } else { Some("guard") },
+                        );
+                        if hit {
+                            cursor.advance(
+                                (decoded.next_pc + if descriptor & 4 != 0 { 3 } else { 2 })
+                                    as usize,
+                            );
+                            continue;
+                        }
+                        if decoded.opcode == Opcode::UpdateLocalDiscardCheck {
+                            if let Some(action) = read_local::<true>(&mut cursor, state, index)? {
+                                break 'dispatch Ok(action);
+                            }
+                        } else if let Some(action) = read_local::<false>(&mut cursor, state, index)?
+                        {
+                            break 'dispatch Ok(action);
+                        }
+                    }
+                    Opcode::GetLocal => {
+                        let index = published_u16(operand);
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_dispatch(
+                            runtime, executable, pc, false,
+                        );
+                        if let Some(action) = read_local::<false>(&mut cursor, state, index)? {
+                            break 'dispatch Ok(action);
+                        }
+                    }
+                    Opcode::GetLocalCheck => {
+                        let index = published_u16(operand);
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_dispatch(
+                            runtime, executable, pc, false,
+                        );
+                        if let Some(action) = read_local::<true>(&mut cursor, state, index)? {
+                            break 'dispatch Ok(action);
+                        }
+                    }
+                    Opcode::NumberArgInc => {
+                        let index = published_u16(operand);
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_dispatch(
+                            runtime, executable, pc, true,
+                        );
+                        let result = cursor.with_slots(|slots| {
+                            let Some(value) = slots.immediate_parameter(index) else {
+                                return Ok(None);
+                            };
+                            if !slots.has_operand_capacity(2) {
+                                return Ok(None);
+                            }
+                            Ok(Some(value.add(Number::Int(1))))
+                        })?;
+                        if let Some(value) = result {
+                            #[cfg(feature = "profiling")]
+                            crate::engine::api::profiling::record_execution_outcome(
+                                runtime,
+                                executable,
+                                pc,
+                                "number_arg_inc",
+                                None,
+                            );
+                            cursor.commit_push(number_value(value))?;
+                            cursor.advance(next + 2);
+                            continue;
+                        }
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_outcome(
+                            runtime,
+                            executable,
+                            pc,
+                            "number_arg_inc",
+                            Some("guard"),
+                        );
+                        if let Some(action) = read_arg(&mut cursor, state, index)? {
+                            break 'dispatch Ok(action);
+                        }
+                    }
+                    Opcode::DensePreUpdateLocal
+                    | Opcode::DensePreUpdateArg
+                    | Opcode::DensePostUpdateLocal
+                    | Opcode::DensePostUpdateLocalCheck
+                    | Opcode::DensePostUpdateArg => {
+                        let base_index = published_u16(operand);
+                        let postfix = matches!(
+                            decoded.opcode,
+                            Opcode::DensePostUpdateLocal
+                                | Opcode::DensePostUpdateLocalCheck
+                                | Opcode::DensePostUpdateArg
+                        );
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_dispatch(
+                            runtime, executable, pc, true,
+                        );
+                        let update = decoded.operand(1);
+                        let update_index = published_u16(update & 0xffff);
+                        let base = if matches!(
+                            decoded.opcode,
+                            Opcode::DensePreUpdateLocal
+                                | Opcode::DensePostUpdateLocal
+                                | Opcode::DensePostUpdateLocalCheck
+                        ) {
+                            DirectSlot::Local(base_index)
+                        } else {
+                            DirectSlot::Argument(base_index)
+                        };
+                        let update_slot = if update & 0x1_0000 != 0 {
+                            DirectSlot::Argument(update_index)
+                        } else {
+                            DirectSlot::Local(update_index)
+                        };
+                        let increment = update & 0x2_0000 == 0;
+                        let hit = cursor.with_slots(|slots| {
+                            if !slots.has_operand_capacity(if postfix { 3 } else { 2 }) {
+                                return Ok(false);
+                            }
+                            let Some(old) = slots
+                                .direct_value(update_slot)
+                                .and_then(JsValue::as_number_repr)
+                            else {
+                                return Ok(false);
+                            };
+                            let updated = old.update(increment);
+                            let key = if postfix { old } else { updated };
+                            let Number::Int(index) = key else {
+                                return Ok(false);
+                            };
+                            let Ok(index) = u32::try_from(index) else {
+                                return Ok(false);
+                            };
+                            let Some(base) = slots.direct_value(base) else {
+                                return Ok(false);
+                            };
+                            let Some(read) = state.peek_dense_number(base, index) else {
+                                return Ok(false);
+                            };
+                            slots.commit_numeric_update_and_read(update_slot, updated, read)?;
+                            Ok(true)
+                        })?;
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_outcome(
+                            runtime,
+                            executable,
+                            pc,
+                            if postfix {
+                                "dense_post_update"
+                            } else {
+                                "dense_pre_update"
+                            },
+                            if hit { None } else { Some("guard") },
+                        );
+                        if hit {
+                            cursor.advance(decoded.operand(2) as usize);
+                            continue;
+                        }
+                        if decoded.opcode == Opcode::DensePostUpdateLocalCheck {
+                            if let Some(action) =
+                                read_local::<true>(&mut cursor, state, base_index)?
+                            {
+                                break 'dispatch Ok(action);
+                            }
+                        } else if matches!(
+                            decoded.opcode,
+                            Opcode::DensePreUpdateLocal | Opcode::DensePostUpdateLocal
+                        ) {
+                            if let Some(action) =
+                                read_local::<false>(&mut cursor, state, base_index)?
+                            {
+                                break 'dispatch Ok(action);
+                            }
+                        } else if let Some(action) = read_arg(&mut cursor, state, base_index)? {
+                            break 'dispatch Ok(action);
+                        }
+                    }
+                    Opcode::FieldAccSetDrop => {
+                        let accumulator = published_u16(operand);
+                        let packed = decoded.operand(1);
+                        let base_index = published_u16(packed & 0xffff);
+                        let field_index = packed >> 16;
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_dispatch(
+                            runtime, executable, pc, true,
+                        );
+                        let hit = cursor.with_slots(|slots| {
+                            if !slots.has_operand_capacity(2) {
+                                return Ok(false);
+                            }
+                            let Some(sum) = slots
+                                .direct_value(DirectSlot::Local(accumulator))
+                                .and_then(JsValue::as_number_repr)
+                            else {
+                                return Ok(false);
+                            };
+                            let Some(JsValue::Object(base)) =
+                                slots.direct_value(DirectSlot::Local(base_index))
+                            else {
+                                return Ok(false);
+                            };
+                            let Some(read) = state.property_ic_peek_number(
+                                runtime.domain_id(),
+                                *base,
+                                executable,
+                                next + 1,
+                                field_index,
+                            ) else {
+                                return Ok(false);
+                            };
+                            slots.commit_number_local_discard(accumulator, sum.add(read))?;
+                            Ok(true)
+                        })?;
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_outcome(
+                            runtime,
+                            executable,
+                            pc,
+                            "field_acc_set_drop",
+                            if hit { None } else { Some("guard") },
+                        );
+                        if hit {
+                            cursor.advance((decoded.next_pc + 5) as usize);
+                            continue;
+                        }
+                        if let Some(action) = read_local::<false>(&mut cursor, state, accumulator)?
+                        {
+                            break 'dispatch Ok(action);
+                        }
+                    }
+                    Opcode::DenseAccIndexSetDrop => {
+                        let accumulator = published_u16(operand);
+                        let packed = decoded.operand(1);
+                        let base_index = published_u16(packed & 0xffff);
+                        let key_index = published_u16(packed >> 16);
+                        let mask = i32::from(decoded.operand(2) as u16 as i16);
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_dispatch(
+                            runtime, executable, pc, true,
+                        );
+                        let hit = cursor.with_slots(|slots| {
+                            if !slots.has_operand_capacity(4) {
+                                return Ok(false);
+                            }
+                            let Some(sum) = slots
+                                .direct_value(DirectSlot::Local(accumulator))
+                                .and_then(JsValue::as_number_repr)
+                            else {
+                                return Ok(false);
+                            };
+                            let Some(key) = slots
+                                .direct_value(DirectSlot::Local(key_index))
+                                .and_then(JsValue::as_number_repr)
+                            else {
+                                return Ok(false);
+                            };
+                            let Ok(index) = u32::try_from(key.int32() & mask) else {
+                                return Ok(false);
+                            };
+                            let Some(base) = slots.direct_value(DirectSlot::Local(base_index))
+                            else {
+                                return Ok(false);
+                            };
+                            let Some(read) = state.peek_dense_number(base, index) else {
+                                return Ok(false);
+                            };
+                            slots.commit_number_local_discard(accumulator, sum.add(read))?;
+                            Ok(true)
+                        })?;
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_outcome(
+                            runtime,
+                            executable,
+                            pc,
+                            "dense_acc_index_set_drop",
+                            if hit { None } else { Some("guard") },
+                        );
+                        if hit {
+                            cursor.advance((decoded.next_pc + 8) as usize);
+                            continue;
+                        }
+                        if let Some(action) = read_local::<false>(&mut cursor, state, accumulator)?
+                        {
+                            break 'dispatch Ok(action);
+                        }
+                    }
+                    Opcode::DenseIndexBinaryLocal | Opcode::DenseIndexBinaryArg => {
+                        let base_index = published_u16(operand);
+                        let slots_operand = decoded.operand(1);
+                        let descriptor = decoded.operand(2);
+                        let operation = Opcode::from_raw((descriptor & 0x3ff) as u16)
+                            .expect("published numeric operation was verified");
+                        let key_index = published_u16(slots_operand & 0xffff);
+                        let rhs_bits = published_u16(slots_operand >> 16);
+                        let base = if decoded.opcode == Opcode::DenseIndexBinaryLocal {
+                            DirectSlot::Local(base_index)
+                        } else {
+                            DirectSlot::Argument(base_index)
+                        };
+                        let key = if descriptor & 0x400 != 0 {
+                            DirectSlot::Argument(key_index)
+                        } else {
+                            DirectSlot::Local(key_index)
+                        };
+                        let rhs_mode = (descriptor >> 11) & 3;
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_dispatch(
+                            runtime, executable, pc, true,
+                        );
+                        let read = cursor.with_slots(|slots| {
+                            Ok(try_dense_index_binary(
+                                slots, state, base, key, rhs_mode, rhs_bits, operation,
+                            ))
+                        })?;
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_outcome(
+                            runtime,
+                            executable,
+                            pc,
+                            "dense_index_binary",
+                            if read.is_some() { None } else { Some("guard") },
+                        );
+                        if let Some(value) = read {
+                            cursor.commit_push(number_value(value))?;
+                            cursor.advance((decoded.next_pc + 4) as usize);
+                            continue;
+                        }
+                        if decoded.opcode == Opcode::DenseIndexBinaryLocal {
+                            if let Some(action) =
+                                read_local::<false>(&mut cursor, state, base_index)?
+                            {
+                                break 'dispatch Ok(action);
+                            }
+                        } else if let Some(action) = read_arg(&mut cursor, state, base_index)? {
+                            break 'dispatch Ok(action);
+                        }
+                    }
+                    Opcode::DenseReadBinaryLocal | Opcode::DenseReadBinaryArg => {
+                        let base_index = published_u16(operand);
+                        let slots_operand = decoded.operand(1);
+                        let descriptor = decoded.operand(2);
+                        let operation = Opcode::from_raw((descriptor & 0x3ff) as u16)
+                            .expect("published numeric operation was verified");
+                        let key_index = published_u16(slots_operand & 0xffff);
+                        let rhs_index = published_u16(slots_operand >> 16);
+                        let base = if decoded.opcode == Opcode::DenseReadBinaryLocal {
+                            DirectSlot::Local(base_index)
+                        } else {
+                            DirectSlot::Argument(base_index)
+                        };
+                        let key = if descriptor & 0x400 != 0 {
+                            DirectSlot::Argument(key_index)
+                        } else {
+                            DirectSlot::Local(key_index)
+                        };
+                        let rhs_mode = (descriptor >> 11) & 3;
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_dispatch(
+                            runtime, executable, pc, true,
+                        );
+                        let result = cursor.with_slots(|slots| {
+                            Ok(try_dense_read_binary(
+                                slots, state, base, key, rhs_mode, rhs_index, operation,
+                            ))
+                        })?;
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_outcome(
+                            runtime,
+                            executable,
+                            pc,
+                            "dense_read_binary",
+                            if result.is_some() {
+                                None
+                            } else {
+                                Some("guard")
+                            },
+                        );
+                        if let Some(value) = result {
+                            cursor.commit_push(value)?;
+                            cursor.advance((decoded.next_pc + 4) as usize);
+                            continue;
+                        }
+                        if decoded.opcode == Opcode::DenseReadBinaryLocal {
+                            if let Some(action) =
+                                read_local::<false>(&mut cursor, state, base_index)?
+                            {
+                                break 'dispatch Ok(action);
+                            }
+                        } else if let Some(action) = read_arg(&mut cursor, state, base_index)? {
+                            break 'dispatch Ok(action);
+                        }
+                    }
+                    Opcode::DenseReadLocal | Opcode::DenseReadArg => {
+                        let base_index = published_u16(operand);
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_dispatch(
+                            runtime, executable, pc, true,
+                        );
+                        let key = decoded.operand(1);
+                        let key_index = published_u16(key & 0xffff);
+                        let base = if decoded.opcode == Opcode::DenseReadLocal {
+                            DirectSlot::Local(base_index)
+                        } else {
+                            DirectSlot::Argument(base_index)
+                        };
+                        let key = if key & 0x1_0000 != 0 {
+                            DirectSlot::Argument(key_index)
+                        } else {
+                            DirectSlot::Local(key_index)
+                        };
+                        let read = cursor.with_slots(|slots| {
+                            if !slots.has_operand_capacity(2) {
+                                return Ok(None);
+                            }
+                            let Some(Number::Int(index)) =
+                                slots.direct_value(key).and_then(JsValue::as_number_repr)
+                            else {
+                                return Ok(None);
+                            };
+                            let Ok(index) = u32::try_from(index) else {
+                                return Ok(None);
+                            };
+                            Ok(slots
+                                .direct_value(base)
+                                .and_then(|base| state.peek_dense_number(base, index)))
+                        })?;
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_outcome(
+                            runtime,
+                            executable,
+                            pc,
+                            "dense_read",
+                            if read.is_some() { None } else { Some("guard") },
+                        );
+                        if let Some(value) = read {
+                            cursor.commit_push(number_value(value))?;
+                            cursor.advance(decoded.operand(2) as usize);
+                            continue;
+                        }
+                        if decoded.opcode == Opcode::DenseReadLocal {
+                            if let Some(action) =
+                                read_local::<false>(&mut cursor, state, base_index)?
+                            {
+                                break 'dispatch Ok(action);
+                            }
+                        } else if let Some(action) = read_arg(&mut cursor, state, base_index)? {
+                            break 'dispatch Ok(action);
+                        }
+                    }
+                    Opcode::BorrowedFieldLocal | Opcode::BorrowedFieldArg => {
+                        let base_index = published_u16(operand);
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_dispatch(
+                            runtime, executable, pc, true,
+                        );
+                        let base = if decoded.opcode == Opcode::BorrowedFieldLocal {
+                            DirectSlot::Local(base_index)
+                        } else {
+                            DirectSlot::Argument(base_index)
+                        };
+                        let mut miss = crate::engine::object::NamedSelectionMiss::ContinueLookup;
+                        // Keep the shared decoder out of this closure as well.
+                        let field_index = decoded.operand(1);
+                        let selection = cursor.with_slots(|slots| {
+                            if !slots.has_operand_capacity(1) {
+                                return Ok(None);
+                            }
+                            let Some(base @ JsValue::Object(_)) = slots.direct_value(base) else {
+                                return Ok(None);
+                            };
+                            Ok(state.select_linked_data_into(
+                                runtime.domain_id(),
+                                base,
+                                executable,
+                                next,
+                                field_index,
+                                true,
+                                &mut None,
+                                &mut miss,
+                            ))
+                        })?;
+                        let selection = selection.or_else(|| {
+                            matches!(
+                                miss,
+                                crate::engine::object::NamedSelectionMiss::CompleteAbsent
+                            )
+                            .then_some(JsValue::Undefined)
+                        });
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_outcome(
+                            runtime,
+                            executable,
+                            pc,
+                            "borrowed_field",
+                            if selection.is_some() {
+                                None
+                            } else {
+                                Some("guard")
+                            },
+                        );
+                        if let Some(value) = selection {
+                            cursor.commit_owned(state, value)?;
+                            #[cfg(feature = "profiling")]
+                            crate::engine::api::profiling::record_owned_execution_event(
+                                "local_completion.borrowed_named_read",
+                            );
+                            cursor.advance(decoded.operand(2) as usize);
+                            continue;
+                        }
+                        match miss {
+                            crate::engine::object::NamedSelectionMiss::Accessor(getter) => {
+                                let selected = cursor.with_slots(|slots| {
+                                    let receiver = slots.direct_value(base).ok_or_else(|| {
+                                        Error::internal("selected borrowed receiver disappeared")
+                                    })?;
+                                    super::property_driver::OwnedGetterSelection::prepare(
+                                        state,
+                                        &runtime.0.poisoned,
+                                        receiver,
+                                        getter,
+                                    )
+                                })?;
+                                let load = if decoded.opcode == Opcode::BorrowedFieldLocal {
+                                    read_local::<false>(&mut cursor, state, base_index)
+                                } else {
+                                    read_arg(&mut cursor, state, base_index)
+                                };
+                                match load {
+                                    Ok(None) => {
+                                        debug_assert!(selected_named_read.is_none());
+                                        *selected_named_read = Some(
+                                            super::property_driver::SelectedNamedRead::Getter(
+                                                selected,
+                                            ),
+                                        );
+                                        cursor.advance(next);
+                                        cursor.begin();
+                                        break 'dispatch Ok(VmAction::GetField {
+                                            index: decoded.operand(1),
+                                            keep_receiver: false,
+                                            fallthrough: FallthroughPc(decoded.operand(2)),
+                                        });
+                                    }
+                                    Ok(Some(action)) => {
+                                        selected.release(state, &runtime.0.poisoned)?;
+                                        break 'dispatch Ok(action);
+                                    }
+                                    Err(error) => {
+                                        let _ = selected.release(state, &runtime.0.poisoned);
+                                        return Err(error);
+                                    }
+                                }
+                            }
+                            crate::engine::object::NamedSelectionMiss::ContinueLookup => {}
+                            crate::engine::object::NamedSelectionMiss::CompleteAbsent => {
+                                unreachable!("absence completed above")
+                            }
+                        }
+                        if decoded.opcode == Opcode::BorrowedFieldLocal {
+                            if let Some(action) =
+                                read_local::<false>(&mut cursor, state, base_index)?
+                            {
+                                break 'dispatch Ok(action);
+                            }
+                        } else if let Some(action) = read_arg(&mut cursor, state, base_index)? {
+                            break 'dispatch Ok(action);
+                        }
+                    }
+                    Opcode::CompareBranchStack => {
+                        let descriptor = operand;
+                        let comparison = Opcode::from_raw((descriptor & 0x3ff) as u16)
+                            .ok_or_else(|| Error::internal("invalid published comparison"))?;
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_dispatch(
+                            runtime, executable, pc, true,
+                        );
+                        let decision = cursor.with_slots(|slots| {
+                            slots.number_pair_branch(|left, right| {
+                                compare_direct_numbers(comparison as u16, left, right)
+                            })
+                        })?;
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_outcome(
+                            runtime,
+                            executable,
+                            pc,
+                            "compare_branch_stack",
+                            if decision.is_some() {
+                                None
+                            } else {
+                                Some("guard")
+                            },
+                        );
+                        if let Some(decision) = decision {
+                            cursor.advance(if decision == (descriptor & 0x400 != 0) {
                                 decoded.operand(1) as usize
                             } else {
-                                region.fallthrough_pc as usize
+                                next + 2
+                            });
+                            continue;
+                        }
+                        if matches!(comparison, Opcode::Eq | Opcode::Neq) {
+                            if let Some(equal) = cursor.with_slots(|slots| {
+                                slots.nullish_equality_in_state(state, &runtime.0.poisoned)
+                            })? {
+                                let decision = equal != (comparison == Opcode::Neq);
+                                cursor.advance(if decision == (descriptor & 0x400 != 0) {
+                                    decoded.operand(1) as usize
+                                } else {
+                                    next + 2
+                                });
+                                continue;
+                            }
+                        }
+                        let completed = cursor.with_slots(|slots| {
+                            slots.binary_number(|left, right| {
+                                binary_number_result(comparison, left, right)
+                            })
+                        })?;
+                        if !completed {
+                            if matches!(comparison, Opcode::StrictEq | Opcode::StrictNeq) {
+                                let decision = cursor.strict_comparison(state, active_frame)?
+                                    != (comparison == Opcode::StrictNeq);
+                                #[cfg(feature = "profiling")]
+                                crate::engine::api::profiling::record_owned_execution_event(
+                                    "strict_comparison.local_branch",
+                                );
+                                cursor.advance(if decision == (descriptor & 0x400 != 0) {
+                                    decoded.operand(1) as usize
+                                } else {
+                                    next + 2
+                                });
+                                continue;
+                            }
+                            break 'dispatch Ok(VmAction::Numeric {
+                                kind: super::numeric::operation::NumericKind::for_opcode(
+                                    comparison,
+                                )
+                                .ok_or_else(|| Error::internal("comparison has no operation"))?,
+                                fallthrough: FallthroughPc::from_decoded(decoded),
+                            });
+                        }
+                    }
+                    Opcode::CompareBranchLocalLt | Opcode::CompareBranchArgLt => {
+                        let left_index = published_u16(operand);
+                        let descriptor = decoded.operand(1);
+                        let right_index = published_u16(descriptor & 0xffff);
+                        let left = if decoded.opcode == Opcode::CompareBranchLocalLt {
+                            DirectSlot::Local(left_index)
+                        } else {
+                            DirectSlot::Argument(left_index)
+                        };
+                        let right = if descriptor & 0x1_0000 != 0 {
+                            DirectSlot::Argument(right_index)
+                        } else {
+                            DirectSlot::Local(right_index)
+                        };
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_dispatch(
+                            runtime, executable, pc, true,
+                        );
+                        let decision = cursor.with_slots(|slots| {
+                            if !slots.has_operand_capacity(2) {
+                                return Ok(None);
+                            }
+                            let left = slots.direct_value(left).and_then(JsValue::as_number_repr);
+                            let right = slots.direct_value(right).and_then(JsValue::as_number_repr);
+                            Ok(left
+                                .zip(right)
+                                .map(|(left, right)| left.float() < right.float()))
+                        })?;
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_outcome(
+                            runtime,
+                            executable,
+                            pc,
+                            "compare_branch_lt",
+                            if decision.is_some() {
+                                None
+                            } else {
+                                Some("guard")
+                            },
+                        );
+                        if let Some(decision) = decision {
+                            let target = if decision == (descriptor & 0x800_0000 != 0) {
+                                decoded.operand(2) as usize
+                            } else {
+                                next + 4
                             };
                             cursor.advance(target);
                             continue;
                         }
-                        miss_reason = result.err();
-                        false
+                        if decoded.opcode == Opcode::CompareBranchLocalLt {
+                            if let Some(action) =
+                                read_local::<false>(&mut cursor, state, left_index)?
+                            {
+                                break 'dispatch Ok(action);
+                            }
+                        } else if let Some(action) = read_arg(&mut cursor, state, left_index)? {
+                            break 'dispatch Ok(action);
+                        }
                     }
-                    _ => unreachable!("numeric region opcode was already selected"),
-                };
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_outcome(
-                    runtime,
-                    executable,
-                    pc,
-                    match decoded.opcode {
-                        Opcode::NumericArrayAccumulate => "numeric_array_accumulate",
-                        Opcode::NumericArrayStoreProduct => "numeric_array_store_product",
-                        Opcode::NumericArrayCopyElement => "numeric_array_copy_element",
-                        Opcode::NumericArrayAddPreInc => "numeric_array_add_preinc",
-                        Opcode::NumericArrayStoreAndLocal => "numeric_array_store_and_local",
-                        Opcode::NumericArrayUpdateElement => "numeric_array_update_element",
-                        Opcode::NumericArrayCompareBranch => "numeric_array_compare_branch",
-                        _ => unreachable!(),
-                    },
-                    if hit {
-                        None
-                    } else {
-                        miss_reason.map(Miss::name)
-                    },
-                );
-                #[cfg(not(feature = "profiling"))]
-                let _ = miss_reason;
-                if hit {
-                    #[cfg(test)]
-                    NUMERIC_REGION_HITS.set(NUMERIC_REGION_HITS.get() + 1);
-                    cursor.advance(decoded.operand(1) as usize);
-                    continue;
-                }
-                #[cfg(test)]
-                NUMERIC_REGION_MISSES.set(NUMERIC_REGION_MISSES.get() + 1);
-                let first = match decoded.opcode {
-                    Opcode::NumericArrayStoreAndLocal => {
-                        cursor.with_slots(|slots| {
-                            slots.peek(2)?;
-                            slots.insert_copy_in_state(state, 0, 3)
-                        })?;
-                        None
-                    }
-                    Opcode::NumericArrayAccumulate => {
-                        if region.checked {
-                            read_local::<true>(&mut cursor, state, region.destination)?
+                    Opcode::CompareBranchLocal | Opcode::CompareBranchArg => {
+                        let left_index = published_u16(operand);
+                        let descriptor = decoded.operand(1);
+                        let right_index = published_u16(descriptor & 0xffff);
+                        let left = if decoded.opcode == Opcode::CompareBranchLocal {
+                            DirectSlot::Local(left_index)
                         } else {
-                            read_local::<false>(&mut cursor, state, region.destination)?
-                        }
-                    }
-                    _ => match region.array {
-                        DirectSource::Local(index) => {
-                            read_local::<false>(&mut cursor, state, index)?
-                        }
-                        DirectSource::CheckedLocal(index) => {
-                            read_local::<true>(&mut cursor, state, index)?
-                        }
-                        DirectSource::Argument(index) => read_arg(&mut cursor, state, index)?,
-                    },
-                };
-                if let Some(action) = first {
-                    return Ok(action);
-                }
-                cursor.advance(decoded.operand(2) as usize);
-                continue;
-            }
-            Opcode::UpdateLocalDiscard | Opcode::UpdateLocalDiscardCheck => {
-                let index = published_u16(operand & 0x1fff);
-                let descriptor = operand >> 13;
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_dispatch(
-                    runtime, executable, pc, true,
-                );
-                let hit = cursor.with_slots(|slots| {
-                    if !slots.has_operand_capacity(if descriptor & 2 != 0 { 2 } else { 1 }) {
-                        return Ok(false);
-                    }
-                    let Some(old) = slots
-                        .direct_value(DirectSlot::Local(index))
-                        .and_then(JsValue::as_number_repr)
-                    else {
-                        return Ok(false);
-                    };
-                    slots.commit_number_local_discard(index, old.update(descriptor & 1 != 0))?;
-                    Ok(true)
-                })?;
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_outcome(
-                    runtime,
-                    executable,
-                    pc,
-                    "update_local_discard",
-                    if hit { None } else { Some("guard") },
-                );
-                if hit {
-                    cursor.advance(
-                        (decoded.next_pc + if descriptor & 4 != 0 { 3 } else { 2 }) as usize,
-                    );
-                    continue;
-                }
-                if decoded.opcode == Opcode::UpdateLocalDiscardCheck {
-                    if let Some(action) = read_local::<true>(&mut cursor, state, index)? {
-                        return Ok(action);
-                    }
-                } else if let Some(action) = read_local::<false>(&mut cursor, state, index)? {
-                    return Ok(action);
-                }
-            }
-            Opcode::GetLocal => {
-                let index = published_u16(operand);
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_dispatch(
-                    runtime, executable, pc, false,
-                );
-                if let Some(action) = read_local::<false>(&mut cursor, state, index)? {
-                    return Ok(action);
-                }
-            }
-            Opcode::GetLocalCheck => {
-                let index = published_u16(operand);
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_dispatch(
-                    runtime, executable, pc, false,
-                );
-                if let Some(action) = read_local::<true>(&mut cursor, state, index)? {
-                    return Ok(action);
-                }
-            }
-            Opcode::NumberArgInc => {
-                let index = published_u16(operand);
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_dispatch(
-                    runtime, executable, pc, true,
-                );
-                let result = cursor.with_slots(|slots| {
-                    let Some(value) = slots.immediate_parameter(index) else {
-                        return Ok(None);
-                    };
-                    if !slots.has_operand_capacity(2) {
-                        return Ok(None);
-                    }
-                    Ok(Some(value.add(Number::Int(1))))
-                })?;
-                if let Some(value) = result {
-                    #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_execution_outcome(
-                        runtime,
-                        executable,
-                        pc,
-                        "number_arg_inc",
-                        None,
-                    );
-                    cursor.commit_push(number_value(value))?;
-                    cursor.advance(next + 2);
-                    continue;
-                }
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_outcome(
-                    runtime,
-                    executable,
-                    pc,
-                    "number_arg_inc",
-                    Some("guard"),
-                );
-                if let Some(action) = read_arg(&mut cursor, state, index)? {
-                    return Ok(action);
-                }
-            }
-            Opcode::DensePreUpdateLocal
-            | Opcode::DensePreUpdateArg
-            | Opcode::DensePostUpdateLocal
-            | Opcode::DensePostUpdateLocalCheck
-            | Opcode::DensePostUpdateArg => {
-                let base_index = published_u16(operand);
-                let postfix = matches!(
-                    decoded.opcode,
-                    Opcode::DensePostUpdateLocal
-                        | Opcode::DensePostUpdateLocalCheck
-                        | Opcode::DensePostUpdateArg
-                );
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_dispatch(
-                    runtime, executable, pc, true,
-                );
-                let update = decoded.operand(1);
-                let update_index = published_u16(update & 0xffff);
-                let base = if matches!(
-                    decoded.opcode,
-                    Opcode::DensePreUpdateLocal
-                        | Opcode::DensePostUpdateLocal
-                        | Opcode::DensePostUpdateLocalCheck
-                ) {
-                    DirectSlot::Local(base_index)
-                } else {
-                    DirectSlot::Argument(base_index)
-                };
-                let update_slot = if update & 0x1_0000 != 0 {
-                    DirectSlot::Argument(update_index)
-                } else {
-                    DirectSlot::Local(update_index)
-                };
-                let increment = update & 0x2_0000 == 0;
-                let hit = cursor.with_slots(|slots| {
-                    if !slots.has_operand_capacity(if postfix { 3 } else { 2 }) {
-                        return Ok(false);
-                    }
-                    let Some(old) = slots
-                        .direct_value(update_slot)
-                        .and_then(JsValue::as_number_repr)
-                    else {
-                        return Ok(false);
-                    };
-                    let updated = old.update(increment);
-                    let key = if postfix { old } else { updated };
-                    let Number::Int(index) = key else {
-                        return Ok(false);
-                    };
-                    let Ok(index) = u32::try_from(index) else {
-                        return Ok(false);
-                    };
-                    let Some(base) = slots.direct_value(base) else {
-                        return Ok(false);
-                    };
-                    let Some(read) = state.peek_dense_number(base, index) else {
-                        return Ok(false);
-                    };
-                    slots.commit_numeric_update_and_read(update_slot, updated, read)?;
-                    Ok(true)
-                })?;
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_outcome(
-                    runtime,
-                    executable,
-                    pc,
-                    if postfix {
-                        "dense_post_update"
-                    } else {
-                        "dense_pre_update"
-                    },
-                    if hit { None } else { Some("guard") },
-                );
-                if hit {
-                    cursor.advance(decoded.operand(2) as usize);
-                    continue;
-                }
-                if decoded.opcode == Opcode::DensePostUpdateLocalCheck {
-                    if let Some(action) = read_local::<true>(&mut cursor, state, base_index)? {
-                        return Ok(action);
-                    }
-                } else if matches!(
-                    decoded.opcode,
-                    Opcode::DensePreUpdateLocal | Opcode::DensePostUpdateLocal
-                ) {
-                    if let Some(action) = read_local::<false>(&mut cursor, state, base_index)? {
-                        return Ok(action);
-                    }
-                } else if let Some(action) = read_arg(&mut cursor, state, base_index)? {
-                    return Ok(action);
-                }
-            }
-            Opcode::FieldAccSetDrop => {
-                let accumulator = published_u16(operand);
-                let packed = decoded.operand(1);
-                let base_index = published_u16(packed & 0xffff);
-                let field_index = packed >> 16;
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_dispatch(
-                    runtime, executable, pc, true,
-                );
-                let hit = cursor.with_slots(|slots| {
-                    if !slots.has_operand_capacity(2) {
-                        return Ok(false);
-                    }
-                    let Some(sum) = slots
-                        .direct_value(DirectSlot::Local(accumulator))
-                        .and_then(JsValue::as_number_repr)
-                    else {
-                        return Ok(false);
-                    };
-                    let Some(JsValue::Object(base)) =
-                        slots.direct_value(DirectSlot::Local(base_index))
-                    else {
-                        return Ok(false);
-                    };
-                    let Some(read) = state.property_ic_peek_number(
-                        runtime.domain_id(),
-                        *base,
-                        executable,
-                        next + 1,
-                        field_index,
-                    ) else {
-                        return Ok(false);
-                    };
-                    slots.commit_number_local_discard(accumulator, sum.add(read))?;
-                    Ok(true)
-                })?;
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_outcome(
-                    runtime,
-                    executable,
-                    pc,
-                    "field_acc_set_drop",
-                    if hit { None } else { Some("guard") },
-                );
-                if hit {
-                    cursor.advance((decoded.next_pc + 5) as usize);
-                    continue;
-                }
-                if let Some(action) = read_local::<false>(&mut cursor, state, accumulator)? {
-                    return Ok(action);
-                }
-            }
-            Opcode::DenseAccIndexSetDrop => {
-                let accumulator = published_u16(operand);
-                let packed = decoded.operand(1);
-                let base_index = published_u16(packed & 0xffff);
-                let key_index = published_u16(packed >> 16);
-                let mask = i32::from(decoded.operand(2) as u16 as i16);
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_dispatch(
-                    runtime, executable, pc, true,
-                );
-                let hit = cursor.with_slots(|slots| {
-                    if !slots.has_operand_capacity(4) {
-                        return Ok(false);
-                    }
-                    let Some(sum) = slots
-                        .direct_value(DirectSlot::Local(accumulator))
-                        .and_then(JsValue::as_number_repr)
-                    else {
-                        return Ok(false);
-                    };
-                    let Some(key) = slots
-                        .direct_value(DirectSlot::Local(key_index))
-                        .and_then(JsValue::as_number_repr)
-                    else {
-                        return Ok(false);
-                    };
-                    let Ok(index) = u32::try_from(key.int32() & mask) else {
-                        return Ok(false);
-                    };
-                    let Some(base) = slots.direct_value(DirectSlot::Local(base_index)) else {
-                        return Ok(false);
-                    };
-                    let Some(read) = state.peek_dense_number(base, index) else {
-                        return Ok(false);
-                    };
-                    slots.commit_number_local_discard(accumulator, sum.add(read))?;
-                    Ok(true)
-                })?;
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_outcome(
-                    runtime,
-                    executable,
-                    pc,
-                    "dense_acc_index_set_drop",
-                    if hit { None } else { Some("guard") },
-                );
-                if hit {
-                    cursor.advance((decoded.next_pc + 8) as usize);
-                    continue;
-                }
-                if let Some(action) = read_local::<false>(&mut cursor, state, accumulator)? {
-                    return Ok(action);
-                }
-            }
-            Opcode::DenseIndexBinaryLocal | Opcode::DenseIndexBinaryArg => {
-                let base_index = published_u16(operand);
-                let slots_operand = decoded.operand(1);
-                let descriptor = decoded.operand(2);
-                let operation = Opcode::from_raw((descriptor & 0x3ff) as u16)
-                    .expect("published numeric operation was verified");
-                let key_index = published_u16(slots_operand & 0xffff);
-                let rhs_bits = published_u16(slots_operand >> 16);
-                let base = if decoded.opcode == Opcode::DenseIndexBinaryLocal {
-                    DirectSlot::Local(base_index)
-                } else {
-                    DirectSlot::Argument(base_index)
-                };
-                let key = if descriptor & 0x400 != 0 {
-                    DirectSlot::Argument(key_index)
-                } else {
-                    DirectSlot::Local(key_index)
-                };
-                let rhs_mode = (descriptor >> 11) & 3;
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_dispatch(
-                    runtime, executable, pc, true,
-                );
-                let read = cursor.with_slots(|slots| {
-                    Ok(try_dense_index_binary(
-                        slots, state, base, key, rhs_mode, rhs_bits, operation,
-                    ))
-                })?;
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_outcome(
-                    runtime,
-                    executable,
-                    pc,
-                    "dense_index_binary",
-                    if read.is_some() { None } else { Some("guard") },
-                );
-                if let Some(value) = read {
-                    cursor.commit_push(number_value(value))?;
-                    cursor.advance((decoded.next_pc + 4) as usize);
-                    continue;
-                }
-                if decoded.opcode == Opcode::DenseIndexBinaryLocal {
-                    if let Some(action) = read_local::<false>(&mut cursor, state, base_index)? {
-                        return Ok(action);
-                    }
-                } else if let Some(action) = read_arg(&mut cursor, state, base_index)? {
-                    return Ok(action);
-                }
-            }
-            Opcode::DenseReadBinaryLocal | Opcode::DenseReadBinaryArg => {
-                let base_index = published_u16(operand);
-                let slots_operand = decoded.operand(1);
-                let descriptor = decoded.operand(2);
-                let operation = Opcode::from_raw((descriptor & 0x3ff) as u16)
-                    .expect("published numeric operation was verified");
-                let key_index = published_u16(slots_operand & 0xffff);
-                let rhs_index = published_u16(slots_operand >> 16);
-                let base = if decoded.opcode == Opcode::DenseReadBinaryLocal {
-                    DirectSlot::Local(base_index)
-                } else {
-                    DirectSlot::Argument(base_index)
-                };
-                let key = if descriptor & 0x400 != 0 {
-                    DirectSlot::Argument(key_index)
-                } else {
-                    DirectSlot::Local(key_index)
-                };
-                let rhs_mode = (descriptor >> 11) & 3;
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_dispatch(
-                    runtime, executable, pc, true,
-                );
-                let result = cursor.with_slots(|slots| {
-                    Ok(try_dense_read_binary(
-                        slots, state, base, key, rhs_mode, rhs_index, operation,
-                    ))
-                })?;
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_outcome(
-                    runtime,
-                    executable,
-                    pc,
-                    "dense_read_binary",
-                    if result.is_some() {
-                        None
-                    } else {
-                        Some("guard")
-                    },
-                );
-                if let Some(value) = result {
-                    cursor.commit_push(value)?;
-                    cursor.advance((decoded.next_pc + 4) as usize);
-                    continue;
-                }
-                if decoded.opcode == Opcode::DenseReadBinaryLocal {
-                    if let Some(action) = read_local::<false>(&mut cursor, state, base_index)? {
-                        return Ok(action);
-                    }
-                } else if let Some(action) = read_arg(&mut cursor, state, base_index)? {
-                    return Ok(action);
-                }
-            }
-            Opcode::DenseReadLocal | Opcode::DenseReadArg => {
-                let base_index = published_u16(operand);
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_dispatch(
-                    runtime, executable, pc, true,
-                );
-                let key = decoded.operand(1);
-                let key_index = published_u16(key & 0xffff);
-                let base = if decoded.opcode == Opcode::DenseReadLocal {
-                    DirectSlot::Local(base_index)
-                } else {
-                    DirectSlot::Argument(base_index)
-                };
-                let key = if key & 0x1_0000 != 0 {
-                    DirectSlot::Argument(key_index)
-                } else {
-                    DirectSlot::Local(key_index)
-                };
-                let read = cursor.with_slots(|slots| {
-                    if !slots.has_operand_capacity(2) {
-                        return Ok(None);
-                    }
-                    let Some(Number::Int(index)) =
-                        slots.direct_value(key).and_then(JsValue::as_number_repr)
-                    else {
-                        return Ok(None);
-                    };
-                    let Ok(index) = u32::try_from(index) else {
-                        return Ok(None);
-                    };
-                    Ok(slots
-                        .direct_value(base)
-                        .and_then(|base| state.peek_dense_number(base, index)))
-                })?;
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_outcome(
-                    runtime,
-                    executable,
-                    pc,
-                    "dense_read",
-                    if read.is_some() { None } else { Some("guard") },
-                );
-                if let Some(value) = read {
-                    cursor.commit_push(number_value(value))?;
-                    cursor.advance(decoded.operand(2) as usize);
-                    continue;
-                }
-                if decoded.opcode == Opcode::DenseReadLocal {
-                    if let Some(action) = read_local::<false>(&mut cursor, state, base_index)? {
-                        return Ok(action);
-                    }
-                } else if let Some(action) = read_arg(&mut cursor, state, base_index)? {
-                    return Ok(action);
-                }
-            }
-            Opcode::BorrowedFieldLocal | Opcode::BorrowedFieldArg => {
-                let base_index = published_u16(operand);
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_dispatch(
-                    runtime, executable, pc, true,
-                );
-                let base = if decoded.opcode == Opcode::BorrowedFieldLocal {
-                    DirectSlot::Local(base_index)
-                } else {
-                    DirectSlot::Argument(base_index)
-                };
-                let mut miss = crate::engine::object::NamedSelectionMiss::ContinueLookup;
-                // Keep the shared decoder out of this closure as well.
-                let field_index = decoded.operand(1);
-                let selection = cursor.with_slots(|slots| {
-                    if !slots.has_operand_capacity(1) {
-                        return Ok(None);
-                    }
-                    let Some(base @ JsValue::Object(_)) = slots.direct_value(base) else {
-                        return Ok(None);
-                    };
-                    Ok(state.select_linked_data_into(
-                        runtime.domain_id(),
-                        base,
-                        executable,
-                        next,
-                        field_index,
-                        true,
-                        &mut None,
-                        &mut miss,
-                    ))
-                })?;
-                let selection = selection.or_else(|| {
-                    matches!(
-                        miss,
-                        crate::engine::object::NamedSelectionMiss::CompleteAbsent
-                    )
-                    .then_some(JsValue::Undefined)
-                });
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_outcome(
-                    runtime,
-                    executable,
-                    pc,
-                    "borrowed_field",
-                    if selection.is_some() {
-                        None
-                    } else {
-                        Some("guard")
-                    },
-                );
-                if let Some(value) = selection {
-                    cursor.commit_owned(state, value)?;
-                    #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_owned_execution_event(
-                        "local_completion.borrowed_named_read",
-                    );
-                    cursor.advance(decoded.operand(2) as usize);
-                    continue;
-                }
-                match miss {
-                    crate::engine::object::NamedSelectionMiss::Accessor(getter) => {
-                        let selected = cursor.with_slots(|slots| {
-                            let receiver = slots.direct_value(base).ok_or_else(|| {
-                                Error::internal("selected borrowed receiver disappeared")
-                            })?;
-                            super::property_driver::OwnedGetterSelection::prepare(
-                                state,
-                                &runtime.0.poisoned,
-                                receiver,
-                                getter,
-                            )
-                        })?;
-                        let load = if decoded.opcode == Opcode::BorrowedFieldLocal {
-                            read_local::<false>(&mut cursor, state, base_index)
-                        } else {
-                            read_arg(&mut cursor, state, base_index)
+                            DirectSlot::Argument(left_index)
                         };
-                        match load {
-                            Ok(None) => {
-                                debug_assert!(execution.selected_named_read.is_none());
-                                execution.selected_named_read = Some(
-                                    super::property_driver::SelectedNamedRead::Getter(selected),
-                                );
-                                cursor.advance(next);
-                                cursor.begin();
-                                return Ok(VmAction::GetField {
-                                    index: decoded.operand(1),
-                                    keep_receiver: false,
-                                    fallthrough: FallthroughPc(decoded.operand(2)),
-                                });
-                            }
-                            Ok(Some(action)) => {
-                                selected.release(state, &runtime.0.poisoned)?;
-                                return Ok(action);
-                            }
-                            Err(error) => {
-                                let _ = selected.release(state, &runtime.0.poisoned);
-                                return Err(error);
-                            }
-                        }
-                    }
-                    crate::engine::object::NamedSelectionMiss::ContinueLookup => {}
-                    crate::engine::object::NamedSelectionMiss::CompleteAbsent => {
-                        unreachable!("absence completed above")
-                    }
-                }
-                if decoded.opcode == Opcode::BorrowedFieldLocal {
-                    if let Some(action) = read_local::<false>(&mut cursor, state, base_index)? {
-                        return Ok(action);
-                    }
-                } else if let Some(action) = read_arg(&mut cursor, state, base_index)? {
-                    return Ok(action);
-                }
-            }
-            Opcode::CompareBranchStack => {
-                let descriptor = operand;
-                let comparison = Opcode::from_raw((descriptor & 0x3ff) as u16)
-                    .ok_or_else(|| Error::internal("invalid published comparison"))?;
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_dispatch(
-                    runtime, executable, pc, true,
-                );
-                let decision = cursor.with_slots(|slots| {
-                    slots.number_pair_branch(|left, right| {
-                        compare_direct_numbers(comparison as u16, left, right)
-                    })
-                })?;
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_outcome(
-                    runtime,
-                    executable,
-                    pc,
-                    "compare_branch_stack",
-                    if decision.is_some() {
-                        None
-                    } else {
-                        Some("guard")
-                    },
-                );
-                if let Some(decision) = decision {
-                    cursor.advance(if decision == (descriptor & 0x400 != 0) {
-                        decoded.operand(1) as usize
-                    } else {
-                        next + 2
-                    });
-                    continue;
-                }
-                if matches!(comparison, Opcode::Eq | Opcode::Neq) {
-                    if let Some(equal) = cursor.with_slots(|slots| {
-                        slots.nullish_equality_in_state(state, &runtime.0.poisoned)
-                    })? {
-                        let decision = equal != (comparison == Opcode::Neq);
-                        cursor.advance(if decision == (descriptor & 0x400 != 0) {
-                            decoded.operand(1) as usize
+                        let right = if descriptor & 0x1_0000 != 0 {
+                            DirectSlot::Argument(right_index)
                         } else {
-                            next + 2
-                        });
-                        continue;
-                    }
-                }
-                let completed = cursor.with_slots(|slots| {
-                    slots.binary_number(|left, right| binary_number_result(comparison, left, right))
-                })?;
-                if !completed {
-                    if matches!(comparison, Opcode::StrictEq | Opcode::StrictNeq) {
-                        let decision = cursor.strict_comparison(state, frame.active_frame)?
-                            != (comparison == Opcode::StrictNeq);
+                            DirectSlot::Local(right_index)
+                        };
                         #[cfg(feature = "profiling")]
-                        crate::engine::api::profiling::record_owned_execution_event(
-                            "strict_comparison.local_branch",
+                        crate::engine::api::profiling::record_execution_dispatch(
+                            runtime, executable, pc, true,
                         );
-                        cursor.advance(if decision == (descriptor & 0x400 != 0) {
-                            decoded.operand(1) as usize
-                        } else {
-                            next + 2
-                        });
-                        continue;
-                    }
-                    return Ok(VmAction::Numeric {
-                        kind: super::numeric::operation::NumericKind::for_opcode(comparison)
-                            .ok_or_else(|| Error::internal("comparison has no operation"))?,
-                        fallthrough: FallthroughPc::from_decoded(decoded),
-                    });
-                }
-            }
-            Opcode::CompareBranchLocalLt | Opcode::CompareBranchArgLt => {
-                let left_index = published_u16(operand);
-                let descriptor = decoded.operand(1);
-                let right_index = published_u16(descriptor & 0xffff);
-                let left = if decoded.opcode == Opcode::CompareBranchLocalLt {
-                    DirectSlot::Local(left_index)
-                } else {
-                    DirectSlot::Argument(left_index)
-                };
-                let right = if descriptor & 0x1_0000 != 0 {
-                    DirectSlot::Argument(right_index)
-                } else {
-                    DirectSlot::Local(right_index)
-                };
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_dispatch(
-                    runtime, executable, pc, true,
-                );
-                let decision = cursor.with_slots(|slots| {
-                    if !slots.has_operand_capacity(2) {
-                        return Ok(None);
-                    }
-                    let left = slots.direct_value(left).and_then(JsValue::as_number_repr);
-                    let right = slots.direct_value(right).and_then(JsValue::as_number_repr);
-                    Ok(left
-                        .zip(right)
-                        .map(|(left, right)| left.float() < right.float()))
-                })?;
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_outcome(
-                    runtime,
-                    executable,
-                    pc,
-                    "compare_branch_lt",
-                    if decision.is_some() {
-                        None
-                    } else {
-                        Some("guard")
-                    },
-                );
-                if let Some(decision) = decision {
-                    let target = if decision == (descriptor & 0x800_0000 != 0) {
-                        decoded.operand(2) as usize
-                    } else {
-                        next + 4
-                    };
-                    cursor.advance(target);
-                    continue;
-                }
-                if decoded.opcode == Opcode::CompareBranchLocalLt {
-                    if let Some(action) = read_local::<false>(&mut cursor, state, left_index)? {
-                        return Ok(action);
-                    }
-                } else if let Some(action) = read_arg(&mut cursor, state, left_index)? {
-                    return Ok(action);
-                }
-            }
-            Opcode::CompareBranchLocal | Opcode::CompareBranchArg => {
-                let left_index = published_u16(operand);
-                let descriptor = decoded.operand(1);
-                let right_index = published_u16(descriptor & 0xffff);
-                let left = if decoded.opcode == Opcode::CompareBranchLocal {
-                    DirectSlot::Local(left_index)
-                } else {
-                    DirectSlot::Argument(left_index)
-                };
-                let right = if descriptor & 0x1_0000 != 0 {
-                    DirectSlot::Argument(right_index)
-                } else {
-                    DirectSlot::Local(right_index)
-                };
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_dispatch(
-                    runtime, executable, pc, true,
-                );
-                let decision = cursor.with_slots(|slots| {
-                    if !slots.has_operand_capacity(2) {
-                        return Ok(None);
-                    }
-                    let left = slots.direct_value(left).and_then(JsValue::as_number_repr);
-                    let right = slots.direct_value(right).and_then(JsValue::as_number_repr);
-                    Ok(left.zip(right).map(|(left, right)| {
-                        compare_direct_numbers(((descriptor >> 17) & 0x3ff) as u16, left, right)
-                    }))
-                })?;
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_outcome(
-                    runtime,
-                    executable,
-                    pc,
-                    "compare_branch",
-                    if decision.is_some() {
-                        None
-                    } else {
-                        Some("guard")
-                    },
-                );
-                if let Some(decision) = decision {
-                    let target = if decision == (descriptor & 0x800_0000 != 0) {
-                        decoded.operand(2) as usize
-                    } else {
-                        next + 4
-                    };
-                    cursor.advance(target);
-                    continue;
-                }
-                if decoded.opcode == Opcode::CompareBranchLocal {
-                    if let Some(action) = read_local::<false>(&mut cursor, state, left_index)? {
-                        return Ok(action);
-                    }
-                } else if let Some(action) = read_arg(&mut cursor, state, left_index)? {
-                    return Ok(action);
-                }
-            }
-            Opcode::GetVarRef | Opcode::GetVarRefCheck => {
-                let index = published_u16(operand);
-                let value = if cursor.with_slots(|slots| Ok(slots.has_operand_capacity(1)))? {
-                    let root = body
-                        .owners
-                        .function
-                        .closures()
-                        .get(runtime, usize::from(index))
-                        .ok_or_else(|| {
-                            Error::internal("closure variable index is out of bounds")
+                        let decision = cursor.with_slots(|slots| {
+                            if !slots.has_operand_capacity(2) {
+                                return Ok(None);
+                            }
+                            let left = slots.direct_value(left).and_then(JsValue::as_number_repr);
+                            let right = slots.direct_value(right).and_then(JsValue::as_number_repr);
+                            Ok(left.zip(right).map(|(left, right)| {
+                                compare_direct_numbers(
+                                    ((descriptor >> 17) & 0x3ff) as u16,
+                                    left,
+                                    right,
+                                )
+                            }))
                         })?;
-                    super::bindings::try_read_captured_immediate_in_state(state, root.id())
-                } else {
-                    None
-                };
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_outcome(
-                    runtime,
-                    executable,
-                    pc,
-                    "captured_read",
-                    if value.is_some() { None } else { Some("guard") },
-                );
-                if let Some(value) = value {
-                    cursor.commit_push(value)?;
-                } else {
-                    return Ok(VmAction::Binding {
-                        source: BindingSource::Closure,
-                        index,
-                        write: false,
-                        checked: decoded.opcode == Opcode::GetVarRefCheck,
-                        keep: false,
-                    });
-                }
-            }
-            Opcode::GetVar | Opcode::GetVarUndef => {
-                let index = published_u16(operand);
-                // Check space before taking the output edge. The cell keeps its
-                // own edge through commit; errors publish this cursor's fault
-                // PC and materialize in ready::run before they are propagated.
-                if cursor.with_slots(|slots| Ok(slots.has_operand_capacity(1)))?
-                    && let Some(value) = super::environment_driver::try_read_global_cell_in_state(
-                        runtime,
-                        state,
-                        executable,
-                        body.owners.function.closures(),
-                        index,
-                    )?
-                {
-                    cursor.commit_owned(state, value)?;
-                    #[cfg(feature = "profiling")]
-                    crate::engine::api::profiling::record_owned_execution_event(
-                        "global_cell.local_complete",
-                    );
-                } else {
-                    return Ok(VmAction::Environment(
-                        super::environment_driver::Operation::GlobalGet {
-                            index,
-                            strict: decoded.opcode == Opcode::GetVar,
-                        },
-                    ));
-                }
-            }
-            Opcode::GetArg => {
-                let index = published_u16(operand);
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_dispatch(
-                    runtime, executable, pc, false,
-                );
-                if let Some(action) = read_arg(&mut cursor, state, index)? {
-                    return Ok(action);
-                }
-            }
-            Opcode::PutLocal | Opcode::SetLocal | Opcode::PutLocalCheck | Opcode::SetLocalCheck => {
-                let index = published_u16(operand);
-                let keep = matches!(decoded.opcode, Opcode::SetLocal | Opcode::SetLocalCheck);
-                let checked = matches!(
-                    decoded.opcode,
-                    Opcode::PutLocalCheck | Opcode::SetLocalCheck
-                );
-                let binding = cursor.with_slots(|slots| Ok(binding_class(slots.local(index)?)))?;
-                if binding == BindingClass::Captured {
-                    return Ok(VmAction::Binding {
-                        source: BindingSource::Local,
-                        index,
-                        write: true,
-                        checked,
-                        keep,
-                    });
-                }
-                if checked && binding == BindingClass::Uninitialized {
-                    return Ok(VmAction::LexicalUninitialized(index));
-                }
-                if binding == BindingClass::DirectNumber
-                    && cursor.with_slots(|slots| {
-                        Ok(slots.store_proven_number_operand(DirectSlot::Local(index), keep))
-                    })?
-                {
-                    cursor.advance(next);
-                    continue;
-                }
-                let progress = cursor.with_slots(|slots| {
-                    if keep {
-                        slots.set_direct_in_state(
-                            state,
-                            &runtime.0.poisoned,
-                            DirectSlot::Local(index),
-                        )
-                    } else {
-                        slots.put_direct_in_state(
-                            state,
-                            &runtime.0.poisoned,
-                            DirectSlot::Local(index),
-                        )
-                    }
-                })?;
-                if progress == StoreProgress::Committed {
-                    cursor.advance(next);
-                    continue;
-                }
-                if !frame.active_frame.is_materialized() {
-                    return Ok(VmAction::Materialize);
-                }
-                cursor.publish_fault(state, frame.active_frame)?;
-                let old = cursor.with_slots(|slots| {
-                    let next = if keep {
-                        copy_value_in_state(state, slots.peek(0)?)?
-                    } else {
-                        slots.pop()?
-                    };
-                    slots.replace_local(index, FrameBinding::Direct(next))
-                })?;
-                super::bindings::release_frame_binding_in_state(state, old).inspect_err(|_| {
-                    runtime.0.poisoned.set(true);
-                })?;
-            }
-            Opcode::PutArg | Opcode::SetArg => {
-                let index = published_u16(operand);
-                let keep = decoded.opcode == Opcode::SetArg;
-                let binding =
-                    cursor.with_slots(|slots| Ok(binding_class(slots.parameter(index)?)))?;
-                if binding == BindingClass::Captured {
-                    return Ok(VmAction::Binding {
-                        source: BindingSource::Argument,
-                        index,
-                        write: true,
-                        checked: false,
-                        keep,
-                    });
-                }
-                if binding == BindingClass::DirectNumber
-                    && cursor.with_slots(|slots| {
-                        Ok(slots.store_proven_number_operand(DirectSlot::Argument(index), keep))
-                    })?
-                {
-                    cursor.advance(next);
-                    continue;
-                }
-                let progress = cursor.with_slots(|slots| {
-                    if keep {
-                        slots.set_direct_in_state(
-                            state,
-                            &runtime.0.poisoned,
-                            DirectSlot::Argument(index),
-                        )
-                    } else {
-                        slots.put_direct_in_state(
-                            state,
-                            &runtime.0.poisoned,
-                            DirectSlot::Argument(index),
-                        )
-                    }
-                })?;
-                if progress == StoreProgress::Committed {
-                    cursor.advance(next);
-                    continue;
-                }
-                if !frame.active_frame.is_materialized() {
-                    return Ok(VmAction::Materialize);
-                }
-                cursor.publish_fault(state, frame.active_frame)?;
-                let old = cursor.with_slots(|slots| {
-                    let next = if keep {
-                        copy_value_in_state(state, slots.peek(0)?)?
-                    } else {
-                        slots.pop()?
-                    };
-                    slots.replace_parameter(index, FrameBinding::Direct(next))
-                })?;
-                super::bindings::release_frame_binding_in_state(state, old).inspect_err(|_| {
-                    runtime.0.poisoned.set(true);
-                })?;
-            }
-            Opcode::InitializeLocal => {
-                let index = published_u16(operand);
-                let definition = executable.local_definitions[usize::from(index)];
-                use crate::engine::code::function::metadata::ClosureVariableKind;
-                if definition.kind == ClosureVariableKind::WithObject {
-                    return Ok(VmAction::Environment(
-                        super::environment_driver::Operation::InitializeWith(index),
-                    ));
-                }
-                let class = cursor.with_slots(|slots| Ok(binding_class(slots.local(index)?)))?;
-                if class == BindingClass::Captured && definition.kind == ClosureVariableKind::Normal
-                {
-                    return Ok(VmAction::Binding {
-                        source: BindingSource::Local,
-                        index,
-                        write: true,
-                        checked: false,
-                        keep: false,
-                    });
-                }
-                if !definition.is_lexical
-                    || !matches!(
-                        class,
-                        BindingClass::Direct
-                            | BindingClass::DirectNumber
-                            | BindingClass::Uninitialized
-                    )
-                {
-                    return Err(Error::internal("local initializer has no valid binding"));
-                }
-                if cursor.with_slots(|slots| {
-                    slots.initialize_direct_local_in_state(state, &runtime.0.poisoned, index)
-                })? == StoreProgress::Committed
-                {
-                    cursor.advance(next);
-                    continue;
-                }
-                if !frame.active_frame.is_materialized() {
-                    return Ok(VmAction::Materialize);
-                }
-                cursor.publish_fault(state, frame.active_frame)?;
-                let old = cursor.with_slots(|slots| {
-                    let value = slots.pop()?;
-                    slots.replace_local(index, FrameBinding::Direct(value))
-                })?;
-                super::bindings::release_frame_binding_in_state(state, old).inspect_err(|_| {
-                    runtime.0.poisoned.set(true);
-                })?;
-            }
-            Opcode::CloseLocal => {
-                let index = published_u16(operand);
-                let class = cursor.with_slots(|slots| Ok(binding_class(slots.local(index)?)))?;
-                if class == BindingClass::Captured {
-                    return Ok(VmAction::CloseCaptured(index));
-                }
-                if let Some(flag) = body
-                    .owners
-                    .reusable_captured_locals
-                    .get_mut(usize::from(index))
-                {
-                    *flag = false;
-                }
-            }
-            Opcode::SetLocalUninitialized => {
-                let index = published_u16(operand);
-                let class = cursor.with_slots(|slots| Ok(binding_class(slots.local(index)?)))?;
-                if class == BindingClass::Captured {
-                    return Ok(VmAction::ResetCaptured(index));
-                }
-                if class != BindingClass::Uninitialized {
-                    if cursor.with_slots(|slots| {
-                        slots.reset_direct_local_in_state(state, &runtime.0.poisoned, index)
-                    })? == StoreProgress::Committed
-                    {
-                        if let Some(flag) = body
-                            .owners
-                            .reusable_captured_locals
-                            .get_mut(usize::from(index))
-                        {
-                            *flag = false;
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_outcome(
+                            runtime,
+                            executable,
+                            pc,
+                            "compare_branch",
+                            if decision.is_some() {
+                                None
+                            } else {
+                                Some("guard")
+                            },
+                        );
+                        if let Some(decision) = decision {
+                            let target = if decision == (descriptor & 0x800_0000 != 0) {
+                                decoded.operand(2) as usize
+                            } else {
+                                next + 4
+                            };
+                            cursor.advance(target);
+                            continue;
                         }
-                        cursor.advance(next);
-                        continue;
+                        if decoded.opcode == Opcode::CompareBranchLocal {
+                            if let Some(action) =
+                                read_local::<false>(&mut cursor, state, left_index)?
+                            {
+                                break 'dispatch Ok(action);
+                            }
+                        } else if let Some(action) = read_arg(&mut cursor, state, left_index)? {
+                            break 'dispatch Ok(action);
+                        }
                     }
-                    if !frame.active_frame.is_materialized() {
-                        return Ok(VmAction::Materialize);
+                    Opcode::GetVarRef | Opcode::GetVarRefCheck => {
+                        let index = published_u16(operand);
+                        let value = if cursor
+                            .with_slots(|slots| Ok(slots.has_operand_capacity(1)))?
+                        {
+                            let root = owners
+                                .function
+                                .closures()
+                                .get(runtime, usize::from(index))
+                                .ok_or_else(|| {
+                                    Error::internal("closure variable index is out of bounds")
+                                })?;
+                            super::bindings::try_read_captured_immediate_in_state(state, root.id())
+                        } else {
+                            None
+                        };
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_outcome(
+                            runtime,
+                            executable,
+                            pc,
+                            "captured_read",
+                            if value.is_some() { None } else { Some("guard") },
+                        );
+                        if let Some(value) = value {
+                            cursor.commit_push(value)?;
+                        } else {
+                            break 'dispatch Ok(VmAction::Binding {
+                                source: BindingSource::Closure,
+                                index,
+                                write: false,
+                                checked: decoded.opcode == Opcode::GetVarRefCheck,
+                                keep: false,
+                            });
+                        }
                     }
-                    cursor.publish_fault(state, frame.active_frame)?;
-                    let old = cursor.with_slots(|slots| {
-                        slots.replace_local(index, FrameBinding::Uninitialized)
-                    })?;
-                    super::bindings::release_frame_binding_in_state(state, old).inspect_err(
-                        |_| {
-                            runtime.0.poisoned.set(true);
-                        },
-                    )?;
-                }
-                if let Some(flag) = body
-                    .owners
-                    .reusable_captured_locals
-                    .get_mut(usize::from(index))
-                {
-                    *flag = false;
-                }
-            }
-            Opcode::Dup | Opcode::Dup1 | Opcode::Dup3 => {
-                cursor.with_slots(|slots| match decoded.opcode {
-                    Opcode::Dup => slots.insert_copy_in_state(state, 0, 0),
-                    Opcode::Dup1 => slots.insert_copy_in_state(state, 1, 1),
-                    _ => slots.duplicate_operands_in_state(state, 3),
-                })?;
-            }
-            Opcode::Insert2 | Opcode::Insert3 | Opcode::Insert4 => {
-                let count = match decoded.opcode {
-                    Opcode::Insert2 => 2,
-                    Opcode::Insert3 => 3,
-                    _ => 4,
-                };
-                cursor.with_slots(|slots| {
-                    slots.peek(count - 1)?;
-                    slots.insert_copy_in_state(state, 0, count)
-                })?;
-            }
-            Opcode::Perm3 | Opcode::Perm4 | Opcode::Perm5 => {
-                let count = match decoded.opcode {
-                    Opcode::Perm3 => 2,
-                    Opcode::Perm4 => 3,
-                    _ => 4,
-                };
-                cursor.with_slots(|slots| slots.rotate_operands(1, count, false))?;
-            }
-            Opcode::Rot4Left => cursor.with_slots(|slots| slots.rotate_operands(0, 4, true))?,
-            Opcode::Swap => cursor.with_slots(|slots| slots.rotate_operands(0, 2, false))?,
-            Opcode::Drop | Opcode::Nip => {
-                let removed_offset = usize::from(decoded.opcode == Opcode::Nip);
-                let immediate =
-                    cursor.with_slots(|slots| Ok(is_immediate(slots.peek(removed_offset)?)))?;
-                if !immediate {
-                    cursor.publish_fault(state, frame.active_frame)?;
-                }
-                let removed = cursor.with_slots(|slots| {
-                    if decoded.opcode == Opcode::Drop {
-                        slots.pop()
-                    } else {
-                        slots.peek(1)?;
-                        let kept = slots.pop()?;
-                        let removed = slots.pop()?;
-                        slots.push(kept)?;
-                        Ok(removed)
+                    Opcode::GetVar | Opcode::GetVarUndef => {
+                        let index = published_u16(operand);
+                        // Check space before taking the output edge. The cell keeps its
+                        // own edge through commit; errors publish this cursor's fault
+                        // PC and materialize in ready::run before they are propagated.
+                        if cursor.with_slots(|slots| Ok(slots.has_operand_capacity(1)))?
+                            && let Some(value) =
+                                super::environment_driver::try_read_global_cell_in_state(
+                                    runtime,
+                                    state,
+                                    executable,
+                                    owners.function.closures(),
+                                    index,
+                                )?
+                        {
+                            cursor.commit_owned(state, value)?;
+                            #[cfg(feature = "profiling")]
+                            crate::engine::api::profiling::record_owned_execution_event(
+                                "global_cell.local_complete",
+                            );
+                        } else {
+                            break 'dispatch Ok(VmAction::Environment(
+                                super::environment_driver::Operation::GlobalGet {
+                                    index,
+                                    strict: decoded.opcode == Opcode::GetVar,
+                                },
+                            ));
+                        }
                     }
-                })?;
-                if !immediate {
-                    state
-                        .release_owned_jsvalue(&runtime.0.poisoned, removed)
-                        .map_err(runtime_error_to_vm_error)?;
-                }
-            }
-            Opcode::Add
-            | Opcode::Sub
-            | Opcode::Mul
-            | Opcode::Div
-            | Opcode::Mod
-            | Opcode::Pow
-            | Opcode::Shl
-            | Opcode::Sar
-            | Opcode::Shr
-            | Opcode::BitAnd
-            | Opcode::BitOr
-            | Opcode::BitXor
-            | Opcode::Eq
-            | Opcode::Neq
-            | Opcode::Lt
-            | Opcode::Lte
-            | Opcode::Gt
-            | Opcode::Gte
-            | Opcode::StrictEq
-            | Opcode::StrictNeq => {
-                let completed = cursor.with_slots(|slots| {
-                    slots.binary_number(|left, right| {
-                        binary_number_result(decoded.opcode, left, right)
-                    })
-                })?;
-                if !completed {
-                    if matches!(decoded.opcode, Opcode::Eq | Opcode::Neq) {
-                        if let Some(equal) = cursor.with_slots(|slots| {
-                            slots.nullish_equality_in_state(state, &runtime.0.poisoned)
-                        })? {
-                            cursor.commit_push(JsValue::Bool(
-                                equal != (decoded.opcode == Opcode::Neq),
-                            ))?;
+                    Opcode::GetArg => {
+                        let index = published_u16(operand);
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_dispatch(
+                            runtime, executable, pc, false,
+                        );
+                        if let Some(action) = read_arg(&mut cursor, state, index)? {
+                            break 'dispatch Ok(action);
+                        }
+                    }
+                    Opcode::PutLocal
+                    | Opcode::SetLocal
+                    | Opcode::PutLocalCheck
+                    | Opcode::SetLocalCheck => {
+                        let index = published_u16(operand);
+                        let keep =
+                            matches!(decoded.opcode, Opcode::SetLocal | Opcode::SetLocalCheck);
+                        let checked = matches!(
+                            decoded.opcode,
+                            Opcode::PutLocalCheck | Opcode::SetLocalCheck
+                        );
+                        let binding =
+                            cursor.with_slots(|slots| Ok(binding_class(slots.local(index)?)))?;
+                        if binding == BindingClass::Captured {
+                            break 'dispatch Ok(VmAction::Binding {
+                                source: BindingSource::Local,
+                                index,
+                                write: true,
+                                checked,
+                                keep,
+                            });
+                        }
+                        if checked && binding == BindingClass::Uninitialized {
+                            break 'dispatch Ok(VmAction::LexicalUninitialized(index));
+                        }
+                        if binding == BindingClass::DirectNumber
+                            && cursor.with_slots(|slots| {
+                                Ok(slots
+                                    .store_proven_number_operand(DirectSlot::Local(index), keep))
+                            })?
+                        {
                             cursor.advance(next);
                             continue;
                         }
+                        let progress = cursor.with_slots(|slots| {
+                            if keep {
+                                slots.set_direct_in_state(
+                                    state,
+                                    &runtime.0.poisoned,
+                                    DirectSlot::Local(index),
+                                )
+                            } else {
+                                slots.put_direct_in_state(
+                                    state,
+                                    &runtime.0.poisoned,
+                                    DirectSlot::Local(index),
+                                )
+                            }
+                        })?;
+                        if progress == StoreProgress::Committed {
+                            cursor.advance(next);
+                            continue;
+                        }
+                        if !active_frame.is_materialized() {
+                            break 'dispatch Ok(VmAction::Materialize);
+                        }
+                        cursor.publish_fault(state, active_frame)?;
+                        let old = cursor.with_slots(|slots| {
+                            let next = if keep {
+                                copy_value_in_state(state, slots.peek(0)?)?
+                            } else {
+                                slots.pop()?
+                            };
+                            slots.replace_local(index, FrameBinding::Direct(next))
+                        })?;
+                        super::bindings::release_frame_binding_in_state(state, old).inspect_err(
+                            |_| {
+                                runtime.0.poisoned.set(true);
+                            },
+                        )?;
                     }
-                    if matches!(decoded.opcode, Opcode::StrictEq | Opcode::StrictNeq) {
-                        let equal = cursor.strict_comparison(state, frame.active_frame)?;
-                        cursor.commit_push(JsValue::Bool(
-                            equal != (decoded.opcode == Opcode::StrictNeq),
-                        ))?;
-                        #[cfg(feature = "profiling")]
-                        crate::engine::api::profiling::record_owned_execution_event(
-                            "strict_comparison.local_value",
-                        );
-                        cursor.advance(next);
-                        continue;
+                    Opcode::PutArg | Opcode::SetArg => {
+                        let index = published_u16(operand);
+                        let keep = decoded.opcode == Opcode::SetArg;
+                        let binding = cursor
+                            .with_slots(|slots| Ok(binding_class(slots.parameter(index)?)))?;
+                        if binding == BindingClass::Captured {
+                            break 'dispatch Ok(VmAction::Binding {
+                                source: BindingSource::Argument,
+                                index,
+                                write: true,
+                                checked: false,
+                                keep,
+                            });
+                        }
+                        if binding == BindingClass::DirectNumber
+                            && cursor.with_slots(|slots| {
+                                Ok(slots
+                                    .store_proven_number_operand(DirectSlot::Argument(index), keep))
+                            })?
+                        {
+                            cursor.advance(next);
+                            continue;
+                        }
+                        let progress = cursor.with_slots(|slots| {
+                            if keep {
+                                slots.set_direct_in_state(
+                                    state,
+                                    &runtime.0.poisoned,
+                                    DirectSlot::Argument(index),
+                                )
+                            } else {
+                                slots.put_direct_in_state(
+                                    state,
+                                    &runtime.0.poisoned,
+                                    DirectSlot::Argument(index),
+                                )
+                            }
+                        })?;
+                        if progress == StoreProgress::Committed {
+                            cursor.advance(next);
+                            continue;
+                        }
+                        if !active_frame.is_materialized() {
+                            break 'dispatch Ok(VmAction::Materialize);
+                        }
+                        cursor.publish_fault(state, active_frame)?;
+                        let old = cursor.with_slots(|slots| {
+                            let next = if keep {
+                                copy_value_in_state(state, slots.peek(0)?)?
+                            } else {
+                                slots.pop()?
+                            };
+                            slots.replace_parameter(index, FrameBinding::Direct(next))
+                        })?;
+                        super::bindings::release_frame_binding_in_state(state, old).inspect_err(
+                            |_| {
+                                runtime.0.poisoned.set(true);
+                            },
+                        )?;
                     }
-                    return Ok(VmAction::Numeric {
-                        kind: super::numeric::operation::NumericKind::for_opcode(decoded.opcode)
-                            .ok_or_else(|| Error::internal("numeric opcode has no operation"))?,
-                        fallthrough: FallthroughPc::from_decoded(decoded),
-                    });
-                }
-            }
-            Opcode::Neg
-            | Opcode::Plus
-            | Opcode::BitNot
-            | Opcode::Inc
-            | Opcode::Dec
-            | Opcode::PostInc
-            | Opcode::PostDec => {
-                let completed = cursor.with_slots(|slots| {
-                    let Some(old) = slots.peek(0)?.as_number_repr() else {
-                        return Ok(false);
-                    };
-                    if matches!(decoded.opcode, Opcode::PostInc | Opcode::PostDec)
-                        && !slots.has_operand_capacity(1)
-                    {
-                        return Ok(false);
-                    }
-                    let value = match decoded.opcode {
-                        Opcode::Neg => old.negate(),
-                        Opcode::Plus => old,
-                        Opcode::BitNot => Number::Int(!old.int32()),
-                        _ => old.update(matches!(decoded.opcode, Opcode::Inc | Opcode::PostInc)),
-                    };
-                    if !matches!(decoded.opcode, Opcode::PostInc | Opcode::PostDec) {
-                        let _ = slots.pop()?;
-                    }
-                    slots.push(number_value(value))?;
-                    Ok(true)
-                })?;
-                if !completed {
-                    if decoded.opcode == Opcode::Plus {
-                        return Ok(VmAction::ConvertPlus);
-                    }
-                    return Ok(VmAction::Numeric {
-                        kind: super::numeric::operation::NumericKind::for_opcode(decoded.opcode)
-                            .ok_or_else(|| Error::internal("numeric opcode has no operation"))?,
-                        fallthrough: FallthroughPc::from_decoded(decoded),
-                    });
-                }
-            }
-            Opcode::Not => {
-                let immediate = cursor.with_slots(|slots| Ok(is_immediate(slots.peek(0)?)))?;
-                if immediate {
-                    let value = cursor.move_owned()?;
-                    cursor.commit_push(JsValue::Bool(!value.to_boolean_primitive()))?;
-                    cursor.advance(next);
-                    continue;
-                }
-                let truthy = cursor.with_slots(|slots| {
-                    state
-                        .value_to_boolean_jsvalue(slots.peek(0)?)
-                        .map_err(runtime_error_to_vm_error)
-                })?;
-                cursor.publish_fault(state, frame.active_frame)?;
-                let old = cursor.move_owned()?;
-                cursor.commit_push(JsValue::Bool(!truthy))?;
-                state
-                    .release_owned_jsvalue(&runtime.0.poisoned, old)
-                    .map_err(runtime_error_to_vm_error)?;
-            }
-            Opcode::GetFieldCached | Opcode::GetField2Cached => {
-                let keep_receiver = decoded.opcode == Opcode::GetField2Cached;
-                let mut native = None;
-                let pending = PendingNamedRead {
-                    index: operand,
-                    keep_receiver,
-                    fallthrough: FallthroughPc::from_decoded(decoded),
-                };
-                let step = cursor.with_slots(|slots| {
-                    slots.property_ic_read_in_state(
-                        state,
-                        &runtime.0.poisoned,
-                        runtime.domain_id(),
-                        executable,
-                        NamedReadOperation {
-                            site: pc,
-                            key_index: operand,
-                            keep_receiver,
-                        },
-                        &mut native,
-                    )
-                })?;
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_outcome(
-                    runtime,
-                    executable,
-                    pc,
-                    "field_cache",
-                    if matches!(step, PropertyReadProgress::Completed) {
-                        None
-                    } else {
-                        Some("guard")
-                    },
-                );
-                match step {
-                    PropertyReadProgress::Completed => {
-                        #[cfg(feature = "profiling")]
-                        crate::engine::api::profiling::record_owned_execution_event(
-                            "local_completion.named_read",
-                        );
-                    }
-                    PropertyReadProgress::Driver => {
-                        return Ok(pending.action());
-                    }
-                    PropertyReadProgress::Selected(getter) => {
-                        let read = cursor.with_slots(|slots| {
-                            Ok(super::property_driver::OwnedGetterSelection::prepare(
+                    Opcode::InitializeLocal => {
+                        let index = published_u16(operand);
+                        let definition = executable.local_definitions[usize::from(index)];
+                        use crate::engine::code::function::metadata::ClosureVariableKind;
+                        if definition.kind == ClosureVariableKind::WithObject {
+                            break 'dispatch Ok(VmAction::Environment(
+                                super::environment_driver::Operation::InitializeWith(index),
+                            ));
+                        }
+                        let class =
+                            cursor.with_slots(|slots| Ok(binding_class(slots.local(index)?)))?;
+                        if class == BindingClass::Captured
+                            && definition.kind == ClosureVariableKind::Normal
+                        {
+                            break 'dispatch Ok(VmAction::Binding {
+                                source: BindingSource::Local,
+                                index,
+                                write: true,
+                                checked: false,
+                                keep: false,
+                            });
+                        }
+                        if !definition.is_lexical
+                            || !matches!(
+                                class,
+                                BindingClass::Direct
+                                    | BindingClass::DirectNumber
+                                    | BindingClass::Uninitialized
+                            )
+                        {
+                            return Err(Error::internal("local initializer has no valid binding"));
+                        }
+                        if cursor.with_slots(|slots| {
+                            slots.initialize_direct_local_in_state(
                                 state,
                                 &runtime.0.poisoned,
-                                slots.peek(0)?,
-                                getter,
-                            ))
+                                index,
+                            )
+                        })? == StoreProgress::Committed
+                        {
+                            cursor.advance(next);
+                            continue;
+                        }
+                        if !active_frame.is_materialized() {
+                            break 'dispatch Ok(VmAction::Materialize);
+                        }
+                        cursor.publish_fault(state, active_frame)?;
+                        let old = cursor.with_slots(|slots| {
+                            let value = slots.pop()?;
+                            slots.replace_local(index, FrameBinding::Direct(value))
                         })?;
-                        debug_assert!(execution.selected_named_read.is_none());
-                        execution.selected_named_read = Some(match read {
-                            Ok(read) => super::property_driver::SelectedNamedRead::Getter(read),
-                            Err(error) => {
-                                super::property_driver::SelectedNamedRead::LookupError(error)
+                        super::bindings::release_frame_binding_in_state(state, old).inspect_err(
+                            |_| {
+                                runtime.0.poisoned.set(true);
+                            },
+                        )?;
+                    }
+                    Opcode::CloseLocal => {
+                        let index = published_u16(operand);
+                        let class =
+                            cursor.with_slots(|slots| Ok(binding_class(slots.local(index)?)))?;
+                        if class == BindingClass::Captured {
+                            break 'dispatch Ok(VmAction::CloseCaptured(index));
+                        }
+                        if let Some(flag) =
+                            owners.reusable_captured_locals.get_mut(usize::from(index))
+                        {
+                            *flag = false;
+                        }
+                    }
+                    Opcode::SetLocalUninitialized => {
+                        let index = published_u16(operand);
+                        let class =
+                            cursor.with_slots(|slots| Ok(binding_class(slots.local(index)?)))?;
+                        if class == BindingClass::Captured {
+                            break 'dispatch Ok(VmAction::ResetCaptured(index));
+                        }
+                        if class != BindingClass::Uninitialized {
+                            if cursor.with_slots(|slots| {
+                                slots.reset_direct_local_in_state(state, &runtime.0.poisoned, index)
+                            })? == StoreProgress::Committed
+                            {
+                                if let Some(flag) =
+                                    owners.reusable_captured_locals.get_mut(usize::from(index))
+                                {
+                                    *flag = false;
+                                }
+                                cursor.advance(next);
+                                continue;
                             }
-                        });
-                        return Ok(pending.action());
+                            if !active_frame.is_materialized() {
+                                break 'dispatch Ok(VmAction::Materialize);
+                            }
+                            cursor.publish_fault(state, active_frame)?;
+                            let old = cursor.with_slots(|slots| {
+                                slots.replace_local(index, FrameBinding::Uninitialized)
+                            })?;
+                            super::bindings::release_frame_binding_in_state(state, old)
+                                .inspect_err(|_| {
+                                    runtime.0.poisoned.set(true);
+                                })?;
+                        }
+                        if let Some(flag) =
+                            owners.reusable_captured_locals.get_mut(usize::from(index))
+                        {
+                            *flag = false;
+                        }
                     }
-                }
-            }
-            Opcode::GetArrayElDense | Opcode::GetArrayEl2Dense | Opcode::GetArrayEl3Dense => {
-                let keep_receiver = decoded.opcode != Opcode::GetArrayElDense;
-                let keep_key = decoded.opcode == Opcode::GetArrayEl3Dense;
-                let hit = cursor.with_slots(|slots| {
-                    if keep_receiver {
-                        slots.array_kept_immediate_read_in_state(
-                            state,
-                            &runtime.0.poisoned,
-                            keep_key,
-                        )
-                    } else {
-                        slots.array_immediate_read_in_state(state, &runtime.0.poisoned)
+                    Opcode::Dup | Opcode::Dup1 | Opcode::Dup3 => {
+                        cursor.with_slots(|slots| match decoded.opcode {
+                            Opcode::Dup => slots.insert_copy_in_state(state, 0, 0),
+                            Opcode::Dup1 => slots.insert_copy_in_state(state, 1, 1),
+                            _ => slots.duplicate_operands_in_state(state, 3),
+                        })?;
                     }
-                })?;
-                #[cfg(feature = "profiling")]
-                crate::engine::api::profiling::record_execution_outcome(
-                    runtime,
-                    executable,
-                    pc,
-                    "dense_array_read",
-                    if hit { None } else { Some("guard") },
-                );
-                if !hit {
-                    return Ok(VmAction::GetElement {
-                        keep_receiver,
-                        keep_key,
-                        fallthrough: FallthroughPc::from_decoded(decoded),
-                    });
-                }
-            }
-            Opcode::PutField => {
-                let Some(generation) = frame.property_generation.checked_add(1) else {
-                    return Ok(VmAction::SetProperty(Some(operand)));
-                };
-                if !cursor.with_slots(|slots| {
-                    slots.try_scalar_field_write_in_state(
-                        state,
-                        &runtime.0.poisoned,
-                        runtime.domain_id(),
-                        executable,
-                        operand,
-                    )
-                })? {
-                    return Ok(VmAction::SetProperty(Some(operand)));
-                }
-                frame.property_generation = generation;
-            }
-            Opcode::PutArrayEl => {
-                let Some(generation) = frame.property_generation.checked_add(1) else {
-                    return Ok(VmAction::SetProperty(None));
-                };
-                if !cursor.with_slots(|slots| {
-                    slots.try_scalar_element_write_in_state(state, &runtime.0.poisoned)
-                })? {
-                    return Ok(VmAction::SetProperty(None));
-                }
-                frame.property_generation = generation;
-            }
-            Opcode::Goto => next = operand as usize,
-            Opcode::IfTrue | Opcode::IfFalse => {
-                let immediate = cursor.with_slots(|slots| Ok(is_immediate(slots.peek(0)?)))?;
-                if immediate {
-                    let truthy = cursor.move_owned()?.to_boolean_primitive();
-                    if truthy == (decoded.opcode == Opcode::IfTrue) {
-                        next = operand as usize;
+                    Opcode::Insert2 | Opcode::Insert3 | Opcode::Insert4 => {
+                        let count = match decoded.opcode {
+                            Opcode::Insert2 => 2,
+                            Opcode::Insert3 => 3,
+                            _ => 4,
+                        };
+                        cursor.with_slots(|slots| {
+                            slots.peek(count - 1)?;
+                            slots.insert_copy_in_state(state, 0, count)
+                        })?;
                     }
-                } else {
-                    let truthy = cursor.with_slots(|slots| {
+                    Opcode::Perm3 | Opcode::Perm4 | Opcode::Perm5 => {
+                        let count = match decoded.opcode {
+                            Opcode::Perm3 => 2,
+                            Opcode::Perm4 => 3,
+                            _ => 4,
+                        };
+                        cursor.with_slots(|slots| slots.rotate_operands(1, count, false))?;
+                    }
+                    Opcode::Rot4Left => {
+                        cursor.with_slots(|slots| slots.rotate_operands(0, 4, true))?
+                    }
+                    Opcode::Swap => {
+                        cursor.with_slots(|slots| slots.rotate_operands(0, 2, false))?
+                    }
+                    Opcode::Drop | Opcode::Nip => {
+                        let removed_offset = usize::from(decoded.opcode == Opcode::Nip);
+                        let immediate = cursor
+                            .with_slots(|slots| Ok(is_immediate(slots.peek(removed_offset)?)))?;
+                        if !immediate {
+                            cursor.publish_fault(state, active_frame)?;
+                        }
+                        let removed = cursor.with_slots(|slots| {
+                            if decoded.opcode == Opcode::Drop {
+                                slots.pop()
+                            } else {
+                                slots.peek(1)?;
+                                let kept = slots.pop()?;
+                                let removed = slots.pop()?;
+                                slots.push(kept)?;
+                                Ok(removed)
+                            }
+                        })?;
+                        if !immediate {
+                            state
+                                .release_owned_jsvalue(&runtime.0.poisoned, removed)
+                                .map_err(runtime_error_to_vm_error)?;
+                        }
+                    }
+                    Opcode::Add
+                    | Opcode::Sub
+                    | Opcode::Mul
+                    | Opcode::Div
+                    | Opcode::Mod
+                    | Opcode::Pow
+                    | Opcode::Shl
+                    | Opcode::Sar
+                    | Opcode::Shr
+                    | Opcode::BitAnd
+                    | Opcode::BitOr
+                    | Opcode::BitXor
+                    | Opcode::Eq
+                    | Opcode::Neq
+                    | Opcode::Lt
+                    | Opcode::Lte
+                    | Opcode::Gt
+                    | Opcode::Gte
+                    | Opcode::StrictEq
+                    | Opcode::StrictNeq => {
+                        let completed = cursor.with_slots(|slots| {
+                            slots.binary_number(|left, right| {
+                                binary_number_result(decoded.opcode, left, right)
+                            })
+                        })?;
+                        if !completed {
+                            if matches!(decoded.opcode, Opcode::Eq | Opcode::Neq) {
+                                if let Some(equal) = cursor.with_slots(|slots| {
+                                    slots.nullish_equality_in_state(state, &runtime.0.poisoned)
+                                })? {
+                                    cursor.commit_push(JsValue::Bool(
+                                        equal != (decoded.opcode == Opcode::Neq),
+                                    ))?;
+                                    cursor.advance(next);
+                                    continue;
+                                }
+                            }
+                            if matches!(decoded.opcode, Opcode::StrictEq | Opcode::StrictNeq) {
+                                let equal = cursor.strict_comparison(state, active_frame)?;
+                                cursor.commit_push(JsValue::Bool(
+                                    equal != (decoded.opcode == Opcode::StrictNeq),
+                                ))?;
+                                #[cfg(feature = "profiling")]
+                                crate::engine::api::profiling::record_owned_execution_event(
+                                    "strict_comparison.local_value",
+                                );
+                                cursor.advance(next);
+                                continue;
+                            }
+                            break 'dispatch Ok(VmAction::Numeric {
+                                kind: super::numeric::operation::NumericKind::for_opcode(
+                                    decoded.opcode,
+                                )
+                                .ok_or_else(|| {
+                                    Error::internal("numeric opcode has no operation")
+                                })?,
+                                fallthrough: FallthroughPc::from_decoded(decoded),
+                            });
+                        }
+                    }
+                    Opcode::Neg
+                    | Opcode::Plus
+                    | Opcode::BitNot
+                    | Opcode::Inc
+                    | Opcode::Dec
+                    | Opcode::PostInc
+                    | Opcode::PostDec => {
+                        let completed = cursor.with_slots(|slots| {
+                            let Some(old) = slots.peek(0)?.as_number_repr() else {
+                                return Ok(false);
+                            };
+                            if matches!(decoded.opcode, Opcode::PostInc | Opcode::PostDec)
+                                && !slots.has_operand_capacity(1)
+                            {
+                                return Ok(false);
+                            }
+                            let value = match decoded.opcode {
+                                Opcode::Neg => old.negate(),
+                                Opcode::Plus => old,
+                                Opcode::BitNot => Number::Int(!old.int32()),
+                                _ => old.update(matches!(
+                                    decoded.opcode,
+                                    Opcode::Inc | Opcode::PostInc
+                                )),
+                            };
+                            if !matches!(decoded.opcode, Opcode::PostInc | Opcode::PostDec) {
+                                let _ = slots.pop()?;
+                            }
+                            slots.push(number_value(value))?;
+                            Ok(true)
+                        })?;
+                        if !completed {
+                            if decoded.opcode == Opcode::Plus {
+                                break 'dispatch Ok(VmAction::ConvertPlus);
+                            }
+                            break 'dispatch Ok(VmAction::Numeric {
+                                kind: super::numeric::operation::NumericKind::for_opcode(
+                                    decoded.opcode,
+                                )
+                                .ok_or_else(|| {
+                                    Error::internal("numeric opcode has no operation")
+                                })?,
+                                fallthrough: FallthroughPc::from_decoded(decoded),
+                            });
+                        }
+                    }
+                    Opcode::Not => {
+                        let immediate =
+                            cursor.with_slots(|slots| Ok(is_immediate(slots.peek(0)?)))?;
+                        if immediate {
+                            let value = cursor.move_owned()?;
+                            cursor.commit_push(JsValue::Bool(!value.to_boolean_primitive()))?;
+                            cursor.advance(next);
+                            continue;
+                        }
+                        let truthy = cursor.with_slots(|slots| {
+                            state
+                                .value_to_boolean_jsvalue(slots.peek(0)?)
+                                .map_err(runtime_error_to_vm_error)
+                        })?;
+                        cursor.publish_fault(state, active_frame)?;
+                        let old = cursor.move_owned()?;
+                        cursor.commit_push(JsValue::Bool(!truthy))?;
                         state
-                            .value_to_boolean_jsvalue(slots.peek(0)?)
-                            .map_err(runtime_error_to_vm_error)
-                    })?;
-                    cursor.publish_fault(state, frame.active_frame)?;
-                    let condition = cursor.move_owned()?;
-                    state
-                        .release_owned_jsvalue(&runtime.0.poisoned, condition)
-                        .map_err(runtime_error_to_vm_error)?;
-                    if truthy == (decoded.opcode == Opcode::IfTrue) {
+                            .release_owned_jsvalue(&runtime.0.poisoned, old)
+                            .map_err(runtime_error_to_vm_error)?;
+                    }
+                    Opcode::GetFieldCached | Opcode::GetField2Cached => {
+                        let keep_receiver = decoded.opcode == Opcode::GetField2Cached;
+                        let mut native = None;
+                        let pending = PendingNamedRead {
+                            index: operand,
+                            keep_receiver,
+                            fallthrough: FallthroughPc::from_decoded(decoded),
+                        };
+                        let step = cursor.with_slots(|slots| {
+                            slots.property_ic_read_in_state(
+                                state,
+                                &runtime.0.poisoned,
+                                runtime.domain_id(),
+                                executable,
+                                NamedReadOperation {
+                                    site: pc,
+                                    key_index: operand,
+                                    keep_receiver,
+                                },
+                                &mut native,
+                            )
+                        })?;
+                        // This weak selection belongs to the latest named
+                        // read. Nested argument reads replace it; the native
+                        // consumer also checks the actual callee identity.
+                        *selected_native = native;
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_outcome(
+                            runtime,
+                            executable,
+                            pc,
+                            "field_cache",
+                            if matches!(step, PropertyReadProgress::Completed) {
+                                None
+                            } else {
+                                Some("guard")
+                            },
+                        );
+                        match step {
+                            PropertyReadProgress::Completed => {
+                                #[cfg(feature = "profiling")]
+                                crate::engine::api::profiling::record_owned_execution_event(
+                                    "local_completion.named_read",
+                                );
+                            }
+                            PropertyReadProgress::Driver => {
+                                break 'dispatch Ok(pending.action());
+                            }
+                            PropertyReadProgress::Selected(getter) => {
+                                let read = cursor.with_slots(|slots| {
+                                    Ok(super::property_driver::OwnedGetterSelection::prepare(
+                                        state,
+                                        &runtime.0.poisoned,
+                                        slots.peek(0)?,
+                                        getter,
+                                    ))
+                                })?;
+                                debug_assert!(selected_named_read.is_none());
+                                *selected_named_read = Some(match read {
+                                    Ok(read) => {
+                                        super::property_driver::SelectedNamedRead::Getter(read)
+                                    }
+                                    Err(error) => {
+                                        super::property_driver::SelectedNamedRead::LookupError(
+                                            error,
+                                        )
+                                    }
+                                });
+                                break 'dispatch Ok(pending.action());
+                            }
+                        }
+                    }
+                    Opcode::GetArrayElDense
+                    | Opcode::GetArrayEl2Dense
+                    | Opcode::GetArrayEl3Dense => {
+                        let keep_receiver = decoded.opcode != Opcode::GetArrayElDense;
+                        let keep_key = decoded.opcode == Opcode::GetArrayEl3Dense;
+                        let hit = cursor.with_slots(|slots| {
+                            if keep_receiver {
+                                slots.array_kept_immediate_read_in_state(
+                                    state,
+                                    &runtime.0.poisoned,
+                                    keep_key,
+                                )
+                            } else {
+                                slots.array_immediate_read_in_state(state, &runtime.0.poisoned)
+                            }
+                        })?;
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_execution_outcome(
+                            runtime,
+                            executable,
+                            pc,
+                            "dense_array_read",
+                            if hit { None } else { Some("guard") },
+                        );
+                        if !hit {
+                            break 'dispatch Ok(VmAction::GetElement {
+                                keep_receiver,
+                                keep_key,
+                                fallthrough: FallthroughPc::from_decoded(decoded),
+                            });
+                        }
+                    }
+                    Opcode::PutField => {
+                        let Some(generation) = property_generation.checked_add(1) else {
+                            break 'dispatch Ok(VmAction::SetProperty(Some(operand)));
+                        };
+                        if !cursor.with_slots(|slots| {
+                            slots.try_scalar_field_write_in_state(
+                                state,
+                                &runtime.0.poisoned,
+                                runtime.domain_id(),
+                                executable,
+                                operand,
+                            )
+                        })? {
+                            break 'dispatch Ok(VmAction::SetProperty(Some(operand)));
+                        }
+                        *property_generation = generation;
+                    }
+                    Opcode::PutArrayEl => {
+                        let Some(generation) = property_generation.checked_add(1) else {
+                            break 'dispatch Ok(VmAction::SetProperty(None));
+                        };
+                        if !cursor.with_slots(|slots| {
+                            slots.try_scalar_element_write_in_state(state, &runtime.0.poisoned)
+                        })? {
+                            break 'dispatch Ok(VmAction::SetProperty(None));
+                        }
+                        *property_generation = generation;
+                    }
+                    Opcode::Goto => next = operand as usize,
+                    Opcode::IfTrue | Opcode::IfFalse => {
+                        let immediate =
+                            cursor.with_slots(|slots| Ok(is_immediate(slots.peek(0)?)))?;
+                        if immediate {
+                            let truthy = cursor.move_owned()?.to_boolean_primitive();
+                            if truthy == (decoded.opcode == Opcode::IfTrue) {
+                                next = operand as usize;
+                            }
+                        } else {
+                            let truthy = cursor.with_slots(|slots| {
+                                state
+                                    .value_to_boolean_jsvalue(slots.peek(0)?)
+                                    .map_err(runtime_error_to_vm_error)
+                            })?;
+                            cursor.publish_fault(state, active_frame)?;
+                            let condition = cursor.move_owned()?;
+                            state
+                                .release_owned_jsvalue(&runtime.0.poisoned, condition)
+                                .map_err(runtime_error_to_vm_error)?;
+                            if truthy == (decoded.opcode == Opcode::IfTrue) {
+                                next = operand as usize;
+                            }
+                        }
+                    }
+                    Opcode::Gosub => {
+                        let return_pc = i32::try_from(next)
+                            .map_err(|_| Error::internal("gosub return PC exceeds Int"))?;
+                        cursor.commit_push(JsValue::Int(return_pc))?;
                         next = operand as usize;
+                    }
+                    Opcode::Ret => {
+                        // A dynamic target is not a published static continuation.
+                        // Validate it while its owner remains in the frame storage.
+                        next = cursor.with_slots(|slots| {
+                            let JsValue::Int(target) = slots.peek(0)? else {
+                                return Err(Error::internal("invalid ret value"));
+                            };
+                            let target = usize::try_from(*target)
+                                .map_err(|_| Error::internal("invalid ret value"))?;
+                            if executable.exec.opcode_at_exec(target).is_none() {
+                                return Err(Error::internal(
+                                    "ret target is not an instruction boundary",
+                                ));
+                            }
+                            Ok(target)
+                        })?;
+                        let _address = cursor.move_owned()?;
+                    }
+                    Opcode::DropGosub => {
+                        cursor.with_slots(|slots| {
+                            if !matches!(slots.peek(0)?, JsValue::Int(_)) {
+                                return Err(Error::internal("invalid gosub cleanup value"));
+                            }
+                            Ok(())
+                        })?;
+                        let _address = cursor.move_owned()?;
+                    }
+                    Opcode::InitialYield
+                    | Opcode::Yield
+                    | Opcode::YieldStar
+                    | Opcode::AsyncYieldStar
+                    | Opcode::Await => {
+                        let kind = match decoded.opcode {
+                            Opcode::InitialYield => super::VmSuspendKind::Initial,
+                            Opcode::Yield => super::VmSuspendKind::Yield,
+                            Opcode::YieldStar => super::VmSuspendKind::YieldStar,
+                            Opcode::AsyncYieldStar => super::VmSuspendKind::AsyncYieldStar,
+                            _ => super::VmSuspendKind::Await,
+                        };
+                        if kind != super::VmSuspendKind::Initial {
+                            cursor.with_slots(|slots| {
+                                slots.peek(0)?;
+                                Ok(())
+                            })?;
+                        }
+                        cursor.advance(next);
+                        break 'dispatch Ok(VmAction::Suspend(kind));
+                    }
+                    Opcode::Call
+                    | Opcode::TailCall
+                    | Opcode::CallMethod
+                    | Opcode::TailCallMethod => {
+                        break 'dispatch Ok(VmAction::Call {
+                            arguments: published_u16(operand),
+                            method: matches!(
+                                decoded.opcode,
+                                Opcode::CallMethod | Opcode::TailCallMethod
+                            ),
+                            tail: matches!(
+                                decoded.opcode,
+                                Opcode::TailCall | Opcode::TailCallMethod
+                            ),
+                            fallthrough: FallthroughPc::from_decoded(decoded),
+                        });
+                    }
+                    Opcode::Return => {
+                        *pending = Some(cursor.move_owned()?);
+                        cursor.advance(next);
+                        break 'dispatch Ok(VmAction::Complete);
+                    }
+                    Opcode::ReturnUndefined => {
+                        *pending = Some(JsValue::Undefined);
+                        cursor.advance(next);
+                        break 'dispatch Ok(VmAction::Complete);
+                    }
+                    Opcode::Throw => break 'dispatch Ok(VmAction::Throw),
+                    _ => {
+                        // Materialize only the fallback operands here. Passing the whole
+                        // decoder makes its aggregate spill on every dispatch iteration.
+                        break 'dispatch deferred_action(
+                            decoded.opcode,
+                            operand,
+                            decoded.operand_or_zero(1),
+                            decoded.operand_or_zero(2),
+                            FallthroughPc::from_decoded(decoded),
+                            executable.metadata.strict,
+                        )?
+                        .ok_or_else(|| {
+                            Error::internal("published opcode has no execution handler")
+                        });
+                    }
+                }
+                cursor.advance(next);
+            }
+        }?;
+        match action {
+            VmAction::Call {
+                arguments,
+                method,
+                tail,
+                fallthrough,
+            } => {
+                match segment.enter_ordinary(
+                    runtime,
+                    state,
+                    arguments,
+                    method,
+                    tail,
+                    fallthrough,
+                )? {
+                    super::driver::ordinary::Entry::Ordinary => {
+                        #[cfg(feature = "profiling")]
+                        crate::engine::api::profiling::record_owned_execution_event(
+                            "core.internal_call",
+                        );
+                        continue;
+                    }
+                    super::driver::ordinary::Entry::General => return Ok(action),
+                    super::driver::ordinary::Entry::Native(_)
+                    | super::driver::ordinary::Entry::NativeReady => {
+                        return Err(Error::internal(
+                            "ordinary segment entered a native activation",
+                        ));
                     }
                 }
             }
-            Opcode::Gosub => {
-                let return_pc = i32::try_from(next)
-                    .map_err(|_| Error::internal("gosub return PC exceeds Int"))?;
-                cursor.commit_push(JsValue::Int(return_pc))?;
-                next = operand as usize;
-            }
-            Opcode::Ret => {
-                let JsValue::Int(target) = cursor.move_owned()? else {
-                    return Err(Error::internal("invalid ret value"));
-                };
-                next = usize::try_from(target).map_err(|_| Error::internal("invalid ret value"))?;
-                if executable.exec.opcode_at_exec(next).is_none() {
-                    return Err(Error::internal("ret target is not an instruction boundary"));
+            VmAction::Complete => match segment.finish_ordinary(runtime, state)? {
+                super::driver::ordinary::ReturnProgress::Returned => {
+                    #[cfg(feature = "profiling")]
+                    crate::engine::api::profiling::record_owned_execution_event(
+                        "core.internal_return",
+                    );
+                    continue;
                 }
-            }
-            Opcode::DropGosub => {
-                if !matches!(cursor.move_owned()?, JsValue::Int(_)) {
-                    return Err(Error::internal("invalid gosub cleanup value"));
+                super::driver::ordinary::ReturnProgress::Declined => return Ok(action),
+                super::driver::ordinary::ReturnProgress::Property(_) => {
+                    return Err(Error::internal(
+                        "ordinary segment entered a property continuation",
+                    ));
                 }
-            }
-            Opcode::InitialYield
-            | Opcode::Yield
-            | Opcode::YieldStar
-            | Opcode::AsyncYieldStar
-            | Opcode::Await => {
-                let kind = match decoded.opcode {
-                    Opcode::InitialYield => super::VmSuspendKind::Initial,
-                    Opcode::Yield => super::VmSuspendKind::Yield,
-                    Opcode::YieldStar => super::VmSuspendKind::YieldStar,
-                    Opcode::AsyncYieldStar => super::VmSuspendKind::AsyncYieldStar,
-                    _ => super::VmSuspendKind::Await,
-                };
-                if kind != super::VmSuspendKind::Initial {
-                    cursor.with_slots(|slots| {
-                        slots.peek(0)?;
-                        Ok(())
-                    })?;
-                }
-                cursor.advance(next);
-                return Ok(VmAction::Suspend(kind));
-            }
-            Opcode::Call | Opcode::TailCall | Opcode::CallMethod | Opcode::TailCallMethod => {
-                return Ok(VmAction::Call {
-                    arguments: published_u16(operand),
-                    method: matches!(decoded.opcode, Opcode::CallMethod | Opcode::TailCallMethod),
-                    tail: matches!(decoded.opcode, Opcode::TailCall | Opcode::TailCallMethod),
-                    fallthrough: FallthroughPc::from_decoded(decoded),
-                });
-            }
-            Opcode::Return => {
-                execution.pending = Some(cursor.move_owned()?);
-                cursor.advance(next);
-                return Ok(VmAction::Complete);
-            }
-            Opcode::ReturnUndefined => {
-                execution.pending = Some(JsValue::Undefined);
-                cursor.advance(next);
-                return Ok(VmAction::Complete);
-            }
-            Opcode::Throw => return Ok(VmAction::Throw),
-            _ => {
-                // Materialize only the fallback operands here. Passing the whole
-                // decoder makes its aggregate spill on every dispatch iteration.
-                return deferred_action(
-                    decoded.opcode,
-                    operand,
-                    decoded.operand_or_zero(1),
-                    decoded.operand_or_zero(2),
-                    FallthroughPc::from_decoded(decoded),
-                    executable.metadata.strict,
-                )?
-                .ok_or_else(|| Error::internal("published opcode has no execution handler"));
-            }
+            },
+            _ => return Ok(action),
         }
-        cursor.advance(next);
     }
 }
 
@@ -3086,6 +3266,10 @@ fn borrowed_this_read_ready_in_state(state: &RuntimeState, base: &JsValue) -> bo
 // immortal transition, or cleanup checkpoint. Leave room for an aliasing result.
 #[cfg(test)]
 mod captured_read_tests;
+#[cfg(test)]
+mod continuous_call_tests;
+#[cfg(test)]
+mod dynamic_ret_tests;
 
 #[cfg(test)]
 mod execution_span_tests {

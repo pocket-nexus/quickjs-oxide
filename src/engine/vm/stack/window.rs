@@ -17,6 +17,7 @@ pub(in crate::engine::vm) struct FrameExecution<'a> {
 /// Borrowed projections of the current frame. No frame window or JS owner is
 /// copied, and these borrows prevent a call/return transition during execution.
 pub(in crate::engine::vm) struct FrameTurn<'a> {
+    #[cfg(test)]
     pub id: crate::engine::vm::frame::FrameId,
     pub property_generation: &'a mut u64,
     pub active_frame: crate::engine::vm::frames::ActiveFrameToken,
@@ -26,6 +27,7 @@ pub(in crate::engine::vm) struct FrameTurn<'a> {
     pub fault_pc: &'a mut usize,
     pub resume_pc: &'a mut usize,
     pub pending: &'a mut Option<JsValue>,
+    pub selected_native: &'a mut Option<crate::engine::object::LinkedNativeSelection>,
     pub selected_named_read: &'a mut Option<crate::engine::vm::property_driver::SelectedNamedRead>,
 }
 
@@ -52,14 +54,15 @@ impl<'a> FrameExecution<'a> {
 
     #[inline(always)]
     pub(in crate::engine::vm) fn frame(&mut self) -> FrameTurn<'_> {
-        let (id, frame) = self
+        let (_id, frame) = self
             .execution
             .frames
             .current_frame_mut()
             .expect("an admitted ordinary execution has a current frame");
         let body = &mut *frame.cold;
         FrameTurn {
-            id,
+            #[cfg(test)]
+            id: _id,
             property_generation: &mut frame.property_generation,
             active_frame: frame.active_frame,
             owners: &mut body.owners,
@@ -73,6 +76,7 @@ impl<'a> FrameExecution<'a> {
             fault_pc: &mut frame.fault_pc,
             resume_pc: &mut frame.resume_pc,
             pending: &mut self.execution.pending,
+            selected_native: &mut self.execution.selected_native,
             selected_named_read: &mut self.execution.selected_named_read,
         }
     }

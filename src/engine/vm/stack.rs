@@ -317,7 +317,8 @@ pub(in crate::engine::vm) struct NamedReadOperation {
     pub keep_receiver: bool,
 }
 pub(in crate::engine::vm) use window::{
-    CheckedOrdinaryCallOperands, DirectSlot, FrameSlots, FrameTransaction, LinkedReadCompletion,
+    CheckedOrdinaryCallOperands, DirectSlot, FrameExecution, FrameSlots, FrameTransaction,
+    FrameTurn, LinkedReadCompletion,
 };
 
 impl SlotStore {

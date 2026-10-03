@@ -49,6 +49,12 @@ pub(super) fn run(
             let mut state = runtime.0.state.borrow_mut();
             crate::engine::vm::execute::execute_frame_in_state(runtime, &mut state, execution, id)
         };
+        // A segment can install and retire several ordinary frames. Its cold
+        // action and fault PC belong to the actual current frame at exit.
+        id = execution
+            .frames
+            .current_id()
+            .ok_or_else(|| invariant("execution segment lost current frame"))?;
         // A failed owned release may have partially changed heap cleanup.
         // Do not materialize diagnostics or run another adapter on that state.
         if runtime.0.poisoned.get() {
