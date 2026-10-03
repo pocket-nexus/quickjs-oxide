@@ -517,6 +517,7 @@ impl FrameSlots<'_> {
         Ok(())
     }
 
+    #[cfg(test)]
     pub(in crate::engine::vm) fn property_ic_read(
         &mut self,
         runtime: &Runtime,
@@ -524,8 +525,14 @@ impl FrameSlots<'_> {
         operation: super::NamedReadOperation,
         native: &mut Option<crate::engine::object::LinkedNativeSelection>,
     ) -> Result<super::PropertyReadProgress, Error> {
-        self.store
-            .property_ic_read_current(self.window, runtime, executable, operation, native)
+        self.property_ic_read_in_state(
+            &mut runtime.0.state.borrow_mut(),
+            &runtime.0.poisoned,
+            runtime.domain_id(),
+            executable,
+            operation,
+            native,
+        )
     }
 
     pub(in crate::engine::vm) fn has_operand_capacity(&self, extra: usize) -> bool {
@@ -639,152 +646,12 @@ impl FrameSlots<'_> {
             .rotate_operands_current(self.window, skip_top, count, left)
     }
 
-    pub(in crate::engine::vm) fn insert_copy(
-        &mut self,
-        runtime: &Runtime,
-        source_from_top: usize,
-        destination_from_top: usize,
-    ) -> Result<(), Error> {
-        self.store
-            .insert_copy_current(runtime, self.window, source_from_top, destination_from_top)
-    }
-
-    pub(in crate::engine::vm) fn duplicate_operands(
-        &mut self,
-        runtime: &Runtime,
-        count: usize,
-    ) -> Result<(), Error> {
-        self.store
-            .duplicate_operands_current(runtime, self.window, count)
-    }
-
-    pub(in crate::engine::vm) fn array_kept_immediate_read(
-        &mut self,
-        runtime: &Runtime,
-        keep_key: bool,
-    ) -> Result<bool, Error> {
-        let index = match self.peek(0)? {
-            JsValue::Int(index) if *index >= 0 => *index as u32,
-            JsValue::String(id) => {
-                if !keep_key
-                    && !matches!(
-                        runtime.slot_value_release_readiness_jsvalue(self.peek(0)?),
-                        Ok(crate::engine::heap::SlotReleaseReadiness::Ready)
-                    )
-                {
-                    return Ok(false);
-                }
-                let text = runtime.0.state.borrow().heap.string_fast(*id).clone();
-                let Some(index) = crate::engine::atom::AtomTable::canonical_array_index(&text)
-                else {
-                    return Ok(false);
-                };
-                index
-            }
-            _ => return Ok(false),
-        };
-        let Some(value) = runtime.try_dense_array_kept_read(self.peek(1)?, index) else {
-            return Ok(false);
-        };
-        if !keep_key {
-            runtime
-                .release_jsvalue(self.pop()?)
-                .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
-        }
-        self.push(value)?;
-        Ok(true)
-    }
+    #[cfg(test)]
     pub(in crate::engine::vm) fn array_immediate_read(
         &mut self,
         runtime: &Runtime,
     ) -> Result<bool, Error> {
-        self.store
-            .array_immediate_read_current(self.window, runtime)
-    }
-
-    /// A decline leaves both operands untouched for the property driver.
-    /// Success cannot run cleanup, and consumes the same two owners as PutField.
-    #[inline(always)]
-    pub(in crate::engine::vm) fn try_scalar_field_write(
-        &mut self,
-        runtime: &Runtime,
-        executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
-        key_index: u32,
-    ) -> Result<bool, Error> {
-        if !runtime
-            .try_linked_scalar_field_write(self.peek(1)?, self.peek(0)?, executable, key_index)
-            .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?
-        {
-            return Ok(false);
-        }
-        let _scalar = self.pop()?;
-        let base = self.pop()?;
-        runtime
-            .release_jsvalue(base)
-            .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "ordinary_scalar_field_write_in_execute",
-        );
-        Ok(true)
-    }
-
-    /// Commit a scalar element write while the operands remain rooted. Both
-    /// leaves prove that retiring the receiver cannot run heap cleanup; a
-    /// decline leaves the three operands for the general property protocol.
-    #[inline(always)]
-    pub(in crate::engine::vm) fn try_scalar_element_write(
-        &mut self,
-        runtime: &Runtime,
-    ) -> Result<bool, Error> {
-        let JsValue::Int(index) = self.peek(1)? else {
-            return Ok(false);
-        };
-        let Ok(index) = u32::try_from(*index) else {
-            return Ok(false);
-        };
-        let base = self.peek(2)?;
-        let value = self.peek(0)?;
-        let dense = runtime
-            .try_dense_array_write_scalar(base, index, value)
-            .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
-        let typed = if dense {
-            false
-        } else {
-            match value {
-                JsValue::Int(value) => {
-                    runtime.try_typed_array_number_write(base, index, f64::from(*value))
-                }
-                JsValue::Float(value) => runtime.try_typed_array_number_write(base, index, *value),
-                _ => false,
-            }
-        };
-        if !dense && !typed {
-            return Ok(false);
-        }
-        let value = self.pop()?;
-        let key = self.pop()?;
-        let base = self.pop()?;
-        debug_assert!(matches!(
-            value,
-            JsValue::Undefined
-                | JsValue::Null
-                | JsValue::Bool(_)
-                | JsValue::Int(_)
-                | JsValue::Float(_)
-                | JsValue::ShortBigInt(_)
-        ));
-        debug_assert!(matches!(key, JsValue::Int(_)));
-        runtime
-            .release_jsvalue(base)
-            .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(if typed {
-            "typed_array_number_write_in_execute"
-        } else {
-            "dense_array_scalar_write_in_execute"
-        });
-        Ok(true)
+        self.array_immediate_read_in_state(&mut runtime.0.state.borrow_mut(), &runtime.0.poisoned)
     }
 
     #[cfg(test)]
@@ -1172,7 +1039,10 @@ mod primitive_transaction_tests {
             };
             assert_eq!(
                 crate::engine::vm::execute::numeric_local_array_region(
-                    &mut slots, &runtime, &region, true,
+                    &mut slots,
+                    &mut runtime.0.state.borrow_mut(),
+                    &region,
+                    true,
                 ),
                 Err(crate::engine::numeric_region_miss::NumericRegionMiss::OperandCapacity),
             );

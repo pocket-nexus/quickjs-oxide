@@ -3,7 +3,7 @@ use crate::engine::{
     api::{Runtime, Value},
     heap::{RawId, VarRefId, roots::VarRefView},
     value::JsValue,
-    vm::{bindings::try_read_captured_immediate, execution::ExecutionLimits},
+    vm::{bindings::try_read_captured_immediate_in_state, execution::ExecutionLimits},
 };
 
 fn captured_frame(
@@ -166,10 +166,10 @@ fn captured_heap_reads_keep_the_original_driver_and_result_owner() {
 }
 
 #[test]
-fn captured_scalar_reads_decline_cleanup_and_leave_the_fault_checkpoint_unchanged() {
+fn captured_scalar_reads_use_current_state_without_draining_external_cleanup() {
     let runtime = Runtime::new();
     let mut context = runtime.new_context().expect("create context");
-    let (mut execution, id, pc, cell) = captured_frame(&runtime, &mut context, false);
+    let (mut execution, id, _pc, cell) = captured_frame(&runtime, &mut context, false);
     let count = runtime
         .0
         .state
@@ -185,14 +185,9 @@ fn captured_scalar_reads_decline_cleanup_and_leave_the_fault_checkpoint_unchange
     assert!(runtime.0.deferred_references.has_pending());
     assert!(matches!(
         super::execute_frame(&runtime, &mut execution, id).unwrap(),
-        super::VmAction::Binding {
-            write: false,
-            checked: false,
-            ..
-        }
+        super::VmAction::Complete
     ));
     let frame = execution.frames.current_mut(id).unwrap();
-    assert_eq!((frame.fault_pc, frame.resume_pc), (pc, pc));
     assert_eq!(execution.slots.depth(&frame.window), 0);
     assert_eq!(
         runtime.0.state.borrow().heap.var_ref_strong_count(cell),
@@ -200,10 +195,6 @@ fn captured_scalar_reads_decline_cleanup_and_leave_the_fault_checkpoint_unchange
     );
     assert!(runtime.0.deferred_references.has_pending());
     runtime.drain_deferred_references().unwrap();
-    assert!(matches!(
-        super::execute_frame(&runtime, &mut execution, id).unwrap(),
-        super::VmAction::Complete
-    ));
     assert_eq!(execution.pending.take(), Some(JsValue::Int(7)));
 }
 
@@ -215,15 +206,9 @@ fn captured_scalar_admission_preserves_storage_permission_saturation_and_sentine
         .new_var_ref(JsValue::Int(1), false, false, ClosureVariableKind::Normal)
         .unwrap();
     assert_eq!(
-        try_read_captured_immediate(&runtime, &root),
+        try_read_captured_immediate_in_state(&runtime.0.state.borrow(), root.id()),
         Some(JsValue::Int(1))
     );
-    let foreign = Runtime::new();
-    assert_eq!(try_read_captured_immediate(&foreign, &root), None);
-    {
-        let _state = runtime.0.state.borrow();
-        assert_eq!(try_read_captured_immediate(&runtime, &root), None);
-    }
     for value in [
         JsValue::Undefined,
         JsValue::Null,
@@ -234,7 +219,8 @@ fn captured_scalar_admission_preserves_storage_permission_saturation_and_sentine
     ] {
         let raw = value.as_raw();
         runtime.write_var_ref(&root, value).unwrap();
-        let value = try_read_captured_immediate(&runtime, &root).unwrap();
+        let value =
+            try_read_captured_immediate_in_state(&runtime.0.state.borrow(), root.id()).unwrap();
         match (&raw, &value) {
             (crate::engine::heap::RawValue::Float(expected), JsValue::Float(actual)) => {
                 assert_eq!(expected.to_bits(), actual.to_bits());
@@ -249,7 +235,10 @@ fn captured_scalar_admission_preserves_storage_permission_saturation_and_sentine
             .borrow_mut()
             .heap
             .set_strong_count_for_test(RawId::VarRef(root.id()), count);
-        assert_eq!(try_read_captured_immediate(&runtime, &root), None);
+        assert_eq!(
+            try_read_captured_immediate_in_state(&runtime.0.state.borrow(), root.id()),
+            None
+        );
         assert_eq!(
             runtime
                 .0
@@ -267,9 +256,15 @@ fn captured_scalar_admission_preserves_storage_permission_saturation_and_sentine
         .heap
         .set_strong_count_for_test(RawId::VarRef(root.id()), 1);
     runtime.reset_var_ref_uninitialized(&root).unwrap();
-    assert_eq!(try_read_captured_immediate(&runtime, &root), None);
+    assert_eq!(
+        try_read_captured_immediate_in_state(&runtime.0.state.borrow(), root.id()),
+        None
+    );
     let private = runtime
         .new_uninitialized_captured_var_ref(true, true, ClosureVariableKind::PrivateField)
         .unwrap();
-    assert_eq!(try_read_captured_immediate(&runtime, &private), None);
+    assert_eq!(
+        try_read_captured_immediate_in_state(&runtime.0.state.borrow(), private.id()),
+        None
+    );
 }

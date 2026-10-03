@@ -691,42 +691,28 @@ fn global_cell_view<'a>(
     Ok((descriptor, root))
 }
 
-/// Complete only the initialized-cell portion of a global read. Pending cleanup
-/// and uninitialized cells retain the original environment-driver boundary.
-/// No callback, release or mutation may intervene between reading the raw cell
-/// and acquiring its checked output edge.
-pub(super) fn try_read_global_cell(
+/// Consume the initialized cell directly through the current execution access.
+/// The closure owns its raw value until the output edge is installed.
+pub(super) fn try_read_global_cell_in_state(
     runtime: &Runtime,
+    state: &mut crate::engine::heap::runtime::RuntimeState,
     executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
     roots: &super::closure::ClosureSlots,
     index: u16,
 ) -> Result<Option<JsValue>, Error> {
-    if runtime.0.deferred_references.has_pending() {
+    let (_, root) = global_cell_view(runtime, executable, roots, index)?;
+    let raw = state
+        .heap
+        .var_ref(root.id())
+        .map_err(heap_error_to_vm_error)?
+        .value
+        .clone();
+    if matches!(raw, crate::engine::heap::RawValue::Uninitialized) {
         return Ok(None);
     }
-    let (_, root) = global_cell_view(runtime, executable, roots, index)?;
-    let value = {
-        let Ok(state) = runtime.0.state.try_borrow() else {
-            return Ok(None);
-        };
-        if state.heap.has_pending_zero_cleanup() {
-            return Ok(None);
-        }
-        let raw = state
-            .heap
-            .var_ref(root.id())
-            .map_err(heap_error_to_vm_error)?
-            .value
-            .clone();
-        if matches!(raw, crate::engine::heap::RawValue::Uninitialized) {
-            return Ok(None);
-        }
-        JsValue::from_raw(raw)
-            .ok_or_else(|| Error::internal("global cell held an internal value sentinel"))?
-    };
-    // Keep the exact checked retain, including overflow and near-saturation
-    // behavior. The live cell owns the raw edge until this duplicate completes.
-    runtime
+    let value = JsValue::from_raw(raw)
+        .ok_or_else(|| Error::internal("global cell held an internal value sentinel"))?;
+    state
         .dup_jsvalue(&value)
         .map(Some)
         .map_err(runtime_error_to_vm_error)

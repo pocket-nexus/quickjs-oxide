@@ -10,6 +10,7 @@ use crate::engine::code::bytecode::{
 use crate::engine::code::exec::PublishedDecoded;
 use crate::engine::code::exec_opcode::Opcode;
 use crate::engine::code::region::{DirectSource, NumberSource, PublishedNumericRegion};
+use crate::engine::heap::runtime::RuntimeState;
 use crate::engine::heap::{BytecodeConstant, RawValue};
 use crate::engine::numeric_region_miss::NumericRegionMiss as Miss;
 use crate::engine::value::JsValue;
@@ -21,7 +22,7 @@ use crate::engine::vm::frame::FrameId;
 use crate::engine::vm::frames::ActiveFrameToken;
 use crate::engine::vm::stack::{
     DirectSlot, FrameSlots, FrameTransaction, NamedReadOperation, PropertyReadProgress,
-    StoreProgress, copy_value,
+    StoreProgress, copy_value_in_state,
 };
 
 #[cfg(test)]
@@ -78,18 +79,25 @@ struct FrameCursor<'a> {
     transaction: FrameTransaction<'a>,
     published_fault: &'a mut usize,
     published_resume: &'a mut usize,
+    poisoned: &'a std::cell::Cell<bool>,
     fault: usize,
     resume: usize,
 }
 
 impl<'a> FrameCursor<'a> {
-    fn new(transaction: FrameTransaction<'a>, fault: &'a mut usize, resume: &'a mut usize) -> Self {
+    fn new(
+        transaction: FrameTransaction<'a>,
+        fault: &'a mut usize,
+        resume: &'a mut usize,
+        poisoned: &'a std::cell::Cell<bool>,
+    ) -> Self {
         Self {
             transaction,
             fault: *fault,
             resume: *resume,
             published_fault: fault,
             published_resume: resume,
+            poisoned,
         }
     }
 
@@ -114,45 +122,36 @@ impl<'a> FrameCursor<'a> {
         self.with_slots(|slots| slots.pop())
     }
 
-    fn copy_owned(
-        &self,
-        runtime: &crate::engine::api::runtime::Runtime,
-        value: &JsValue,
-    ) -> Result<JsValue, Error> {
-        copy_value(runtime, value)
+    fn copy_owned(&self, state: &mut RuntimeState, value: &JsValue) -> Result<JsValue, Error> {
+        copy_value_in_state(state, value)
     }
 
     fn commit_push(&mut self, value: JsValue) -> Result<(), Error> {
         self.with_slots(|slots| slots.push(value))
     }
 
-    fn commit_owned(
-        &mut self,
-        runtime: &crate::engine::api::runtime::Runtime,
-        value: JsValue,
-    ) -> Result<(), Error> {
+    fn commit_owned(&mut self, state: &mut RuntimeState, value: JsValue) -> Result<(), Error> {
         let mut pending = Some(value);
         let result = self.with_slots(|slots| slots.push_pending(&mut pending));
         if let Some(value) = pending {
-            runtime
-                .release_jsvalue(value)
+            state
+                .release_owned_jsvalue(self.poisoned, value)
                 .map_err(runtime_error_to_vm_error)?;
         }
         result
     }
 
-    /// Complete a synchronous comparison while retaining the established
-    /// activation boundary. Only the value lookup is inside a slots borrow;
-    /// left and right releases run outside it, in the original order, so
-    /// deferred cleanup and final-owner release keep their normal protocol.
+    /// Lookup and cleanup use the same state access. Fault publication updates
+    /// an already materialized frame; an error materializes the virtual frame
+    /// only after this segment returns.
     fn strict_comparison(
         &mut self,
-        runtime: &crate::engine::api::runtime::Runtime,
+        state: &mut RuntimeState,
         token: ActiveFrameToken,
     ) -> Result<bool, Error> {
-        self.publish_fault(runtime, token)?;
+        self.publish_fault(state, token)?;
         let equal = self.with_slots(|slots| {
-            runtime
+            state
                 .strict_equal_jsvalue(slots.peek(1)?, slots.peek(0)?)
                 .map_err(runtime_error_to_vm_error)
         })?;
@@ -160,24 +159,27 @@ impl<'a> FrameCursor<'a> {
         // owners in place for frame cleanup; no owner crosses a fallible lookup.
         let right = self.move_owned()?;
         let left = self.move_owned()?;
-        runtime
-            .release_jsvalue(left)
+        state
+            .release_owned_jsvalue(self.poisoned, left)
             .map_err(runtime_error_to_vm_error)?;
-        runtime
-            .release_jsvalue(right)
+        state
+            .release_owned_jsvalue(self.poisoned, right)
             .map_err(runtime_error_to_vm_error)?;
         Ok(equal)
     }
 
     fn publish_fault(
         &mut self,
-        runtime: &crate::engine::api::runtime::Runtime,
+        state: &mut RuntimeState,
         token: ActiveFrameToken,
     ) -> Result<(), Error> {
         *self.published_fault = self.fault;
-        runtime
-            .update_active_bytecode_pc(token, super::BytecodePc::new(self.fault))
-            .map_err(runtime_error_to_vm_error)
+        if token.is_materialized() {
+            state
+                .update_active_bytecode_pc(token, super::BytecodePc::new(self.fault))
+                .map_err(runtime_error_to_vm_error)?;
+        }
+        Ok(())
     }
 }
 
@@ -307,7 +309,6 @@ pub(super) enum VmAction {
         source: PrivateNameSource,
         access: super::private_access::Access,
     },
-    StrictEquality(bool),
     Numeric {
         kind: super::numeric::operation::NumericKind,
         fallthrough: FallthroughPc,
@@ -376,7 +377,6 @@ impl VmAction {
             Self::BindingError { .. } => "execute.action.binding_error",
             Self::PrivateInitialize { .. } => "execute.action.private_initialize",
             Self::PrivateAccess { .. } => "execute.action.private_access",
-            Self::StrictEquality(_) => "execute.action.strict_equality",
             Self::Numeric { .. } => "execute.action.numeric",
             Self::ForIn(_) => "execute.action.for_in",
             Self::CopyData { .. } => "execute.action.copy_data",
@@ -389,8 +389,19 @@ impl VmAction {
     }
 }
 
+#[cfg(test)]
 pub(super) fn execute_frame(
     runtime: &Runtime,
+    execution: &mut RunningExecution,
+    id: FrameId,
+) -> Result<VmAction, Error> {
+    let mut state = runtime.0.state.borrow_mut();
+    execute_frame_in_state(runtime, &mut state, execution, id)
+}
+
+pub(super) fn execute_frame_in_state(
+    runtime: &Runtime,
+    state: &mut RuntimeState,
     execution: &mut RunningExecution,
     id: FrameId,
 ) -> Result<VmAction, Error> {
@@ -400,11 +411,12 @@ pub(super) fn execute_frame(
     let body = &mut *frame.cold;
     let executable = &*body.executable;
     #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_execution_static(runtime, executable);
+    crate::engine::api::profiling::record_execution_static_in_state(runtime, state, executable);
     let mut cursor = FrameCursor::new(
         execution.slots.frame_transaction(&mut body.window)?,
         &mut frame.fault_pc,
         &mut frame.resume_pc,
+        &runtime.0.poisoned,
     );
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_execution_event("core.pc_authentication");
@@ -457,12 +469,12 @@ pub(super) fn execute_frame(
                     cursor.commit_push(JsValue::ShortBigInt(*value))?
                 }
                 Some(BytecodeConstant::Value(RawValue::String(value))) => {
-                    let owned = cursor.copy_owned(runtime, &JsValue::String(*value))?;
-                    cursor.commit_owned(runtime, owned)?;
+                    let owned = cursor.copy_owned(state, &JsValue::String(*value))?;
+                    cursor.commit_owned(state, owned)?;
                 }
                 Some(BytecodeConstant::Value(RawValue::BigInt(value))) => {
-                    let owned = cursor.copy_owned(runtime, &JsValue::BigInt(*value))?;
-                    cursor.commit_owned(runtime, owned)?;
+                    let owned = cursor.copy_owned(state, &JsValue::BigInt(*value))?;
+                    cursor.commit_owned(state, owned)?;
                 }
                 _ => {
                     return Ok(VmAction::Pure(
@@ -483,12 +495,13 @@ pub(super) fn execute_frame(
                     let field_index = decoded.operand(1);
                     let selected = cursor.with_slots(|slots| {
                         if !slots.has_operand_capacity(1)
-                            || !borrowed_this_read_ready(runtime, base)
+                            || !borrowed_this_read_ready_in_state(state, base)
                         {
                             return Ok(None);
                         }
                         let mut miss = crate::engine::object::NamedSelectionMiss::ContinueLookup;
-                        let value = runtime.select_linked_data_into(
+                        let value = state.select_linked_data_into(
+                            runtime.domain_id(),
                             base,
                             executable,
                             next,
@@ -518,7 +531,7 @@ pub(super) fn execute_frame(
                         },
                     );
                     if let Some(value) = selected {
-                        cursor.commit_owned(runtime, value)?;
+                        cursor.commit_owned(state, value)?;
                         #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_owned_execution_event(
                             "local_completion.borrowed_this_read",
@@ -528,32 +541,36 @@ pub(super) fn execute_frame(
                     }
                 }
                 let value = if let Some(value) = normalized {
-                    cursor.copy_owned(runtime, value)?
+                    cursor.copy_owned(state, value)?
                 } else if executable.metadata.strict
                     || matches!(body.owners.input.this_value, JsValue::Object(_))
                 {
-                    cursor.copy_owned(runtime, &body.owners.input.this_value)?
+                    cursor.copy_owned(state, &body.owners.input.this_value)?
                 } else if matches!(
                     body.owners.input.this_value,
                     JsValue::Undefined | JsValue::Null
                 ) {
-                    let global = body.owners.input.callee_global(runtime, executable.realm)?;
-                    cursor.copy_owned(runtime, &JsValue::Object(global))?
+                    let global = body
+                        .owners
+                        .input
+                        .callee_global_in_state(state, executable.realm)?;
+                    cursor.copy_owned(state, &JsValue::Object(global))?
                 } else {
                     return Ok(VmAction::NormalizeThis);
                 };
-                cursor.commit_owned(runtime, value)?;
+                cursor.commit_owned(state, value)?;
             }
             Opcode::PushNewTarget => {
-                let value = cursor.copy_owned(runtime, &body.owners.input.new_target)?;
-                cursor.commit_owned(runtime, value)?;
+                let value = cursor.copy_owned(state, &body.owners.input.new_target)?;
+                cursor.commit_owned(state, value)?;
             }
             Opcode::PushActiveFunction => {
                 let object = body.owners.function.object_id();
-                runtime
-                    .retain_object_handle(object)
+                state
+                    .heap
+                    .retain_object(object)
                     .map_err(|error| Error::internal(error.to_string()))?;
-                cursor.commit_owned(runtime, JsValue::Object(object))?;
+                cursor.commit_owned(state, JsValue::Object(object))?;
             }
             Opcode::CheckCtor => {
                 if matches!(body.owners.input.new_target, JsValue::Undefined) {
@@ -598,7 +615,7 @@ pub(super) fn execute_frame(
                     "number_local_inc",
                     Some("guard"),
                 );
-                if let Some(action) = read_local::<false>(&mut cursor, runtime, index)? {
+                if let Some(action) = read_local::<false>(&mut cursor, state, index)? {
                     return Ok(action);
                 }
             }
@@ -625,7 +642,7 @@ pub(super) fn execute_frame(
                         match cursor.with_slots(|slots| {
                             Ok(numeric_local_array_region(
                                 slots,
-                                runtime,
+                                state,
                                 region,
                                 decoded.opcode == Opcode::NumericArrayAccumulate,
                             ))
@@ -674,7 +691,7 @@ pub(super) fn execute_frame(
                                 else {
                                     return Ok(Err(Miss::ReceiverBindingUnavailable));
                                 };
-                                let element = match runtime
+                                let element = match state
                                     .peek_dense_number_result(product_base, product_index)
                                 {
                                     Ok(value) => value,
@@ -691,7 +708,7 @@ pub(super) fn execute_frame(
                             else {
                                 return Ok(Err(Miss::ReceiverBindingUnavailable));
                             };
-                            Ok(runtime.try_add_array_own_number(base, index, delta))
+                            Ok(state.try_add_array_own_number(base, index, delta))
                         })?;
                         match result {
                             Ok(()) => {
@@ -735,7 +752,7 @@ pub(super) fn execute_frame(
                                 return Ok(Err(Miss::ReceiverBindingUnavailable));
                             };
                             let value =
-                                match runtime.peek_dense_number_result(source_base, source_index) {
+                                match state.peek_dense_number_result(source_base, source_index) {
                                     Ok(value) => value,
                                     Err(reason) => return Ok(Err(reason)),
                                 };
@@ -744,7 +761,7 @@ pub(super) fn execute_frame(
                             else {
                                 return Ok(Err(Miss::ReceiverBindingUnavailable));
                             };
-                            Ok(runtime.try_replace_array_own_number(target_base, index, value))
+                            Ok(state.try_replace_array_own_number(target_base, index, value))
                         })?;
                         match result {
                             Ok(()) => {
@@ -783,7 +800,7 @@ pub(super) fn execute_frame(
                             else {
                                 return Ok(Err(Miss::ReceiverBindingUnavailable));
                             };
-                            let element = match runtime.peek_dense_number_result(base, index) {
+                            let element = match state.peek_dense_number_result(base, index) {
                                 Ok(value) => value,
                                 Err(reason) => return Ok(Err(reason)),
                             };
@@ -803,76 +820,70 @@ pub(super) fn execute_frame(
                         }
                     }
                     Opcode::NumericArrayStoreAndLocal => {
-                        if !frame.active_frame.is_materialized() {
-                            miss_reason = Some(Miss::FrameNotMaterialized);
-                            false
-                        } else {
-                            let generation = frame.property_generation.checked_add(1);
-                            let result = cursor.with_slots(|slots| {
-                                if generation.is_none() {
-                                    return Ok(Err(Miss::PropertyGenerationOverflow));
-                                }
-                                if !slots.has_operand_capacity(region.peak as usize) {
-                                    return Ok(Err(Miss::OperandCapacity));
-                                }
-                                let Some(value) = slots.peek(0)?.as_number_repr() else {
-                                    return Ok(Err(Miss::DeltaNotNumber));
-                                };
-                                let Some(index) =
-                                    slots.peek(1)?.as_number_repr().and_then(array_index)
-                                else {
-                                    return Ok(Err(Miss::IndexNotNumericInteger));
-                                };
-                                let eligible = matches!(
-                                    slots.local(region.destination)?,
-                                    FrameBinding::Direct(
-                                        JsValue::Undefined
-                                            | JsValue::Null
-                                            | JsValue::Bool(_)
-                                            | JsValue::Int(_)
-                                            | JsValue::Float(_)
-                                    )
-                                );
-                                if !eligible {
-                                    return Ok(Err(Miss::DestinationOrReceiverUnavailable));
-                                }
-                                let base = slots.peek(2)?;
-                                if let Err(reason) =
-                                    runtime.try_replace_array_own_number(base, index, value)
-                                {
-                                    return Ok(Err(reason));
-                                }
-                                let old = slots.replace_local(
-                                    region.destination,
-                                    FrameBinding::Direct(number_value(value)),
-                                )?;
-                                debug_assert!(matches!(
-                                    old,
-                                    FrameBinding::Direct(
-                                        JsValue::Undefined
-                                            | JsValue::Null
-                                            | JsValue::Bool(_)
-                                            | JsValue::Int(_)
-                                            | JsValue::Float(_)
-                                    )
-                                ));
-                                let _value = slots.pop()?;
-                                let _index = slots.pop()?;
-                                Ok(Ok(slots.pop()?))
-                            })?;
-                            match result {
-                                Ok(base) => {
-                                    frame.property_generation = generation.unwrap();
-                                    cursor.publish_fault(runtime, frame.active_frame)?;
-                                    runtime
-                                        .release_jsvalue(base)
-                                        .map_err(runtime_error_to_vm_error)?;
-                                    true
-                                }
-                                Err(reason) => {
-                                    miss_reason = Some(reason);
-                                    false
-                                }
+                        cursor.publish_fault(state, frame.active_frame)?;
+                        let generation = frame.property_generation.checked_add(1);
+                        let result = cursor.with_slots(|slots| {
+                            if generation.is_none() {
+                                return Ok(Err(Miss::PropertyGenerationOverflow));
+                            }
+                            if !slots.has_operand_capacity(region.peak as usize) {
+                                return Ok(Err(Miss::OperandCapacity));
+                            }
+                            let Some(value) = slots.peek(0)?.as_number_repr() else {
+                                return Ok(Err(Miss::DeltaNotNumber));
+                            };
+                            let Some(index) = slots.peek(1)?.as_number_repr().and_then(array_index)
+                            else {
+                                return Ok(Err(Miss::IndexNotNumericInteger));
+                            };
+                            let eligible = matches!(
+                                slots.local(region.destination)?,
+                                FrameBinding::Direct(
+                                    JsValue::Undefined
+                                        | JsValue::Null
+                                        | JsValue::Bool(_)
+                                        | JsValue::Int(_)
+                                        | JsValue::Float(_)
+                                )
+                            );
+                            if !eligible {
+                                return Ok(Err(Miss::DestinationOrReceiverUnavailable));
+                            }
+                            let base = slots.peek(2)?;
+                            if let Err(reason) =
+                                state.try_replace_array_own_number(base, index, value)
+                            {
+                                return Ok(Err(reason));
+                            }
+                            let old = slots.replace_local(
+                                region.destination,
+                                FrameBinding::Direct(number_value(value)),
+                            )?;
+                            debug_assert!(matches!(
+                                old,
+                                FrameBinding::Direct(
+                                    JsValue::Undefined
+                                        | JsValue::Null
+                                        | JsValue::Bool(_)
+                                        | JsValue::Int(_)
+                                        | JsValue::Float(_)
+                                )
+                            ));
+                            let _value = slots.pop()?;
+                            let _index = slots.pop()?;
+                            Ok(Ok(slots.pop()?))
+                        })?;
+                        match result {
+                            Ok(base) => {
+                                frame.property_generation = generation.unwrap();
+                                state
+                                    .release_owned_jsvalue(&runtime.0.poisoned, base)
+                                    .map_err(runtime_error_to_vm_error)?;
+                                true
+                            }
+                            Err(reason) => {
+                                miss_reason = Some(reason);
+                                false
                             }
                         }
                     }
@@ -893,7 +904,7 @@ pub(super) fn execute_frame(
                             else {
                                 return Ok(Err(Miss::ReceiverBindingUnavailable));
                             };
-                            Ok(runtime.peek_dense_number_result(base, index).map(|left| {
+                            Ok(state.peek_dense_number_result(base, index).map(|left| {
                                 compare_direct_numbers(region.comparison as u16, left, rhs)
                             }))
                         })?;
@@ -956,25 +967,25 @@ pub(super) fn execute_frame(
                     Opcode::NumericArrayStoreAndLocal => {
                         cursor.with_slots(|slots| {
                             slots.peek(2)?;
-                            slots.insert_copy(runtime, 0, 3)
+                            slots.insert_copy_in_state(state, 0, 3)
                         })?;
                         None
                     }
                     Opcode::NumericArrayAccumulate => {
                         if region.checked {
-                            read_local::<true>(&mut cursor, runtime, region.destination)?
+                            read_local::<true>(&mut cursor, state, region.destination)?
                         } else {
-                            read_local::<false>(&mut cursor, runtime, region.destination)?
+                            read_local::<false>(&mut cursor, state, region.destination)?
                         }
                     }
                     _ => match region.array {
                         DirectSource::Local(index) => {
-                            read_local::<false>(&mut cursor, runtime, index)?
+                            read_local::<false>(&mut cursor, state, index)?
                         }
                         DirectSource::CheckedLocal(index) => {
-                            read_local::<true>(&mut cursor, runtime, index)?
+                            read_local::<true>(&mut cursor, state, index)?
                         }
-                        DirectSource::Argument(index) => read_arg(&mut cursor, runtime, index)?,
+                        DirectSource::Argument(index) => read_arg(&mut cursor, state, index)?,
                     },
                 };
                 if let Some(action) = first {
@@ -1018,10 +1029,10 @@ pub(super) fn execute_frame(
                     continue;
                 }
                 if decoded.opcode == Opcode::UpdateLocalDiscardCheck {
-                    if let Some(action) = read_local::<true>(&mut cursor, runtime, index)? {
+                    if let Some(action) = read_local::<true>(&mut cursor, state, index)? {
                         return Ok(action);
                     }
-                } else if let Some(action) = read_local::<false>(&mut cursor, runtime, index)? {
+                } else if let Some(action) = read_local::<false>(&mut cursor, state, index)? {
                     return Ok(action);
                 }
             }
@@ -1031,7 +1042,7 @@ pub(super) fn execute_frame(
                 crate::engine::api::profiling::record_execution_dispatch(
                     runtime, executable, pc, false,
                 );
-                if let Some(action) = read_local::<false>(&mut cursor, runtime, index)? {
+                if let Some(action) = read_local::<false>(&mut cursor, state, index)? {
                     return Ok(action);
                 }
             }
@@ -1041,7 +1052,7 @@ pub(super) fn execute_frame(
                 crate::engine::api::profiling::record_execution_dispatch(
                     runtime, executable, pc, false,
                 );
-                if let Some(action) = read_local::<true>(&mut cursor, runtime, index)? {
+                if let Some(action) = read_local::<true>(&mut cursor, state, index)? {
                     return Ok(action);
                 }
             }
@@ -1081,7 +1092,7 @@ pub(super) fn execute_frame(
                     "number_arg_inc",
                     Some("guard"),
                 );
-                if let Some(action) = read_arg(&mut cursor, runtime, index)? {
+                if let Some(action) = read_arg(&mut cursor, state, index)? {
                     return Ok(action);
                 }
             }
@@ -1140,7 +1151,7 @@ pub(super) fn execute_frame(
                     let Some(base) = slots.direct_value(base) else {
                         return Ok(false);
                     };
-                    let Some(read) = runtime.peek_dense_number(base, index) else {
+                    let Some(read) = state.peek_dense_number(base, index) else {
                         return Ok(false);
                     };
                     slots.commit_numeric_update_and_read(update_slot, updated, read)?;
@@ -1163,17 +1174,17 @@ pub(super) fn execute_frame(
                     continue;
                 }
                 if decoded.opcode == Opcode::DensePostUpdateLocalCheck {
-                    if let Some(action) = read_local::<true>(&mut cursor, runtime, base_index)? {
+                    if let Some(action) = read_local::<true>(&mut cursor, state, base_index)? {
                         return Ok(action);
                     }
                 } else if matches!(
                     decoded.opcode,
                     Opcode::DensePreUpdateLocal | Opcode::DensePostUpdateLocal
                 ) {
-                    if let Some(action) = read_local::<false>(&mut cursor, runtime, base_index)? {
+                    if let Some(action) = read_local::<false>(&mut cursor, state, base_index)? {
                         return Ok(action);
                     }
-                } else if let Some(action) = read_arg(&mut cursor, runtime, base_index)? {
+                } else if let Some(action) = read_arg(&mut cursor, state, base_index)? {
                     return Ok(action);
                 }
             }
@@ -1201,9 +1212,13 @@ pub(super) fn execute_frame(
                     else {
                         return Ok(false);
                     };
-                    let Some(read) =
-                        runtime.property_ic_peek_number(*base, executable, next + 1, field_index)
-                    else {
+                    let Some(read) = state.property_ic_peek_number(
+                        runtime.domain_id(),
+                        *base,
+                        executable,
+                        next + 1,
+                        field_index,
+                    ) else {
                         return Ok(false);
                     };
                     slots.commit_number_local_discard(accumulator, sum.add(read))?;
@@ -1221,7 +1236,7 @@ pub(super) fn execute_frame(
                     cursor.advance((decoded.next_pc + 5) as usize);
                     continue;
                 }
-                if let Some(action) = read_local::<false>(&mut cursor, runtime, accumulator)? {
+                if let Some(action) = read_local::<false>(&mut cursor, state, accumulator)? {
                     return Ok(action);
                 }
             }
@@ -1257,7 +1272,7 @@ pub(super) fn execute_frame(
                     let Some(base) = slots.direct_value(DirectSlot::Local(base_index)) else {
                         return Ok(false);
                     };
-                    let Some(read) = runtime.peek_dense_number(base, index) else {
+                    let Some(read) = state.peek_dense_number(base, index) else {
                         return Ok(false);
                     };
                     slots.commit_number_local_discard(accumulator, sum.add(read))?;
@@ -1275,7 +1290,7 @@ pub(super) fn execute_frame(
                     cursor.advance((decoded.next_pc + 8) as usize);
                     continue;
                 }
-                if let Some(action) = read_local::<false>(&mut cursor, runtime, accumulator)? {
+                if let Some(action) = read_local::<false>(&mut cursor, state, accumulator)? {
                     return Ok(action);
                 }
             }
@@ -1304,7 +1319,7 @@ pub(super) fn execute_frame(
                 );
                 let read = cursor.with_slots(|slots| {
                     Ok(try_dense_index_binary(
-                        slots, runtime, base, key, rhs_mode, rhs_bits, operation,
+                        slots, state, base, key, rhs_mode, rhs_bits, operation,
                     ))
                 })?;
                 #[cfg(feature = "profiling")]
@@ -1321,10 +1336,10 @@ pub(super) fn execute_frame(
                     continue;
                 }
                 if decoded.opcode == Opcode::DenseIndexBinaryLocal {
-                    if let Some(action) = read_local::<false>(&mut cursor, runtime, base_index)? {
+                    if let Some(action) = read_local::<false>(&mut cursor, state, base_index)? {
                         return Ok(action);
                     }
-                } else if let Some(action) = read_arg(&mut cursor, runtime, base_index)? {
+                } else if let Some(action) = read_arg(&mut cursor, state, base_index)? {
                     return Ok(action);
                 }
             }
@@ -1353,7 +1368,7 @@ pub(super) fn execute_frame(
                 );
                 let result = cursor.with_slots(|slots| {
                     Ok(try_dense_read_binary(
-                        slots, runtime, base, key, rhs_mode, rhs_index, operation,
+                        slots, state, base, key, rhs_mode, rhs_index, operation,
                     ))
                 })?;
                 #[cfg(feature = "profiling")]
@@ -1374,10 +1389,10 @@ pub(super) fn execute_frame(
                     continue;
                 }
                 if decoded.opcode == Opcode::DenseReadBinaryLocal {
-                    if let Some(action) = read_local::<false>(&mut cursor, runtime, base_index)? {
+                    if let Some(action) = read_local::<false>(&mut cursor, state, base_index)? {
                         return Ok(action);
                     }
-                } else if let Some(action) = read_arg(&mut cursor, runtime, base_index)? {
+                } else if let Some(action) = read_arg(&mut cursor, state, base_index)? {
                     return Ok(action);
                 }
             }
@@ -1413,7 +1428,7 @@ pub(super) fn execute_frame(
                     };
                     Ok(slots
                         .direct_value(base)
-                        .and_then(|base| runtime.peek_dense_number(base, index)))
+                        .and_then(|base| state.peek_dense_number(base, index)))
                 })?;
                 #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_execution_outcome(
@@ -1429,10 +1444,10 @@ pub(super) fn execute_frame(
                     continue;
                 }
                 if decoded.opcode == Opcode::DenseReadLocal {
-                    if let Some(action) = read_local::<false>(&mut cursor, runtime, base_index)? {
+                    if let Some(action) = read_local::<false>(&mut cursor, state, base_index)? {
                         return Ok(action);
                     }
-                } else if let Some(action) = read_arg(&mut cursor, runtime, base_index)? {
+                } else if let Some(action) = read_arg(&mut cursor, state, base_index)? {
                     return Ok(action);
                 }
             }
@@ -1457,7 +1472,8 @@ pub(super) fn execute_frame(
                     let Some(base @ JsValue::Object(_)) = slots.direct_value(base) else {
                         return Ok(None);
                     };
-                    Ok(runtime.select_linked_data_into(
+                    Ok(state.select_linked_data_into(
+                        runtime.domain_id(),
                         base,
                         executable,
                         next,
@@ -1487,7 +1503,7 @@ pub(super) fn execute_frame(
                     },
                 );
                 if let Some(value) = selection {
-                    cursor.commit_owned(runtime, value)?;
+                    cursor.commit_owned(state, value)?;
                     #[cfg(feature = "profiling")]
                     crate::engine::api::profiling::record_owned_execution_event(
                         "local_completion.borrowed_named_read",
@@ -1501,20 +1517,24 @@ pub(super) fn execute_frame(
                             let receiver = slots.direct_value(base).ok_or_else(|| {
                                 Error::internal("selected borrowed receiver disappeared")
                             })?;
-                            runtime
-                                .prepare_selected_linked_getter(receiver, getter)
-                                .map_err(runtime_error_to_vm_error)
+                            super::property_driver::OwnedGetterSelection::prepare(
+                                state,
+                                &runtime.0.poisoned,
+                                receiver,
+                                getter,
+                            )
                         })?;
                         let load = if decoded.opcode == Opcode::BorrowedFieldLocal {
-                            read_local::<false>(&mut cursor, runtime, base_index)
+                            read_local::<false>(&mut cursor, state, base_index)
                         } else {
-                            read_arg(&mut cursor, runtime, base_index)
+                            read_arg(&mut cursor, state, base_index)
                         };
                         match load {
                             Ok(None) => {
                                 debug_assert!(execution.selected_named_read.is_none());
-                                execution.selected_named_read =
-                                    Some(super::property_driver::SelectedNamedRead::Read(selected));
+                                execution.selected_named_read = Some(
+                                    super::property_driver::SelectedNamedRead::Getter(selected),
+                                );
                                 cursor.advance(next);
                                 cursor.begin();
                                 return Ok(VmAction::GetField {
@@ -1524,26 +1544,25 @@ pub(super) fn execute_frame(
                                 });
                             }
                             Ok(Some(action)) => {
-                                selected.release(runtime);
+                                selected.release(state, &runtime.0.poisoned)?;
                                 return Ok(action);
                             }
                             Err(error) => {
-                                selected.release(runtime);
+                                let _ = selected.release(state, &runtime.0.poisoned);
                                 return Err(error);
                             }
                         }
                     }
-                    crate::engine::object::NamedSelectionMiss::NeedsObservation
-                    | crate::engine::object::NamedSelectionMiss::ContinueLookup => {}
+                    crate::engine::object::NamedSelectionMiss::ContinueLookup => {}
                     crate::engine::object::NamedSelectionMiss::CompleteAbsent => {
                         unreachable!("absence completed above")
                     }
                 }
                 if decoded.opcode == Opcode::BorrowedFieldLocal {
-                    if let Some(action) = read_local::<false>(&mut cursor, runtime, base_index)? {
+                    if let Some(action) = read_local::<false>(&mut cursor, state, base_index)? {
                         return Ok(action);
                     }
-                } else if let Some(action) = read_arg(&mut cursor, runtime, base_index)? {
+                } else if let Some(action) = read_arg(&mut cursor, state, base_index)? {
                     return Ok(action);
                 }
             }
@@ -1581,9 +1600,9 @@ pub(super) fn execute_frame(
                     continue;
                 }
                 if matches!(comparison, Opcode::Eq | Opcode::Neq) {
-                    if let Some(equal) =
-                        cursor.with_slots(|slots| slots.nullish_equality(runtime))?
-                    {
+                    if let Some(equal) = cursor.with_slots(|slots| {
+                        slots.nullish_equality_in_state(state, &runtime.0.poisoned)
+                    })? {
                         let decision = equal != (comparison == Opcode::Neq);
                         cursor.advance(if decision == (descriptor & 0x400 != 0) {
                             decoded.operand(1) as usize
@@ -1598,10 +1617,7 @@ pub(super) fn execute_frame(
                 })?;
                 if !completed {
                     if matches!(comparison, Opcode::StrictEq | Opcode::StrictNeq) {
-                        if !frame.active_frame.is_materialized() {
-                            return Ok(VmAction::StrictEquality(comparison == Opcode::StrictNeq));
-                        }
-                        let decision = cursor.strict_comparison(runtime, frame.active_frame)?
+                        let decision = cursor.strict_comparison(state, frame.active_frame)?
                             != (comparison == Opcode::StrictNeq);
                         #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_owned_execution_event(
@@ -1671,10 +1687,10 @@ pub(super) fn execute_frame(
                     continue;
                 }
                 if decoded.opcode == Opcode::CompareBranchLocalLt {
-                    if let Some(action) = read_local::<false>(&mut cursor, runtime, left_index)? {
+                    if let Some(action) = read_local::<false>(&mut cursor, state, left_index)? {
                         return Ok(action);
                     }
-                } else if let Some(action) = read_arg(&mut cursor, runtime, left_index)? {
+                } else if let Some(action) = read_arg(&mut cursor, state, left_index)? {
                     return Ok(action);
                 }
             }
@@ -1728,10 +1744,10 @@ pub(super) fn execute_frame(
                     continue;
                 }
                 if decoded.opcode == Opcode::CompareBranchLocal {
-                    if let Some(action) = read_local::<false>(&mut cursor, runtime, left_index)? {
+                    if let Some(action) = read_local::<false>(&mut cursor, state, left_index)? {
                         return Ok(action);
                     }
-                } else if let Some(action) = read_arg(&mut cursor, runtime, left_index)? {
+                } else if let Some(action) = read_arg(&mut cursor, state, left_index)? {
                     return Ok(action);
                 }
             }
@@ -1746,7 +1762,7 @@ pub(super) fn execute_frame(
                         .ok_or_else(|| {
                             Error::internal("closure variable index is out of bounds")
                         })?;
-                    super::bindings::try_read_captured_immediate(runtime, &root)
+                    super::bindings::try_read_captured_immediate_in_state(state, root.id())
                 } else {
                     None
                 };
@@ -1776,14 +1792,15 @@ pub(super) fn execute_frame(
                 // own edge through commit; errors publish this cursor's fault
                 // PC and materialize in ready::run before they are propagated.
                 if cursor.with_slots(|slots| Ok(slots.has_operand_capacity(1)))?
-                    && let Some(value) = super::environment_driver::try_read_global_cell(
+                    && let Some(value) = super::environment_driver::try_read_global_cell_in_state(
                         runtime,
+                        state,
                         executable,
                         body.owners.function.closures(),
                         index,
                     )?
                 {
-                    cursor.commit_owned(runtime, value)?;
+                    cursor.commit_owned(state, value)?;
                     #[cfg(feature = "profiling")]
                     crate::engine::api::profiling::record_owned_execution_event(
                         "global_cell.local_complete",
@@ -1803,7 +1820,7 @@ pub(super) fn execute_frame(
                 crate::engine::api::profiling::record_execution_dispatch(
                     runtime, executable, pc, false,
                 );
-                if let Some(action) = read_arg(&mut cursor, runtime, index)? {
+                if let Some(action) = read_arg(&mut cursor, state, index)? {
                     return Ok(action);
                 }
             }
@@ -1837,9 +1854,17 @@ pub(super) fn execute_frame(
                 }
                 let progress = cursor.with_slots(|slots| {
                     if keep {
-                        slots.set_direct(runtime, DirectSlot::Local(index))
+                        slots.set_direct_in_state(
+                            state,
+                            &runtime.0.poisoned,
+                            DirectSlot::Local(index),
+                        )
                     } else {
-                        slots.put_direct(runtime, DirectSlot::Local(index))
+                        slots.put_direct_in_state(
+                            state,
+                            &runtime.0.poisoned,
+                            DirectSlot::Local(index),
+                        )
                     }
                 })?;
                 if progress == StoreProgress::Committed {
@@ -1849,16 +1874,18 @@ pub(super) fn execute_frame(
                 if !frame.active_frame.is_materialized() {
                     return Ok(VmAction::Materialize);
                 }
+                cursor.publish_fault(state, frame.active_frame)?;
                 let old = cursor.with_slots(|slots| {
                     let next = if keep {
-                        copy_value(runtime, slots.peek(0)?)?
+                        copy_value_in_state(state, slots.peek(0)?)?
                     } else {
                         slots.pop()?
                     };
                     slots.replace_local(index, FrameBinding::Direct(next))
                 })?;
-                cursor.publish_fault(runtime, frame.active_frame)?;
-                super::bindings::release_frame_binding(runtime, old)?;
+                super::bindings::release_frame_binding_in_state(state, old).inspect_err(|_| {
+                    runtime.0.poisoned.set(true);
+                })?;
             }
             Opcode::PutArg | Opcode::SetArg => {
                 let index = published_u16(operand);
@@ -1884,9 +1911,17 @@ pub(super) fn execute_frame(
                 }
                 let progress = cursor.with_slots(|slots| {
                     if keep {
-                        slots.set_direct(runtime, DirectSlot::Argument(index))
+                        slots.set_direct_in_state(
+                            state,
+                            &runtime.0.poisoned,
+                            DirectSlot::Argument(index),
+                        )
                     } else {
-                        slots.put_direct(runtime, DirectSlot::Argument(index))
+                        slots.put_direct_in_state(
+                            state,
+                            &runtime.0.poisoned,
+                            DirectSlot::Argument(index),
+                        )
                     }
                 })?;
                 if progress == StoreProgress::Committed {
@@ -1896,16 +1931,18 @@ pub(super) fn execute_frame(
                 if !frame.active_frame.is_materialized() {
                     return Ok(VmAction::Materialize);
                 }
+                cursor.publish_fault(state, frame.active_frame)?;
                 let old = cursor.with_slots(|slots| {
                     let next = if keep {
-                        copy_value(runtime, slots.peek(0)?)?
+                        copy_value_in_state(state, slots.peek(0)?)?
                     } else {
                         slots.pop()?
                     };
                     slots.replace_parameter(index, FrameBinding::Direct(next))
                 })?;
-                cursor.publish_fault(runtime, frame.active_frame)?;
-                super::bindings::release_frame_binding(runtime, old)?;
+                super::bindings::release_frame_binding_in_state(state, old).inspect_err(|_| {
+                    runtime.0.poisoned.set(true);
+                })?;
             }
             Opcode::InitializeLocal => {
                 let index = published_u16(operand);
@@ -1937,8 +1974,9 @@ pub(super) fn execute_frame(
                 {
                     return Err(Error::internal("local initializer has no valid binding"));
                 }
-                if cursor.with_slots(|slots| slots.initialize_direct_local(runtime, index))?
-                    == StoreProgress::Committed
+                if cursor.with_slots(|slots| {
+                    slots.initialize_direct_local_in_state(state, &runtime.0.poisoned, index)
+                })? == StoreProgress::Committed
                 {
                     cursor.advance(next);
                     continue;
@@ -1946,12 +1984,14 @@ pub(super) fn execute_frame(
                 if !frame.active_frame.is_materialized() {
                     return Ok(VmAction::Materialize);
                 }
+                cursor.publish_fault(state, frame.active_frame)?;
                 let old = cursor.with_slots(|slots| {
                     let value = slots.pop()?;
                     slots.replace_local(index, FrameBinding::Direct(value))
                 })?;
-                cursor.publish_fault(runtime, frame.active_frame)?;
-                super::bindings::release_frame_binding(runtime, old)?;
+                super::bindings::release_frame_binding_in_state(state, old).inspect_err(|_| {
+                    runtime.0.poisoned.set(true);
+                })?;
             }
             Opcode::CloseLocal => {
                 let index = published_u16(operand);
@@ -1974,8 +2014,9 @@ pub(super) fn execute_frame(
                     return Ok(VmAction::ResetCaptured(index));
                 }
                 if class != BindingClass::Uninitialized {
-                    if cursor.with_slots(|slots| slots.reset_direct_local(runtime, index))?
-                        == StoreProgress::Committed
+                    if cursor.with_slots(|slots| {
+                        slots.reset_direct_local_in_state(state, &runtime.0.poisoned, index)
+                    })? == StoreProgress::Committed
                     {
                         if let Some(flag) = body
                             .owners
@@ -1990,11 +2031,15 @@ pub(super) fn execute_frame(
                     if !frame.active_frame.is_materialized() {
                         return Ok(VmAction::Materialize);
                     }
+                    cursor.publish_fault(state, frame.active_frame)?;
                     let old = cursor.with_slots(|slots| {
                         slots.replace_local(index, FrameBinding::Uninitialized)
                     })?;
-                    cursor.publish_fault(runtime, frame.active_frame)?;
-                    super::bindings::release_frame_binding(runtime, old)?;
+                    super::bindings::release_frame_binding_in_state(state, old).inspect_err(
+                        |_| {
+                            runtime.0.poisoned.set(true);
+                        },
+                    )?;
                 }
                 if let Some(flag) = body
                     .owners
@@ -2006,9 +2051,9 @@ pub(super) fn execute_frame(
             }
             Opcode::Dup | Opcode::Dup1 | Opcode::Dup3 => {
                 cursor.with_slots(|slots| match decoded.opcode {
-                    Opcode::Dup => slots.insert_copy(runtime, 0, 0),
-                    Opcode::Dup1 => slots.insert_copy(runtime, 1, 1),
-                    _ => slots.duplicate_operands(runtime, 3),
+                    Opcode::Dup => slots.insert_copy_in_state(state, 0, 0),
+                    Opcode::Dup1 => slots.insert_copy_in_state(state, 1, 1),
+                    _ => slots.duplicate_operands_in_state(state, 3),
                 })?;
             }
             Opcode::Insert2 | Opcode::Insert3 | Opcode::Insert4 => {
@@ -2019,7 +2064,7 @@ pub(super) fn execute_frame(
                 };
                 cursor.with_slots(|slots| {
                     slots.peek(count - 1)?;
-                    slots.insert_copy(runtime, 0, count)
+                    slots.insert_copy_in_state(state, 0, count)
                 })?;
             }
             Opcode::Perm3 | Opcode::Perm4 | Opcode::Perm5 => {
@@ -2036,8 +2081,8 @@ pub(super) fn execute_frame(
                 let removed_offset = usize::from(decoded.opcode == Opcode::Nip);
                 let immediate =
                     cursor.with_slots(|slots| Ok(is_immediate(slots.peek(removed_offset)?)))?;
-                if !immediate && !frame.active_frame.is_materialized() {
-                    return Ok(VmAction::Materialize);
+                if !immediate {
+                    cursor.publish_fault(state, frame.active_frame)?;
                 }
                 let removed = cursor.with_slots(|slots| {
                     if decoded.opcode == Opcode::Drop {
@@ -2051,9 +2096,8 @@ pub(super) fn execute_frame(
                     }
                 })?;
                 if !immediate {
-                    cursor.publish_fault(runtime, frame.active_frame)?;
-                    runtime
-                        .release_jsvalue(removed)
+                    state
+                        .release_owned_jsvalue(&runtime.0.poisoned, removed)
                         .map_err(runtime_error_to_vm_error)?;
                 }
             }
@@ -2084,9 +2128,9 @@ pub(super) fn execute_frame(
                 })?;
                 if !completed {
                     if matches!(decoded.opcode, Opcode::Eq | Opcode::Neq) {
-                        if let Some(equal) =
-                            cursor.with_slots(|slots| slots.nullish_equality(runtime))?
-                        {
+                        if let Some(equal) = cursor.with_slots(|slots| {
+                            slots.nullish_equality_in_state(state, &runtime.0.poisoned)
+                        })? {
                             cursor.commit_push(JsValue::Bool(
                                 equal != (decoded.opcode == Opcode::Neq),
                             ))?;
@@ -2095,12 +2139,7 @@ pub(super) fn execute_frame(
                         }
                     }
                     if matches!(decoded.opcode, Opcode::StrictEq | Opcode::StrictNeq) {
-                        if !frame.active_frame.is_materialized() {
-                            return Ok(VmAction::StrictEquality(
-                                decoded.opcode == Opcode::StrictNeq,
-                            ));
-                        }
-                        let equal = cursor.strict_comparison(runtime, frame.active_frame)?;
+                        let equal = cursor.strict_comparison(state, frame.active_frame)?;
                         cursor.commit_push(JsValue::Bool(
                             equal != (decoded.opcode == Opcode::StrictNeq),
                         ))?;
@@ -2166,18 +2205,15 @@ pub(super) fn execute_frame(
                     continue;
                 }
                 let truthy = cursor.with_slots(|slots| {
-                    runtime
+                    state
                         .value_to_boolean_jsvalue(slots.peek(0)?)
                         .map_err(runtime_error_to_vm_error)
                 })?;
-                if !frame.active_frame.is_materialized() {
-                    return Ok(VmAction::Materialize);
-                }
+                cursor.publish_fault(state, frame.active_frame)?;
                 let old = cursor.move_owned()?;
                 cursor.commit_push(JsValue::Bool(!truthy))?;
-                cursor.publish_fault(runtime, frame.active_frame)?;
-                runtime
-                    .release_jsvalue(old)
+                state
+                    .release_owned_jsvalue(&runtime.0.poisoned, old)
                     .map_err(runtime_error_to_vm_error)?;
             }
             Opcode::GetFieldCached | Opcode::GetField2Cached => {
@@ -2189,8 +2225,10 @@ pub(super) fn execute_frame(
                     fallthrough: FallthroughPc::from_decoded(decoded),
                 };
                 let step = cursor.with_slots(|slots| {
-                    slots.property_ic_read(
-                        runtime,
+                    slots.property_ic_read_in_state(
+                        state,
+                        &runtime.0.poisoned,
+                        runtime.domain_id(),
                         executable,
                         NamedReadOperation {
                             site: pc,
@@ -2219,18 +2257,21 @@ pub(super) fn execute_frame(
                             "local_completion.named_read",
                         );
                     }
-                    PropertyReadProgress::NeedsObservation | PropertyReadProgress::Driver => {
+                    PropertyReadProgress::Driver => {
                         return Ok(pending.action());
                     }
                     PropertyReadProgress::Selected(getter) => {
                         let read = cursor.with_slots(|slots| {
-                            Ok(runtime
-                                .prepare_selected_linked_getter(slots.peek(0)?, getter)
-                                .map_err(runtime_error_to_vm_error))
+                            Ok(super::property_driver::OwnedGetterSelection::prepare(
+                                state,
+                                &runtime.0.poisoned,
+                                slots.peek(0)?,
+                                getter,
+                            ))
                         })?;
                         debug_assert!(execution.selected_named_read.is_none());
                         execution.selected_named_read = Some(match read {
-                            Ok(read) => super::property_driver::SelectedNamedRead::Read(read),
+                            Ok(read) => super::property_driver::SelectedNamedRead::Getter(read),
                             Err(error) => {
                                 super::property_driver::SelectedNamedRead::LookupError(error)
                             }
@@ -2244,9 +2285,13 @@ pub(super) fn execute_frame(
                 let keep_key = decoded.opcode == Opcode::GetArrayEl3Dense;
                 let hit = cursor.with_slots(|slots| {
                     if keep_receiver {
-                        slots.array_kept_immediate_read(runtime, keep_key)
+                        slots.array_kept_immediate_read_in_state(
+                            state,
+                            &runtime.0.poisoned,
+                            keep_key,
+                        )
                     } else {
-                        slots.array_immediate_read(runtime)
+                        slots.array_immediate_read_in_state(state, &runtime.0.poisoned)
                     }
                 })?;
                 #[cfg(feature = "profiling")]
@@ -2270,7 +2315,13 @@ pub(super) fn execute_frame(
                     return Ok(VmAction::SetProperty(Some(operand)));
                 };
                 if !cursor.with_slots(|slots| {
-                    slots.try_scalar_field_write(runtime, executable, operand)
+                    slots.try_scalar_field_write_in_state(
+                        state,
+                        &runtime.0.poisoned,
+                        runtime.domain_id(),
+                        executable,
+                        operand,
+                    )
                 })? {
                     return Ok(VmAction::SetProperty(Some(operand)));
                 }
@@ -2280,7 +2331,9 @@ pub(super) fn execute_frame(
                 let Some(generation) = frame.property_generation.checked_add(1) else {
                     return Ok(VmAction::SetProperty(None));
                 };
-                if !cursor.with_slots(|slots| slots.try_scalar_element_write(runtime))? {
+                if !cursor.with_slots(|slots| {
+                    slots.try_scalar_element_write_in_state(state, &runtime.0.poisoned)
+                })? {
                     return Ok(VmAction::SetProperty(None));
                 }
                 frame.property_generation = generation;
@@ -2294,12 +2347,19 @@ pub(super) fn execute_frame(
                         next = operand as usize;
                     }
                 } else {
-                    return Ok(VmAction::Pure(
-                        super::pure_operations::PureOperation::Branch {
-                            target: operand,
-                            when: decoded.opcode == Opcode::IfTrue,
-                        },
-                    ));
+                    let truthy = cursor.with_slots(|slots| {
+                        state
+                            .value_to_boolean_jsvalue(slots.peek(0)?)
+                            .map_err(runtime_error_to_vm_error)
+                    })?;
+                    cursor.publish_fault(state, frame.active_frame)?;
+                    let condition = cursor.move_owned()?;
+                    state
+                        .release_owned_jsvalue(&runtime.0.poisoned, condition)
+                        .map_err(runtime_error_to_vm_error)?;
+                    if truthy == (decoded.opcode == Opcode::IfTrue) {
+                        next = operand as usize;
+                    }
                 }
             }
             Opcode::Gosub => {
@@ -2402,7 +2462,7 @@ fn region_number(slots: &FrameSlots<'_>, source: NumberSource) -> Option<Number>
 #[inline(always)]
 pub(in crate::engine::vm) fn numeric_local_array_region(
     slots: &mut FrameSlots<'_>,
-    runtime: &crate::engine::api::runtime::Runtime,
+    state: &mut RuntimeState,
     region: &PublishedNumericRegion,
     accumulate: bool,
 ) -> Result<(), Miss> {
@@ -2426,7 +2486,7 @@ pub(in crate::engine::vm) fn numeric_local_array_region(
     let Some((destination, base)) = admitted else {
         return Err(Miss::DestinationOrReceiverUnavailable);
     };
-    let element = runtime.peek_dense_number_result(base, index)?;
+    let element = state.peek_dense_number_result(base, index)?;
     let product = element.mul(scale);
     let result = if accumulate {
         destination
@@ -2449,26 +2509,25 @@ fn array_index(value: Number) -> Option<u32> {
 #[inline(always)]
 fn read_local<const CHECKED: bool>(
     cursor: &mut FrameCursor<'_>,
-    runtime: &crate::engine::api::runtime::Runtime,
+    state: &mut RuntimeState,
     index: u16,
 ) -> Result<Option<VmAction>, Error> {
     if cursor.with_slots(|slots| slots.push_direct_immediate(DirectSlot::Local(index)))? {
         return Ok(None);
     }
     let (copied, uninitialized) = cursor.with_slots(|slots| match slots.local(index)? {
-        FrameBinding::Direct(value) => copy_value(runtime, value).map(|value| (Some(value), false)),
+        FrameBinding::Direct(value) => {
+            copy_value_in_state(state, value).map(|value| (Some(value), false))
+        }
         FrameBinding::Captured(id) if slots.has_operand_capacity(1) => Ok((
-            super::bindings::try_read_captured_immediate(
-                runtime,
-                &crate::engine::heap::roots::VarRefView::from_frame(runtime, *id),
-            ),
+            super::bindings::try_read_captured_immediate_in_state(state, *id),
             false,
         )),
         FrameBinding::Uninitialized => Ok((None, true)),
         _ => Ok((None, false)),
     })?;
     if let Some(value) = copied {
-        cursor.commit_owned(runtime, value)?;
+        cursor.commit_owned(state, value)?;
         return Ok(None);
     }
     if CHECKED && uninitialized {
@@ -2486,24 +2545,21 @@ fn read_local<const CHECKED: bool>(
 #[inline(always)]
 fn read_arg(
     cursor: &mut FrameCursor<'_>,
-    runtime: &crate::engine::api::runtime::Runtime,
+    state: &mut RuntimeState,
     index: u16,
 ) -> Result<Option<VmAction>, Error> {
     if cursor.with_slots(|slots| slots.push_direct_immediate(DirectSlot::Argument(index)))? {
         return Ok(None);
     }
     let copied = cursor.with_slots(|slots| match slots.parameter(index)? {
-        FrameBinding::Direct(value) => copy_value(runtime, value).map(Some),
-        FrameBinding::Captured(id) if slots.has_operand_capacity(1) => {
-            Ok(super::bindings::try_read_captured_immediate(
-                runtime,
-                &crate::engine::heap::roots::VarRefView::from_frame(runtime, *id),
-            ))
-        }
+        FrameBinding::Direct(value) => copy_value_in_state(state, value).map(Some),
+        FrameBinding::Captured(id) if slots.has_operand_capacity(1) => Ok(
+            super::bindings::try_read_captured_immediate_in_state(state, *id),
+        ),
         _ => Ok(None),
     })?;
     if let Some(value) = copied {
-        cursor.commit_owned(runtime, value)?;
+        cursor.commit_owned(state, value)?;
         return Ok(None);
     }
     Ok(Some(VmAction::Binding {
@@ -2935,7 +2991,7 @@ fn dense_binary_rhs(slots: &FrameSlots<'_>, mode: u32, bits: u16) -> Option<Numb
 #[inline(never)]
 fn try_dense_read_binary(
     slots: &FrameSlots<'_>,
-    runtime: &crate::engine::api::runtime::Runtime,
+    state: &mut RuntimeState,
     base: DirectSlot,
     key: DirectSlot,
     rhs_mode: u32,
@@ -2950,14 +3006,14 @@ fn try_dense_read_binary(
     };
     let index = u32::try_from(index).ok()?;
     let right = dense_binary_rhs(slots, rhs_mode, rhs_bits)?;
-    let left = runtime.peek_dense_number(slots.direct_value(base)?, index)?;
+    let left = state.peek_dense_number(slots.direct_value(base)?, index)?;
     Some(binary_number_result(operation, left, right))
 }
 
 #[inline(never)]
 fn try_dense_index_binary(
     slots: &FrameSlots<'_>,
-    runtime: &crate::engine::api::runtime::Runtime,
+    state: &mut RuntimeState,
     base: DirectSlot,
     key: DirectSlot,
     rhs_mode: u32,
@@ -2973,7 +3029,7 @@ fn try_dense_index_binary(
         return None;
     };
     let index = u32::try_from(index).ok()?;
-    runtime.peek_dense_number(slots.direct_value(base)?, index)
+    state.peek_dense_number(slots.direct_value(base)?, index)
 }
 
 #[inline(always)]
@@ -3016,61 +3072,18 @@ fn binary_number_result(opcode: Opcode, left: Number, right: Number) -> JsValue 
     }
 }
 
-/// Strict equality cannot invoke JavaScript. The values remain owned until
-/// the comparison finishes, then both owners are released before stack commit.
-pub(super) fn strict_comparison(
-    runtime: &crate::engine::api::runtime::Runtime,
-    execution: &mut RunningExecution,
-    id: FrameId,
-    negate: bool,
-) -> Result<(), Error> {
-    let frame = execution.frames.current_mut(id)?;
-    #[cfg(feature = "profiling")]
-    let depth = execution.slots.depth(&frame.window);
-    let right = execution.slots.pop(&mut frame.window)?;
-    let left = execution.slots.pop(&mut frame.window)?;
-    let equal = runtime
-        .strict_equal_jsvalue(&left, &right)
-        .map_err(runtime_error_to_vm_error)?;
-    runtime
-        .release_jsvalue(left)
-        .map_err(runtime_error_to_vm_error)?;
-    runtime
-        .release_jsvalue(right)
-        .map_err(runtime_error_to_vm_error)?;
-    execution
-        .slots
-        .push(&mut frame.window, JsValue::Bool(equal != negate))?;
-    frame.resume_pc = frame
-        .executable
-        .exec
-        .decode(frame.fault_pc as u32)
-        .map_err(|_| Error::internal("comparison PC is not a verified boundary"))?
-        .next_pc as usize;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_instruction(depth);
-    Ok(())
+fn borrowed_this_read_ready_in_state(state: &RuntimeState, base: &JsValue) -> bool {
+    let JsValue::Object(id) = base else {
+        return false;
+    };
+    state
+        .heap
+        .object_strong_count(*id)
+        .is_ok_and(|count| count != 0 && count < u32::MAX - 2)
 }
 
 // Removing the temporary this owner must not remove a checked-retain failure,
 // immortal transition, or cleanup checkpoint. Leave room for an aliasing result.
-fn borrowed_this_read_ready(runtime: &crate::engine::api::Runtime, base: &JsValue) -> bool {
-    let JsValue::Object(id) = base else {
-        return false;
-    };
-    if runtime.0.deferred_references.has_pending() {
-        return false;
-    }
-    let Ok(state) = runtime.0.state.try_borrow() else {
-        return false;
-    };
-    !state.heap.has_pending_zero_cleanup()
-        && state
-            .heap
-            .object_strong_count(*id)
-            .is_ok_and(|count| count < u32::MAX - 2)
-}
-
 #[cfg(test)]
 mod captured_read_tests;
 
@@ -3152,13 +3165,16 @@ mod execution_span_tests {
     }
 
     #[test]
-    fn borrowed_this_admission_keeps_count_and_cleanup_boundaries() {
+    fn borrowed_this_admission_preserves_counts_without_draining_external_cleanup() {
         use crate::engine::{heap::RawId, value::JsValue};
         let runtime = Runtime::new();
         let object = runtime.new_object(None).unwrap();
         let id = object.object_id();
         let value = JsValue::Object(id);
-        assert!(super::borrowed_this_read_ready(&runtime, &value));
+        assert!(super::borrowed_this_read_ready_in_state(
+            &runtime.0.state.borrow(),
+            &value
+        ));
         for count in [u32::MAX - 2, u32::MAX - 1, u32::MAX] {
             runtime
                 .0
@@ -3166,7 +3182,10 @@ mod execution_span_tests {
                 .borrow_mut()
                 .heap
                 .set_strong_count_for_test(RawId::Object(id), count);
-            assert!(!super::borrowed_this_read_ready(&runtime, &value));
+            assert!(!super::borrowed_this_read_ready_in_state(
+                &runtime.0.state.borrow(),
+                &value
+            ));
         }
         runtime
             .0
@@ -3179,7 +3198,10 @@ mod execution_span_tests {
             let _borrow = runtime.0.state.borrow();
             drop(pending);
         }
-        assert!(!super::borrowed_this_read_ready(&runtime, &value));
+        assert!(super::borrowed_this_read_ready_in_state(
+            &runtime.0.state.borrow(),
+            &value
+        ));
         assert!(runtime.0.deferred_references.has_pending());
     }
 

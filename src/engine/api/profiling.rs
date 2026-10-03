@@ -234,7 +234,7 @@ pub(crate) use cost::{
 #[cfg(feature = "profiling")]
 pub(crate) use cost::{
     record_callsite_callee, record_execution_dispatch, record_execution_outcome,
-    record_execution_static, record_numeric_rejection_visit,
+    record_execution_static_in_state, record_numeric_rejection_visit,
 };
 
 #[cfg(test)]

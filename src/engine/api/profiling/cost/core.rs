@@ -5,7 +5,6 @@ use std::cell::Cell;
 
 thread_local! {
     static IN_CORE: Cell<bool> = const { Cell::new(false) };
-    static IN_DIAGNOSTIC: Cell<bool> = const { Cell::new(false) };
 }
 
 pub(crate) struct CoreExecutionScope(bool);
@@ -27,28 +26,9 @@ impl Drop for CoreExecutionScope {
 }
 
 pub(crate) fn record_runtime_event(total: &'static str, internal: &'static str) {
-    if IN_DIAGNOSTIC.with(Cell::get) {
-        return;
-    }
     super::record_owned_execution_event(total);
     if IN_CORE.with(Cell::get) {
         super::record_owned_execution_event(internal);
-    }
-}
-
-/// Diagnostic metadata lookup is not guest execution and must not instrument
-/// its own state borrow while the collector is already borrowed.
-pub(super) struct DiagnosticScope(bool);
-
-impl DiagnosticScope {
-    pub(super) fn enter() -> Self {
-        Self(IN_DIAGNOSTIC.with(|scope| scope.replace(true)))
-    }
-}
-
-impl Drop for DiagnosticScope {
-    fn drop(&mut self) {
-        IN_DIAGNOSTIC.with(|scope| scope.set(self.0));
     }
 }
 
@@ -63,10 +43,6 @@ mod tests {
         record_runtime_event("all", "internal");
         {
             let _core = CoreExecutionScope::enter();
-            {
-                let _diagnostic = DiagnosticScope::enter();
-                record_runtime_event("all", "internal");
-            }
             record_runtime_event("all", "internal");
             let result = std::panic::catch_unwind(|| {
                 let _external = CoreExecutionScope::outside();

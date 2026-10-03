@@ -38,7 +38,26 @@ pub(super) fn run(
             }
             entered = true;
         }
-        let result = super::execute_frame(runtime, execution, id);
+        // The state borrow ends before materialization and every legacy helper.
+        // Unwind likewise drops it before RunningExecution's cleanup guard.
+        let result = {
+            // Public roots dropped by a legacy adapter coordinate outside the
+            // exclusive segment. No public-root Drop occurs inside this loop.
+            runtime
+                .drain_deferred_references()
+                .map_err(crate::engine::vm::exception::runtime_error_to_vm_error)?;
+            let mut state = runtime.0.state.borrow_mut();
+            crate::engine::vm::execute::execute_frame_in_state(runtime, &mut state, execution, id)
+        };
+        // A failed owned release may have partially changed heap cleanup.
+        // Do not materialize diagnostics or run another adapter on that state.
+        if runtime.0.poisoned.get() {
+            return Err(result
+                .err()
+                .unwrap_or_else(|| Error::internal("runtime is poisoned")));
+        }
+        #[cfg(feature = "profiling")]
+        record_segment_boundary(&result);
         #[cfg(feature = "profiling")]
         record_exit(&result);
         // Ordinary Call/Return need no observable activation. Cold operations
@@ -62,11 +81,6 @@ pub(super) fn run(
                     CallStep::Complete(completion) => return Ok(Boundary::Complete(completion)),
                     CallStep::Bridge => return Err(invariant("pure operation attempted replay")),
                 }
-            }
-            VmAction::StrictEquality(negate) => {
-                crate::engine::vm::execute::strict_comparison(runtime, execution, id, negate)?;
-                #[cfg(feature = "profiling")]
-                record_event("strict_comparison_completed_in_same_frame");
             }
             VmAction::Call {
                 arguments,
@@ -353,6 +367,25 @@ fn record_event(event: &'static str) {
     crate::engine::api::profiling::record_owned_execution_event(event);
 }
 
+#[cfg(feature = "profiling")]
+fn record_segment_boundary(result: &Result<VmAction, Error>) {
+    let boundary = match result {
+        Ok(VmAction::Call { .. }) => "core.legacy_boundary.ordinary_call",
+        Ok(VmAction::Complete) => "core.legacy_boundary.ordinary_return",
+        Ok(VmAction::GetField { .. } | VmAction::GetElement { .. }) => {
+            "core.legacy_boundary.property_read"
+        }
+        Ok(VmAction::Pure(_)) => "core.legacy_boundary.pure",
+        Ok(VmAction::Numeric { .. } | VmAction::ConvertAdd | VmAction::ConvertPlus) => {
+            "core.legacy_boundary.numeric"
+        }
+        Ok(VmAction::Materialize) => "core.legacy_boundary.materialize",
+        Err(_) => "core.legacy_boundary.error",
+        Ok(_) => "core.legacy_boundary.other",
+    };
+    crate::engine::api::profiling::record_owned_execution_event(boundary);
+}
+
 #[cfg(test)]
 mod tests {
     use crate::engine::api::{Runtime, Value};
@@ -396,7 +429,7 @@ mod tests {
             );
             assert!(
                 events
-                    .get("strict_comparison_completed_in_same_frame")
+                    .get("strict_comparison.local_value")
                     .copied()
                     .unwrap_or(0)
                     >= 32

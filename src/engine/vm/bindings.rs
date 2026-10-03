@@ -171,27 +171,13 @@ pub(in crate::engine::vm) fn read_frame_binding(
     }
 }
 
-/// Read an owner-free value while the caller still holds the frame or callee
-/// edge to its captured cell. The borrow ends before the value is pushed; no
-/// callback, frame transition, allocation or owner release intervenes.
-///
-/// The ordinary driver temporarily clones the cell root. Decline at the two
-/// top counts so removing that clone cannot remove its checked-overflow or
-/// immortal-promotion behavior. Pending cleanup and unavailable exclusive
-/// state access likewise retain the original operation boundary.
+/// The caller's frame or closure owns this cell throughout the short read.
 #[inline]
-pub(in crate::engine::vm) fn try_read_captured_immediate(
-    runtime: &Runtime,
-    root: &impl crate::engine::heap::roots::VarRefHandle,
+pub(in crate::engine::vm) fn try_read_captured_immediate_in_state(
+    state: &crate::engine::heap::runtime::RuntimeState,
+    id: VarRefId,
 ) -> Option<JsValue> {
-    if runtime.0.deferred_references.has_pending() || !root.belongs_to(runtime) {
-        return None;
-    }
-    let state = runtime.0.state.try_borrow_mut().ok()?;
-    if state.heap.has_pending_zero_cleanup() {
-        return None;
-    }
-    let cell = state.heap.var_ref(root.id()).ok()?;
+    let cell = state.heap.var_ref(id).ok()?;
     if cell.kind.is_private() {
         return None;
     }
@@ -206,7 +192,7 @@ pub(in crate::engine::vm) fn try_read_captured_immediate(
     ) {
         return None;
     }
-    let count = state.heap.var_ref_strong_count(root.id()).ok()?;
+    let count = state.heap.var_ref_strong_count(id).ok()?;
     if count == 0 || count >= u32::MAX - 1 {
         return None;
     }

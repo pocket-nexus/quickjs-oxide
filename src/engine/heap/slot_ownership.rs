@@ -19,39 +19,6 @@ pub(crate) enum SlotReleaseReadiness {
 }
 
 impl Heap {
-    #[cfg(test)]
-    pub(crate) fn slot_object_release_readiness(
-        &self,
-        object: super::ObjectId,
-    ) -> Result<SlotReleaseReadiness, HeapError> {
-        self.slot_release_readiness(RawId::Object(object))
-    }
-
-    /// Trusted hot-path release readiness for a live object held by an owning
-    /// root. Identical to [`Heap::slot_object_release_readiness`] except that
-    /// the generation check is omitted; a non-live slot still reports `Drain`
-    /// rather than aborting.
-    #[inline]
-    pub(crate) fn slot_object_release_readiness_fast(
-        &self,
-        object: super::ObjectId,
-    ) -> SlotReleaseReadiness {
-        if !self.zero_queue.is_empty() {
-            return SlotReleaseReadiness::Drain;
-        }
-        match &self.slots[object.index as usize].state {
-            SlotState::Resident(node) if node.strong.get() > 1 => SlotReleaseReadiness::Ready,
-            SlotState::Resident(node) if node.strong.get() == 1 => {
-                if self.zero_queue.len() == self.zero_queue.capacity() {
-                    SlotReleaseReadiness::QueueCapacity
-                } else {
-                    SlotReleaseReadiness::Drain
-                }
-            }
-            _ => SlotReleaseReadiness::Drain,
-        }
-    }
-
     /// Leaf retirement has no graph traversal. Unlike an object, a string or
     /// BigInt node's last reference is retired in place by
     /// `try_release_leaf_reference`; it never enters the zero queue. The only
@@ -525,69 +492,6 @@ mod tests {
             Some(JsValue::Int(17))
         );
         runtime.release_jsvalue(base).unwrap();
-    }
-
-    #[test]
-    fn resident_array_leaves_preserve_existing_zero_queue_and_storage() {
-        let runtime = Runtime::new();
-        let mut context = runtime.new_context().expect("create context");
-        let dense = context.eval("globalThis.denseProbe = [7]").unwrap();
-        let typed = context
-            .eval("globalThis.typedProbe = new Int32Array([7])")
-            .unwrap();
-        runtime.run_gc().unwrap();
-        let queued = runtime.new_object(None).unwrap();
-        let queued_id = queued.object_id();
-        runtime
-            .0
-            .state
-            .borrow_mut()
-            .heap
-            .retain_object(queued_id)
-            .unwrap();
-        drop(queued);
-        runtime
-            .0
-            .state
-            .borrow_mut()
-            .heap
-            .release_raw_no_drain(RawId::Object(queued_id))
-            .unwrap();
-        assert_eq!(runtime.0.state.borrow().heap.zero_queue.len(), 1);
-        let dense_js = runtime.unroot_value(&dense).unwrap();
-        let typed_js = runtime.unroot_value(&typed).unwrap();
-        assert!(!runtime.try_typed_array_number_write(&typed_js, 0, 17.0));
-        assert!(
-            runtime
-                .try_dense_array_immediate_read(&dense_js, 0)
-                .is_none()
-        );
-        assert!(runtime.try_array_immediate_read(&dense_js, 0).is_none());
-        assert!(runtime.try_array_immediate_read(&typed_js, 0).is_none());
-        assert_eq!(runtime.0.state.borrow().heap.zero_queue.len(), 1);
-        runtime.release_jsvalue(dense_js).unwrap();
-        runtime.release_jsvalue(typed_js).unwrap();
-        for value in [&dense, &typed] {
-            let Value::Object(object) = value else {
-                panic!("array receiver");
-            };
-            assert!(
-                runtime
-                    .0
-                    .state
-                    .borrow()
-                    .heap
-                    .object(object.object_id())
-                    .is_ok()
-            );
-        }
-        runtime.run_gc().unwrap();
-        assert_eq!(
-            context
-                .eval("typedProbe[0] === 7 && denseProbe[0] === 7")
-                .unwrap(),
-            Value::Bool(true)
-        );
     }
 
     #[test]

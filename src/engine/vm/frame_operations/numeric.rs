@@ -403,7 +403,7 @@ mod tests {
     }
 
     #[test]
-    fn materialization_retry_reexecutes_the_current_operation() {
+    fn object_truthiness_releases_the_owner_without_materializing() {
         use crate::engine::code::exec_opcode::Opcode;
 
         let runtime = Runtime::new();
@@ -427,17 +427,15 @@ mod tests {
         execution.frames.current_mut(id).unwrap().resume_pc = not_pc as usize;
         assert_eq!(
             execute_frame(&runtime, &mut execution, id).unwrap(),
-            VmAction::Materialize
-        );
-        let frame = execution.frames.current_mut(id).unwrap();
-        assert_eq!(
-            (frame.fault_pc, frame.resume_pc),
-            (not_pc as usize, not_pc as usize)
-        );
-        execution.frames.materialize(&runtime).unwrap();
-        assert_eq!(
-            execute_frame(&runtime, &mut execution, id).unwrap(),
             VmAction::Complete
+        );
+        assert!(
+            !execution
+                .frames
+                .current_mut(id)
+                .unwrap()
+                .active_frame
+                .is_materialized()
         );
         let frame = execution.frames.current_mut(id).unwrap();
         assert_eq!(execution.slots.depth(&frame.window), 0);

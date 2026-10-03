@@ -14,7 +14,9 @@ use crate::engine::vm::BytecodePc;
 use crate::engine::vm::Completion;
 use crate::engine::vm::call::{BytecodeCallRequest, CallableExecution};
 use crate::engine::vm::exception::runtime_error_to_vm_error;
-use crate::engine::vm::execute::{VmAction, execute_frame};
+use crate::engine::vm::execute::VmAction;
+#[cfg(test)]
+use crate::engine::vm::execute::execute_frame;
 use crate::engine::vm::execution::{ExecutionLimits, RunningExecution};
 use crate::engine::vm::frame::{Frame, FrameEntry, FrameId, ReturnTarget};
 use crate::engine::vm::stack::FrameStorage;

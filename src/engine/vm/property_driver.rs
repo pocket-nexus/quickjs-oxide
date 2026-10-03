@@ -34,14 +34,78 @@ pub(super) enum PropertyProgress {
 /// A static read selected while the frame transaction was still active.
 /// The read owns its getter/receiver or result until the driver consumes it.
 pub(super) enum SelectedNamedRead {
-    Read(OrdinaryRead),
+    Getter(OwnedGetterSelection),
     LookupError(Error),
 }
 
 impl SelectedNamedRead {
     pub(super) fn release(self, runtime: &Runtime) {
-        if let Self::Read(read) = self {
-            read.release(runtime);
+        match self {
+            Self::Getter(OwnedGetterSelection { getter, receiver }) => {
+                let _ = runtime.release_jsvalue(getter);
+                let _ = runtime.release_jsvalue(receiver);
+            }
+            Self::LookupError(_) => {}
+        }
+    }
+}
+
+/// A completed getter choice owns only its callee and receiver edges. Selection
+/// does not build a public root or replay lookup at the legacy boundary.
+pub(super) struct OwnedGetterSelection {
+    getter: JsValue,
+    receiver: JsValue,
+}
+
+impl OwnedGetterSelection {
+    pub(super) fn prepare(
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        poisoned: &std::cell::Cell<bool>,
+        receiver: &JsValue,
+        getter: crate::engine::heap::ObjectId,
+    ) -> Result<Self, Error> {
+        let getter = state
+            .dup_jsvalue(&JsValue::Object(getter))
+            .map_err(runtime_error_to_vm_error)?;
+        let mut guard = crate::engine::heap::runtime::owned_values::OwnedValueGuard::new(
+            state, poisoned, getter,
+        );
+        let (state, getter) = guard.parts();
+        let receiver = state
+            .dup_jsvalue(receiver)
+            .map_err(runtime_error_to_vm_error)?;
+        Ok(Self {
+            getter: getter.take().expect("guard owns selected getter"),
+            receiver,
+        })
+    }
+
+    pub(super) fn release(
+        self,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        poisoned: &std::cell::Cell<bool>,
+    ) -> Result<(), Error> {
+        state
+            .release_owned_jsvalue(poisoned, self.getter)
+            .map_err(runtime_error_to_vm_error)?;
+        state
+            .release_owned_jsvalue(poisoned, self.receiver)
+            .map_err(runtime_error_to_vm_error)
+    }
+
+    fn into_legacy_read(self, runtime: &Runtime) -> OrdinaryRead {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "core.legacy_boundary.selected_getter_root",
+        );
+        let JsValue::Object(id) = self.getter else {
+            unreachable!("selected getter is an object")
+        };
+        OrdinaryRead::Call {
+            getter: crate::engine::object::CallableRef::from_validated_object(
+                crate::engine::object::ObjectRef::from_owned_handle(runtime.clone(), id),
+            ),
+            receiver: self.receiver,
         }
     }
 }
@@ -153,7 +217,7 @@ pub(super) fn read_progress_selected(
     let realm = frame.executable.realm;
     let next_pc = fallthrough.index();
     let selected_read = match selected.selected.take() {
-        Some(SelectedNamedRead::Read(read)) => Some(read),
+        Some(SelectedNamedRead::Getter(read)) => Some(read.into_legacy_read(runtime)),
         Some(SelectedNamedRead::LookupError(error)) => {
             return throw_error(runtime, realm, error).map(PropertyProgress::Deferred);
         }
@@ -1095,7 +1159,7 @@ mod read_completion_tests {
         ));
         assert!(matches!(
             execution.selected_named_read,
-            Some(SelectedNamedRead::Read(OrdinaryRead::Call { .. }))
+            Some(SelectedNamedRead::Getter(_))
         ));
     }
 
@@ -1167,15 +1231,6 @@ mod read_completion_tests {
             expected_key,
             expected_depth,
         ) in [
-            (
-                "(function(o){return o.x})",
-                "({x:7,true:5})",
-                Opcode::GetFieldCached,
-                false,
-                false,
-                false,
-                1,
-            ),
             (
                 "(function(o,k){return o[k]})",
                 "({x:7,true:5})",

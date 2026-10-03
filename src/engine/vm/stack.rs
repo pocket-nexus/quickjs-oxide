@@ -295,15 +295,17 @@ impl Drop for StateFrameStorageGuard<'_> {
     }
 }
 
+#[cfg(test)]
 mod nullish;
 mod number;
+mod state;
 mod transfer;
 mod window;
+pub(in crate::engine::vm) use state::copy_value_in_state;
 pub(in crate::engine::vm) use transfer::StoreProgress;
 
 pub(in crate::engine::vm) enum PropertyReadProgress {
     Completed,
-    NeedsObservation,
     Driver,
     Selected(crate::engine::heap::ObjectId),
 }
@@ -319,73 +321,6 @@ pub(in crate::engine::vm) use window::{
 };
 
 impl SlotStore {
-    /// Commit a retained IC result only after output capacity and the receiver
-    /// release proof have succeeded. Failure leaves the canonical operands.
-    // The slot window, immutable site facts and selected native output are disjoint borrowed inputs to one transaction.
-    #[allow(clippy::too_many_arguments)]
-    fn property_ic_read_current(
-        &mut self,
-        window: &mut FrameWindow,
-        runtime: &Runtime,
-        executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
-        operation: NamedReadOperation,
-        native: &mut Option<crate::engine::object::LinkedNativeSelection>,
-    ) -> Result<PropertyReadProgress, Error> {
-        let output_index = if operation.keep_receiver {
-            // Canonical get can have effects before an output-capacity error;
-            // declining here preserves that order without promoting a root.
-            let Ok(index) = self.operand_push_index(window) else {
-                return Ok(PropertyReadProgress::Driver);
-            };
-            Some(index)
-        } else {
-            None
-        };
-        let base = self.peek_current(window, 0)?;
-        let mut miss = crate::engine::object::NamedSelectionMiss::ContinueLookup;
-        // Consume the selected owned value directly. The cold miss outcome
-        // carries no value, avoiding a second large data/result transport.
-        let value = match runtime.select_linked_data_into(
-            base,
-            executable,
-            operation.site,
-            operation.key_index,
-            operation.keep_receiver,
-            native,
-            &mut miss,
-        ) {
-            Some(value) => value,
-            None => match miss {
-                crate::engine::object::NamedSelectionMiss::CompleteAbsent => JsValue::Undefined,
-                crate::engine::object::NamedSelectionMiss::Accessor(getter) => {
-                    return Ok(PropertyReadProgress::Selected(getter));
-                }
-                crate::engine::object::NamedSelectionMiss::ContinueLookup => {
-                    return Ok(PropertyReadProgress::Driver);
-                }
-                crate::engine::object::NamedSelectionMiss::NeedsObservation => {
-                    return Ok(PropertyReadProgress::NeedsObservation);
-                }
-            },
-        };
-        if let Some(index) = output_index {
-            self.install_operand(window, index, value);
-        } else {
-            let index = window.operands().start + window.depth - 1;
-            let base = self.slots[index].replace(FrameBinding::Direct(value));
-            // No reentry or cleanup queue mutation intervenes between the
-            // runtime proof and this non-final receiver release.
-            if let Some(FrameBinding::Direct(old)) = base {
-                runtime
-                    .release_jsvalue(old)
-                    .map_err(runtime_error_to_vm_error)?;
-            }
-            #[cfg(feature = "profiling")]
-            record_owned_storage(Cost::Move(2));
-        }
-        Ok(PropertyReadProgress::Completed)
-    }
-
     pub(in crate::engine::vm) fn new(limit: usize) -> Self {
         Self {
             slots: Vec::new(),
@@ -1068,79 +1003,6 @@ impl SlotStore {
         Ok(Some(decision))
     }
 
-    fn array_immediate_read_current(
-        &mut self,
-        window: &mut FrameWindow,
-        runtime: &Runtime,
-    ) -> Result<bool, Error> {
-        let offset = window
-            .depth
-            .checked_sub(2)
-            .ok_or_else(Self::operand_stack_underflow)?;
-        let index = window.operands().start + offset;
-        let [
-            Some(FrameBinding::Direct(base)),
-            Some(FrameBinding::Direct(key)),
-        ] = &self.slots[index..index + 2]
-        else {
-            return Err(Self::operand_slot_not_a_value());
-        };
-        let index_key = match key {
-            JsValue::Int(key) if *key >= 0 => *key as u32,
-            JsValue::String(id) => {
-                // Shared payload storage only proves the spelling survives its
-                // own release; it does not prove the arena slot can retire
-                // without allocating. The slot readiness proof is the sole
-                // gate for consuming the key owner below. The spelling is
-                // cloned out before the slot owners are consumed.
-                if !matches!(
-                    runtime.slot_value_release_readiness_jsvalue(key),
-                    Ok(crate::engine::heap::SlotReleaseReadiness::Ready)
-                ) {
-                    return Ok(false);
-                }
-                let text = runtime.0.state.borrow().heap.string_fast(*id).clone();
-                let Some(index) = crate::engine::atom::AtomTable::canonical_array_index(&text)
-                else {
-                    return Ok(false);
-                };
-                index
-            }
-            _ => return Ok(false),
-        };
-        let Some(value) = runtime.try_array_immediate_read(base, index_key) else {
-            return Ok(false);
-        };
-        // The scalar result owns no heap edge. Preflight proved that releasing
-        // the base cannot drain; no ownership decrease intervened since then.
-        // Both inputs were authenticated Direct bindings. Numeric keys are
-        // edge-free; string keys still surrender their genuine arena owner.
-        let Some(FrameBinding::Direct(key)) = self.slots[index + 1].take() else {
-            unreachable!("array leaf authenticated its key slot")
-        };
-        let Some(FrameBinding::Direct(base)) =
-            self.slots[index].replace(FrameBinding::Direct(value))
-        else {
-            unreachable!("array leaf authenticated its base slot")
-        };
-        window.depth -= 1;
-        runtime
-            .release_jsvalue(key)
-            .map_err(super::exception::runtime_error_to_vm_error)?;
-        runtime
-            .release_jsvalue(base)
-            .map_err(super::exception::runtime_error_to_vm_error)?;
-        #[cfg(feature = "profiling")]
-        {
-            self.live_slots -= 1;
-            record_owned_storage(Cost::Move(3));
-            crate::engine::api::profiling::record_owned_execution_event(
-                "array_immediate_read_in_run",
-            );
-        }
-        Ok(true)
-    }
-
     #[cfg(test)]
     fn ordinary_field_immediate_read_current(
         &mut self,
@@ -1301,24 +1163,12 @@ impl SlotStore {
         source_from_top: usize,
         destination_from_top: usize,
     ) -> Result<(), Error> {
-        self.check_current(window)?;
-        self.insert_copy_current(runtime, window, source_from_top, destination_from_top)
-    }
-
-    fn insert_copy_current(
-        &mut self,
-        runtime: &Runtime,
-        window: &mut FrameWindow,
-        source_from_top: usize,
-        destination_from_top: usize,
-    ) -> Result<(), Error> {
-        self.peek_current(window, source_from_top)?;
-        if destination_from_top > window.depth || window.depth >= window.operands().len() {
-            return Err(Error::internal("owned insertion exceeds verified capacity"));
-        }
-        let copied = copy_value(runtime, self.peek_current(window, source_from_top)?)?;
-        self.push_current(window, copied)?;
-        self.rotate_operands_current(window, 0, destination_from_top + 1, false)
+        let mut transaction = self.frame_transaction(window)?;
+        transaction.slots().insert_copy_in_state(
+            &mut runtime.0.state.borrow_mut(),
+            source_from_top,
+            destination_from_top,
+        )
     }
 
     /// Retain a sequence into reserved slots. If a retain fails, the committed
@@ -1332,31 +1182,10 @@ impl SlotStore {
         window: &mut FrameWindow,
         count: usize,
     ) -> Result<(), Error> {
-        self.check_current(window)?;
-        self.duplicate_operands_current(runtime, window, count)
-    }
-
-    fn duplicate_operands_current(
-        &mut self,
-        runtime: &Runtime,
-        window: &mut FrameWindow,
-        count: usize,
-    ) -> Result<(), Error> {
-        let source = count
-            .checked_sub(1)
-            .ok_or_else(|| Error::internal("empty owned operand duplication"))?;
-        self.peek_current(window, source)?;
-        if count > window.operands().len() - window.depth {
-            return Err(Error::internal(
-                "owned duplication exceeds verified capacity",
-            ));
-        }
-        for _ in 0..count {
-            // As depth grows, this fixed offset visits the next original slot.
-            let copied = copy_value(runtime, self.peek_current(window, source)?)?;
-            self.push_current(window, copied)?;
-        }
-        Ok(())
+        let mut transaction = self.frame_transaction(window)?;
+        transaction
+            .slots()
+            .duplicate_operands_in_state(&mut runtime.0.state.borrow_mut(), count)
     }
 
     /// Logical pop removes ownership immediately. No dead value survives above sp.
@@ -1892,13 +1721,27 @@ mod tests {
         };
         let mut native = None;
         let base_internal = runtime.unroot_value(&base).unwrap();
-        assert!(
-            runtime
-                .try_property_ic_read_owned(&base_internal, &code, pc, key, true, &mut native)
-                .unwrap()
-                .is_none()
-        );
-        runtime.release_jsvalue(base_internal).unwrap();
+        {
+            let mut state = runtime.0.state.borrow_mut();
+            let value = state
+                .select_linked_data_into(
+                    runtime.domain_id(),
+                    &base_internal,
+                    &code,
+                    pc,
+                    key,
+                    true,
+                    &mut native,
+                    &mut crate::engine::object::NamedSelectionMiss::ContinueLookup,
+                )
+                .expect("select field");
+            state
+                .release_owned_jsvalue(&runtime.0.poisoned, value)
+                .unwrap();
+            state
+                .release_owned_jsvalue(&runtime.0.poisoned, base_internal)
+                .unwrap();
+        }
         let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
         owner.metadata.max_stack = 1;
         let mut slots = SlotStore::new(2);
@@ -1999,8 +1842,8 @@ mod tests {
         assert_eq!(to_public(&runtime, slots.peek(&window, 1).unwrap()), base);
         slots.clear_frame(&runtime, window).unwrap();
 
-        // A consumed last-owner receiver cannot be released inside the local
-        // read. Observation must leave its operand and depth intact.
+        // The consumed final receiver is released under the same state access;
+        // its result is installed before heap cleanup.
         owner.metadata.max_stack = 1;
         let mut window = slots
             .push_frame(&runtime, &owner.frame_layout(), empty_storage())
@@ -2025,20 +1868,11 @@ mod tests {
                     &mut native,
                 )
                 .unwrap(),
-            super::PropertyReadProgress::NeedsObservation
+            super::PropertyReadProgress::Completed
         ));
         assert_eq!(window.depth, 1);
-        assert!(matches!(slots.peek(&window, 0), Ok(JsValue::Object(id)) if *id == lone_id));
-        assert_eq!(
-            runtime
-                .0
-                .state
-                .borrow()
-                .heap
-                .object_strong_count(lone_id)
-                .unwrap(),
-            1
-        );
+        assert_eq!(slots.peek(&window, 0).unwrap(), &JsValue::Int(1));
+        assert!(runtime.0.state.borrow().heap.object(lone_id).is_err());
         slots.clear_frame(&runtime, window).unwrap();
     }
 
@@ -2526,23 +2360,29 @@ mod tests {
                     .push(&mut window, into_internal(&runtime, value))
                     .unwrap();
             }
-            assert!(
-                !slots
-                    .borrow_frame_slots(&mut window)
-                    .unwrap()
-                    .array_immediate_read(&runtime)
-                    .unwrap(),
-                "{source}"
-            );
-            assert_eq!(window.depth, 3);
-            assert_eq!(to_public(&runtime, slots.peek(&window, 0).unwrap()), key);
-            assert!(
-                matches!(slots.peek(&window, 1).unwrap(), JsValue::Object(handle) if *handle == id)
-            );
-            assert_eq!(
-                to_public(&runtime, slots.peek(&window, 2).unwrap()),
-                Value::Int(99)
-            );
+            let completed = slots
+                .borrow_frame_slots(&mut window)
+                .unwrap()
+                .array_immediate_read(&runtime)
+                .unwrap();
+            if single_root {
+                assert!(completed, "{source}");
+                assert_eq!(window.depth, 2);
+                assert_eq!(slots.peek(&window, 0).unwrap(), &JsValue::Int(42));
+                assert!(runtime.0.state.borrow().heap.object(id).is_err());
+                assert_eq!(slots.peek(&window, 1).unwrap(), &JsValue::Int(99));
+            } else {
+                assert!(!completed, "{source}");
+                assert_eq!(window.depth, 3);
+                assert_eq!(to_public(&runtime, slots.peek(&window, 0).unwrap()), key);
+                assert!(
+                    matches!(slots.peek(&window, 1).unwrap(), JsValue::Object(handle) if *handle == id)
+                );
+                assert_eq!(
+                    to_public(&runtime, slots.peek(&window, 2).unwrap()),
+                    Value::Int(99)
+                );
+            }
             slots.clear_frame(&runtime, window).unwrap();
         }
         let runtime = Runtime::new();
@@ -2563,25 +2403,8 @@ mod tests {
         let queued = runtime.new_object(None).unwrap();
         {
             let _borrow = runtime.0.state.borrow();
-            assert!(
-                !slots
-                    .borrow_frame_slots(&mut window)
-                    .unwrap()
-                    .array_immediate_read(&runtime)
-                    .unwrap()
-            );
             drop(queued);
         }
-        assert!(
-            !slots
-                .borrow_frame_slots(&mut window)
-                .unwrap()
-                .array_immediate_read(&runtime)
-                .unwrap()
-        );
-        assert_eq!(window.depth, 3);
-        assert!(runtime.0.deferred_references.has_pending());
-        runtime.drain_deferred_references().unwrap();
         assert!(
             slots
                 .borrow_frame_slots(&mut window)
@@ -2589,6 +2412,9 @@ mod tests {
                 .array_immediate_read(&runtime)
                 .unwrap()
         );
+        assert_eq!(window.depth, 2);
+        assert!(runtime.0.deferred_references.has_pending());
+        runtime.drain_deferred_references().unwrap();
         assert_eq!(window.depth, 2);
         assert_eq!(
             take_public(&runtime, slots.pop(&mut window).unwrap()),
@@ -2603,7 +2429,7 @@ mod tests {
     }
 
     #[test]
-    fn typed_read_leaf_preserves_declined_inputs_and_release_guards() {
+    fn typed_read_leaf_preserves_invalid_inputs_and_external_cleanup() {
         for (source, single_root) in [
             ("new Uint8Array([42])", true),
             ("new Uint8Array(0)", false),
@@ -2637,22 +2463,27 @@ mod tests {
                     .push(&mut window, into_internal(&runtime, value))
                     .unwrap();
             }
-            assert!(
-                !slots
-                    .borrow_frame_slots(&mut window)
-                    .unwrap()
-                    .array_immediate_read(&runtime)
-                    .unwrap(),
-                "{source}"
-            );
-            assert_eq!(window.depth, 2);
-            assert_eq!(
-                to_public(&runtime, slots.peek(&window, 0).unwrap()),
-                Value::Int(0)
-            );
-            assert!(
-                matches!(slots.peek(&window, 1).unwrap(), JsValue::Object(handle) if *handle == id)
-            );
+            let completed = slots
+                .borrow_frame_slots(&mut window)
+                .unwrap()
+                .array_immediate_read(&runtime)
+                .unwrap();
+            if single_root {
+                assert!(completed, "{source}");
+                assert_eq!(window.depth, 1);
+                assert_eq!(slots.peek(&window, 0).unwrap(), &JsValue::Int(42));
+                assert!(runtime.0.state.borrow().heap.object(id).is_err());
+            } else {
+                assert!(!completed, "{source}");
+                assert_eq!(window.depth, 2);
+                assert_eq!(
+                    to_public(&runtime, slots.peek(&window, 0).unwrap()),
+                    Value::Int(0)
+                );
+                assert!(
+                    matches!(slots.peek(&window, 1).unwrap(), JsValue::Object(handle) if *handle == id)
+                );
+            }
             slots.clear_frame(&runtime, window).unwrap();
         }
         let runtime = Runtime::new();
@@ -2673,25 +2504,8 @@ mod tests {
         let queued = runtime.new_object(None).unwrap();
         {
             let _borrow = runtime.0.state.borrow();
-            assert!(
-                !slots
-                    .borrow_frame_slots(&mut window)
-                    .unwrap()
-                    .array_immediate_read(&runtime)
-                    .unwrap()
-            );
             drop(queued);
         }
-        assert!(
-            !slots
-                .borrow_frame_slots(&mut window)
-                .unwrap()
-                .array_immediate_read(&runtime)
-                .unwrap()
-        );
-        assert_eq!(window.depth, 2);
-        assert!(runtime.0.deferred_references.has_pending());
-        runtime.drain_deferred_references().unwrap();
         assert!(
             slots
                 .borrow_frame_slots(&mut window)
@@ -2699,6 +2513,9 @@ mod tests {
                 .array_immediate_read(&runtime)
                 .unwrap()
         );
+        assert_eq!(window.depth, 1);
+        assert!(runtime.0.deferred_references.has_pending());
+        runtime.drain_deferred_references().unwrap();
         assert_eq!(window.depth, 1);
         assert_eq!(
             take_public(&runtime, slots.pop(&mut window).unwrap()),

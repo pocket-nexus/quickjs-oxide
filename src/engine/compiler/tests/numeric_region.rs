@@ -229,10 +229,9 @@ fn array_store_and_local_uses_saved_stack_target_and_falls_back_cleanly() {
         let _ = assert_same(&source, hits);
     }
     let saved_index = "(function(){function f(a){var i=0,out=0;out=a[i]=++i;return out+':'+i+':'+a.join(',');}return f([1,2]);})()";
-    // Direct scalar initialization no longer materializes this frame merely
-    // to release `out`. The region still falls back correctly when its older
-    // materialized-frame admission is unavailable.
-    let _ = assert_same(saved_index, 0);
+    // State-held retirement consumes the saved receiver after committing both
+    // stores; this does not need an observable frame.
+    let _ = assert_same(saved_index, 1);
 }
 
 #[test]

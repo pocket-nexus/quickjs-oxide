@@ -1484,30 +1484,6 @@ impl Runtime {
         Some(typed_array_decode_number_jsvalue(snapshot.element, bytes))
     }
 
-    /// Resident VM leaf: every decline precedes the only byte write. The
-    /// owning input may be dropped after success without running heap cleanup.
-    pub(crate) fn try_typed_array_number_write(
-        &self,
-        base: &JsValue,
-        index: u32,
-        number: f64,
-    ) -> bool {
-        use crate::engine::heap::SlotReleaseReadiness;
-        let JsValue::Object(_object) = base else {
-            return false;
-        };
-        if !matches!(
-            self.slot_value_release_readiness_jsvalue(base),
-            Ok(SlotReleaseReadiness::Ready)
-        ) {
-            return false;
-        }
-        self.0
-            .state
-            .try_borrow_mut()
-            .is_ok_and(|mut state| state.try_typed_array_number_write(base, index, number))
-    }
-
     pub(crate) fn typed_array_define_index(
         &self,
         realm: ContextId,

@@ -24,8 +24,6 @@ pub(crate) enum NamedDataSelection {
     /// The consumer must acquire owning getter/receiver edges before handoff.
     Accessor(ObjectId),
     ContinueLookup,
-    #[cfg(test)]
-    NeedsObservation,
 }
 
 /// Cold outcomes kept separate from the common owned-data return. The
@@ -35,7 +33,6 @@ pub(crate) enum NamedSelectionMiss {
     CompleteAbsent,
     Accessor(ObjectId),
     ContinueLookup,
-    NeedsObservation,
 }
 
 /// Affine native payload fact selected together with an own property value.
@@ -1363,19 +1360,6 @@ impl Runtime {
         )
     }
 
-    /// Promote a getter selected under a protected property-cache traversal.
-    /// The original receiver still owns the slot while both edges are acquired.
-    pub(crate) fn prepare_selected_linked_getter(
-        &self,
-        base: &JsValue,
-        getter: ObjectId,
-    ) -> Result<crate::engine::object::OrdinaryRead, RuntimeError> {
-        let getter = crate::engine::object::CallableRef::from_validated_object(
-            ObjectRef::from_borrowed_handle(self.clone(), getter)?,
-        );
-        let receiver = self.dup_jsvalue(base)?;
-        Ok(crate::engine::object::OrdinaryRead::Call { getter, receiver })
-    }
     /// Only an existing writable own scalar slot reaches the ordinary Set
     /// replacement transaction. There are no callback or owner-bearing edges.
     #[cfg(test)]
@@ -1441,169 +1425,6 @@ impl Runtime {
         state
             .replace_property_slot(id, slot.index, PropertySlot::Data(raw))
             .is_ok()
-    }
-}
-
-impl Runtime {
-    /// Read an own Number from a genuine Array while its base owner remains in
-    /// the frame. Dense elements and materialized data slots qualify; read
-    /// semantics do not depend on a data property's attribute flags. Holes and
-    /// accessors fall back to canonical [[Get]].
-    /// The heap borrow ends before the Copy result leaves.
-    pub(crate) fn peek_dense_number(&self, base: &JsValue, index: u32) -> Option<Number> {
-        if !matches!(base, JsValue::Object(_)) {
-            return None;
-        }
-        self.0
-            .state
-            .try_borrow()
-            .ok()?
-            .peek_dense_number(base, index)
-    }
-
-    /// A miss classification is produced during the same borrow that probes
-    /// the element; diagnostic callers do not repeat a property lookup.
-    pub(crate) fn peek_dense_number_result(
-        &self,
-        base: &JsValue,
-        index: u32,
-    ) -> Result<Number, Miss> {
-        let JsValue::Object(_id) = base else {
-            return Err(Miss::ReceiverNotObject);
-        };
-        self.0
-            .state
-            .try_borrow()
-            .map_err(|_| Miss::HeapBorrowUnavailable)?
-            .peek_dense_number_result(base, index)
-    }
-
-    /// Update one existing writable own Array Number under a single mutable
-    /// state borrow. Old and new values own no edges, so this cannot release
-    /// an owner, change a descriptor or length, or run guest code.
-    pub(crate) fn try_add_array_own_number(
-        &self,
-        base: &JsValue,
-        index: u32,
-        delta: Number,
-    ) -> Result<(), Miss> {
-        let JsValue::Object(_id) = base else {
-            return Err(Miss::ReceiverNotObject);
-        };
-        self.0
-            .state
-            .try_borrow_mut()
-            .map_err(|_| Miss::HeapBorrowUnavailable)?
-            .try_add_array_own_number(base, index, delta)
-    }
-
-    pub(crate) fn try_replace_array_own_number(
-        &self,
-        base: &JsValue,
-        index: u32,
-        value: Number,
-    ) -> Result<(), Miss> {
-        let JsValue::Object(_id) = base else {
-            return Err(Miss::ReceiverNotObject);
-        };
-        self.0
-            .state
-            .try_borrow_mut()
-            .map_err(|_| Miss::HeapBorrowUnavailable)?
-            .try_replace_array_own_number(base, index, value)
-    }
-
-    /// Diagnose a *previously failed* numeric dense read. This performs an
-    /// extra heap borrow only in profiling builds and never changes storage.
-    #[cfg(all(test, feature = "profiling"))]
-    pub(crate) fn diagnose_dense_number_read_miss(
-        &self,
-        base: &JsValue,
-        index: u32,
-    ) -> &'static str {
-        if !matches!(base, JsValue::Object(_)) {
-            return "base_not_object";
-        }
-        let Ok(state) = self.0.state.try_borrow() else {
-            return "read_borrow_unavailable";
-        };
-        dense_number_miss_in_state(&state, base, index)
-    }
-
-    /// Diagnose a *previously failed* numeric dense write. The mutable
-    /// borrow probe distinguishes storage readiness from an active lease.
-    #[cfg(all(test, feature = "profiling"))]
-    pub(crate) fn diagnose_dense_number_write_miss(
-        &self,
-        base: &JsValue,
-        index: u32,
-    ) -> &'static str {
-        if !matches!(base, JsValue::Object(_)) {
-            return "base_not_object";
-        }
-        let Ok(state) = self.0.state.try_borrow_mut() else {
-            return "write_borrow_unavailable";
-        };
-        dense_number_miss_in_state(&state, base, index)
-    }
-
-    /// Replace one existing own dense Number under a single heap borrow. A
-    /// dense element has the default writable data descriptor; descriptor
-    /// changes materialize the Array and make this leaf decline. Both the old
-    /// and new values are immediate, so this cannot release an owner, drain
-    /// cleanup, change layout or length, or invoke user code.
-    #[inline]
-    #[cfg(test)]
-    pub(crate) fn try_write_dense_number(&self, base: &JsValue, index: u32, value: Number) -> bool {
-        let JsValue::Object(_id) = base else {
-            return false;
-        };
-        self.0
-            .state
-            .try_borrow_mut()
-            .is_ok_and(|mut state| state.try_write_dense_number(base, index, value))
-    }
-
-    /// Borrow an existing dense own immediate value while proving that the VM
-    /// can subsequently release its base operand without draining heap work.
-    /// Every decline leaves owners and storage untouched; the general property
-    /// lookup retains all missing/exotic/reference-valued cases.
-    #[cfg(test)]
-    pub(crate) fn try_dense_array_immediate_read(
-        &self,
-        base: &JsValue,
-        index: u32,
-    ) -> Option<JsValue> {
-        self.try_array_immediate_read_kind(base, index, false)
-    }
-
-    /// One release proof and heap borrow select either existing array kernel.
-    pub(crate) fn try_array_immediate_read(&self, base: &JsValue, index: u32) -> Option<JsValue> {
-        self.try_array_immediate_read_kind(base, index, true)
-    }
-
-    fn try_array_immediate_read_kind(
-        &self,
-        base: &JsValue,
-        index: u32,
-        include_typed: bool,
-    ) -> Option<JsValue> {
-        use crate::engine::heap::SlotReleaseReadiness;
-        let JsValue::Object(_object) = base else {
-            return None;
-        };
-        if !matches!(
-            self.slot_value_release_readiness_jsvalue(base),
-            Ok(SlotReleaseReadiness::Ready)
-        ) {
-            return None;
-        }
-        let mut state = self.0.state.try_borrow_mut().ok()?;
-        if include_typed {
-            state.try_array_immediate_read(base, index)
-        } else {
-            state.try_array_immediate_read_kind(base, index, false)
-        }
     }
 }
 
@@ -1695,24 +1516,6 @@ fn materialized_number_miss_in_state(
 mod dense_array_read_tests {
     use super::*;
 
-    #[cfg(feature = "profiling")]
-    #[test]
-    fn dense_diagnostic_priority_reports_nonobject_before_borrow() {
-        let runtime = Runtime::new();
-        let base = JsValue::Int(3);
-        let _lease = runtime.0.state.borrow_mut();
-        assert!(runtime.peek_dense_number(&base, 0).is_none());
-        assert!(!runtime.try_write_dense_number(&base, 0, Number::Int(1)));
-        assert_eq!(
-            runtime.diagnose_dense_number_read_miss(&base, 0),
-            "base_not_object"
-        );
-        assert_eq!(
-            runtime.diagnose_dense_number_write_miss(&base, 0),
-            "base_not_object"
-        );
-    }
-
     fn receiver(runtime: &Runtime, expression: &str) -> Value {
         let mut context = runtime.new_context().expect("create context");
         let value = context.eval(expression).unwrap();
@@ -1732,26 +1535,29 @@ mod dense_array_read_tests {
         };
         let count = runtime.0.state.borrow().heap.object_strong_count(*id);
         assert!(matches!(
-            runtime.peek_dense_number(&base, 0),
+            runtime.0.state.borrow().peek_dense_number(&base, 0),
             Some(Number::Int(7))
         ));
         assert!(
-            matches!(runtime.peek_dense_number(&base, 1), Some(Number::Float(n)) if n == 0.0 && n.is_sign_negative())
+            matches!(runtime.0.state.borrow().peek_dense_number(&base, 1), Some(Number::Float(n)) if n == 0.0 && n.is_sign_negative())
         );
         assert!(
-            matches!(runtime.peek_dense_number(&base, 2), Some(Number::Float(n)) if n.is_nan())
+            matches!(runtime.0.state.borrow().peek_dense_number(&base, 2), Some(Number::Float(n)) if n.is_nan())
         );
         for index in [3, 4, 5, u32::MAX] {
-            assert!(runtime.peek_dense_number(&base, index).is_none());
+            assert!(
+                runtime
+                    .0
+                    .state
+                    .borrow()
+                    .peek_dense_number(&base, index)
+                    .is_none()
+            );
         }
         assert_eq!(
             runtime.0.state.borrow().heap.object_strong_count(*id),
             count
         );
-        {
-            let _borrow = runtime.0.state.borrow_mut();
-            assert!(runtime.peek_dense_number(&base, 0).is_none());
-        }
         runtime.release_jsvalue(base).unwrap();
     }
 
@@ -1767,34 +1573,65 @@ mod dense_array_read_tests {
         let JsValue::Object(id) = &base else {
             panic!("array");
         };
-        // Canonical GetArrayEl consumes its base, so its read leaf must still
-        // decline the final owner. The borrowed numeric span need not do so.
-        assert!(runtime.try_array_immediate_read(&base, 5).is_none());
+        // The supplied-state read borrows its receiver, including its final owner.
+        assert!(matches!(
+            runtime
+                .0
+                .state
+                .borrow_mut()
+                .try_array_immediate_read(&base, 5),
+            Some(JsValue::Int(5))
+        ));
         let keeper = runtime.dup_jsvalue(&base).unwrap();
         let before = runtime.0.state.borrow().heap.object_strong_count(*id);
         assert!(matches!(
-            runtime.peek_dense_number(&base, 5),
+            runtime.0.state.borrow().peek_dense_number(&base, 5),
             Some(Number::Int(5))
         ));
         assert!(matches!(
-            runtime.peek_dense_number(&base, 2),
+            runtime.0.state.borrow().peek_dense_number(&base, 2),
             Some(Number::Float(value)) if value == 0.0 && value.is_sign_negative()
         ));
         assert!(matches!(
-            runtime.peek_dense_number(&base, 4),
+            runtime.0.state.borrow().peek_dense_number(&base, 4),
             Some(Number::Float(value)) if value.is_nan()
         ));
         assert!(matches!(
-            runtime.try_array_immediate_read(&base, 5),
+            runtime
+                .0
+                .state
+                .borrow_mut()
+                .try_array_immediate_read(&base, 5),
             Some(JsValue::Int(5))
         ));
         assert!(matches!(
-            runtime.try_array_immediate_read(&base, 2),
+            runtime.0.state.borrow_mut().try_array_immediate_read(&base, 2),
             Some(JsValue::Float(value)) if value == 0.0 && value.is_sign_negative()
         ));
-        assert!(runtime.peek_dense_number(&base, 3).is_none());
-        assert!(runtime.try_array_immediate_read(&base, 3).is_none());
-        assert!(runtime.peek_dense_number(&base, u32::MAX).is_none());
+        assert!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .peek_dense_number(&base, 3)
+                .is_none()
+        );
+        assert!(
+            runtime
+                .0
+                .state
+                .borrow_mut()
+                .try_array_immediate_read(&base, 3)
+                .is_none()
+        );
+        assert!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .peek_dense_number(&base, u32::MAX)
+                .is_none()
+        );
         assert_eq!(
             runtime.0.state.borrow().heap.object_strong_count(*id),
             before
@@ -1820,19 +1657,27 @@ mod dense_array_read_tests {
             )
             .unwrap();
         assert!(matches!(
-            runtime.peek_dense_number(&base, 0),
+            runtime.0.state.borrow().peek_dense_number(&base, 0),
             Some(Number::Int(3))
         ));
         assert!(matches!(
-            runtime.try_array_immediate_read(&base, 0),
+            runtime
+                .0
+                .state
+                .borrow_mut()
+                .try_array_immediate_read(&base, 0),
             Some(JsValue::Int(3))
         ));
         assert!(matches!(
-            runtime.peek_dense_number(&base, 1),
+            runtime.0.state.borrow().peek_dense_number(&base, 1),
             Some(Number::Int(4))
         ));
         assert!(matches!(
-            runtime.try_array_immediate_read(&base, 1),
+            runtime
+                .0
+                .state
+                .borrow_mut()
+                .try_array_immediate_read(&base, 1),
             Some(JsValue::Int(4))
         ));
         assert_eq!(context.eval("readEffects").unwrap(), Value::Int(0));
@@ -1840,8 +1685,22 @@ mod dense_array_read_tests {
             context.eval("delete readArray[1]").unwrap(),
             Value::Bool(true)
         );
-        assert!(runtime.peek_dense_number(&base, 1).is_none());
-        assert!(runtime.try_array_immediate_read(&base, 1).is_none());
+        assert!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .peek_dense_number(&base, 1)
+                .is_none()
+        );
+        assert!(
+            runtime
+                .0
+                .state
+                .borrow_mut()
+                .try_array_immediate_read(&base, 1)
+                .is_none()
+        );
         assert_eq!(context.eval("readArray[1]").unwrap(), Value::Int(19));
         assert_eq!(context.eval("readEffects").unwrap(), Value::Int(1));
         runtime.release_jsvalue(base).unwrap();
@@ -1857,16 +1716,22 @@ mod dense_array_read_tests {
         ] {
             let base = runtime.into_jsvalue(receiver(&runtime, source)).unwrap();
             assert!(matches!(
-                runtime.peek_dense_number(&base, 0),
+                runtime.0.state.borrow().peek_dense_number(&base, 0),
                 Some(Number::Int(7))
             ));
-            assert!(!runtime.try_write_dense_number(&base, 0, Number::Int(9)));
+            assert!(
+                !runtime
+                    .0
+                    .state
+                    .borrow_mut()
+                    .try_write_dense_number(&base, 0, Number::Int(9))
+            );
             runtime.release_jsvalue(base).unwrap();
         }
     }
 
     #[test]
-    fn dense_number_peek_declines_slow_exotic_and_foreign_receivers() {
+    fn dense_number_peek_declines_slow_exotic_receivers() {
         for expression in [
             "[, 1]",
             "Object.defineProperty([1], '0', {get(){throw 71}})",
@@ -1879,15 +1744,26 @@ mod dense_array_read_tests {
                 .into_jsvalue(receiver(&runtime, expression))
                 .unwrap();
             assert!(
-                runtime.peek_dense_number(&base, 0).is_none(),
+                runtime
+                    .0
+                    .state
+                    .borrow()
+                    .peek_dense_number(&base, 0)
+                    .is_none(),
                 "{expression}"
             );
             runtime.release_jsvalue(base).unwrap();
         }
         let runtime = Runtime::new();
         let base = runtime.into_jsvalue(receiver(&runtime, "[1]")).unwrap();
-        assert!(Runtime::new().peek_dense_number(&base, 0).is_none());
-        assert!(runtime.peek_dense_number(&JsValue::Int(1), 0).is_none());
+        assert!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .peek_dense_number(&JsValue::Int(1), 0)
+                .is_none()
+        );
         runtime.release_jsvalue(base).unwrap();
     }
 
@@ -1908,16 +1784,22 @@ mod dense_array_read_tests {
             ))
             .unwrap();
         assert!(matches!(
-            runtime.peek_dense_number(&sequential, 3),
+            runtime.0.state.borrow().peek_dense_number(&sequential, 3),
             Some(Number::Int(3))
         ));
         assert!(matches!(
-            runtime.peek_dense_number(&reverse, 3),
+            runtime.0.state.borrow().peek_dense_number(&reverse, 3),
             Some(Number::Int(3))
         ));
-        assert!(runtime.try_write_dense_number(&reverse, 3, Number::Int(7)));
+        assert!(
+            runtime
+                .0
+                .state
+                .borrow_mut()
+                .try_write_dense_number(&reverse, 3, Number::Int(7))
+        );
         assert!(matches!(
-            runtime.peek_dense_number(&reverse, 3),
+            runtime.0.state.borrow().peek_dense_number(&reverse, 3),
             Some(Number::Int(7))
         ));
         runtime.release_jsvalue(sequential).unwrap();
@@ -1955,15 +1837,22 @@ mod dense_array_read_tests {
                 panic!("Array expected")
             };
             let before = runtime.0.state.borrow().heap.object_strong_count(*id);
-            assert!(runtime.peek_dense_number(&base, index).is_none());
+            assert!(
+                runtime
+                    .0
+                    .state
+                    .borrow()
+                    .peek_dense_number(&base, index)
+                    .is_none()
+            );
             let expected = format!("array_materialized.{suffix}");
             assert_eq!(
-                runtime.diagnose_dense_number_read_miss(&base, index),
+                dense_number_miss_in_state(&runtime.0.state.borrow(), &base, index),
                 expected,
                 "{source}"
             );
             assert_eq!(
-                runtime.diagnose_dense_number_write_miss(&base, index),
+                dense_number_miss_in_state(&runtime.0.state.borrow(), &base, index),
                 expected,
                 "{source}"
             );
@@ -1982,13 +1871,13 @@ mod dense_array_read_tests {
             ))
             .unwrap();
         assert!(matches!(
-            runtime.peek_dense_number(&base, 1),
+            runtime.0.state.borrow().peek_dense_number(&base, 1),
             Some(Number::Int(1))
         ));
         // Writes still require dense storage, so the write diagnostic keeps
         // describing this materialized own slot as a write miss.
         assert_eq!(
-            runtime.diagnose_dense_number_write_miss(&base, 1),
+            dense_number_miss_in_state(&runtime.0.state.borrow(), &base, 1),
             "array_materialized.own_default_number"
         );
         runtime.release_jsvalue(base).unwrap();
@@ -2005,9 +1894,16 @@ mod dense_array_read_tests {
         ] {
             let runtime = Runtime::new();
             let base = runtime.into_jsvalue(receiver(&runtime, source)).unwrap();
-            assert!(runtime.peek_dense_number(&base, index).is_none());
+            assert!(
+                runtime
+                    .0
+                    .state
+                    .borrow()
+                    .peek_dense_number(&base, index)
+                    .is_none()
+            );
             assert_eq!(
-                runtime.diagnose_dense_number_read_miss(&base, index),
+                dense_number_miss_in_state(&runtime.0.state.borrow(), &base, index),
                 reason,
                 "{source}"
             );
@@ -2033,18 +1929,34 @@ mod dense_array_read_tests {
                 state.heap.object_strong_count(*id),
             )
         };
-        assert!(runtime.try_write_dense_number(&base, 0, Number::Float(-0.0)));
-        assert!(runtime.try_write_dense_number(&base, 1, Number::Int(23)));
-        assert!(runtime.try_write_dense_number(&base, 2, Number::Float(f64::NAN)));
         assert!(
-            matches!(runtime.peek_dense_number(&base, 0), Some(Number::Float(n)) if n == 0.0 && n.is_sign_negative())
+            runtime
+                .0
+                .state
+                .borrow_mut()
+                .try_write_dense_number(&base, 0, Number::Float(-0.0))
+        );
+        assert!(
+            runtime
+                .0
+                .state
+                .borrow_mut()
+                .try_write_dense_number(&base, 1, Number::Int(23))
+        );
+        assert!(runtime.0.state.borrow_mut().try_write_dense_number(
+            &base,
+            2,
+            Number::Float(f64::NAN)
+        ));
+        assert!(
+            matches!(runtime.0.state.borrow().peek_dense_number(&base, 0), Some(Number::Float(n)) if n == 0.0 && n.is_sign_negative())
         );
         assert!(matches!(
-            runtime.peek_dense_number(&base, 1),
+            runtime.0.state.borrow().peek_dense_number(&base, 1),
             Some(Number::Int(23))
         ));
         assert!(
-            matches!(runtime.peek_dense_number(&base, 2), Some(Number::Float(n)) if n.is_nan())
+            matches!(runtime.0.state.borrow().peek_dense_number(&base, 2), Some(Number::Float(n)) if n.is_nan())
         );
         let state = runtime.0.state.borrow();
         let data = state.heap.object(*id).unwrap();
@@ -2066,10 +1978,21 @@ mod dense_array_read_tests {
                 "(function(){let a=[3,4];Object.defineProperty(a,'length',{writable:false});return a})()",
             ))
             .unwrap();
-        let copied = runtime.peek_dense_number(&base, 0).expect("dense source");
-        assert!(runtime.try_write_dense_number(&base, 1, copied));
+        let copied = runtime
+            .0
+            .state
+            .borrow()
+            .peek_dense_number(&base, 0)
+            .expect("dense source");
+        assert!(
+            runtime
+                .0
+                .state
+                .borrow_mut()
+                .try_write_dense_number(&base, 1, copied)
+        );
         assert!(matches!(
-            runtime.peek_dense_number(&base, 1),
+            runtime.0.state.borrow().peek_dense_number(&base, 1),
             Some(Number::Int(3))
         ));
         runtime.release_jsvalue(base).unwrap();
@@ -2086,9 +2009,15 @@ mod dense_array_read_tests {
                     .unwrap(),
             )
             .unwrap();
-        assert!(runtime.try_write_dense_number(&base, 0, Number::Int(9)));
+        assert!(
+            runtime
+                .0
+                .state
+                .borrow_mut()
+                .try_write_dense_number(&base, 0, Number::Int(9))
+        );
         assert!(matches!(
-            runtime.peek_dense_number(&base, 0),
+            runtime.0.state.borrow().peek_dense_number(&base, 0),
             Some(Number::Int(9))
         ));
         assert_eq!(context.eval("writes").unwrap(), Value::Int(0));
@@ -2113,7 +2042,11 @@ mod dense_array_read_tests {
                 .into_jsvalue(receiver(&runtime, expression))
                 .unwrap();
             assert!(
-                !runtime.try_write_dense_number(&base, index, Number::Int(42)),
+                !runtime
+                    .0
+                    .state
+                    .borrow_mut()
+                    .try_write_dense_number(&base, index, Number::Int(42)),
                 "{expression}"
             );
             runtime.release_jsvalue(base).unwrap();
@@ -2121,16 +2054,19 @@ mod dense_array_read_tests {
         let runtime = Runtime::new();
         let base = runtime.into_jsvalue(receiver(&runtime, "[1]")).unwrap();
         for index in [1, 2, u32::MAX] {
-            assert!(!runtime.try_write_dense_number(&base, index, Number::Int(42)));
+            assert!(!runtime.0.state.borrow_mut().try_write_dense_number(
+                &base,
+                index,
+                Number::Int(42)
+            ));
         }
-        assert!(!runtime.try_write_dense_number(&JsValue::Int(1), 0, Number::Int(42)));
-        assert!(!Runtime::new().try_write_dense_number(&base, 0, Number::Int(42)));
-        {
-            let _borrow = runtime.0.state.borrow();
-            assert!(!runtime.try_write_dense_number(&base, 0, Number::Int(42)));
-        }
+        assert!(!runtime.0.state.borrow_mut().try_write_dense_number(
+            &JsValue::Int(1),
+            0,
+            Number::Int(42)
+        ));
         assert!(matches!(
-            runtime.peek_dense_number(&base, 0),
+            runtime.0.state.borrow().peek_dense_number(&base, 0),
             Some(Number::Int(1))
         ));
         runtime.release_jsvalue(base).unwrap();
@@ -2160,7 +2096,10 @@ mod dense_array_read_tests {
         .enumerate()
         {
             let result = runtime
-                .try_dense_array_immediate_read(&base, index as u32)
+                .0
+                .state
+                .borrow_mut()
+                .try_array_immediate_read_kind(&base, index as u32, false)
                 .unwrap();
             assert!(
                 runtime
@@ -2170,14 +2109,21 @@ mod dense_array_read_tests {
             );
         }
         assert!(
-            matches!(runtime.try_dense_array_immediate_read(&base, 6), Some(JsValue::Float(v)) if v.is_nan())
+            matches!(runtime.0.state.borrow_mut().try_array_immediate_read_kind(&base, 6, false), Some(JsValue::Float(v)) if v.is_nan())
         );
         assert_eq!(
             runtime.0.state.borrow().heap.object_strong_count(object),
             count
         );
         runtime.release_jsvalue(keep).unwrap();
-        assert!(runtime.try_dense_array_immediate_read(&base, 0).is_none());
+        assert!(matches!(
+            runtime
+                .0
+                .state
+                .borrow_mut()
+                .try_array_immediate_read_kind(&base, 0, false),
+            Some(JsValue::Undefined)
+        ));
         assert!(runtime.0.state.borrow().heap.object(object).is_ok());
         runtime.release_jsvalue(base).unwrap();
     }
@@ -2206,7 +2152,11 @@ mod dense_array_read_tests {
             };
             let object = *object;
             let count = runtime.0.state.borrow().heap.object_strong_count(object);
-            let result = runtime.try_dense_array_immediate_read(&base, 0);
+            let result = runtime
+                .0
+                .state
+                .borrow_mut()
+                .try_array_immediate_read_kind(&base, 0, false);
             let declined = result.is_none();
             if let Some(value) = result {
                 runtime.release_jsvalue(value).unwrap();
@@ -2222,14 +2172,22 @@ mod dense_array_read_tests {
         let runtime = Runtime::new();
         let base = runtime.into_jsvalue(receiver(&runtime, "[1]")).unwrap();
         let keep = runtime.dup_jsvalue(&base).unwrap();
-        assert!(runtime.try_dense_array_immediate_read(&base, 1).is_none());
         assert!(
             runtime
-                .try_dense_array_immediate_read(&base, u32::MAX)
+                .0
+                .state
+                .borrow_mut()
+                .try_array_immediate_read_kind(&base, 1, false)
                 .is_none()
         );
-        let other = Runtime::new();
-        assert!(other.try_dense_array_immediate_read(&base, 0).is_none());
+        assert!(
+            runtime
+                .0
+                .state
+                .borrow_mut()
+                .try_array_immediate_read_kind(&base, u32::MAX, false)
+                .is_none()
+        );
         runtime.release_jsvalue(keep).unwrap();
         runtime.release_jsvalue(base).unwrap();
     }
@@ -2247,48 +2205,30 @@ mod dense_array_read_tests {
             .unwrap();
         runtime.run_gc().unwrap();
         assert!(matches!(
-            runtime.try_dense_array_immediate_read(&base, 0),
+            runtime
+                .0
+                .state
+                .borrow_mut()
+                .try_array_immediate_read_kind(&base, 0, false),
             Some(JsValue::Int(7))
         ));
         assert!(matches!(
-            runtime.try_dense_array_immediate_read(&base, 1),
+            runtime.0.state.borrow_mut().try_array_immediate_read_kind(&base, 1, false),
             Some(JsValue::Float(value)) if value == 0.0 && value.is_sign_negative()
         ));
-        assert!(!runtime.try_write_dense_number(&base, 0, Number::Int(9)));
+        assert!(
+            !runtime
+                .0
+                .state
+                .borrow_mut()
+                .try_write_dense_number(&base, 0, Number::Int(9))
+        );
         assert_eq!(
             context
                 .eval("frozenRead[0] === 7 && 1 / frozenRead[1] === -Infinity")
                 .unwrap(),
             Value::Bool(true)
         );
-        runtime.release_jsvalue(base).unwrap();
-    }
-
-    #[test]
-    fn dense_array_read_leaf_does_not_drain_deferred_or_borrowed_state() {
-        let runtime = Runtime::new();
-        let base = runtime.into_jsvalue(receiver(&runtime, "[1]")).unwrap();
-        let keep = runtime.dup_jsvalue(&base).unwrap();
-        {
-            let _borrow = runtime.0.state.borrow();
-            assert!(runtime.try_dense_array_immediate_read(&base, 0).is_none());
-        }
-        let released = runtime.new_object(None).unwrap();
-        let released_id = released.object_id();
-        {
-            let _borrow = runtime.0.state.borrow();
-            drop(released);
-        }
-        assert!(runtime.0.deferred_references.has_pending());
-        assert!(runtime.try_dense_array_immediate_read(&base, 0).is_none());
-        assert!(runtime.0.deferred_references.has_pending());
-        assert!(runtime.0.state.borrow().heap.object(released_id).is_ok());
-        runtime.run_gc().unwrap();
-        assert!(matches!(
-            runtime.try_dense_array_immediate_read(&base, 0),
-            Some(JsValue::Int(1))
-        ));
-        runtime.release_jsvalue(keep).unwrap();
         runtime.release_jsvalue(base).unwrap();
     }
 }
@@ -2590,12 +2530,20 @@ mod ordinary_field_leaf_tests {
             .unwrap();
         let retained = runtime.dup_jsvalue(&base).unwrap();
         assert_eq!(
-            runtime.try_array_immediate_read(&base, 0),
+            runtime
+                .0
+                .state
+                .borrow_mut()
+                .try_array_immediate_read(&base, 0),
             Some(JsValue::Int(1))
         );
         drop(context.eval("change(7)").unwrap());
         assert_eq!(
-            runtime.try_array_immediate_read(&base, 0),
+            runtime
+                .0
+                .state
+                .borrow_mut()
+                .try_array_immediate_read(&base, 0),
             Some(JsValue::Int(7))
         );
         drop(
@@ -2604,7 +2552,11 @@ mod ordinary_field_leaf_tests {
                 .unwrap(),
         );
         assert_eq!(
-            runtime.try_array_immediate_read(&base, 0),
+            runtime
+                .0
+                .state
+                .borrow_mut()
+                .try_array_immediate_read(&base, 0),
             Some(JsValue::Int(8))
         );
         drop(
@@ -2612,10 +2564,24 @@ mod ordinary_field_leaf_tests {
                 .eval("Object.defineProperty(args,'0',{get(){return 11},configurable:true})")
                 .unwrap(),
         );
-        assert!(runtime.try_array_immediate_read(&base, 0).is_none());
+        assert!(
+            runtime
+                .0
+                .state
+                .borrow_mut()
+                .try_array_immediate_read(&base, 0)
+                .is_none()
+        );
         assert_eq!(context.eval("args[0]").unwrap(), Value::Int(11));
         drop(context.eval("delete args[0]").unwrap());
-        assert!(runtime.try_array_immediate_read(&base, 0).is_none());
+        assert!(
+            runtime
+                .0
+                .state
+                .borrow_mut()
+                .try_array_immediate_read(&base, 0)
+                .is_none()
+        );
         runtime.release_jsvalue(retained).unwrap();
         runtime.release_jsvalue(base).unwrap();
     }

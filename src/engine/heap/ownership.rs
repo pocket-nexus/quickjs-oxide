@@ -629,6 +629,20 @@ impl RuntimeState {
             .expect("JsValue has no private or uninitialized payload"))
     }
 
+    /// Retire an execution-owned edge. Cleanup errors can follow partial heap
+    /// mutation, so abandon this state instead of traversing another owner.
+    /// Checked retain failure is handled separately and does not poison state.
+    #[inline]
+    pub(crate) fn release_owned_jsvalue(
+        &mut self,
+        poisoned: &std::cell::Cell<bool>,
+        value: JsValue,
+    ) -> Result<(), RuntimeError> {
+        self.release_jsvalue(value).inspect_err(|_| {
+            poisoned.set(true);
+        })
+    }
+
     /// Surrender an internal edge directly. Final release applies heap and
     /// atom cleanup under this same state access instead of queueing work for
     /// a later Runtime borrow. This operation cannot execute JavaScript.
