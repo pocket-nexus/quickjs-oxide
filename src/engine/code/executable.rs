@@ -163,24 +163,6 @@ impl PublishedFunctionSnapshot {
         Ok(())
     }
 
-    pub(crate) fn authentication(&self, closure_count: usize) -> OrdinaryAuthentication {
-        OrdinaryAuthentication {
-            publish_generation: self.bytecode.unwrap().publish_generation(),
-            closure_count,
-            data: self.data.clone(),
-        }
-    }
-
-    /// Caller holds the owning function and has checked the certificate's
-    /// generation and closure fact in the same immutable heap borrow.
-    pub(crate) fn from_authentication(
-        runtime: &Runtime,
-        id: FunctionBytecodeId,
-        facts: OrdinaryAuthentication,
-    ) -> Self {
-        Self::from_authentication_in_domain(runtime.domain_id(), id, facts)
-    }
-
     /// The caller pairs the admitted state with its runtime domain and holds
     /// the callee owning this bytecode. Generation and closure facts must have
     /// been checked against that same live function before construction.

@@ -1561,52 +1561,18 @@ impl SlotStore {
         Ok(taken)
     }
 
-    /// The driver must keep the completion/pending result owned before
-    /// clearing. Every released binding's edges are surrendered through the
-    /// runtime's deferred-release path.
+    /// Outside-state wrapper; running retirement calls the shared kernel.
     pub(in crate::engine::vm) fn clear_frame(
         &mut self,
         runtime: &Runtime,
         window: FrameWindow,
     ) -> Result<(), Error> {
-        self.check_current(&window)?;
-        #[cfg(feature = "profiling")]
-        {
-            let cleared = self.slots[window.whole()]
-                .iter()
-                .filter(|slot| slot.is_some())
-                .count();
-            self.live_slots -= cleared;
-            record_owned_storage(Cost::Clear(cleared));
-        }
-        // Vec::truncate previously lowered logical length before dropping the
-        // suffix. Preserve that authority boundary and ascending owner order.
-        self.active_end = window.whole().start;
-        for index in window.whole().start..window.operands().start + window.depth {
-            if let Some(binding) = self.slots[index].take() {
-                // These direct values carry no owner. Most ordinary calls
-                // clear several Undefined/Number parameter and local slots;
-                // entering the generic release path for each is unnecessary.
-                // Every edge-bearing or captured binding still releases in
-                // its original ascending slot order.
-                if !matches!(
-                    &binding,
-                    FrameBinding::Direct(
-                        JsValue::Undefined
-                            | JsValue::Null
-                            | JsValue::Bool(_)
-                            | JsValue::Int(_)
-                            | JsValue::Float(_)
-                            | JsValue::ShortBigInt(_)
-                    )
-                ) {
-                    release_binding(runtime, binding)?;
-                }
-            }
-        }
-        debug_assert!(self.slots[window.whole()].iter().all(Option::is_none));
-        self.windows.pop();
-        Ok(())
+        let _unwind = runtime.unwind_guard();
+        self.clear_frame_owned_in_state(
+            &mut runtime.0.state.borrow_mut(),
+            &runtime.0.poisoned,
+            window,
+        )
     }
 }
 

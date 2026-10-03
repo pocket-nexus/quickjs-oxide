@@ -491,6 +491,12 @@ impl FrameStore {
         Some(frame)
     }
 
+    /// Lend the actual stack top; no caller-supplied identity can select a
+    /// different frame. The exclusive borrow blocks installation/retirement.
+    pub(super) fn current_frame_mut(&mut self) -> Option<(FrameId, &mut Frame)> {
+        self.frames.last_mut().map(|(id, frame)| (*id, frame))
+    }
+
     pub(super) fn current_mut(&mut self, id: FrameId) -> Result<&mut Frame, Error> {
         match self.frames.last_mut() {
             Some((current, frame)) if *current == id => Ok(frame),

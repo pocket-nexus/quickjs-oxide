@@ -6,9 +6,33 @@ pub(in crate::engine::vm) struct InstalledOrdinaryFrame {
     pub input: crate::engine::vm::CallInput,
 }
 impl SlotStore {
+    #[cfg(test)]
     pub(in crate::engine::vm) fn push_ordinary_frame(
         &mut self,
         runtime: &Runtime,
+        layout: &FrameLayout<'_>,
+        parent: &mut FrameWindow,
+        checked: CheckedOrdinaryCallOperands,
+        function: crate::engine::heap::ObjectId,
+        observes_arguments: bool,
+    ) -> Result<InstalledOrdinaryFrame, Error> {
+        let _unwind = runtime.unwind_guard();
+        self.push_ordinary_frame_in_state(
+            runtime,
+            &mut runtime.0.state.borrow_mut(),
+            layout,
+            parent,
+            checked,
+            function,
+            observes_arguments,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::engine::vm) fn push_ordinary_frame_in_state(
+        &mut self,
+        runtime: &Runtime,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
         layout: &FrameLayout<'_>,
         parent: &mut FrameWindow,
         checked: CheckedOrdinaryCallOperands,
@@ -78,13 +102,19 @@ impl SlotStore {
                 {
                     roots += usize::from(matches!(value, JsValue::Object(_) | JsValue::Symbol(_)));
                 }
-                match copy_value(runtime, value) {
-                    Ok(value) => {
-                        self.slots[original_end + index] = Some(FrameBinding::Direct(value))
+                match state.dup_jsvalue(value) {
+                    Ok(copied) => {
+                        #[cfg(feature = "profiling")]
+                        record_copy(value);
+                        self.slots[original_end + index] = Some(FrameBinding::Direct(copied));
                     }
                     Err(error) => {
-                        let _ = self.clear_unpublished(runtime, original_end..original_end + index);
-                        return Err(error);
+                        self.clear_unpublished_owned_in_state(
+                            state,
+                            &runtime.0.poisoned,
+                            original_end..original_end + index,
+                        )?;
+                        return Err(runtime_error_to_vm_error(error));
                     }
                 }
             }
@@ -100,8 +130,8 @@ impl SlotStore {
                 .fill_with(|| Some(FrameBinding::Direct(JsValue::Undefined)));
         } else {
             for (index, definition) in layout.locals().iter().enumerate() {
-                let binding = match super::super::call::prepare::initial_local_binding_id(
-                    runtime,
+                let binding = match initial_local_binding_in_state(
+                    state,
                     definition.is_lexical,
                     function_name == Some(index as u16),
                     function,
@@ -111,8 +141,11 @@ impl SlotStore {
                         // Parameters and preceding locals were installed only in
                         // the unpublished suffix. The caller still owns every
                         // outgoing operand, including the method receiver.
-                        let _ =
-                            self.clear_unpublished(runtime, original_end..parameters_end + index);
+                        self.clear_unpublished_owned_in_state(
+                            state,
+                            &runtime.0.poisoned,
+                            original_end..parameters_end + index,
+                        )?;
                         return Err(runtime_error_to_vm_error(error));
                     }
                 };
@@ -193,6 +226,69 @@ impl SlotStore {
                 actual_count: count,
             },
         })
+    }
+    fn clear_unpublished_owned_in_state(
+        &mut self,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        poisoned: &std::cell::Cell<bool>,
+        range: std::ops::Range<usize>,
+    ) -> Result<(), Error> {
+        for index in range {
+            if let Some(binding) = self.slots[index].take() {
+                if let Err(error) =
+                    crate::engine::vm::bindings::release_frame_binding_in_state(state, binding)
+                {
+                    poisoned.set(true);
+                    return Err(runtime_error_to_vm_error(error));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Clear the actual current window under the executor's state access.
+    /// The result owner remains in execution storage throughout retirement.
+    pub(in crate::engine::vm) fn clear_frame_owned_in_state(
+        &mut self,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        poisoned: &std::cell::Cell<bool>,
+        window: FrameWindow,
+    ) -> Result<(), Error> {
+        self.check_current(&window)?;
+        #[cfg(feature = "profiling")]
+        {
+            let cleared = self.slots[window.whole()]
+                .iter()
+                .filter(|slot| slot.is_some())
+                .count();
+            self.live_slots -= cleared;
+            record_owned_storage(Cost::Clear(cleared));
+        }
+        self.active_end = window.whole().start;
+        self.clear_unpublished_owned_in_state(
+            state,
+            poisoned,
+            window.whole().start..window.operands().start + window.depth,
+        )?;
+        debug_assert!(self.slots[window.whole()].iter().all(Option::is_none));
+        self.windows.pop();
+        Ok(())
+    }
+}
+
+fn initial_local_binding_in_state(
+    state: &mut crate::engine::heap::runtime::RuntimeState,
+    lexical: bool,
+    function_name: bool,
+    function: crate::engine::heap::ObjectId,
+) -> Result<FrameBinding, crate::engine::api::runtime_error::RuntimeError> {
+    if function_name {
+        state.heap.retain_object(function)?;
+        Ok(FrameBinding::Direct(JsValue::Object(function)))
+    } else if lexical {
+        Ok(FrameBinding::Uninitialized)
+    } else {
+        Ok(FrameBinding::Direct(JsValue::Undefined))
     }
 }
 

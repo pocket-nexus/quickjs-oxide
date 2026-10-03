@@ -74,7 +74,6 @@ pub(in crate::engine::vm) fn release_frame_binding(
 /// Release a binding while the execution core already owns state access.
 /// Captured cells, private atoms and private callables carry the same one-edge
 /// obligation as direct values; none needs a temporary public root.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(in crate::engine::vm) fn release_frame_binding_in_state(
     state: &mut crate::engine::heap::runtime::RuntimeState,
     binding: FrameBinding,

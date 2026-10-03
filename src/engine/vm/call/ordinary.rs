@@ -4,7 +4,6 @@ use crate::engine::{
     api::{Error, runtime::Runtime, runtime_error::RuntimeError},
     code::{
         function::metadata::FunctionKind,
-        rooted::FunctionBytecodeRef,
         runtime::{OrdinaryAuthentication, PublishedFunctionSnapshot},
     },
     heap::{FunctionBytecodeId, ObjectId, ObjectPayload, VarRefId},
@@ -27,11 +26,11 @@ pub(in crate::engine::vm) struct OrdinaryCall {
 }
 // Selection may read metadata but does not publish a frame or consume operands.
 // Any malformed metadata error is returned only after the original domain check.
-pub(in crate::engine::vm) struct OrdinarySelection<'a> {
+pub(in crate::engine::vm) struct OrdinarySelection {
     function: ObjectId,
     bytecode: FunctionBytecodeId,
     authentication: Option<OrdinaryAuthentication>,
-    closure: std::cell::Ref<'a, std::rc::Rc<[VarRefId]>>,
+    closure: std::rc::Rc<[VarRefId]>,
 }
 // Only DirectSelection can create this proof: payload metadata and borrowed
 // slot/owner originate from the same heap lookup. Promotion cannot accept a caller's
@@ -67,7 +66,7 @@ impl<'a> NativeSelection<'a> {
 }
 
 pub(in crate::engine::vm) enum DirectSelection<'a> {
-    Ordinary(OrdinarySelection<'a>),
+    Ordinary(OrdinarySelection),
     Native(NativeSelection<'a>),
     General,
 }
@@ -104,87 +103,71 @@ impl<'a> DirectSelection<'a> {
         Self::select_id(runtime, *function)
     }
     fn select_id(runtime: &'a Runtime, function: ObjectId) -> Result<Self, RuntimeError> {
-        let mut selected_bytecode = None;
-        let mut selected_authentication = None;
-        let mut native = None;
-        let mut failure = None;
-        let closure = std::cell::Ref::filter_map(runtime.0.state.borrow(), |state| {
-            let selected = (|| {
-                let object = state.heap.object(function)?;
-                if let ObjectPayload::NativeFunction { data, .. } = &object.payload {
-                    // Unregistered native kinds retain the checked general
-                    // entry, including its original preparation/error order.
-                    if let Some(operation) = data.operation() {
-                        let defining_realm = data.realm.ok_or(RuntimeError::Invariant(
-                            "native function was called before its defining realm was attached",
-                        ))?;
-                        state.heap.context(defining_realm)?;
-                        native = Some(NativeSelection {
-                            runtime,
-                            function,
-                            target: data.target,
-                            defining_realm,
-                            min_readable_args: data.min_readable_args,
-                            operation,
-                        });
-                    }
-                    return Ok(None);
-                }
-                let ObjectPayload::BytecodeFunction {
-                    bytecode,
-                    closure_slots,
-                    authentication,
-                    ..
-                } = &object.payload
-                else {
-                    return Ok(None);
-                };
-                let cached = authentication.borrow();
-                if let Some(facts) = cached
-                    .as_ref()
-                    .filter(|facts| facts.publish_generation == bytecode.publish_generation())
-                {
-                    if closure_slots.len() != facts.closure_count {
-                        return Err(RuntimeError::Invariant(
-                            "function object closure slot count does not match bytecode metadata",
-                        ));
-                    }
-                    selected_authentication = Some(facts.clone());
-                } else {
-                    let data = state.heap.function_bytecode(*bytecode)?;
-                    if data.metadata.function_kind != FunctionKind::Normal {
-                        return Ok(None);
-                    }
-                    if closure_slots.len() != usize::from(data.metadata.closure_count) {
-                        return Err(RuntimeError::Invariant(
-                            "function object closure slot count does not match bytecode metadata",
-                        ));
-                    }
-                }
-                selected_bytecode = Some(*bytecode);
-                Ok(Some(closure_slots))
-            })();
-            match selected {
-                Ok(closure) => closure,
-                Err(error) => {
-                    failure = Some(error);
-                    None
-                }
-            }
-        });
-        match closure {
-            Ok(closure) => Ok(Self::Ordinary(OrdinarySelection {
+        Self::select_in_state(runtime, &runtime.0.state.borrow(), function)
+    }
+
+    pub(in crate::engine::vm) fn select_in_state(
+        runtime: &'a Runtime,
+        state: &crate::engine::heap::runtime::RuntimeState,
+        function: ObjectId,
+    ) -> Result<Self, RuntimeError> {
+        let object = state.heap.object(function)?;
+        if let ObjectPayload::NativeFunction { data, .. } = &object.payload {
+            // Unregistered native kinds retain the checked general entry.
+            let Some(operation) = data.operation() else {
+                return Ok(Self::General);
+            };
+            let defining_realm = data.realm.ok_or(RuntimeError::Invariant(
+                "native function was called before its defining realm was attached",
+            ))?;
+            state.heap.context(defining_realm)?;
+            return Ok(Self::Native(NativeSelection {
+                runtime,
                 function,
-                authentication: selected_authentication,
-                bytecode: selected_bytecode
-                    .ok_or(RuntimeError::Invariant("ordinary selection lost bytecode"))?,
-                closure,
-            })),
-            Err(_) => match failure {
-                Some(error) => Err(error),
-                None => Ok(native.map(Self::Native).unwrap_or(Self::General)),
-            },
+                target: data.target,
+                defining_realm,
+                min_readable_args: data.min_readable_args,
+                operation,
+            }));
         }
+        let ObjectPayload::BytecodeFunction {
+            bytecode,
+            closure_slots,
+            authentication,
+            ..
+        } = &object.payload
+        else {
+            return Ok(Self::General);
+        };
+        let cached = authentication.borrow();
+        let authentication = if let Some(facts) = cached
+            .as_ref()
+            .filter(|facts| facts.publish_generation == bytecode.publish_generation())
+        {
+            if closure_slots.len() != facts.closure_count {
+                return Err(RuntimeError::Invariant(
+                    "function object closure slot count does not match bytecode metadata",
+                ));
+            }
+            Some(facts.clone())
+        } else {
+            let data = state.heap.function_bytecode(*bytecode)?;
+            if data.metadata.function_kind != FunctionKind::Normal {
+                return Ok(Self::General);
+            }
+            if closure_slots.len() != usize::from(data.metadata.closure_count) {
+                return Err(RuntimeError::Invariant(
+                    "function object closure slot count does not match bytecode metadata",
+                ));
+            }
+            None
+        };
+        Ok(Self::Ordinary(OrdinarySelection {
+            function,
+            authentication,
+            bytecode: *bytecode,
+            closure: std::rc::Rc::clone(closure_slots),
+        }))
     }
 }
 
@@ -356,6 +339,33 @@ impl OrdinaryCall {
         tail: bool,
         fallthrough: crate::engine::vm::execute::FallthroughPc,
     ) -> Result<(), Error> {
+        let _unwind = runtime.unwind_guard();
+        self.install_in_state(
+            runtime,
+            &mut runtime.0.state.borrow_mut(),
+            execution,
+            parent,
+            checked,
+            tail,
+            fallthrough,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::engine::vm) fn install_in_state(
+        self,
+        runtime: &Runtime,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        execution: &mut crate::engine::vm::execution::RunningExecution,
+        parent: crate::engine::vm::frame::FrameId,
+        checked: crate::engine::vm::stack::CheckedOrdinaryCallOperands,
+        tail: bool,
+        fallthrough: crate::engine::vm::execute::FallthroughPc,
+    ) -> Result<(), Error> {
+        debug_assert!(
+            self.owner.is_none(),
+            "ordinary slot installation transfers its source owner"
+        );
         #[cfg(feature = "profiling")]
         let _timer =
             crate::engine::api::profiling::PhaseTimer::start_vm_sampled("ordinary.install.sampled");
@@ -400,8 +410,9 @@ impl OrdinaryCall {
             let _timer = crate::engine::api::profiling::PhaseTimer::start_vm_sampled(
                 "ordinary.install.slots.sampled",
             );
-            execution.slots.push_ordinary_frame(
+            execution.slots.push_ordinary_frame_in_state(
                 runtime,
+                state,
                 &self.executable.frame_layout(),
                 &mut frame.window,
                 checked,
@@ -443,7 +454,7 @@ impl OrdinaryCall {
     }
 }
 
-impl OrdinarySelection<'_> {
+impl OrdinarySelection {
     pub(in crate::engine::vm) fn authenticate(
         self,
         runtime: &Runtime,
@@ -464,46 +475,54 @@ impl OrdinarySelection<'_> {
         runtime: &Runtime,
         retain_owner: bool,
     ) -> Result<OrdinaryCall, RuntimeError> {
-        // Domain/slot validation has succeeded. Only now promote the selected
-        // shared environment and owner, after ending the read-only heap borrow.
-        let closure = std::rc::Rc::clone(&self.closure);
-        drop(self.closure);
-        let owner = retain_owner
-            .then(|| ObjectRef::from_borrowed_handle(runtime.clone(), self.function))
+        let mut call = self.authenticate_slot_in_state(runtime, &runtime.0.state.borrow())?;
+        call.owner = retain_owner
+            .then(|| ObjectRef::from_borrowed_handle(runtime.clone(), call.function))
             .transpose()?;
-        let function = self.function;
-        let executable = if let Some(facts) = self.authentication {
+        Ok(call)
+    }
+
+    /// The original callee operand pins the selected payload and publication
+    /// until installation transfers that same edge into the new frame.
+    pub(in crate::engine::vm) fn authenticate_slot_in_state(
+        self,
+        runtime: &Runtime,
+        state: &crate::engine::heap::runtime::RuntimeState,
+    ) -> Result<OrdinaryCall, RuntimeError> {
+        let facts = if let Some(facts) = self.authentication {
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_execution_event(
                 "ordinary_call_auth_cache_hit",
             );
-            PublishedFunctionSnapshot::from_authentication(runtime, self.bytecode, facts)
+            facts
         } else {
-            let bytecode =
-                FunctionBytecodeRef::from_borrowed_handle(runtime.clone(), self.bytecode)?;
-            let snapshot = runtime.snapshot_function_bytecode_owned(bytecode)?;
-            let facts = snapshot.authentication(closure.len());
-            {
-                let state = runtime.0.state.borrow();
-                let object = state.heap.object(function)?;
-                let ObjectPayload::BytecodeFunction { authentication, .. } = &object.payload else {
-                    return Err(RuntimeError::Invariant(
-                        "selected ordinary function changed kind",
-                    ));
-                };
-                *authentication.borrow_mut() = Some(facts.clone());
-            }
+            let facts = state
+                .authenticate_ordinary_bytecode(self.bytecode, self.closure.len())?
+                .ok_or(RuntimeError::Invariant(
+                    "selected ordinary function changed kind",
+                ))?;
+            let object = state.heap.object(self.function)?;
+            let ObjectPayload::BytecodeFunction { authentication, .. } = &object.payload else {
+                return Err(RuntimeError::Invariant(
+                    "selected ordinary function changed kind",
+                ));
+            };
+            *authentication.borrow_mut() = Some(facts.clone());
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_execution_event(
                 "ordinary_call_authenticated",
             );
-            PublishedFunctionSnapshot::from_authentication(runtime, self.bytecode, facts)
+            facts
         };
         Ok(OrdinaryCall {
-            closure,
-            function,
-            owner,
-            executable,
+            function: self.function,
+            owner: None,
+            closure: self.closure,
+            executable: PublishedFunctionSnapshot::from_authentication_in_domain(
+                runtime.domain_id(),
+                self.bytecode,
+                facts,
+            ),
         })
     }
 }

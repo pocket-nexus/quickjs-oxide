@@ -105,7 +105,9 @@ impl Runtime {
     /// catch the overflow error.
     pub(super) fn host_stack_would_overflow(&self) -> bool {
         let current = current_host_stack_address();
-        let active_frames = !self.0.state.borrow().active_frames.is_empty();
+        // ActiveFrames updates this existing header fact on every push/pop.
+        // Stack admission therefore also works inside a held state segment.
+        let active_frames = self.0.active_frame_depth.get() != 0;
         let active_chain = active_frames
             || self.0.proxy_method_depth.get() != 0
             || self.0.module_host_callback_depth.get() != 0;

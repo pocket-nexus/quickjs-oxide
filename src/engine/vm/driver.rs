@@ -1,7 +1,7 @@
 //! Own frames and advance ordinary bytecode calls without native recursion.
 
 mod cold;
-mod ordinary;
+pub(super) mod ordinary;
 mod ready;
 
 use crate::engine::api::error::Error;
