@@ -1,7 +1,8 @@
 //! Allocation consumes a budget; collection is serviced at VM boundaries.
 //! Leaves cannot participate in cycles and do not consume the budget.
 use super::{AuxiliaryState, Heap, HeapCleanup, SlotState};
-use crate::engine::api::Runtime;
+use crate::engine::api::{Runtime, RuntimeError};
+use crate::engine::heap::runtime::RuntimeState;
 use std::{cell::Cell, rc::Rc};
 
 /// Automatic cycle collection policy. Explicit `Runtime::run_gc` always works.
@@ -47,6 +48,86 @@ impl GcPressure {
 
     fn collected(&self, live: usize) {
         self.remaining.set(live.max(MIN_GC_HEADROOM));
+    }
+
+    #[inline]
+    pub(crate) fn requested(&self) -> bool {
+        self.remaining.get() == 0 && self.policy.get() == GcPolicy::Automatic
+    }
+
+    pub(crate) fn begin_collection(&self) -> Result<CollectionGuard<'_>, RuntimeError> {
+        if self.collecting.replace(true) {
+            return Err(RuntimeError::Invariant("cycle collection reentered"));
+        }
+        Ok(CollectionGuard {
+            collecting: &self.collecting,
+            #[cfg(feature = "profiling")]
+            _timer: None,
+        })
+    }
+
+    /// Automatic admission is shared by external and current-state service.
+    /// A skipped or failed collection leaves an exhausted request latched.
+    pub(crate) fn begin_requested_collection(
+        &self,
+    ) -> Result<Option<CollectionGuard<'_>>, RuntimeError> {
+        if !self.requested() || self.collecting.get() || std::thread::panicking() {
+            return Ok(None);
+        }
+        let guard = self.begin_collection()?;
+        #[cfg(feature = "profiling")]
+        let guard = {
+            let mut guard = guard;
+            guard._timer = Some(crate::engine::api::profiling::PhaseTimer::start_vm(
+                "gc.automatic",
+            ));
+            crate::engine::api::profiling::record_owned_execution_event("gc.automatic.started");
+            guard
+        };
+        Ok(Some(guard))
+    }
+}
+
+pub(crate) struct CollectionGuard<'a> {
+    collecting: &'a Cell<bool>,
+    #[cfg(feature = "profiling")]
+    _timer: Option<crate::engine::api::profiling::PhaseTimer>,
+}
+
+impl Drop for CollectionGuard<'_> {
+    fn drop(&mut self) {
+        self.collecting.set(false);
+    }
+}
+
+impl RuntimeState {
+    /// Service at a fully published allocation or scheduler safe point. The
+    /// caller pairs this state with its RuntimeInner pressure and has already
+    /// assigned every temporary strong edge a cleanup owner. This neither
+    /// reborrows Runtime nor drains external deferred releases or runs jobs.
+    #[inline]
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn collect_if_requested(
+        &mut self,
+        pressure: &GcPressure,
+    ) -> Result<(), RuntimeError> {
+        if !pressure.requested() {
+            return Ok(());
+        }
+        self.collect_requested(pressure)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn collect_requested(&mut self, pressure: &GcPressure) -> Result<(), RuntimeError> {
+        let Some(_collection) = pressure.begin_requested_collection()? else {
+            return Ok(());
+        };
+        self.collect_cycles()?;
+        // External roots can still be queued while this access is held. Keep
+        // zero-queue capacity until their outside-borrow coordination point.
+        self.heap.rearm_gc_budget();
+        Ok(())
     }
 }
 
@@ -267,5 +348,142 @@ mod net_budget_tests {
                 budget + initial
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod direct_state_tests {
+    use super::*;
+    use crate::engine::heap::{RawId, Shape};
+    use crate::engine::value::JsValue;
+
+    #[test]
+    fn direct_state_requested_gc_collects_cycles_and_preserves_owned_values() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().expect("create context");
+        runtime.set_gc_policy(GcPolicy::Manual).unwrap();
+        let live = runtime
+            .into_jsvalue(
+                context
+                    .eval("(()=>{let dead={};dead.self=dead;return {n:42}})()")
+                    .unwrap(),
+            )
+            .unwrap();
+        let JsValue::Object(live_id) = live else {
+            panic!("object")
+        };
+        let mut state = runtime.0.state.borrow_mut();
+        let before = state.heap.counts().object_nodes;
+        let owners = state.heap.object_strong_count(live_id).unwrap();
+        runtime.0.gc_pressure.policy.set(GcPolicy::Automatic);
+        runtime.0.gc_pressure.remaining.set(0);
+        state.collect_if_requested(&runtime.0.gc_pressure).unwrap();
+        assert!(state.heap.counts().object_nodes < before);
+        assert_eq!(state.heap.object_strong_count(live_id).unwrap(), owners);
+        assert!(runtime.0.gc_pressure.remaining.get() >= MIN_GC_HEADROOM);
+        assert!(!runtime.0.gc_pressure.collecting.get());
+        assert!(!runtime.0.deferred_references.has_pending());
+        state.release_jsvalue(JsValue::Object(live_id)).unwrap();
+    }
+
+    #[test]
+    fn direct_state_requested_gc_defers_policy_and_reentry_without_clearing_request() {
+        let runtime = Runtime::new();
+        let mut state = runtime.0.state.borrow_mut();
+        runtime.0.gc_pressure.remaining.set(0);
+        runtime.0.gc_pressure.policy.set(GcPolicy::Manual);
+        state.collect_if_requested(&runtime.0.gc_pressure).unwrap();
+        assert_eq!(runtime.0.gc_pressure.remaining.get(), 0);
+        runtime.0.gc_pressure.policy.set(GcPolicy::Automatic);
+        runtime.0.gc_pressure.collecting.set(true);
+        state.collect_if_requested(&runtime.0.gc_pressure).unwrap();
+        assert!(runtime.0.gc_pressure.collecting.get());
+        assert_eq!(runtime.0.gc_pressure.remaining.get(), 0);
+        runtime.0.gc_pressure.collecting.set(false);
+        state.collect_if_requested(&runtime.0.gc_pressure).unwrap();
+        assert_eq!(runtime.0.gc_pressure.remaining.get(), MIN_GC_HEADROOM);
+    }
+
+    #[test]
+    fn direct_state_requested_gc_failure_resets_admission_and_keeps_budget_latched() {
+        let runtime = Runtime::new();
+        let mut state = runtime.0.state.borrow_mut();
+        let shape = state
+            .heap
+            .allocate_shape(Shape::new(None, []).unwrap())
+            .unwrap();
+        state.retain_construction_shape(shape).unwrap();
+        let owners = state.heap.shape_strong_count(shape).unwrap();
+        runtime.0.gc_pressure.remaining.set(0);
+        state.heap.set_strong_count_for_test(RawId::Shape(shape), 0);
+        let result = state.collect_if_requested(&runtime.0.gc_pressure);
+        // Repair the injected invariant fault before asserting or unwinding.
+        // The pool removed its bookkeeping before the failed release, so
+        // complete that one outstanding pool edge explicitly after repair.
+        state
+            .heap
+            .set_strong_count_for_test(RawId::Shape(shape), owners);
+        let cleanup = state.heap.release_shape(shape).unwrap();
+        state.apply_cleanup(cleanup).unwrap();
+        assert!(result.is_err());
+        assert_eq!(runtime.0.gc_pressure.remaining.get(), 0);
+        assert!(!runtime.0.gc_pressure.collecting.get());
+        state.collect_if_requested(&runtime.0.gc_pressure).unwrap();
+        assert!(runtime.0.gc_pressure.remaining.get() >= MIN_GC_HEADROOM);
+        let cleanup = state.heap.release_shape(shape).unwrap();
+        state.apply_cleanup(cleanup).unwrap();
+    }
+
+    #[test]
+    fn direct_state_requested_gc_leaves_external_deferred_roots_for_boundary() {
+        let runtime = Runtime::new();
+        let root = runtime.new_object(None).unwrap();
+        let id = root.object_id();
+        let mut state = runtime.0.state.borrow_mut();
+        drop(root);
+        assert!(runtime.0.deferred_references.has_pending());
+        runtime.0.gc_pressure.remaining.set(0);
+        state.collect_if_requested(&runtime.0.gc_pressure).unwrap();
+        assert!(runtime.0.deferred_references.has_pending());
+        assert!(state.heap.object(id).is_ok());
+        drop(state);
+        runtime.drain_deferred_references().unwrap();
+        assert!(!runtime.0.deferred_references.has_pending());
+        assert!(runtime.0.state.borrow().heap.object(id).is_err());
+    }
+
+    #[test]
+    fn direct_state_requested_gc_defers_during_unwind() {
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+        struct ServiceOnDrop<'a> {
+            state: &'a mut RuntimeState,
+            pressure: &'a GcPressure,
+            deferred: &'a Cell<bool>,
+        }
+        impl Drop for ServiceOnDrop<'_> {
+            fn drop(&mut self) {
+                self.deferred.set(
+                    self.state.collect_if_requested(self.pressure).is_ok()
+                        && self.pressure.remaining.get() == 0
+                        && !self.pressure.collecting.get(),
+                );
+            }
+        }
+        let runtime = Runtime::new();
+        let mut state = runtime.0.state.borrow_mut();
+        let deferred = Cell::new(false);
+        runtime.0.gc_pressure.remaining.set(0);
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            let _guard = ServiceOnDrop {
+                state: &mut state,
+                pressure: &runtime.0.gc_pressure,
+                deferred: &deferred,
+            };
+            panic!("exercise direct-state automatic GC admission while unwinding");
+        }));
+        assert!(result.is_err());
+        assert!(deferred.get());
+        state.collect_if_requested(&runtime.0.gc_pressure).unwrap();
+        assert_eq!(runtime.0.gc_pressure.remaining.get(), MIN_GC_HEADROOM);
     }
 }

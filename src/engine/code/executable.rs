@@ -1,6 +1,6 @@
-//! Immutable execution projection. Only a runtime snapshot can pair this
-//! layout with its owning bytecode root. Deref exposes shared fields for
-//! readers, never mutable metadata or a constructor accepting arbitrary parts.
+//! Immutable execution projection built from authenticated published bytecode.
+//! External snapshots own a bytecode root; internal snapshots borrow liveness
+//! from their callee owner. Deref exposes shared facts, never mutable metadata.
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::atom::Atom;
@@ -8,7 +8,8 @@ use crate::engine::code::function::metadata::{
     ClosureVariable, EvalEnvironment, FunctionMetadata, VariableDefinition,
 };
 use crate::engine::code::rooted::FunctionBytecodeRef;
-use crate::engine::heap::{BytecodeConstant, ContextId, FunctionBytecodeId};
+use crate::engine::heap::runtime::RuntimeState;
+use crate::engine::heap::{BytecodeConstant, ContextId, FunctionBytecodeData, FunctionBytecodeId};
 use std::rc::Rc;
 
 /// A rooted, immutable eval descriptor selected from its publisher's array.
@@ -177,10 +178,21 @@ impl PublishedFunctionSnapshot {
         id: FunctionBytecodeId,
         facts: OrdinaryAuthentication,
     ) -> Self {
+        Self::from_authentication_in_domain(runtime.domain_id(), id, facts)
+    }
+
+    /// The caller pairs the admitted state with its runtime domain and holds
+    /// the callee owning this bytecode. Generation and closure facts must have
+    /// been checked against that same live function before construction.
+    pub(crate) fn from_authentication_in_domain(
+        domain_id: u64,
+        id: FunctionBytecodeId,
+        facts: OrdinaryAuthentication,
+    ) -> Self {
         Self {
             root: Default::default(),
             bytecode: Some(id),
-            runtime_domain: runtime.domain_id(),
+            runtime_domain: domain_id,
             data: facts.data,
         }
     }
@@ -269,74 +281,7 @@ impl Runtime {
             return Err(RuntimeError::WrongRuntime("function bytecode"));
         }
         let state = self.0.state.borrow();
-        let bytecode = state.heap.function_bytecode(function.bytecode_id())?;
-        // The realm is a strong edge of the bytecode node. Validating it here
-        // makes a corrupt realm edge fail before entering a VM frame.
-        state.heap.context(bytecode.realm)?;
-        let data = bytecode.executable.get_or_init(|| {
-            let data = Rc::new(PublishedFunctionData {
-                has_captured_locals: !bytecode.local_definitions.is_empty()
-                    && (0..bytecode.exec.instruction_len()).any(|pc| {
-                        matches!(
-                            bytecode.exec.opcode_at_source(pc),
-                            Some(
-                                crate::engine::code::exec_opcode::Opcode::FClosure
-                                    | crate::engine::code::exec_opcode::Opcode::Eval
-                                    | crate::engine::code::exec_opcode::Opcode::ApplyEval
-                            )
-                        )
-                    }),
-                observes_arguments: (0..bytecode.exec.instruction_len()).any(|pc| {
-                    matches!(
-                        bytecode.exec.opcode_at_source(pc),
-                        Some(
-                            crate::engine::code::exec_opcode::Opcode::Arguments
-                                | crate::engine::code::exec_opcode::Opcode::Rest
-                                | crate::engine::code::exec_opcode::Opcode::Eval
-                                | crate::engine::code::exec_opcode::Opcode::ApplyEval
-                        )
-                    )
-                }),
-                plain_local_initializers: bytecode.metadata.function_name_local.is_none()
-                    && bytecode
-                        .local_definitions
-                        .iter()
-                        .all(|local| !local.is_lexical),
-
-                property_read_ic:
-                    crate::engine::object::property_ic::PropertyReadCacheTable::new_exec(
-                        &bytecode.exec,
-                    ),
-                exec: bytecode.exec.clone(),
-                constants: bytecode.constants.clone(),
-                property_key_atoms: bytecode.property_key_atoms.clone(),
-                argument_definitions: bytecode.argument_definitions.clone(),
-                local_definitions: bytecode.local_definitions.clone(),
-                closure_variables: bytecode.closure_variables.clone(),
-                eval_environments: bytecode.eval_environments.clone(),
-                arg_eval_variable_object_local: bytecode
-                    .parameter_environment
-                    .as_ref()
-                    .and_then(|layout| layout.arg_eval_variable_object_local),
-                metadata: bytecode.metadata,
-                realm: bytecode.realm,
-            });
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_call_buffer_capacity(
-                "executable.published_data_rc",
-                0,
-                1,
-                size_of::<PublishedFunctionData>(),
-            );
-            data
-        });
-        let data = data.clone();
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_call_buffer_share(
-            "executable.published_data_rc",
-            1,
-            size_of::<PublishedFunctionData>(),
-        );
+        let data = state.published_function_data(function.bytecode_id())?;
 
         Ok(PublishedFunctionSnapshot {
             runtime_domain: self.domain_id(),
@@ -345,6 +290,116 @@ impl Runtime {
             data,
         })
     }
+}
+
+impl RuntimeState {
+    fn published_function_data(
+        &self,
+        id: FunctionBytecodeId,
+    ) -> Result<Rc<PublishedFunctionData>, RuntimeError> {
+        let bytecode = self.heap.function_bytecode(id)?;
+        // The realm is a strong bytecode edge, checked before entering a frame.
+        self.heap.context(bytecode.realm)?;
+        Ok(published_function_data(bytecode))
+    }
+
+    /// Authenticate the cold ordinary-call path without an independent root.
+    /// The caller already owns the function's bytecode edge; a raw ID itself
+    /// is not a liveness proof. Weak cached certificates must still be checked
+    /// for publication generation and closure count by their actual consumer.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn authenticate_ordinary_bytecode(
+        &self,
+        id: FunctionBytecodeId,
+        closure_count: usize,
+    ) -> Result<Option<OrdinaryAuthentication>, RuntimeError> {
+        let bytecode = self.heap.function_bytecode(id)?;
+        if bytecode.metadata.function_kind
+            != crate::engine::code::function::metadata::FunctionKind::Normal
+        {
+            return Ok(None);
+        }
+        if closure_count != usize::from(bytecode.metadata.closure_count) {
+            return Err(RuntimeError::Invariant(
+                "function object closure slot count does not match bytecode metadata",
+            ));
+        }
+        self.heap.context(bytecode.realm)?;
+        Ok(Some(OrdinaryAuthentication {
+            publish_generation: id.publish_generation(),
+            closure_count,
+            data: published_function_data(bytecode),
+        }))
+    }
+}
+
+// Both external snapshots and internal authentication share the immutable
+// projection resident on this publication. Building it owns no heap edge.
+fn published_function_data(bytecode: &FunctionBytecodeData) -> Rc<PublishedFunctionData> {
+    let data = bytecode.executable.get_or_init(|| {
+        let data = Rc::new(PublishedFunctionData {
+            has_captured_locals: !bytecode.local_definitions.is_empty()
+                && (0..bytecode.exec.instruction_len()).any(|pc| {
+                    matches!(
+                        bytecode.exec.opcode_at_source(pc),
+                        Some(
+                            crate::engine::code::exec_opcode::Opcode::FClosure
+                                | crate::engine::code::exec_opcode::Opcode::Eval
+                                | crate::engine::code::exec_opcode::Opcode::ApplyEval
+                        )
+                    )
+                }),
+            observes_arguments: (0..bytecode.exec.instruction_len()).any(|pc| {
+                matches!(
+                    bytecode.exec.opcode_at_source(pc),
+                    Some(
+                        crate::engine::code::exec_opcode::Opcode::Arguments
+                            | crate::engine::code::exec_opcode::Opcode::Rest
+                            | crate::engine::code::exec_opcode::Opcode::Eval
+                            | crate::engine::code::exec_opcode::Opcode::ApplyEval
+                    )
+                )
+            }),
+            plain_local_initializers: bytecode.metadata.function_name_local.is_none()
+                && bytecode
+                    .local_definitions
+                    .iter()
+                    .all(|local| !local.is_lexical),
+
+            property_read_ic: crate::engine::object::property_ic::PropertyReadCacheTable::new_exec(
+                &bytecode.exec,
+            ),
+            exec: bytecode.exec.clone(),
+            constants: bytecode.constants.clone(),
+            property_key_atoms: bytecode.property_key_atoms.clone(),
+            argument_definitions: bytecode.argument_definitions.clone(),
+            local_definitions: bytecode.local_definitions.clone(),
+            closure_variables: bytecode.closure_variables.clone(),
+            eval_environments: bytecode.eval_environments.clone(),
+            arg_eval_variable_object_local: bytecode
+                .parameter_environment
+                .as_ref()
+                .and_then(|layout| layout.arg_eval_variable_object_local),
+            metadata: bytecode.metadata,
+            realm: bytecode.realm,
+        });
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_call_buffer_capacity(
+            "executable.published_data_rc",
+            0,
+            1,
+            size_of::<PublishedFunctionData>(),
+        );
+        data
+    });
+    let data = data.clone();
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_call_buffer_share(
+        "executable.published_data_rc",
+        1,
+        size_of::<PublishedFunctionData>(),
+    );
+    data
 }
 
 #[cfg(test)]
@@ -367,6 +422,211 @@ mod tests {
                 ),
             )
             .unwrap()
+    }
+
+    #[test]
+    fn direct_state_authentication_preserves_shared_publication_without_roots() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().expect("create context");
+        let crate::engine::value::Value::Object(function) = context
+            .eval(
+                "(function(a){let lexical=a.x;function inner(){return lexical};return arguments})",
+            )
+            .unwrap()
+        else {
+            panic!("function")
+        };
+        let state = runtime.0.state.borrow_mut();
+        let crate::engine::heap::ObjectPayload::BytecodeFunction {
+            bytecode,
+            closure_slots,
+            ..
+        } = &state.heap.object(function.object_id()).unwrap().payload
+        else {
+            panic!("bytecode function")
+        };
+        let id = *bytecode;
+        let count = closure_slots.len();
+        let runtime_owners = Rc::strong_count(&runtime.0);
+        let bytecode_owners = state.heap.function_bytecode_strong_count(id).unwrap();
+        let function_owners = state
+            .heap
+            .object_strong_count(function.object_id())
+            .unwrap();
+        let facts = state
+            .authenticate_ordinary_bytecode(id, count)
+            .unwrap()
+            .unwrap();
+        let shared = state
+            .authenticate_ordinary_bytecode(id, count)
+            .unwrap()
+            .unwrap();
+        assert_eq!(facts.publish_generation, id.publish_generation());
+        assert_eq!(facts.closure_count, count);
+        assert!(Rc::ptr_eq(&facts.data, &shared.data));
+        let snapshot = PublishedFunctionSnapshot::from_authentication_in_domain(
+            runtime.domain_id(),
+            id,
+            facts,
+        );
+        assert!(snapshot.root().is_none());
+        assert!(snapshot.belongs_to_domain(runtime.domain_id()));
+        assert!(!snapshot.belongs_to_domain(runtime.domain_id() + 1));
+        assert!(snapshot.has_captured_locals);
+        assert!(snapshot.observes_arguments);
+        assert!(!snapshot.frame_layout().plain_local_initializers());
+        let published = state.heap.function_bytecode(id).unwrap();
+        assert!(Rc::ptr_eq(&snapshot.constants, &published.constants));
+        assert!(Rc::ptr_eq(
+            &snapshot.argument_definitions,
+            &published.argument_definitions
+        ));
+        assert!(Rc::ptr_eq(
+            &snapshot.local_definitions,
+            &published.local_definitions
+        ));
+        assert!(Rc::ptr_eq(
+            &snapshot.closure_variables,
+            &published.closure_variables
+        ));
+        assert!(Rc::ptr_eq(
+            &snapshot.eval_environments,
+            &published.eval_environments
+        ));
+        assert!(Rc::ptr_eq(
+            snapshot.property_key_atoms.as_ref().unwrap(),
+            published.property_key_atoms.as_ref().unwrap()
+        ));
+        assert!(Rc::ptr_eq(
+            &snapshot.data,
+            published.executable.get().unwrap()
+        ));
+        assert!(std::ptr::eq(
+            snapshot.exec.test_ir(),
+            published.exec.test_ir()
+        ));
+        assert_eq!(snapshot.metadata, published.metadata);
+        #[cfg(feature = "profiling")]
+        {
+            assert_eq!(
+                snapshot.exec.word_storage_identity(),
+                published.exec.word_storage_identity()
+            );
+            assert_eq!(
+                snapshot.exec.boundary_storage_identity(),
+                published.exec.boundary_storage_identity()
+            );
+        }
+        assert_eq!(Rc::strong_count(&runtime.0), runtime_owners);
+        assert_eq!(
+            state.heap.function_bytecode_strong_count(id).unwrap(),
+            bytecode_owners
+        );
+        assert_eq!(
+            state
+                .heap
+                .object_strong_count(function.object_id())
+                .unwrap(),
+            function_owners
+        );
+        assert!(!runtime.0.deferred_references.has_pending());
+    }
+
+    #[test]
+    fn direct_state_authentication_rejects_bad_closures_before_creating_facts() {
+        let runtime = Runtime::new();
+        let context = runtime.new_context().expect("create context");
+        let function = publish(&runtime, context.realm);
+        let state = runtime.0.state.borrow_mut();
+        let id = function.bytecode_id();
+        assert!(
+            state
+                .heap
+                .function_bytecode(id)
+                .unwrap()
+                .executable
+                .get()
+                .is_none()
+        );
+        let error = state.authenticate_ordinary_bytecode(id, 1).unwrap_err();
+        assert!(matches!(
+            error,
+            RuntimeError::Invariant(
+                "function object closure slot count does not match bytecode metadata"
+            )
+        ));
+        assert!(
+            state
+                .heap
+                .function_bytecode(id)
+                .unwrap()
+                .executable
+                .get()
+                .is_none()
+        );
+        assert_eq!(state.heap.function_bytecode_strong_count(id).unwrap(), 1);
+    }
+
+    #[test]
+    fn direct_state_authentication_declines_nonordinary_function_kinds() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().expect("create context");
+        for source in ["(async function(){return 42})", "(function*(){return 42})"] {
+            let crate::engine::value::Value::Object(function) = context.eval(source).unwrap()
+            else {
+                panic!("function")
+            };
+            let state = runtime.0.state.borrow_mut();
+            let crate::engine::heap::ObjectPayload::BytecodeFunction {
+                bytecode,
+                closure_slots,
+                ..
+            } = &state.heap.object(function.object_id()).unwrap().payload
+            else {
+                panic!("bytecode function")
+            };
+            assert!(
+                state
+                    .authenticate_ordinary_bytecode(*bytecode, closure_slots.len())
+                    .unwrap()
+                    .is_none()
+            );
+            assert!(
+                state
+                    .heap
+                    .function_bytecode(*bytecode)
+                    .unwrap()
+                    .executable
+                    .get()
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn direct_state_authentication_rejects_stale_publication_after_arena_reuse() {
+        let runtime = Runtime::new();
+        let context = runtime.new_context().expect("create context");
+        let function = publish(&runtime, context.realm);
+        let old_id = function.bytecode_id();
+        let old = runtime
+            .0
+            .state
+            .borrow_mut()
+            .authenticate_ordinary_bytecode(old_id, 0)
+            .unwrap()
+            .unwrap();
+        drop(function);
+        let replacement = publish(&runtime, context.realm);
+        let state = runtime.0.state.borrow_mut();
+        assert!(state.authenticate_ordinary_bytecode(old_id, 0).is_err());
+        let fresh = state
+            .authenticate_ordinary_bytecode(replacement.bytecode_id(), 0)
+            .unwrap()
+            .unwrap();
+        assert_eq!(fresh.publish_generation >> 32, old.publish_generation >> 32);
+        assert_ne!(fresh.publish_generation, old.publish_generation);
+        assert!(!Rc::ptr_eq(&fresh.data, &old.data));
     }
 
     #[test]

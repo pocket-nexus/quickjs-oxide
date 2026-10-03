@@ -15,12 +15,12 @@ impl Runtime {
     /// Run QuickJS-style cycle collection for this runtime.
     pub fn run_gc(&self) -> Result<GcStats, RuntimeError> {
         self.check_poison()?;
-        let _operation = self.operation();
-        let pressure = &self.0.gc_pressure;
-        if pressure.collecting.replace(true) {
-            return Err(RuntimeError::Invariant("cycle collection reentered"));
-        }
-        let _collection = CollectionGuard(&pressure.collecting);
+        let _collection = self.0.gc_pressure.begin_collection()?;
+        self.run_gc_admitted()
+    }
+
+    fn run_gc_admitted(&self) -> Result<GcStats, RuntimeError> {
+        self.check_poison()?;
         let _operation = self.operation();
         let mut state = self.0.state.borrow_mut();
         let stats = state.collect_cycles()?;
@@ -36,14 +36,13 @@ impl Runtime {
         Ok(stats)
     }
 
-    /// The driver and outer execution turn own automatic collection. The
-    /// executor cannot allocate cycle nodes without returning to the driver.
+    /// Outside-state service at the driver and outer execution boundary.
+    /// Continuous execution services the same request under its current state
+    /// only at fully published allocation or scheduler safe points.
     #[inline]
     pub(crate) fn collect_if_requested(&self) -> Result<(), RuntimeError> {
         let pressure = &self.0.gc_pressure;
-        if pressure.remaining.get() != 0
-            || pressure.policy.get() == crate::engine::heap::GcPolicy::Manual
-        {
+        if !pressure.requested() {
             return Ok(());
         }
         self.collect_requested()
@@ -59,13 +58,12 @@ impl Runtime {
             return Ok(());
         };
         drop(borrow);
-        #[cfg(feature = "profiling")]
-        let _timer = crate::engine::api::profiling::PhaseTimer::start_vm("gc.automatic");
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("gc.automatic.started");
-        // run_gc's existing operation guard drains deferred releases before
+        let Some(_collection) = self.0.gc_pressure.begin_requested_collection()? else {
+            return Ok(());
+        };
+        // The existing operation guard drains deferred releases before
         // borrowing the graph and again before rearming the allocation budget.
-        self.run_gc()?;
+        self.run_gc_admitted()?;
         Ok(())
     }
 
@@ -143,12 +141,5 @@ impl RuntimeState {
         self.release_atom_indices(atom_indices)?;
         self.atoms.sweep_released_strings();
         Ok(stats)
-    }
-}
-
-struct CollectionGuard<'a>(&'a std::cell::Cell<bool>);
-impl Drop for CollectionGuard<'_> {
-    fn drop(&mut self) {
-        self.0.set(false);
     }
 }
