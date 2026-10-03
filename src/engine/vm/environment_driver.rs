@@ -28,7 +28,6 @@ pub(super) enum Operation {
         strict: bool,
     },
     CreateVariable,
-    CreateObject,
     CreateArray(u16),
     DefineArrayElement,
     Append,
@@ -366,17 +365,6 @@ pub(super) fn step(
                     &mut execution.slots,
                     &mut frame.window,
                     array,
-                )?;
-            }
-            Operation::CreateObject => {
-                let object = runtime
-                    .new_ordinary_object_in_realm(realm)
-                    .map_err(runtime_error_to_vm_error)?;
-                push_retained_factory_result(
-                    runtime,
-                    &mut execution.slots,
-                    &mut frame.window,
-                    object,
                 )?;
             }
             Operation::CreateVariable => {

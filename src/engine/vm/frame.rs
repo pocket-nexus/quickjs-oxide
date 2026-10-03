@@ -367,12 +367,20 @@ impl FrameStore {
         &mut self,
         runtime: &crate::engine::api::runtime::Runtime,
     ) -> Result<(), Error> {
+        if self.frames.is_empty() {
+            self.materialized_watermark = 0;
+            return Ok(());
+        }
+        self.materialize_in_state(&mut runtime.0.state.borrow_mut())
+    }
+
+    pub(super) fn materialize_in_state(&mut self, state: &mut RuntimeState) -> Result<(), Error> {
         use super::exception::runtime_error_to_vm_error;
         let depth = self.frames.len();
         let start = self.materialized_watermark.saturating_sub(1);
         for (offset, (_, frame)) in self.frames[start..].iter_mut().enumerate() {
             if frame.active_frame.is_materialized() {
-                runtime
+                state
                     .publish_materialized_pc(
                         frame.active_frame,
                         frame
@@ -384,12 +392,12 @@ impl FrameStore {
                     )
                     .map_err(runtime_error_to_vm_error)?;
             } else {
-                let guard = runtime
+                let restore = state
                     .materialize_owned_frame(frame)
                     .map_err(runtime_error_to_vm_error)?;
-                frame.active_frame = guard.token();
+                frame.active_frame = restore.token();
                 self.unmaterialized_depth -= 1;
-                frame.cold.entry_guard = Some(guard.into_internal());
+                frame.cold.entry_guard = Some(restore);
             }
             self.materialized_watermark = start + offset + 1;
         }
