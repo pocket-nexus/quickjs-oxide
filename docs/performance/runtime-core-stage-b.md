@@ -19,6 +19,8 @@
 | `f23e9d68` | native receiver/argv 移出帧槽后，由局部 guard 持有直到 NativeActivation 接手；修复帧 materialization 可恢复失败时 owner 丢失。 |
 | `98b473c7` | 八类 AutoInit 和 fresh function 字段共享完整状态算法；保留原生表顺序、checked 临时引用、终结失败和 String 后置转换，删除五个失去消费者的旧 Runtime 工厂。 |
 
+| `d637f6f8` | 所有 own-property 表示共享状态选择器：data/accessor/VarRef、String、dense 和 TypedArray；内部直接取得 raw-owned descriptor，共享 backing 只在真实 mutex 边界离开状态。 |
+
 这些改动沿用原有分配、描述符、帧发布和元素追加算法。状态访问权同时提供清理能力；内部结果直接交给持有 owner 的帧或调用存储。
 
 ## 已完成的验证
@@ -34,6 +36,7 @@
 - 原生 argv：真实 callable retain overflow 见证确认活动帧、receiver 和参数正确清理，runtime 未隔离且仍可继续执行。
 - 原生帧登记：Call/CallMethod 在 token 耗尽时释放独占 owner、保留有效别名与 lower slots，故障 PC 和活动帧恢复正确；25 条验证命令通过。
 - AutoInit：10 个新见证；普通配置与 profiling 配置各通过 91 个选定用例，包含 FunctionPrototype 的 checked retain/饱和边界、realm 释放、终结失败和发布隔离。
+- Own-property：22 个新见证；普通配置通过 817 个选定顶层用例，profiling 配置通过 827 个，各自的 25 个成功子进程结果另列。覆盖 accessor 别名、checked overflow、TDZ、AutoInit、String/dense/typed/shared backing，以及清理失败先隔离。
 - 统一布局入口：公共对象/Array 和真实 Base 构造发布失败见证确认隔离发生在边界与执行存储清理前。
 
 原始命令、受测文件摘要、失败尝试和验收回执保存在 `/home/eric/.cache/oxide-runtime-core-20261003`。采用的文件与通过验证的文件逐项核对；过滤器重叠和子进程结果不合并为独立总数。
@@ -43,6 +46,8 @@
 AutoInit 的旧内部入口会在工厂步骤中多次取得状态并选择性排空协调队列。现在先验证对象和 key，并确认 lazy slot，再由非 String 生产分支在入口排空一次协调队列，完整工厂直接使用当前状态。String 保留原有的无额外 operation 行为。
 
 如果协调队列错误与 realm/prototype 的准备错误同时存在，现在由入口的协调错误优先；有针对性见证确认此时 lazy slot 未变、后续队列项未消费。没有 pending 工作时，原有 checked retain、终结失败和 String 转换顺序保留。
+
+Own-property 内部迁移适配器先验证域，再统一完成一次 operation admission；公共入口保留原来的 operation-first 顺序。状态选择器不排空 Runtime 协调队列。此调整替代旧的虚拟值/TDZ 选择性 admission，并由优先级、无 pending 与清理失败用例验证；最终状态消费者将直接使用选择器，删除迁移适配器。
 
 ## 性能归因与剩余验收
 
