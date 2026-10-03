@@ -1,6 +1,7 @@
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::heap::runtime::RuntimeState;
+use std::cell::Cell;
 
 use crate::engine::heap::{GcStats, HeapCounts, WeakSymbolGcEvent};
 use crate::engine::jobs;
@@ -23,7 +24,7 @@ impl Runtime {
         self.check_poison()?;
         let _operation = self.operation()?;
         let mut state = self.0.state.borrow_mut();
-        let stats = state.collect_cycles()?;
+        let stats = state.collect_cycles(&self.0.poisoned)?;
         drop(state);
         // The operation guard drains deferred root releases. Trim only after
         // that drain, so a release queued during collection cannot be lost.
@@ -101,11 +102,24 @@ impl RuntimeState {
     /// access. The caller owns collection admission, external-root draining
     /// and budget rearming; this kernel neither reborrows Runtime nor executes
     /// finalization jobs. Temporary strong edges must already have an owner.
-    pub(crate) fn collect_cycles(&mut self) -> Result<GcStats, RuntimeError> {
+    pub(crate) fn collect_cycles(
+        &mut self,
+        poisoned: &Cell<bool>,
+    ) -> Result<GcStats, RuntimeError> {
+        if poisoned.get() {
+            return Err(RuntimeError::Poisoned);
+        }
         // Optional shape roots must not keep prototype graphs alive across GC.
-        let retained_cleanup = self.release_retained_shapes()?;
+        let mut retained_cleanup = self
+            .release_retained_shapes()
+            .inspect_err(|_| poisoned.set(true))?;
+        // Complete this detached ownership before the collector's preflight.
+        // Keep its scalar statistics, without replaying atom/shape cleanup.
+        self.unlink_finalized_shapes(retained_cleanup.finalized_shape_ids.drain(..));
+        self.release_atom_indices(std::mem::take(&mut retained_cleanup.atoms))
+            .inspect_err(|_| poisoned.set(true))?;
         let mut atom_error = None;
-        let mut stats = {
+        let heap_result = {
             let RuntimeState {
                 atoms,
                 heap,
@@ -119,26 +133,32 @@ impl RuntimeState {
                         WeakSymbolGcEvent::IsLive(index) => atoms.is_live_index(index),
                         WeakSymbolGcEvent::Release(index) => {
                             if let Err(error) = atoms.release_index(index) {
-                                // A detached weak value owned this atom, so this
-                                // can fail only after an ownership invariant has
-                                // already been violated. Latch the exact error but
-                                // continue without scheduling a double release.
-                                atom_error.get_or_insert(error);
+                                // The weak entry was already detached. Stop this
+                                // sweep and return the original AtomError below;
+                                // the hook protocol itself carries HeapError.
+                                poisoned.set(true);
+                                atom_error = Some(error);
+                                return Err(crate::engine::heap::HeapError::Invariant(
+                                    "detached weak atom cleanup failed",
+                                ));
                             }
                             true
                         }
                     })
                 },
                 &mut finalization_sink,
-            )?
+                poisoned,
+            )
         };
-        stats.cleanup.merge(retained_cleanup);
         if let Some(error) = atom_error {
             return Err(error.into());
         }
+        let mut stats = heap_result?;
+        stats.cleanup.merge(retained_cleanup);
         let atom_indices = std::mem::take(&mut stats.cleanup.atoms);
         self.unlink_finalized_shapes(stats.cleanup.finalized_shape_ids.iter().copied());
-        self.release_atom_indices(atom_indices)?;
+        self.release_atom_indices(atom_indices)
+            .inspect_err(|_| poisoned.set(true))?;
         self.atoms.sweep_released_strings();
         Ok(stats)
     }

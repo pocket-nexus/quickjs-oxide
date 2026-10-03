@@ -2613,7 +2613,7 @@ pub(super) fn execute_frame_in_state(
                 // The allocation is now published in a complete child frame;
                 // no temporary owner lies outside execution storage at GC.
                 state
-                    .collect_if_requested(&runtime.0.gc_pressure)
+                    .collect_if_requested(&runtime.0.gc_pressure, &runtime.0.poisoned)
                     .map_err(runtime_error_to_vm_error)?;
                 #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_owned_execution_event(

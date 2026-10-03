@@ -5,6 +5,7 @@
 //! runtime atom table or invokes JavaScript callbacks while borrowing the arena.
 
 use crate::engine::hash::FxBuildHasher;
+use std::cell::Cell;
 
 use super::AuxiliaryState;
 #[cfg(debug_assertions)]
@@ -578,16 +579,24 @@ impl Heap {
     /// Runtime-facing collection entry point. The sink reserves its concrete
     /// job queue before the heap transfers any ownership, eliminating a
     /// second allocation boundary between weak removal and Runtime adoption.
+    /// The borrowed header flag quarantines failed destructive cleanup; a
+    /// preflight failure with no detached obligations leaves it unchanged.
     pub(crate) fn run_gc_with_finalization_sink<H, S>(
         &mut self,
         mut hook: H,
         sink: &mut S,
+        poisoned: &Cell<bool>,
     ) -> Result<GcStats, HeapError>
     where
         H: FnMut(WeakSymbolGcEvent) -> Result<bool, HeapError>,
         S: FinalizationJobSink,
     {
-        self.run_gc_with_weak_symbol_hooks_in_mode(WeakObjectGcMode::Remove, &mut hook, sink)
+        self.run_gc_with_weak_symbol_hooks_in_mode(
+            WeakObjectGcMode::Remove,
+            &mut hook,
+            sink,
+            poisoned,
+        )
     }
 
     /// Runtime teardown counterpart of QuickJS
@@ -606,6 +615,7 @@ impl Heap {
             WeakObjectGcMode::PreserveForRuntimeTeardown,
             &mut hook,
             &mut sink,
+            &Cell::new(false),
         )
     }
 
@@ -614,14 +624,41 @@ impl Heap {
         mode: WeakObjectGcMode,
         hook: &mut H,
         sink: &mut S,
+        poisoned: &Cell<bool>,
     ) -> Result<GcStats, HeapError>
     where
         H: FnMut(WeakSymbolGcEvent) -> Result<bool, HeapError>,
         S: FinalizationJobSink,
     {
-        let mut cleanup = self.drain_zero_queue()?;
+        let mut cleanup = HeapCleanup::default();
+        let result = self.collect_graph_into(mode, hook, sink, poisoned, &mut cleanup);
+        if result.is_err() && (!cleanup.atoms.is_empty() || !cleanup.finalized_shape_ids.is_empty())
+        {
+            // Earlier finalization detached these owned cleanup obligations.
+            // An error must not make their loss look like a retryable preflight.
+            poisoned.set(true);
+        }
+        result
+    }
+
+    fn collect_graph_into<H, S>(
+        &mut self,
+        mode: WeakObjectGcMode,
+        hook: &mut H,
+        sink: &mut S,
+        poisoned: &Cell<bool>,
+        cleanup: &mut HeapCleanup,
+    ) -> Result<GcStats, HeapError>
+    where
+        H: FnMut(WeakSymbolGcEvent) -> Result<bool, HeapError>,
+        S: FinalizationJobSink,
+    {
+        cleanup.merge(
+            self.drain_zero_queue()
+                .inspect_err(|_| poisoned.set(true))?,
+        );
         if mode == WeakObjectGcMode::Remove {
-            cleanup.merge(self.remove_dead_weak_objects(hook, sink)?);
+            self.remove_dead_weak_objects(hook, sink, poisoned, cleanup)?;
         }
         if self
             .slots
@@ -806,17 +843,25 @@ impl Heap {
         // generation.
         for id in anchors.iter().copied() {
             if self.is_live(id) {
-                self.finalize_cycle_anchor(id, &mut cleanup)?;
-                cleanup.merge(self.drain_zero_queue()?);
+                self.finalize_cycle_anchor(id, cleanup)
+                    .inspect_err(|_| poisoned.set(true))?;
+                cleanup.merge(
+                    self.drain_zero_queue()
+                        .inspect_err(|_| poisoned.set(true))?,
+                );
             }
         }
-        cleanup.merge(self.drain_zero_queue()?);
+        cleanup.merge(
+            self.drain_zero_queue()
+                .inspect_err(|_| poisoned.set(true))?,
+        );
 
         if self
             .slots
             .iter()
             .any(|slot| matches!(slot.state, SlotState::Zombie { .. }))
         {
+            poisoned.set(true);
             return Err(HeapError::Invariant(
                 "cycle collection left an anchor zombie with incoming references",
             ));
@@ -835,7 +880,7 @@ impl Heap {
             examined_nodes,
             external_root_nodes,
             candidate_nodes,
-            cleanup,
+            cleanup: std::mem::take(cleanup),
         })
     }
 
@@ -847,7 +892,9 @@ impl Heap {
         &mut self,
         hook: &mut H,
         sink: &mut S,
-    ) -> Result<HeapCleanup, HeapError>
+        poisoned: &Cell<bool>,
+        cleanup: &mut HeapCleanup,
+    ) -> Result<(), HeapError>
     where
         H: FnMut(WeakSymbolGcEvent) -> Result<bool, HeapError>,
         S: FinalizationJobSink,
@@ -860,7 +907,6 @@ impl Heap {
             Registry,
         }
 
-        let mut cleanup = HeapCleanup::default();
         let mut current = self.weak_head;
         while let Some(id) = current {
             // Cache the intrusive successor before releasing any values. A
@@ -921,12 +967,15 @@ impl Heap {
                                         ))?
                                     };
                                     if let Some(index) = raw_value_atom(&value) {
-                                        if !hook(WeakSymbolGcEvent::Release(index))? {
+                                        if !hook(WeakSymbolGcEvent::Release(index))
+                                            .inspect_err(|_| poisoned.set(true))?
+                                        {
                                             cleanup.atoms.push(index);
                                         }
                                     }
                                     for edge in raw_value_edges(&value) {
-                                        self.release_raw_no_drain(edge)?;
+                                        self.release_raw_no_drain(edge)
+                                            .inspect_err(|_| poisoned.set(true))?;
                                     }
                                 }
                                 WeakObjectKind::Set => {
@@ -1010,12 +1059,14 @@ impl Heap {
                                 data.entries.remove(entry_index)
                             };
                             if let Some(index) = raw_value_atom(&entry.held_value)
-                                && !hook(WeakSymbolGcEvent::Release(index))?
+                                && !hook(WeakSymbolGcEvent::Release(index))
+                                    .inspect_err(|_| poisoned.set(true))?
                             {
                                 cleanup.atoms.push(index);
                             }
                             for edge in raw_value_edges(&entry.held_value) {
-                                self.release_raw_no_drain(edge)?;
+                                self.release_raw_no_drain(edge)
+                                    .inspect_err(|_| poisoned.set(true))?;
                             }
                             continue;
                         }
@@ -1053,8 +1104,11 @@ impl Heap {
             current = next;
         }
 
-        cleanup.merge(self.drain_zero_queue()?);
-        Ok(cleanup)
+        cleanup.merge(
+            self.drain_zero_queue()
+                .inspect_err(|_| poisoned.set(true))?,
+        );
+        Ok(())
     }
 
     /// Append a newly published WeakMap, WeakSet, WeakRef, or

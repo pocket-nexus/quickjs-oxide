@@ -110,20 +110,25 @@ impl RuntimeState {
     pub(crate) fn collect_if_requested(
         &mut self,
         pressure: &GcPressure,
+        poisoned: &Cell<bool>,
     ) -> Result<(), RuntimeError> {
         if !pressure.requested() {
             return Ok(());
         }
-        self.collect_requested(pressure)
+        self.collect_requested(pressure, poisoned)
     }
 
     #[cold]
     #[inline(never)]
-    fn collect_requested(&mut self, pressure: &GcPressure) -> Result<(), RuntimeError> {
+    fn collect_requested(
+        &mut self,
+        pressure: &GcPressure,
+        poisoned: &Cell<bool>,
+    ) -> Result<(), RuntimeError> {
         let Some(_collection) = pressure.begin_requested_collection()? else {
             return Ok(());
         };
-        self.collect_cycles()?;
+        self.collect_cycles(poisoned)?;
         // External roots can still be queued while this access is held. Keep
         // zero-queue capacity until their outside-borrow coordination point.
         self.heap.rearm_gc_budget();
@@ -376,7 +381,9 @@ mod direct_state_tests {
         let owners = state.heap.object_strong_count(live_id).unwrap();
         runtime.0.gc_pressure.policy.set(GcPolicy::Automatic);
         runtime.0.gc_pressure.remaining.set(0);
-        state.collect_if_requested(&runtime.0.gc_pressure).unwrap();
+        state
+            .collect_if_requested(&runtime.0.gc_pressure, &runtime.0.poisoned)
+            .unwrap();
         assert!(state.heap.counts().object_nodes < before);
         assert_eq!(state.heap.object_strong_count(live_id).unwrap(), owners);
         assert!(runtime.0.gc_pressure.remaining.get() >= MIN_GC_HEADROOM);
@@ -391,15 +398,21 @@ mod direct_state_tests {
         let mut state = runtime.0.state.borrow_mut();
         runtime.0.gc_pressure.remaining.set(0);
         runtime.0.gc_pressure.policy.set(GcPolicy::Manual);
-        state.collect_if_requested(&runtime.0.gc_pressure).unwrap();
+        state
+            .collect_if_requested(&runtime.0.gc_pressure, &runtime.0.poisoned)
+            .unwrap();
         assert_eq!(runtime.0.gc_pressure.remaining.get(), 0);
         runtime.0.gc_pressure.policy.set(GcPolicy::Automatic);
         runtime.0.gc_pressure.collecting.set(true);
-        state.collect_if_requested(&runtime.0.gc_pressure).unwrap();
+        state
+            .collect_if_requested(&runtime.0.gc_pressure, &runtime.0.poisoned)
+            .unwrap();
         assert!(runtime.0.gc_pressure.collecting.get());
         assert_eq!(runtime.0.gc_pressure.remaining.get(), 0);
         runtime.0.gc_pressure.collecting.set(false);
-        state.collect_if_requested(&runtime.0.gc_pressure).unwrap();
+        state
+            .collect_if_requested(&runtime.0.gc_pressure, &runtime.0.poisoned)
+            .unwrap();
         assert_eq!(runtime.0.gc_pressure.remaining.get(), MIN_GC_HEADROOM);
     }
 
@@ -412,25 +425,21 @@ mod direct_state_tests {
             .allocate_shape(Shape::new(None, []).unwrap())
             .unwrap();
         state.retain_construction_shape(shape).unwrap();
-        let owners = state.heap.shape_strong_count(shape).unwrap();
         runtime.0.gc_pressure.remaining.set(0);
         state.heap.set_strong_count_for_test(RawId::Shape(shape), 0);
-        let result = state.collect_if_requested(&runtime.0.gc_pressure);
-        // Repair the injected invariant fault before asserting or unwinding.
-        // The pool removed its bookkeeping before the failed release, so
-        // complete that one outstanding pool edge explicitly after repair.
-        state
-            .heap
-            .set_strong_count_for_test(RawId::Shape(shape), owners);
-        let cleanup = state.heap.release_shape(shape).unwrap();
-        state.apply_cleanup(cleanup).unwrap();
+        let result = state.collect_if_requested(&runtime.0.gc_pressure, &runtime.0.poisoned);
         assert!(result.is_err());
+        assert!(runtime.is_poisoned());
         assert_eq!(runtime.0.gc_pressure.remaining.get(), 0);
         assert!(!runtime.0.gc_pressure.collecting.get());
-        state.collect_if_requested(&runtime.0.gc_pressure).unwrap();
-        assert!(runtime.0.gc_pressure.remaining.get() >= MIN_GC_HEADROOM);
-        let cleanup = state.heap.release_shape(shape).unwrap();
-        state.apply_cleanup(cleanup).unwrap();
+        assert!(matches!(
+            state.collect_if_requested(&runtime.0.gc_pressure, &runtime.0.poisoned),
+            Err(RuntimeError::Poisoned)
+        ));
+        // The pool removed its owner before release failed. Do not repair and
+        // resume a state whose cleanup contract is already broken.
+        drop(state);
+        assert!(matches!(runtime.run_gc(), Err(RuntimeError::Poisoned)));
     }
 
     #[test]
@@ -442,7 +451,9 @@ mod direct_state_tests {
         drop(root);
         assert!(runtime.0.deferred_references.has_pending());
         runtime.0.gc_pressure.remaining.set(0);
-        state.collect_if_requested(&runtime.0.gc_pressure).unwrap();
+        state
+            .collect_if_requested(&runtime.0.gc_pressure, &runtime.0.poisoned)
+            .unwrap();
         assert!(runtime.0.deferred_references.has_pending());
         assert!(state.heap.object(id).is_ok());
         drop(state);
@@ -457,12 +468,15 @@ mod direct_state_tests {
         struct ServiceOnDrop<'a> {
             state: &'a mut RuntimeState,
             pressure: &'a GcPressure,
+            poisoned: &'a Cell<bool>,
             deferred: &'a Cell<bool>,
         }
         impl Drop for ServiceOnDrop<'_> {
             fn drop(&mut self) {
                 self.deferred.set(
-                    self.state.collect_if_requested(self.pressure).is_ok()
+                    self.state
+                        .collect_if_requested(self.pressure, self.poisoned)
+                        .is_ok()
                         && self.pressure.remaining.get() == 0
                         && !self.pressure.collecting.get(),
                 );
@@ -476,13 +490,16 @@ mod direct_state_tests {
             let _guard = ServiceOnDrop {
                 state: &mut state,
                 pressure: &runtime.0.gc_pressure,
+                poisoned: &runtime.0.poisoned,
                 deferred: &deferred,
             };
             panic!("exercise direct-state automatic GC admission while unwinding");
         }));
         assert!(result.is_err());
         assert!(deferred.get());
-        state.collect_if_requested(&runtime.0.gc_pressure).unwrap();
+        state
+            .collect_if_requested(&runtime.0.gc_pressure, &runtime.0.poisoned)
+            .unwrap();
         assert_eq!(runtime.0.gc_pressure.remaining.get(), MIN_GC_HEADROOM);
     }
 }
