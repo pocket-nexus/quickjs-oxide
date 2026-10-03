@@ -251,28 +251,47 @@ impl LinkResume {
 }
 impl Drop for LinkResume {
     fn drop(&mut self) {
+        if self.runtime.skip_cleanup() {
+            return;
+        }
+        let _unwind = self.runtime.unwind_guard();
         if !self.armed {
             return;
         }
         // An abandoned or engine-failed active prefix cannot be replayed.
         if let Some(frame) = self.pending.take() {
-            let _ = self
+            if self
                 .runtime
-                .transition_module_record(frame.module, RawModuleTransition::PoisonLink);
+                .transition_module_record(frame.module, RawModuleTransition::PoisonLink)
+                .is_err()
+            {
+                self.runtime.0.poisoned.set(true);
+                return;
+            }
         }
         for id in &self.dfs.stack {
             let member = RawModuleRef {
                 cache: self.root.raw.cache,
                 module: *id,
             };
-            if self
-                .runtime
-                .module_record(member)
-                .is_ok_and(|record| matches!(record.link_status, ModuleLinkStatus::Linking))
-            {
-                let _ = self
+            let record = match self.runtime.module_record(member) {
+                Ok(record) => record,
+                // Construction rollback leaves stable canceled identities in
+                // the cache; they have no active link state to restore.
+                Err(RuntimeError::AbortedModule) => continue,
+                Err(_) => {
+                    self.runtime.0.poisoned.set(true);
+                    return;
+                }
+            };
+            if matches!(record.link_status, ModuleLinkStatus::Linking)
+                && self
                     .runtime
-                    .transition_module_record(member, RawModuleTransition::ResetLink);
+                    .transition_module_record(member, RawModuleTransition::ResetLink)
+                    .is_err()
+            {
+                self.runtime.0.poisoned.set(true);
+                return;
             }
         }
     }
@@ -299,3 +318,142 @@ pub(crate) fn resume_reply(
 
 // S11 all-domain protocol bound; inline completion stays allocation-free.
 const _: () = assert!(std::mem::size_of::<LinkStep>() <= 64);
+
+#[cfg(all(test, not(target_family = "wasm"), panic = "unwind"))]
+mod quarantine_tests {
+    use super::*;
+    use crate::engine::heap::ModuleId;
+    use crate::engine::value::Value;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    #[test]
+    fn link_resume_abandonment_respects_quarantine() {
+        let Ok(case) = std::env::var("QJS_LINK_RESUME_CHILD") else {
+            for case in [
+                "normal",
+                "poison",
+                "unwind",
+                "error",
+                "probe-error",
+                "aborted",
+            ] {
+                let status = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "engine::modules::link::quarantine_tests::link_resume_abandonment_respects_quarantine",
+                        "--nocapture",
+                    ])
+                    .env("QJS_LINK_RESUME_CHILD", case)
+                    .status()
+                    .unwrap();
+                assert!(status.success(), "link cleanup {case}: {status}");
+            }
+            return;
+        };
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let module = context.compile_module("export let value = 1;").unwrap();
+        runtime
+            .prepare_module_instance(module.raw, context.realm)
+            .unwrap();
+        runtime
+            .transition_module_record(module.raw, RawModuleTransition::BeginLink)
+            .unwrap();
+        let mut dfs = ModuleLinkDfs::new();
+        dfs.stack.push(module.raw.module);
+        let mut resume = LinkResume {
+            runtime: runtime.clone(),
+            root: module.try_clone().unwrap(),
+            dfs,
+            frames: Vec::new(),
+            pending: None,
+            armed: true,
+        };
+        let count = runtime
+            .0
+            .state
+            .borrow()
+            .heap
+            .context_strong_count(module.raw.cache)
+            .unwrap();
+        match case.as_str() {
+            "normal" | "aborted" => {
+                if case == "aborted" {
+                    let canceled = context
+                        .compile_module_with_filename("export let other = 2;", "canceled.js")
+                        .unwrap();
+                    let mut state = runtime.0.state.borrow_mut();
+                    let cleanup = state
+                        .heap
+                        .unpublish_loaded_modules(canceled.raw.cache, &[canceled.raw.module])
+                        .unwrap();
+                    state.apply_cleanup(cleanup).unwrap();
+                    resume.dfs.stack.insert(0, canceled.raw.module);
+                }
+                drop(resume);
+                assert!(!runtime.is_poisoned());
+                assert!(matches!(
+                    runtime.module_record(module.raw).unwrap().link_status,
+                    ModuleLinkStatus::Unlinked
+                ));
+                assert_eq!(context.eval("1 + 2").unwrap(), Value::number(3.0));
+            }
+            "poison" | "unwind" => {
+                let state = runtime.0.state.borrow_mut();
+                if case == "poison" {
+                    runtime.0.poisoned.set(true);
+                    drop(resume);
+                } else {
+                    assert!(
+                        catch_unwind(AssertUnwindSafe(|| {
+                            let _resume = resume;
+                            panic!("injected link abandonment panic");
+                        }))
+                        .is_err()
+                    );
+                }
+                assert!(runtime.is_poisoned());
+                assert!(matches!(
+                    state.heap.loaded_module(module.raw).unwrap().link_status,
+                    ModuleLinkStatus::Linking
+                ));
+                assert_eq!(
+                    state.heap.context_strong_count(module.raw.cache).unwrap(),
+                    count
+                );
+                drop(state);
+                assert!(matches!(runtime.new_context(), Err(RuntimeError::Poisoned)));
+            }
+            "error" | "probe-error" => {
+                // A corrupt pending record fails before the still-valid SCC
+                // member is reset or the guard's cache root is released.
+                if case == "error" {
+                    resume.pending = Some(ModuleDfsFrame {
+                        module: RawModuleRef {
+                            cache: module.raw.cache,
+                            module: ModuleId(usize::MAX),
+                        },
+                        dependencies: Vec::new(),
+                        next_dependency: 0,
+                    });
+                } else {
+                    resume.dfs.stack.insert(0, ModuleId(usize::MAX));
+                }
+                drop(resume);
+                assert!(runtime.is_poisoned());
+                let state = runtime.0.state.borrow();
+                assert!(matches!(
+                    state.heap.loaded_module(module.raw).unwrap().link_status,
+                    ModuleLinkStatus::Linking
+                ));
+                assert_eq!(
+                    state.heap.context_strong_count(module.raw.cache).unwrap(),
+                    count
+                );
+                drop(state);
+                assert!(matches!(runtime.new_context(), Err(RuntimeError::Poisoned)));
+            }
+            _ => panic!("unknown link cleanup case"),
+        }
+    }
+}

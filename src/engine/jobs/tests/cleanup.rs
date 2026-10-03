@@ -64,9 +64,6 @@ fn failed_owned_job_cleanup_stops_and_quarantines() {
         assert_eq!(state.heap.context_strong_count(realm), Ok(realm_count));
         drop(state);
         assert!(string_weak.upgrade().is_some());
-        assert!(matches!(
-            runtime.memory_snapshot(),
-            Err(RuntimeError::Poisoned)
-        ));
+        assert!(matches!(runtime.new_context(), Err(RuntimeError::Poisoned)));
     }
 }
