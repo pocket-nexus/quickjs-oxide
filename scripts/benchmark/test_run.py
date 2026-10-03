@@ -1,5 +1,6 @@
 """Fast, synthetic tests of result admission, timeout handling and aggregation."""
 import importlib.util
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -12,6 +13,39 @@ spec.loader.exec_module(runner)
 
 
 class Results(unittest.TestCase):
+    def test_cpu_affinity_wraps_measured_process_and_is_recorded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "workload.js"
+            source.write_text("// frozen source\n")
+            binary = root / "engine"
+            binary.write_text("frozen engine\n")
+            binary.chmod(0o755)
+            workload = dict(case="richards", path=str(source), args=[],
+                            expected=["Richards"], sha256=runner.digest(source))
+            commands = []
+
+            def sample(command, cwd, prefix, timeout):
+                commands.append(command)
+                stdout = prefix.with_suffix(".stdout")
+                stdout.write_text("Richards: 100\nScore: 100\n")
+                return dict(command=command, exit_code=0, timed_out=False,
+                            process_wall_ns=100, stdout=str(stdout))
+
+            output = root / "results"
+            arguments = ["run.py", "--suite", "v8-v7", "--source", str(source),
+                         "--engine", f"base={binary}", "--repeat", "1", "--cpu", "2",
+                         "--output", str(output)]
+            with mock.patch.object(sys, "argv", arguments), \
+                 mock.patch.object(runner, "prepare_v8", return_value=([workload], {})), \
+                 mock.patch.object(runner, "machine_metadata", return_value={}), \
+                 mock.patch.object(runner, "binary_metadata", return_value={"sha256": runner.digest(binary)}), \
+                 mock.patch.object(runner, "run_sample", side_effect=sample), \
+                 mock.patch("builtins.print"):
+                self.assertEqual(runner.main(), 0)
+            self.assertEqual(commands, [["taskset", "-c", "2", str(binary), str(source)]])
+            self.assertEqual(json.loads((output / "metadata.json").read_text())["cpu"], 2)
+
     def test_macos_machine_metadata_is_read_only_and_specific(self):
         def command_output(command, _cwd=None):
             values = {("sysctl", "-n", "machdep.cpu.brand_string"): "Apple M1",

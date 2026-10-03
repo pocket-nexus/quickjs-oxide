@@ -328,10 +328,12 @@ def main():
     parser.add_argument("--order", choices=["default", "abba", "baab", "abba-baab"], default="default",
                         help="two-engine balanced order; default preserves alternating engine order")
     parser.add_argument("--timeout", type=float, default=120, help="seconds per case and process")
+    parser.add_argument("--cpu", type=int, help="pin each measured process with taskset")
     parser.add_argument("--output", type=Path, required=True, help="new result directory")
     args = parser.parse_args()
-    if args.repeat < 1 or not math.isfinite(args.timeout) or args.timeout <= 0:
-        parser.error("repeat and timeout must be positive and finite")
+    if args.repeat < 1 or not math.isfinite(args.timeout) or args.timeout <= 0 \
+            or (args.cpu is not None and args.cpu < 0):
+        parser.error("repeat and timeout must be positive and finite; CPU must be nonnegative")
     if args.suite == "v8-v7" and not re.fullmatch(r"[0-9a-f]{40}", args.v8_source_commit):
         parser.error("--v8-source-commit must be a full lowercase 40-character SHA")
     engines = {}
@@ -358,6 +360,7 @@ def main():
     metadata = {"schema": "oxide-benchmark-v1", "created_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "suite": args.suite, "machine": machine_metadata(), "source": source, "workloads": workloads,
                 "repeat": args.repeat, "timeout_seconds": args.timeout,
+                "cpu": args.cpu,
                 "order": "serial, alternating per repetition" if args.order == "default" else f"serial {args.order} blocks",
                 "order_strategy": args.order,
                 "instrumentation": "off (no -d/-T)", "engines": {name: binary_metadata(path) for name, path in engines.items()}}
@@ -375,6 +378,8 @@ def main():
                         raise ValueError(f"engine changed during measurement: {name}")
                     prefix = output / "raw" / f"{workload['case']}-{name}-{iteration}"
                     command = [str(engines[name]), workload["path"], *workload["args"]]
+                    if args.cpu is not None:
+                        command = ["taskset", "-c", str(args.cpu), *command]
                     sample = run_sample(command, output, prefix, args.timeout)
                     sample.update(case=workload["case"], engine=name, repetition=iteration, workload_sha256=workload["sha256"])
                     sample["status"] = "timeout" if sample["timed_out"] else "failed" if sample["exit_code"] else "ok"
