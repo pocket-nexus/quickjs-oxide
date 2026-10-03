@@ -7,6 +7,7 @@
 
 use crate::engine::api::error::Error;
 use crate::engine::api::runtime::Runtime;
+use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::atom::AtomIdx;
 use crate::engine::code::function::metadata::{ClosureVariable, ClosureVariableKind};
 use crate::engine::heap::roots::{VarRefRoot, VarRefView};
@@ -67,6 +68,61 @@ pub(in crate::engine::vm) fn release_frame_binding(
             Ok(())
         }
         FrameBinding::Uninitialized => Ok(()),
+    }
+}
+
+/// Release a binding while the execution core already owns state access.
+/// Captured cells, private atoms and private callables carry the same one-edge
+/// obligation as direct values; none needs a temporary public root.
+#[cfg_attr(not(test), allow(dead_code))]
+pub(in crate::engine::vm) fn release_frame_binding_in_state(
+    state: &mut crate::engine::heap::runtime::RuntimeState,
+    binding: FrameBinding,
+) -> Result<(), RuntimeError> {
+    match binding {
+        FrameBinding::Direct(value) => state.release_jsvalue(value),
+        FrameBinding::Private(index) => state.release_atom_index(index),
+        FrameBinding::PrivateCallable(object) => state.release_object_handle(object),
+        FrameBinding::Captured(var_ref) => state.release_var_ref_handle(var_ref),
+        FrameBinding::Uninitialized => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod direct_state_release_tests {
+    use super::*;
+    use crate::engine::heap::VarRefData;
+
+    #[test]
+    fn captured_and_private_bindings_release_their_edges_directly() {
+        let runtime = Runtime::new();
+        let value_id = runtime.new_object(None).unwrap().into_handle();
+        let callable_id = runtime.new_object(None).unwrap().into_handle();
+        let symbol = runtime.new_symbol(None).unwrap();
+        let atom = symbol.atom();
+        let mut state = runtime.0.state.borrow_mut();
+        let index = state.atoms.unbrand(atom).unwrap();
+        state.atoms.retain_index(index).unwrap();
+        let cell = state
+            .heap
+            .allocate_var_ref_owned(VarRefData::captured(
+                RawValue::Object(value_id),
+                false,
+                false,
+                ClosureVariableKind::Normal,
+            ))
+            .unwrap();
+        release_frame_binding_in_state(&mut state, FrameBinding::Captured(cell)).unwrap();
+        release_frame_binding_in_state(&mut state, FrameBinding::PrivateCallable(callable_id))
+            .unwrap();
+        release_frame_binding_in_state(&mut state, FrameBinding::Private(index)).unwrap();
+        release_frame_binding_in_state(&mut state, FrameBinding::Direct(JsValue::Int(1))).unwrap();
+        release_frame_binding_in_state(&mut state, FrameBinding::Uninitialized).unwrap();
+        assert!(state.heap.var_ref(cell).is_err());
+        assert!(state.heap.object(value_id).is_err());
+        assert!(state.heap.object(callable_id).is_err());
+        assert_eq!(state.atoms.resolve(atom).unwrap().ref_count, Some(1));
+        assert!(!runtime.0.deferred_references.has_pending());
     }
 }
 

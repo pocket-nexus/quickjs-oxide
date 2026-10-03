@@ -6,6 +6,7 @@
 
 pub(crate) mod execution_turn;
 mod layout;
+pub(crate) mod owned_values;
 mod retained_shapes;
 mod state_storage;
 use self::error::RuntimeError;

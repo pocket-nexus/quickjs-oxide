@@ -7,6 +7,7 @@ use crate::engine::heap::{
     BigIntId, ContextId, FunctionBytecodeId, HeapError, ObjectId, RawId, RawValue, StringId,
     VarRefId,
 };
+use crate::engine::value::JsValue;
 
 #[cfg(debug_assertions)]
 pub(crate) fn trace_object_matches(id: ObjectId) -> bool {
@@ -587,6 +588,54 @@ impl Drop for ConvertedValue<'_> {
     }
 }
 impl RuntimeState {
+    /// Duplicate an internal value using the state access already held by the
+    /// executor. This retains the checked overflow and identity rules of the
+    /// boundary operation; it is not the authenticated-owner fast path.
+    #[inline]
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn dup_jsvalue(&mut self, value: &JsValue) -> Result<JsValue, RuntimeError> {
+        self.retain_raw_root(value.as_raw())?;
+        Ok(JsValue::from_raw(value.as_raw())
+            .expect("JsValue has no private or uninitialized payload"))
+    }
+
+    /// Surrender an internal edge directly. Final release applies heap and
+    /// atom cleanup under this same state access instead of queueing work for
+    /// a later Runtime borrow. This operation cannot execute JavaScript.
+    #[inline]
+    pub(crate) fn release_jsvalue(&mut self, value: JsValue) -> Result<(), RuntimeError> {
+        match value {
+            JsValue::Object(id) => self.release_heap_reference(RawId::Object(id)),
+            JsValue::String(id) => self.release_heap_reference(RawId::String(id)),
+            JsValue::BigInt(id) => self.release_heap_reference(RawId::BigInt(id)),
+            JsValue::Symbol(index) => self.release_atom_index(index),
+            JsValue::Undefined
+            | JsValue::Null
+            | JsValue::Bool(_)
+            | JsValue::Int(_)
+            | JsValue::Float(_)
+            | JsValue::ShortBigInt(_) => Ok(()),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn release_object_handle(&mut self, id: ObjectId) -> Result<(), RuntimeError> {
+        self.release_heap_reference(RawId::Object(id))
+    }
+
+    #[inline]
+    pub(crate) fn release_var_ref_handle(&mut self, id: VarRefId) -> Result<(), RuntimeError> {
+        self.release_heap_reference(RawId::VarRef(id))
+    }
+
+    #[inline]
+    pub(crate) fn release_atom_index(&mut self, index: AtomIdx) -> Result<(), RuntimeError> {
+        self.atoms
+            .release_index(index)
+            .map(drop)
+            .map_err(Into::into)
+    }
+
     #[inline]
     fn release_heap_reference(&mut self, id: RawId) -> Result<(), RuntimeError> {
         // Nonfinal shared decrements are the VM hot path; they cannot produce
@@ -608,19 +657,15 @@ impl RuntimeState {
         operation: DeferredRefOp,
     ) -> Result<(), RuntimeError> {
         match operation {
-            DeferredRefOp::Object(object) => self.release_heap_reference(RawId::Object(object)),
+            DeferredRefOp::Object(object) => self.release_object_handle(object),
             DeferredRefOp::Context(context) => self.release_heap_reference(RawId::Context(context)),
             DeferredRefOp::FunctionBytecode(bytecode) => {
                 self.release_heap_reference(RawId::FunctionBytecode(bytecode))
             }
-            DeferredRefOp::VarRef(var_ref) => self.release_heap_reference(RawId::VarRef(var_ref)),
+            DeferredRefOp::VarRef(var_ref) => self.release_var_ref_handle(var_ref),
             DeferredRefOp::String(id) => self.release_heap_reference(RawId::String(id)),
             DeferredRefOp::BigInt(id) => self.release_heap_reference(RawId::BigInt(id)),
-            DeferredRefOp::AtomIndexRelease(index) => self
-                .atoms
-                .release_index(index)
-                .map(drop)
-                .map_err(Into::into),
+            DeferredRefOp::AtomIndexRelease(index) => self.release_atom_index(index),
             DeferredRefOp::AtomRelease(atom) => {
                 if self.atoms.release_shared(atom)? {
                     self.atoms.remove_released(atom)?;
@@ -647,6 +692,92 @@ impl RuntimeState {
                 Ok(())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod direct_state_tests {
+    use super::*;
+    use crate::engine::value::{JsString, Value, bigint::JsBigInt};
+
+    #[test]
+    fn value_edges_duplicate_and_release_under_existing_exclusive_access() {
+        let runtime = Runtime::new();
+        let object = runtime.new_object(None).unwrap();
+        let symbol = runtime.new_symbol(None).unwrap();
+        let symbol_atom = symbol.atom();
+        let object_id = object.object_id();
+        let values = [
+            runtime.unroot_value(&Value::Object(object)).unwrap(),
+            runtime.unroot_value(&Value::Symbol(symbol)).unwrap(),
+            runtime
+                .unroot_value(&Value::String(JsString::from_static("direct state")))
+                .unwrap(),
+            runtime
+                .unroot_value(&Value::BigInt(
+                    JsBigInt::parse_js_string("170141183460469231731687303715884105729").unwrap(),
+                ))
+                .unwrap(),
+            JsValue::Undefined,
+            JsValue::ShortBigInt(i64::MIN),
+            JsValue::Float(-0.0),
+        ];
+        let mut state = runtime.0.state.borrow_mut();
+        for value in values {
+            let duplicate = state.dup_jsvalue(&value).unwrap();
+            assert_eq!(duplicate, value);
+            state.release_jsvalue(duplicate).unwrap();
+            // The original owner is still live after its duplicate goes away.
+            match &value {
+                JsValue::Object(id) => assert_eq!(state.heap.object_strong_count(*id), Ok(1)),
+                JsValue::String(id) => assert!(state.heap.string(*id).is_ok()),
+                JsValue::BigInt(id) => assert!(state.heap.bigint(*id).is_ok()),
+                JsValue::Symbol(_) => {
+                    assert_eq!(state.atoms.resolve(symbol_atom).unwrap().ref_count, Some(1))
+                }
+                _ => {}
+            }
+            state.release_jsvalue(value).unwrap();
+        }
+        assert!(state.heap.object(object_id).is_err());
+        assert!(state.atoms.resolve(symbol_atom).is_err());
+        assert!(!runtime.0.deferred_references.has_pending());
+    }
+
+    #[test]
+    fn final_release_cleans_child_edges_and_property_atoms_in_same_state() {
+        use crate::engine::heap::{ObjectData, PropertySlot};
+        use crate::engine::object::shape::{PropertyFlags, ShapeEntry};
+        let runtime = Runtime::new();
+        let child = runtime.new_object(None).unwrap();
+        let child_id = child.object_id();
+        let key = runtime.intern_property_key("child").unwrap();
+        let atom = key.atom();
+        let parent = {
+            let mut state = runtime.0.state.borrow_mut();
+            state
+                .allocate_object_with_layout(
+                    None,
+                    &[ShapeEntry {
+                        atom: AtomIdx::from_raw(atom.raw()),
+                        flags: PropertyFlags::data(true, true, true),
+                    }],
+                    vec![PropertySlot::Data(RawValue::Object(child_id))],
+                    ObjectData::ordinary,
+                )
+                .unwrap()
+        };
+        drop(child);
+        let mut state = runtime.0.state.borrow_mut();
+        let cleanup = state.release_retained_shapes().unwrap();
+        state.apply_cleanup(cleanup).unwrap();
+        assert_eq!(state.heap.object_strong_count(child_id), Ok(1));
+        state.release_jsvalue(JsValue::Object(parent)).unwrap();
+        assert!(state.heap.object(parent).is_err());
+        assert!(state.heap.object(child_id).is_err());
+        assert_eq!(state.atoms.resolve(atom).unwrap().ref_count, Some(1));
+        assert!(!state.heap.has_pending_zero_cleanup());
+        assert!(!runtime.0.deferred_references.has_pending());
     }
 }
 

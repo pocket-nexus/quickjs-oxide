@@ -21,44 +21,7 @@ impl Runtime {
         let _collection = CollectionGuard(&pressure.collecting);
         let _operation = self.operation();
         let mut state = self.0.state.borrow_mut();
-        // Optional shape roots must not keep prototype graphs alive across GC.
-        let retained_cleanup = state.release_retained_shapes()?;
-        let mut atom_error = None;
-        let mut stats = {
-            let RuntimeState {
-                atoms,
-                heap,
-                pending_jobs,
-                ..
-            } = &mut *state;
-            let mut finalization_sink = jobs::RuntimeFinalizationJobSink::new(pending_jobs);
-            heap.run_gc_with_finalization_sink(
-                |event| {
-                    Ok(match event {
-                        WeakSymbolGcEvent::IsLive(index) => atoms.is_live_index(index),
-                        WeakSymbolGcEvent::Release(index) => {
-                            if let Err(error) = atoms.release_index(index) {
-                                // A detached weak value owned this atom, so this
-                                // can fail only after an ownership invariant has
-                                // already been violated. Latch the exact error but
-                                // continue without scheduling a double release.
-                                atom_error.get_or_insert(error);
-                            }
-                            true
-                        }
-                    })
-                },
-                &mut finalization_sink,
-            )?
-        };
-        stats.cleanup.merge(retained_cleanup);
-        if let Some(error) = atom_error {
-            return Err(error.into());
-        }
-        let atom_indices = std::mem::take(&mut stats.cleanup.atoms);
-        state.unlink_finalized_shapes(stats.cleanup.finalized_shape_ids.iter().copied());
-        state.release_atom_indices(atom_indices)?;
-        state.atoms.sweep_released_strings();
+        let stats = state.collect_cycles()?;
         drop(state);
         // The operation guard drains deferred root releases. Trim only after
         // that drain, so a release queued during collection cannot be lost.
@@ -129,6 +92,54 @@ impl Runtime {
     pub fn heap_counts(&self) -> HeapCounts {
         let _operation = self.operation();
         self.0.state.borrow().heap.counts()
+    }
+}
+
+impl RuntimeState {
+    /// Collect a fully published graph under the executor's existing state
+    /// access. The caller owns collection admission, external-root draining
+    /// and budget rearming; this kernel neither reborrows Runtime nor executes
+    /// finalization jobs. Temporary strong edges must already have an owner.
+    pub(crate) fn collect_cycles(&mut self) -> Result<GcStats, RuntimeError> {
+        // Optional shape roots must not keep prototype graphs alive across GC.
+        let retained_cleanup = self.release_retained_shapes()?;
+        let mut atom_error = None;
+        let mut stats = {
+            let RuntimeState {
+                atoms,
+                heap,
+                pending_jobs,
+                ..
+            } = self;
+            let mut finalization_sink = jobs::RuntimeFinalizationJobSink::new(pending_jobs);
+            heap.run_gc_with_finalization_sink(
+                |event| {
+                    Ok(match event {
+                        WeakSymbolGcEvent::IsLive(index) => atoms.is_live_index(index),
+                        WeakSymbolGcEvent::Release(index) => {
+                            if let Err(error) = atoms.release_index(index) {
+                                // A detached weak value owned this atom, so this
+                                // can fail only after an ownership invariant has
+                                // already been violated. Latch the exact error but
+                                // continue without scheduling a double release.
+                                atom_error.get_or_insert(error);
+                            }
+                            true
+                        }
+                    })
+                },
+                &mut finalization_sink,
+            )?
+        };
+        stats.cleanup.merge(retained_cleanup);
+        if let Some(error) = atom_error {
+            return Err(error.into());
+        }
+        let atom_indices = std::mem::take(&mut stats.cleanup.atoms);
+        self.unlink_finalized_shapes(stats.cleanup.finalized_shape_ids.iter().copied());
+        self.release_atom_indices(atom_indices)?;
+        self.atoms.sweep_released_strings();
+        Ok(stats)
     }
 }
 

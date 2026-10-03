@@ -1,6 +1,23 @@
 use super::*;
 
 #[test]
+fn direct_state_gc_collects_cycles_without_reborrowing_runtime() {
+    let runtime = Runtime::new();
+    let baseline = runtime.heap_counts();
+    let object = runtime.new_object(None).unwrap();
+    let self_key = runtime.intern_property_key("self").unwrap();
+    assert!(set_property(&runtime, &object, &self_key, Value::Object(object.clone())).unwrap());
+    let id = object.into_handle();
+    let mut state = runtime.0.state.borrow_mut();
+    state.release_jsvalue(JsValue::Object(id)).unwrap();
+    assert_eq!(state.heap.object_strong_count(id), Ok(1));
+    let stats = state.collect_cycles().unwrap();
+    assert_eq!(stats.cleanup.finalized_objects, 1);
+    assert_eq!(state.heap.counts().object_nodes, baseline.object_nodes);
+    assert!(!runtime.0.deferred_references.has_pending());
+}
+
+#[test]
 fn explicit_gc_caps_empty_zero_queue_but_ordinary_releases_reuse_it() {
     let runtime = Runtime::new();
     let baseline = runtime.heap_counts();
