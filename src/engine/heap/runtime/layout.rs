@@ -6,32 +6,12 @@ use super::*;
 use crate::engine::heap::ObjectData;
 
 impl RuntimeState {
+    /// All callers carry the runtime's quarantine flag. Publication or
+    /// destructive cleanup failure must stop temporary-owner traversal before
+    /// this function returns, including at public object/Array boundaries.
     pub(crate) fn allocate_object_with_layout(
         &mut self,
-        prototype: Option<ObjectId>,
-        entries: &[ShapeEntry],
-        slots: Vec<PropertySlot>,
-        build: impl FnOnce(ShapeId, Vec<PropertySlot>) -> ObjectData,
-    ) -> Result<ObjectId, RuntimeError> {
-        self.allocate_object_with_layout_inner(None, prototype, entries, slots, build)
-    }
-
-    /// Direct state consumers quarantine interrupted publication/cleanup
-    /// before their temporary guards can traverse the heap again.
-    pub(crate) fn allocate_object_with_layout_with_poison(
-        &mut self,
         poisoned: &Cell<bool>,
-        prototype: Option<ObjectId>,
-        entries: &[ShapeEntry],
-        slots: Vec<PropertySlot>,
-        build: impl FnOnce(ShapeId, Vec<PropertySlot>) -> ObjectData,
-    ) -> Result<ObjectId, RuntimeError> {
-        self.allocate_object_with_layout_inner(Some(poisoned), prototype, entries, slots, build)
-    }
-
-    fn allocate_object_with_layout_inner(
-        &mut self,
-        poisoned: Option<&Cell<bool>>,
         prototype: Option<ObjectId>,
         entries: &[ShapeEntry],
         slots: Vec<PropertySlot>,
@@ -41,45 +21,34 @@ impl RuntimeState {
         let atoms = match self.retain_slot_atoms(&slots) {
             Ok(atoms) => atoms,
             Err(error) => {
-                let cleanup = self.heap.release_shape(shape).inspect_err(|_| {
-                    if let Some(poisoned) = poisoned {
-                        poisoned.set(true);
-                    }
-                })?;
-                self.apply_cleanup(cleanup).inspect_err(|_| {
-                    if let Some(poisoned) = poisoned {
-                        poisoned.set(true);
-                    }
-                })?;
+                let cleanup = self
+                    .heap
+                    .release_shape(shape)
+                    .inspect_err(|_| poisoned.set(true))?;
+                self.apply_cleanup(cleanup)
+                    .inspect_err(|_| poisoned.set(true))?;
                 return Err(error);
             }
         };
         let result = match self.heap.allocate_object_with_status(build(shape, slots)) {
-            Err(failure) if failure.published && poisoned.is_some() => {
-                poisoned.expect("direct allocation poison flag").set(true);
+            Err(failure) if failure.published => {
+                poisoned.set(true);
                 return Err(failure.error.into());
             }
             result => result,
         };
         if let Err(failure) = &result {
             if !failure.published {
-                self.release_atoms(atoms).inspect_err(|_| {
-                    if let Some(poisoned) = poisoned {
-                        poisoned.set(true);
-                    }
-                })?;
+                self.release_atoms(atoms)
+                    .inspect_err(|_| poisoned.set(true))?;
             }
         }
-        let cleanup = self.heap.release_shape(shape).inspect_err(|_| {
-            if let Some(poisoned) = poisoned {
-                poisoned.set(true);
-            }
-        })?;
-        self.apply_cleanup(cleanup).inspect_err(|_| {
-            if let Some(poisoned) = poisoned {
-                poisoned.set(true);
-            }
-        })?;
+        let cleanup = self
+            .heap
+            .release_shape(shape)
+            .inspect_err(|_| poisoned.set(true))?;
+        self.apply_cleanup(cleanup)
+            .inspect_err(|_| poisoned.set(true))?;
         result.map_err(|failure| failure.error.into())
     }
 }
@@ -91,6 +60,60 @@ mod tests {
     use crate::engine::heap::RawId;
     use crate::engine::heap::runtime::owned_values::OwnedValueGuard;
     use crate::engine::object::shape::PropertyFlags;
+
+    #[test]
+    fn public_object_and_array_publication_quarantine_before_boundary_cleanup() {
+        for array in [false, true] {
+            let runtime = Runtime::new();
+            let prototype = runtime.new_object(None).unwrap();
+            // Reuse an admitted shape so the fault is in final publication
+            // cleanup rather than shape creation or input authentication.
+            let _matching_layout = if array {
+                runtime.new_empty_array_with_prototype(&prototype).unwrap()
+            } else {
+                runtime.new_object(Some(&prototype)).unwrap()
+            };
+            let first = runtime.new_object(None).unwrap().into_handle();
+            let later = runtime.new_object(None).unwrap().into_handle();
+            let (objects, prototype_count) = {
+                let mut state = runtime.0.state.borrow_mut();
+                state
+                    .heap
+                    .queue_release_for_test(RawId::Object(first))
+                    .unwrap();
+                state
+                    .heap
+                    .queue_release_for_test(RawId::Object(later))
+                    .unwrap();
+                state
+                    .heap
+                    .set_strong_count_for_test(RawId::Object(first), 1);
+                (
+                    state.heap.counts().object_nodes,
+                    state
+                        .heap
+                        .object_strong_count(prototype.object_id())
+                        .unwrap(),
+                )
+            };
+            let result = if array {
+                runtime.new_empty_array_with_prototype(&prototype)
+            } else {
+                runtime.new_object(Some(&prototype))
+            };
+            assert!(result.is_err());
+            assert!(runtime.is_poisoned());
+            let state = runtime.0.state.borrow();
+            assert_eq!(state.heap.counts().object_nodes, objects + 1);
+            assert_eq!(
+                state.heap.object_strong_count(prototype.object_id()),
+                Ok(prototype_count),
+            );
+            assert_eq!(state.heap.object_strong_count(later), Ok(0));
+            assert!(state.heap.has_pending_zero_cleanup());
+            assert!(!runtime.0.deferred_references.has_pending());
+        }
+    }
 
     #[test]
     fn resident_object_allocation_quarantines_before_prototype_cleanup() {
@@ -162,7 +185,7 @@ mod tests {
         }];
         {
             let (state, _) = producer.parts();
-            let error = state.allocate_object_with_layout_with_poison(
+            let error = state.allocate_object_with_layout(
                 &runtime.0.poisoned,
                 None,
                 &entries,
@@ -192,7 +215,7 @@ mod tests {
         let symbol = runtime.new_symbol(None).unwrap();
         let mut runtime_state = runtime.0.state.borrow_mut();
         runtime_state
-            .allocate_object_with_layout_with_poison(
+            .allocate_object_with_layout(
                 &runtime.0.poisoned,
                 None,
                 &[],
@@ -218,7 +241,7 @@ mod tests {
                 atom: AtomIdx::from_raw(key.atom().raw()),
                 flags: PropertyFlags::data(true, true, true),
             }];
-            let result = state.allocate_object_with_layout_with_poison(
+            let result = state.allocate_object_with_layout(
                 &runtime.0.poisoned,
                 None,
                 &entries,
@@ -254,6 +277,7 @@ mod tests {
             flags: PropertyFlags::accessor(true, true),
         }];
         let result = state.allocate_object_with_layout(
+            &runtime.0.poisoned,
             None,
             &entries,
             vec![PropertySlot::Data(RawValue::Symbol(AtomIdx::from_raw(

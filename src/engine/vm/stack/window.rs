@@ -174,7 +174,13 @@ impl<'a> FrameExecution<'a> {
         // Receiver allocation may request GC, but service remains with the
         // execution consumer after this installer publishes every input owner.
         let receiver = state
-            .allocate_object_with_layout(Some(prototype), &[], Vec::new(), ObjectData::ordinary)
+            .allocate_object_with_layout(
+                &runtime.0.poisoned,
+                Some(prototype),
+                &[],
+                Vec::new(),
+                ObjectData::ordinary,
+            )
             .map_err(super::runtime_error_to_vm_error)?;
         let mut receiver =
             OwnedValueGuard::new(state, &runtime.0.poisoned, JsValue::Object(receiver));

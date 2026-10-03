@@ -141,6 +141,7 @@ impl Runtime {
         let prototype = self.0.state.borrow().heap.context(realm)?.object_prototype;
         let mut state = self.0.state.borrow_mut();
         let object = state.allocate_object_with_layout(
+            &self.0.poisoned,
             Some(prototype),
             &entries,
             slots,

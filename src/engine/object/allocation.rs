@@ -52,7 +52,13 @@ impl Runtime {
         let prototype = prototype.map(ObjectRef::object_id);
 
         let mut state = self.0.state.borrow_mut();
-        let object = state.allocate_object_with_layout(prototype, &[], Vec::new(), build)?;
+        let object = state.allocate_object_with_layout(
+            &self.0.poisoned,
+            prototype,
+            &[],
+            Vec::new(),
+            build,
+        )?;
         drop(state);
         Ok(ObjectRef::from_owned_handle(self.clone(), object))
     }
@@ -69,7 +75,8 @@ impl Runtime {
             return Err(RuntimeError::WrongRuntime("Array prototype"));
         }
         let mut state = self.0.state.borrow_mut();
-        let object = state.new_empty_array_with_prototype(prototype.object_id())?;
+        let object =
+            state.new_empty_array_with_prototype(&self.0.poisoned, prototype.object_id())?;
         drop(state);
         Ok(ObjectRef::from_owned_handle(self.clone(), object))
     }
@@ -1170,14 +1177,7 @@ impl RuntimeState {
     /// non-configurable length is physical slot zero, initially zero.
     pub(crate) fn new_empty_array_with_prototype(
         &mut self,
-        prototype: ObjectId,
-    ) -> Result<ObjectId, RuntimeError> {
-        self.allocate_empty_array_with_prototype(None, prototype)
-    }
-
-    fn allocate_empty_array_with_prototype(
-        &mut self,
-        poisoned: Option<&Cell<bool>>,
+        poisoned: &Cell<bool>,
         prototype: ObjectId,
     ) -> Result<ObjectId, RuntimeError> {
         let length = self
@@ -1188,21 +1188,13 @@ impl RuntimeState {
             flags: PropertyFlags::data(true, false, false),
         }];
         let slots = vec![PropertySlot::Data(RawValue::Int(0))];
-        match poisoned {
-            Some(poisoned) => self.allocate_object_with_layout_with_poison(
-                poisoned,
-                Some(prototype),
-                &entries,
-                slots,
-                ObjectData::array,
-            ),
-            None => self.allocate_object_with_layout(
-                Some(prototype),
-                &entries,
-                slots,
-                ObjectData::array,
-            ),
-        }
+        self.allocate_object_with_layout(
+            poisoned,
+            Some(prototype),
+            &entries,
+            slots,
+            ObjectData::array,
+        )
     }
 
     /// Preserve the checked prototype temporary even when the layout is cached.
@@ -1216,7 +1208,7 @@ impl RuntimeState {
         self.heap.retain_object(prototype)?;
         let mut prototype_owner = OwnedValueGuard::new(self, poisoned, JsValue::Object(prototype));
         let (state, prototype_owner) = prototype_owner.parts();
-        let array = state.allocate_empty_array_with_prototype(Some(poisoned), prototype)?;
+        let array = state.new_empty_array_with_prototype(poisoned, prototype)?;
         let mut array_owner = OwnedValueGuard::new(state, poisoned, JsValue::Object(array));
         let (state, array_owner) = array_owner.parts();
         state.release_owned_jsvalue(poisoned, prototype_owner.take().expect("prototype owner"))?;

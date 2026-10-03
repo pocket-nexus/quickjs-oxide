@@ -157,3 +157,82 @@ fn constructor_gc_services_published_inputs_inside_the_execution_segment() {
     assert!(runtime.0.state.borrow().heap.object(marker).is_err());
     assert!(!runtime.is_poisoned());
 }
+
+#[test]
+fn constructor_publication_failure_quarantines_before_execution_owner_cleanup() {
+    use crate::engine::heap::RawId;
+    let runtime = Runtime::new();
+    let mut context = runtime.new_context().unwrap();
+    let callable = runtime
+        .callable_from_value(
+            context
+                .eval("(function invoke(C,arg){return new C(arg)})")
+                .unwrap(),
+        )
+        .unwrap();
+    let CallableExecution::Bytecode {
+        bytecode,
+        closure_slots,
+    } = runtime.bytecode_for_callable(&callable).unwrap()
+    else {
+        panic!("bytecode caller");
+    };
+    let Value::Object(prototype) = context
+        .eval("function C(arg){return arg}; C.prototype")
+        .unwrap()
+    else {
+        panic!("constructor prototype");
+    };
+    let _matching_layout = runtime.new_object(Some(&prototype)).unwrap();
+    let callee = runtime.into_jsvalue(context.eval("C").unwrap()).unwrap();
+    let marker = runtime.new_object(None).unwrap().into_handle();
+    let entry = crate::engine::vm::root_call::prepare_call(
+        &runtime,
+        context.realm,
+        &callable,
+        JsValue::Undefined,
+        JsValue::Undefined,
+        vec![callee, JsValue::Object(marker)],
+        bytecode,
+        closure_slots,
+    )
+    .unwrap();
+    let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
+    let parent = crate::engine::vm::driver::push_frame(&runtime, &mut execution, entry).unwrap();
+    let first = runtime.new_object(None).unwrap().into_handle();
+    let later = runtime.new_object(None).unwrap().into_handle();
+    let marker_count;
+    {
+        let mut state = runtime.0.state.borrow_mut();
+        let objects = state.heap.counts().object_nodes;
+        state
+            .heap
+            .queue_release_for_test(RawId::Object(first))
+            .unwrap();
+        state
+            .heap
+            .queue_release_for_test(RawId::Object(later))
+            .unwrap();
+        state
+            .heap
+            .set_strong_count_for_test(RawId::Object(first), 1);
+        assert!(
+            super::execute_frame_in_state(&runtime, &mut state, &mut execution, parent).is_err()
+        );
+        assert!(runtime.is_poisoned());
+        assert_eq!(state.heap.counts().object_nodes, objects + 1);
+        assert_eq!(state.heap.object_strong_count(later), Ok(0));
+        assert!(state.heap.has_pending_zero_cleanup());
+        assert_eq!(execution.frames.current_id(), Some(parent));
+        assert!(execution.pending.is_none());
+        marker_count = state.heap.object_strong_count(marker).unwrap();
+        assert!(marker_count > 0);
+    }
+    // Interrupted publication makes traversal unsafe. The outer execution
+    // owner must abandon its edges rather than resume that failed cleanup.
+    drop(execution);
+    let state = runtime.0.state.borrow();
+    assert_eq!(state.heap.object_strong_count(marker), Ok(marker_count));
+    assert_eq!(state.heap.object_strong_count(later), Ok(0));
+    assert!(!runtime.0.deferred_references.has_pending());
+}
