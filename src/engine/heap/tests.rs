@@ -607,5 +607,6 @@ mod modules;
 mod native;
 mod objects;
 mod private_bytecode;
+mod slots;
 mod storage;
 mod weak_collections;
