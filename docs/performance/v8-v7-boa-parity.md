@@ -39,3 +39,25 @@
 两个修复通过 **432/432** heap 测试（Rust 1.88.0，`profiling,test262-host`），包括四项新回归：重复预留时复用缓冲区、增长次数不随每次 append 增加、清空后容量复用、失败预留保留原数据，以及跨 arena/代际的完整身份、重复 edge 次数和饱和边界下的事务原子性。格式与 diff 检查通过，未新增依赖。
 
 这两个修复尚未重新运行原版 benchmark；上面的 Score 不包含其收益。测试日志位于 `/home/eric/.cache/oxide-heap-growth-retain-fixes-20261003/heap-tests.log`。
+
+### 快速固定工作量对照
+
+复用已冻结的八项与 combined 完整负载，普通 release、Rust 1.88.0、CPU 2、ABBA 顺序，每个二进制每项两次，共 **36/36** 有效样本；采样进程总耗时 **72.34 秒**。旧二进制受测源码为 `a40fe615`，生产源码与修复前 `2a8e91b9` 一致；新二进制为 `ab79f471`。两者 target、实际编译参数、manifest、lockfile 与工具链匹配，采样期间没有构建或测试。
+
+以下是完整进程耗时（包含加载、Setup、固定 run 与 TearDown）的中位数，**不是原版自适应 Score**；负数表示耗时下降。
+
+| 负载 | 修复前 ms | 两项修复后 ms | 耗时变化 |
+| --- | ---: | ---: | ---: |
+| Richards | 796.98 | 773.30 | −2.97% |
+| DeltaBlue | 827.76 | 815.76 | −1.45% |
+| Crypto | 607.57 | 603.63 | −0.65% |
+| RayTrace | 939.29 | 926.22 | −1.39% |
+| EarleyBoyer | 1376.76 | 1362.19 | −1.06% |
+| RegExp | 2160.76 | 2180.88 | +0.93% |
+| Splay | 1735.37 | 1717.87 | −1.01% |
+| NavierStokes | 613.25 | 622.89 | +1.57% |
+| Combined | 9084.43 | 9025.40 | −0.65% |
+
+该短对照显示多个子项有小幅下降，同时保留 RegExp、NavierStokes 的上升。每种二进制只有两个观察值，没有新增 A/A 阶段，不是置信区间或显著性结论；combined 的 −0.65% 尚不足以确认整体提速。两项修复一起测量，不分别归因。没有追加轮次或重测 Boa。
+
+原始输出、构建身份和完整样本位于 `/home/eric/.cache/oxide-heap-growth-retain-fixes-20261003/perf/`：`summary.json`、`identity.json`、`fixed/results.json` 与 `fixed/raw/`。基线 SHA-256 为 `efa87f77dc38643e1042d496887cb8f2d41ce2d96a9d26fb71615c83dd557083`，新二进制为 `25ddd4d139000f5cb91f32fed159d155bafed83f37c4fc809854fa5db10af6ee`。
