@@ -228,8 +228,8 @@ impl PendingJob {
 }
 
 /// Own the queue's manual roots after one job has been removed from the FIFO.
-/// Normal completion releases them explicitly; a host panic releases them
-/// during unwind without converting the panic into a JavaScript rejection.
+/// Normal completion releases them explicitly; a host panic quarantines them
+/// without converting the panic into a JavaScript rejection.
 #[must_use = "the guard owns a dequeued pending job's roots"]
 struct PendingJobRootGuard<'a> {
     runtime: &'a Runtime,
@@ -251,15 +251,22 @@ impl<'a> PendingJobRootGuard<'a> {
     }
 
     fn finish(mut self) -> Result<Option<ContextId>, RuntimeError> {
+        self.runtime.check_poison()?;
+        let _unwind = self.runtime.unwind_guard();
         let job = self
             .job
             .take()
             .ok_or(RuntimeError::Invariant("pending-job roots released twice"))?;
-        self.runtime
+        let result = self
+            .runtime
             .0
             .state
             .borrow_mut()
-            .release_pending_job_roots_with_context(&job)
+            .release_pending_job_roots_with_context(&job);
+        if result.is_err() {
+            self.runtime.0.poisoned.set(true);
+        }
+        result
     }
 }
 
@@ -268,13 +275,16 @@ impl Drop for PendingJobRootGuard<'_> {
         if self.runtime.skip_cleanup() {
             return;
         }
+        let _unwind = self.runtime.unwind_guard();
         let Some(job) = self.job.take() else {
             return;
         };
         let Ok(mut state) = self.runtime.0.state.try_borrow_mut() else {
             return;
         };
-        let _ = state.release_pending_job_roots_with_context(&job);
+        if state.release_pending_job_roots_with_context(&job).is_err() {
+            self.runtime.0.poisoned.set(true);
+        }
     }
 }
 
@@ -297,11 +307,15 @@ impl Drop for PreparedJobs<'_> {
         if self.runtime.skip_cleanup() {
             return;
         }
+        let _unwind = self.runtime.unwind_guard();
         let Ok(mut state) = self.runtime.0.state.try_borrow_mut() else {
             return;
         };
         for job in self.jobs.drain(..) {
-            let _ = state.release_pending_job_roots_with_context(&job);
+            if state.release_pending_job_roots_with_context(&job).is_err() {
+                self.runtime.0.poisoned.set(true);
+                return;
+            }
         }
     }
 }
@@ -396,41 +410,15 @@ impl RuntimeState {
         let roots = job.roots();
         let mut context_after_release = None;
         let mut found_context = false;
-        let mut first_error = None;
         for root in roots.iter().rev().flatten().copied() {
             if let PendingJobRoot::Context(context) = root {
                 found_context = true;
-                let survives = match self.heap.context_strong_count(context) {
-                    Ok(count) => Some(count > 1),
-                    Err(error) => {
-                        if first_error.is_none() {
-                            first_error = Some(RuntimeError::Heap(error));
-                        }
-                        None
-                    }
-                };
-                match self.release_pending_job_root(root) {
-                    Ok(()) => {
-                        if let Some(survives) = survives {
-                            context_after_release = Some(survives.then_some(context));
-                        }
-                    }
-                    Err(error) => {
-                        if first_error.is_none() {
-                            first_error = Some(error);
-                        }
-                    }
-                }
+                let survives = self.heap.context_strong_count(context)? > 1;
+                self.release_pending_job_root(root)?;
+                context_after_release = Some(survives.then_some(context));
                 continue;
             }
-            if let Err(error) = self.release_pending_job_root(root)
-                && first_error.is_none()
-            {
-                first_error = Some(error);
-            }
-        }
-        if let Some(error) = first_error {
-            return Err(error);
+            self.release_pending_job_root(root)?;
         }
         if !found_context {
             return Err(RuntimeError::Invariant(
@@ -640,7 +628,10 @@ impl Runtime {
         let _operation = self.operation()?;
         let mut state = self.0.state.borrow_mut();
         for job in jobs {
-            state.release_pending_job_roots(&job)?;
+            if let Err(error) = state.release_pending_job_roots(&job) {
+                self.0.poisoned.set(true);
+                return Err(error);
+            }
         }
         Ok(())
     }
@@ -681,6 +672,8 @@ impl Runtime {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(all(not(target_family = "wasm"), panic = "unwind"))]
+    mod cleanup;
     use crate::engine::api::Context;
     use crate::engine::heap::{ContextData, HeapError};
     use crate::engine::modules::ModuleLoaderError;

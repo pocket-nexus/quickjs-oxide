@@ -763,43 +763,35 @@ impl Drop for RuntimeInner {
             // destroys the heap instead of treating their raw edges as leaks.
             return;
         }
-        let state = self.state.get_mut();
-        let retained = state
-            .release_retained_shapes()
-            .and_then(|cleanup| state.apply_cleanup(cleanup));
-        debug_assert!(retained.is_ok(), "shape pool teardown failed: {retained:?}");
-        let clear = state.clear_kept_objects();
-        debug_assert!(clear.is_ok(), "kept-object teardown failed: {clear:?}");
-        let deferred = &self.deferred_references;
-        while let Some(operation) = deferred.pop_front() {
-            let result = state.apply_deferred_operation(operation);
-            debug_assert!(
-                result.is_ok(),
-                "runtime deferred teardown failed: {result:?}"
-            );
+        let teardown = (|| -> Result<(), RuntimeError> {
+            let state = self.state.get_mut();
+            let retained = state.release_retained_shapes()?;
+            state.apply_cleanup(retained)?;
+            state.clear_kept_objects()?;
+            while let Some(operation) = self.deferred_references.pop_front() {
+                state.apply_deferred_operation(operation)?;
+            }
+            while let Some(job) = state.pending_jobs.pop_front() {
+                state.release_pending_job_roots(&job)?;
+            }
+            if let Some(exception) = state.pending_exception.take() {
+                state.release_owned_raw_root(exception)?;
+            }
+            let mut stats = state.heap.run_gc_for_runtime_teardown()?;
+            state.release_atom_indices(std::mem::take(&mut stats.cleanup.atoms))?;
+            Ok(())
+        })();
+        if teardown.is_err() {
+            // Final teardown has no recovery boundary. Even resource failures
+            // stop here: later cleanup must not traverse a partially retired
+            // graph, and ordinary Rust destruction must not destroy its owners.
+            self.poisoned.set(true);
+            self.state.abandon();
+            return;
         }
-        while let Some(job) = state.pending_jobs.pop_front() {
-            let result = state.release_pending_job_roots(&job);
-            debug_assert!(result.is_ok(), "pending job teardown failed: {result:?}");
-        }
-        if let Some(exception) = state.pending_exception.take() {
-            let result = state.release_owned_raw_root(exception);
-            debug_assert!(
-                result.is_ok(),
-                "pending exception teardown failed: {result:?}"
-            );
-        }
-        let result = state
-            .heap
-            .run_gc_for_runtime_teardown()
-            .map_err(RuntimeError::Heap)
-            .and_then(|mut stats| {
-                let atom_indices = std::mem::take(&mut stats.cleanup.atoms);
-                state.release_atom_indices(atom_indices)
-            });
-        debug_assert!(result.is_ok(), "runtime teardown failed: {result:?}");
         #[cfg(debug_assertions)]
         {
+            let state = self.state.get_mut();
             let live = state.heap.counts().live;
             let probe = std::env::var_os("QJS_TEARDOWN_PROBE").is_some();
             let live_atoms = state.atoms.debug_live_unpinned_count();

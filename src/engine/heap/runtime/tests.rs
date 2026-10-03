@@ -418,3 +418,6 @@ mod shapes;
 mod weak_references;
 
 mod dynamic_import;
+
+#[cfg(all(not(target_family = "wasm"), panic = "unwind"))]
+mod teardown;
