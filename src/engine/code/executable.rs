@@ -58,7 +58,7 @@ impl PartialEq for OrdinaryAuthentication {
 pub(crate) struct PublishedFunctionSnapshot {
     root: std::cell::OnceCell<FunctionBytecodeRef>,
     bytecode: Option<FunctionBytecodeId>,
-    runtime_identity: usize,
+    runtime_domain: u64,
     data: Rc<PublishedFunctionData>,
 }
 
@@ -115,10 +115,15 @@ impl PublishedFunctionSnapshot {
         self.root.get()
     }
 
-    /// Domain token is non-owning; a rooted snapshot or its frame's callee
-    /// owns Runtime for every access. It avoids retaining Runtime in caches.
+    /// The domain token rejects foreign published facts without owning Runtime.
+    /// A rooted snapshot owns its bytecode; internal access instead requires
+    /// the caller's live callee owner to keep that bytecode published.
     pub(crate) fn belongs_to(&self, runtime: &Runtime) -> bool {
-        self.runtime_identity == Rc::as_ptr(&runtime.0) as usize
+        self.belongs_to_domain(runtime.domain_id())
+    }
+
+    pub(crate) fn belongs_to_domain(&self, domain: u64) -> bool {
+        self.runtime_domain == domain
     }
 
     pub(crate) fn bytecode_id(&self) -> Option<FunctionBytecodeId> {
@@ -159,7 +164,7 @@ impl PublishedFunctionSnapshot {
         Self {
             root: Default::default(),
             bytecode: Some(id),
-            runtime_identity: Rc::as_ptr(&runtime.0) as usize,
+            runtime_domain: runtime.domain_id(),
             data: facts.data,
         }
     }
@@ -169,7 +174,7 @@ impl PublishedFunctionSnapshot {
         Self {
             root: Default::default(),
             bytecode: None,
-            runtime_identity: 0,
+            runtime_domain: 0,
             data: Rc::new(PublishedFunctionData {
                 has_captured_locals: true,
                 observes_arguments: true,
@@ -318,7 +323,7 @@ impl Runtime {
         );
 
         Ok(PublishedFunctionSnapshot {
-            runtime_identity: Rc::as_ptr(&self.0) as usize,
+            runtime_domain: self.domain_id(),
             bytecode: Some(function.bytecode_id()),
             root: std::cell::OnceCell::from(function),
             data,

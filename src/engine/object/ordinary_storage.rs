@@ -42,7 +42,7 @@ pub(crate) enum NamedSelectionMiss {
 /// Its callee remains retained by the result/operand owner; consumption checks
 /// runtime and generational identity, never re-reads a property or payload.
 pub(crate) struct LinkedNativeSelection {
-    runtime: Runtime,
+    domain_id: u64,
     function: ObjectId,
     data: crate::engine::builtins::native::NativeFunctionData,
 }
@@ -52,8 +52,15 @@ impl LinkedNativeSelection {
         runtime: &Runtime,
         function: ObjectId,
     ) -> Option<crate::engine::builtins::native::NativeFunctionData> {
-        (runtime.domain_id() == self.runtime.domain_id() && function == self.function)
-            .then_some(self.data)
+        self.into_parts_in_domain(runtime.domain_id(), function)
+    }
+
+    pub(crate) fn into_parts_in_domain(
+        self,
+        domain_id: u64,
+        function: ObjectId,
+    ) -> Option<crate::engine::builtins::native::NativeFunctionData> {
+        (domain_id == self.domain_id && function == self.function).then_some(self.data)
     }
 }
 
@@ -672,7 +679,7 @@ impl Runtime {
                     (native.as_mut(), native_data, &value)
                 {
                     **output = Some(LinkedNativeSelection {
-                        runtime: self.clone(),
+                        domain_id: self.domain_id(),
                         function: *function,
                         data,
                     });
@@ -1185,7 +1192,15 @@ fn linked_field_atom(
     executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
     index: u32,
 ) -> Option<Atom> {
-    if !executable.belongs_to(runtime) {
+    linked_field_atom_in_domain(runtime.domain_id(), executable, index)
+}
+
+fn linked_field_atom_in_domain(
+    domain_id: u64,
+    executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
+    index: u32,
+) -> Option<Atom> {
+    if !executable.belongs_to_domain(domain_id) {
         return None;
     }
     executable
@@ -1429,7 +1444,14 @@ impl Runtime {
     /// accessors fall back to canonical [[Get]].
     /// The heap borrow ends before the Copy result leaves.
     pub(crate) fn peek_dense_number(&self, base: &JsValue, index: u32) -> Option<Number> {
-        self.peek_dense_number_result(base, index).ok()
+        if !matches!(base, JsValue::Object(_)) {
+            return None;
+        }
+        self.0
+            .state
+            .try_borrow()
+            .ok()?
+            .peek_dense_number(base, index)
     }
 
     /// A miss classification is produced during the same borrow that probes
@@ -1439,34 +1461,14 @@ impl Runtime {
         base: &JsValue,
         index: u32,
     ) -> Result<Number, Miss> {
-        let JsValue::Object(id) = base else {
+        let JsValue::Object(_id) = base else {
             return Err(Miss::ReceiverNotObject);
         };
-        let state = self
-            .0
+        self.0
             .state
             .try_borrow()
-            .map_err(|_| Miss::HeapBorrowUnavailable)?;
-        let data = state
-            .heap
-            .object(*id)
-            .map_err(|_| Miss::ReceiverUnavailable)?;
-        if !matches!(data.kind, ObjectKind::Array) {
-            return Err(Miss::ReceiverNotArray);
-        }
-        match &data.payload {
-            ObjectPayload::Array { dense: Some(dense) } => match dense.get(index as usize) {
-                Some(RawValue::Int(value)) => Ok(Number::Int(*value)),
-                Some(RawValue::Float(value)) => Ok(Number::Float(*value)),
-                Some(_) => Err(Miss::OwnElementNotNumber),
-                None => Err(Miss::MissingOwnElement),
-            },
-            ObjectPayload::Array { dense: None } => {
-                materialized_array_own_number(&state, data, index)
-                    .ok_or(Miss::UnsupportedMaterializedOwnElement)
-            }
-            _ => Err(Miss::ArrayStorageUnavailable),
-        }
+            .map_err(|_| Miss::HeapBorrowUnavailable)?
+            .peek_dense_number_result(base, index)
     }
 
     /// Update one existing writable own Array Number under a single mutable
@@ -1478,14 +1480,14 @@ impl Runtime {
         index: u32,
         delta: Number,
     ) -> Result<(), Miss> {
-        let JsValue::Object(id) = base else {
+        let JsValue::Object(_id) = base else {
             return Err(Miss::ReceiverNotObject);
         };
-        let Ok(mut state) = self.0.state.try_borrow_mut() else {
-            return Err(Miss::HeapBorrowUnavailable);
-        };
-        let atom = Atom::from_immediate_integer(index).map(|atom| AtomIdx::from_raw(atom.raw()));
-        state.heap.try_add_array_own_number(*id, index, atom, delta)
+        self.0
+            .state
+            .try_borrow_mut()
+            .map_err(|_| Miss::HeapBorrowUnavailable)?
+            .try_add_array_own_number(base, index, delta)
     }
 
     pub(crate) fn try_replace_array_own_number(
@@ -1494,16 +1496,14 @@ impl Runtime {
         index: u32,
         value: Number,
     ) -> Result<(), Miss> {
-        let JsValue::Object(id) = base else {
+        let JsValue::Object(_id) = base else {
             return Err(Miss::ReceiverNotObject);
         };
-        let Ok(mut state) = self.0.state.try_borrow_mut() else {
-            return Err(Miss::HeapBorrowUnavailable);
-        };
-        let atom = Atom::from_immediate_integer(index).map(|atom| AtomIdx::from_raw(atom.raw()));
-        state
-            .heap
-            .try_replace_array_own_number(*id, index, atom, value)
+        self.0
+            .state
+            .try_borrow_mut()
+            .map_err(|_| Miss::HeapBorrowUnavailable)?
+            .try_replace_array_own_number(base, index, value)
     }
 
     /// Diagnose a *previously failed* numeric dense read. This performs an
@@ -1548,19 +1548,13 @@ impl Runtime {
     #[inline]
     #[cfg(test)]
     pub(crate) fn try_write_dense_number(&self, base: &JsValue, index: u32, value: Number) -> bool {
-        let JsValue::Object(id) = base else {
+        let JsValue::Object(_id) = base else {
             return false;
         };
-        let Ok(mut state) = self.0.state.try_borrow_mut() else {
-            return false;
-        };
-        let replacement = match value {
-            Number::Int(number) => RawValue::Int(number),
-            Number::Float(number) => RawValue::Float(number),
-        };
-        state
-            .heap
-            .try_replace_dense_number_value(*id, index, replacement)
+        self.0
+            .state
+            .try_borrow_mut()
+            .is_ok_and(|mut state| state.try_write_dense_number(base, index, value))
     }
 
     /// Borrow an existing dense own immediate value while proving that the VM
@@ -1588,7 +1582,7 @@ impl Runtime {
         include_typed: bool,
     ) -> Option<JsValue> {
         use crate::engine::heap::SlotReleaseReadiness;
-        let JsValue::Object(object) = base else {
+        let JsValue::Object(_object) = base else {
             return None;
         };
         if !matches!(
@@ -1598,39 +1592,11 @@ impl Runtime {
             return None;
         }
         let mut state = self.0.state.try_borrow_mut().ok()?;
-        let data = state.heap.object(*object).ok()?;
-        if matches!(data.kind, ObjectKind::Array) {
-            match &data.payload {
-                ObjectPayload::Array { dense: Some(dense) } => {
-                    return immediate_value_jsvalue(dense.get(index as usize)?);
-                }
-                ObjectPayload::Array { dense: None } => {
-                    return match materialized_array_own_number(&state, data, index)? {
-                        Number::Int(value) => Some(JsValue::Int(value)),
-                        Number::Float(value) => Some(JsValue::Float(value)),
-                    };
-                }
-                _ => {}
-            }
+        if include_typed {
+            state.try_array_immediate_read(base, index)
+        } else {
+            state.try_array_immediate_read_kind(base, index, false)
         }
-        if !include_typed {
-            return None;
-        }
-        if matches!(data.payload, ObjectPayload::Arguments { .. }) {
-            let atom = Atom::from_immediate_integer(index)?;
-            let slot = locate(&state, *object, atom).ok()??;
-            return match &data.slots[slot.index] {
-                PropertySlot::Data(value) => immediate_value_jsvalue(value),
-                PropertySlot::VarRef(cell) => {
-                    immediate_value_jsvalue(&state.heap.var_ref(*cell).ok()?.value)
-                }
-                PropertySlot::Accessor { .. } | PropertySlot::AutoInit(_) => None,
-            };
-        }
-        let value = Self::typed_array_number_read_in_heap(&mut state.heap, *object, index)?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("typed_array_number_read_leaf");
-        Some(value)
     }
 }
 
@@ -2769,5 +2735,138 @@ mod ordinary_field_leaf_tests {
             crate::engine::value::conversion::NativeConversion::Value(Some(Value::Int(7)))
         ));
         assert_eq!(context.eval("readLog").unwrap(), Value::Int(1));
+    }
+}
+
+impl RuntimeState {
+    pub(crate) fn peek_dense_number(&self, base: &JsValue, index: u32) -> Option<Number> {
+        self.peek_dense_number_result(base, index).ok()
+    }
+
+    pub(crate) fn peek_dense_number_result(
+        &self,
+        base: &JsValue,
+        index: u32,
+    ) -> Result<Number, Miss> {
+        let JsValue::Object(id) = base else {
+            return Err(Miss::ReceiverNotObject);
+        };
+        let data = self
+            .heap
+            .object(*id)
+            .map_err(|_| Miss::ReceiverUnavailable)?;
+        if !matches!(data.kind, ObjectKind::Array) {
+            return Err(Miss::ReceiverNotArray);
+        }
+        match &data.payload {
+            ObjectPayload::Array { dense: Some(dense) } => match dense.get(index as usize) {
+                Some(RawValue::Int(value)) => Ok(Number::Int(*value)),
+                Some(RawValue::Float(value)) => Ok(Number::Float(*value)),
+                Some(_) => Err(Miss::OwnElementNotNumber),
+                None => Err(Miss::MissingOwnElement),
+            },
+            ObjectPayload::Array { dense: None } => {
+                materialized_array_own_number(self, data, index)
+                    .ok_or(Miss::UnsupportedMaterializedOwnElement)
+            }
+            _ => Err(Miss::ArrayStorageUnavailable),
+        }
+    }
+
+    pub(crate) fn try_add_array_own_number(
+        &mut self,
+        base: &JsValue,
+        index: u32,
+        delta: Number,
+    ) -> Result<(), Miss> {
+        let JsValue::Object(id) = base else {
+            return Err(Miss::ReceiverNotObject);
+        };
+        let atom = Atom::from_immediate_integer(index).map(|atom| AtomIdx::from_raw(atom.raw()));
+        self.heap.try_add_array_own_number(*id, index, atom, delta)
+    }
+
+    pub(crate) fn try_replace_array_own_number(
+        &mut self,
+        base: &JsValue,
+        index: u32,
+        value: Number,
+    ) -> Result<(), Miss> {
+        let JsValue::Object(id) = base else {
+            return Err(Miss::ReceiverNotObject);
+        };
+        let atom = Atom::from_immediate_integer(index).map(|atom| AtomIdx::from_raw(atom.raw()));
+        self.heap
+            .try_replace_array_own_number(*id, index, atom, value)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn try_write_dense_number(
+        &mut self,
+        base: &JsValue,
+        index: u32,
+        value: Number,
+    ) -> bool {
+        let JsValue::Object(id) = base else {
+            return false;
+        };
+        let replacement = match value {
+            Number::Int(number) => RawValue::Int(number),
+            Number::Float(number) => RawValue::Float(number),
+        };
+        self.heap
+            .try_replace_dense_number_value(*id, index, replacement)
+    }
+
+    fn try_array_immediate_read_kind(
+        &mut self,
+        base: &JsValue,
+        index: u32,
+        include_typed: bool,
+    ) -> Option<JsValue> {
+        let JsValue::Object(object) = base else {
+            return None;
+        };
+        let data = self.heap.object(*object).ok()?;
+        if matches!(data.kind, ObjectKind::Array) {
+            match &data.payload {
+                ObjectPayload::Array { dense: Some(dense) } => {
+                    return immediate_value_jsvalue(dense.get(index as usize)?);
+                }
+                ObjectPayload::Array { dense: None } => {
+                    return match materialized_array_own_number(self, data, index)? {
+                        Number::Int(value) => Some(JsValue::Int(value)),
+                        Number::Float(value) => Some(JsValue::Float(value)),
+                    };
+                }
+                _ => {}
+            }
+        }
+        if !include_typed {
+            return None;
+        }
+        if matches!(data.payload, ObjectPayload::Arguments { .. }) {
+            let atom = Atom::from_immediate_integer(index)?;
+            let slot = locate(self, *object, atom).ok()??;
+            return match &data.slots[slot.index] {
+                PropertySlot::Data(value) => immediate_value_jsvalue(value),
+                PropertySlot::VarRef(cell) => {
+                    immediate_value_jsvalue(&self.heap.var_ref(*cell).ok()?.value)
+                }
+                PropertySlot::Accessor { .. } | PropertySlot::AutoInit(_) => None,
+            };
+        }
+        let value = Runtime::typed_array_number_read_in_heap(&mut self.heap, *object, index)?;
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("typed_array_number_read_leaf");
+        Some(value)
+    }
+
+    pub(crate) fn try_array_immediate_read(
+        &mut self,
+        base: &JsValue,
+        index: u32,
+    ) -> Option<JsValue> {
+        self.try_array_immediate_read_kind(base, index, true)
     }
 }

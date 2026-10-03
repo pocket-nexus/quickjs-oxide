@@ -134,7 +134,7 @@ impl Runtime {
             "internal value sentinel occupied a cached property slot",
         ))?;
         *native = selected.map(|(function, data)| LinkedNativeSelection {
-            runtime: self.clone(),
+            domain_id: self.domain_id(),
             function,
             data,
         });
@@ -180,9 +180,9 @@ impl Runtime {
         }
     }
 
-    /// Return an owned data value directly; only a declined read writes the
-    /// small cold outcome. Selection and promotion still happen once under the
-    /// same heap borrow for both ordinary and borrowed-receiver consumers.
+    /// Legacy entry keeps the old no-cleanup admission. The execution core
+    /// calls the same selection kernel under its existing state access and
+    /// can release a final receiver directly after retaining the result.
     #[inline]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn select_linked_data_into(
@@ -195,19 +195,14 @@ impl Runtime {
         native: &mut Option<LinkedNativeSelection>,
         miss: &mut NamedSelectionMiss,
     ) -> Option<JsValue> {
-        // Only object storage and the primitive string length projection can
-        // complete under this borrow. Other primitive reads use the existing
-        // prototype/conversion driver. They cannot teach this object-location
-        // cache anything, so leave its state untouched.
         if !matches!(base, JsValue::Object(_) | JsValue::String(_)) {
             record_selection_reason("property_selection.decline_primitive");
             return None;
         }
-        let Some(atom) = linked_field_atom(self, executable, key_index) else {
+        if linked_field_atom(self, executable, key_index).is_none() {
             record_selection_reason("property_selection.decline_unlinked_key");
             return None;
-        };
-        let cache = executable.property_read_ic.site(pc);
+        }
         if !keep_receiver && self.0.deferred_references.has_pending() {
             record_selection_reason("property_selection.decline_deferred");
             *miss = NamedSelectionMiss::NeedsObservation;
@@ -234,66 +229,145 @@ impl Runtime {
             *miss = NamedSelectionMiss::NeedsObservation;
             return None;
         }
+        if !keep_receiver && let JsValue::Object(receiver) = base {
+            let readiness = state.heap.slot_object_release_readiness_fast(*receiver);
+            if readiness != SlotReleaseReadiness::Ready {
+                record_release_reason(readiness);
+                *miss = NamedSelectionMiss::NeedsObservation;
+                return None;
+            }
+        }
+        state.select_linked_data_into(
+            self.domain_id(),
+            base,
+            executable,
+            pc,
+            key_index,
+            keep_receiver,
+            native,
+            miss,
+        )
+    }
+
+    #[inline]
+    pub(crate) fn property_ic_peek_number(
+        &self,
+        receiver: ObjectId,
+        executable: &PublishedFunctionSnapshot,
+        pc: usize,
+        key_index: u32,
+    ) -> Option<Number> {
+        self.0.state.try_borrow().ok()?.property_ic_peek_number(
+            self.domain_id(),
+            receiver,
+            executable,
+            pc,
+            key_index,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn property_ic_read_fast(
+        &self,
+        base: &JsValue,
+        executable: &PublishedFunctionSnapshot,
+        pc: usize,
+        key_index: u32,
+        keep_receiver: bool,
+        native: &mut Option<LinkedNativeSelection>,
+    ) -> Option<JsValue> {
+        match self.select_linked_data(base, executable, pc, key_index, keep_receiver, native) {
+            NamedDataSelection::Data(value) => Some(value),
+            NamedDataSelection::CompleteAbsent => Some(JsValue::Undefined),
+            NamedDataSelection::Accessor(_)
+            | NamedDataSelection::ContinueLookup
+            | NamedDataSelection::NeedsObservation => None,
+        }
+    }
+}
+
+impl RuntimeState {
+    /// Return an owned data value directly; only a declined read writes the
+    /// small cold outcome. Selection and promotion still happen once under the
+    /// same heap borrow for both ordinary and borrowed-receiver consumers.
+    /// The execution entry pairs this state with its RuntimeInner domain and
+    /// pins the executable's bytecode through the frame's callee owner. This
+    /// operation does not consume the base; its owner must remain live until
+    /// selection completes, and the returned value owns its retained edge.
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn select_linked_data_into(
+        &self,
+        domain_id: u64,
+        base: &JsValue,
+        executable: &PublishedFunctionSnapshot,
+        pc: usize,
+        key_index: u32,
+        keep_receiver: bool,
+        native: &mut Option<LinkedNativeSelection>,
+        miss: &mut NamedSelectionMiss,
+    ) -> Option<JsValue> {
+        // Only object storage and the primitive string length projection can
+        // complete under this borrow. Other primitive reads use the existing
+        // prototype/conversion driver. They cannot teach this object-location
+        // cache anything, so leave its state untouched.
+        if !matches!(base, JsValue::Object(_) | JsValue::String(_)) {
+            record_selection_reason("property_selection.decline_primitive");
+            return None;
+        }
+        let Some(atom) = super::linked_field_atom_in_domain(domain_id, executable, key_index)
+        else {
+            record_selection_reason("property_selection.decline_unlinked_key");
+            return None;
+        };
+        let cache = executable.property_read_ic.site(pc);
         let (receiver, string_receiver) = match base {
             JsValue::Object(object) => (*object, false),
             JsValue::String(id) => {
-                let length = state
+                let length = self
                     .pinned_atoms
                     .get(crate::engine::atom::pinned::PinnedAtom::Length);
                 if atom == length {
-                    let length = state.heap.string_fast(*id).len();
+                    let length = self.heap.string_fast(*id).len();
                     record_selection_reason("property_selection.string_length");
                     return Some(
                         i32::try_from(length)
                             .map_or_else(|_| JsValue::Float(length as f64), JsValue::Int),
                     );
                 }
-                let Ok(index) = state.atoms.array_index(atom) else {
+                let Ok(index) = self.atoms.array_index(atom) else {
                     return None;
                 };
                 if index.is_some_and(|index| {
                     usize::try_from(index)
-                        .is_ok_and(|index| index < state.heap.string_fast(*id).len())
+                        .is_ok_and(|index| index < self.heap.string_fast(*id).len())
                 }) {
                     // An indexed character creates a string node. Its
                     // allocation and publication remain in the driver.
                     record_selection_reason("property_selection.string_index_allocation");
                     return None;
                 }
-                let prototype = state
-                    .heap
-                    .context(executable.realm)
-                    .ok()
-                    .and_then(|realm| realm.primitive_prototypes[PrimitiveKind::String.index()])?;
+                let prototype =
+                    self.heap.context(executable.realm).ok().and_then(|realm| {
+                        realm.primitive_prototypes[PrimitiveKind::String.index()]
+                    })?;
                 record_selection_reason("property_selection.string_prototype");
                 (prototype, true)
             }
             _ => unreachable!("non-string primitive returned before the heap borrow"),
         };
-        if !keep_receiver && !string_receiver && {
-            let readiness = state.heap.slot_object_release_readiness_fast(receiver);
-            if readiness != SlotReleaseReadiness::Ready {
-                record_release_reason(readiness);
-                true
-            } else {
-                false
-            }
-        } {
-            *miss = NamedSelectionMiss::NeedsObservation;
-            return None;
-        }
         let Some(cache) = cache else {
             record_selection_reason("property_selection.no_site");
             return if string_receiver {
                 None
             } else {
-                self.uncached_field_in_state(&state, base, atom, keep_receiver, native)
+                self.uncached_field_in_state(domain_id, base, atom, keep_receiver, native)
             };
         };
-        if let Some(raw) = cache.read(&state.heap, self.domain_id(), executable.realm, receiver) {
+        if let Some(raw) = cache.read(&self.heap, domain_id, executable.realm, receiver) {
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_execution_event("property_selection.cache");
-            let result = self.promote_field_in_state(&state, raw, keep_receiver, native);
+            let result = self.promote_field_in_state(domain_id, raw, keep_receiver, native);
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_execution_event(if result.is_some() {
                 "property_selection.data"
@@ -303,7 +377,7 @@ impl Runtime {
             return result;
         }
         let result = self.select_linked_miss(
-            &state,
+            domain_id,
             cache,
             atom,
             executable.realm,
@@ -339,7 +413,7 @@ impl Runtime {
     #[allow(clippy::too_many_arguments)]
     fn select_linked_miss(
         &self,
-        state: &RuntimeState,
+        domain_id: u64,
         cache: &PropertyReadCache,
         atom: crate::engine::atom::Atom,
         realm: crate::engine::heap::ContextId,
@@ -348,9 +422,9 @@ impl Runtime {
         native: &mut Option<LinkedNativeSelection>,
     ) -> NamedDataSelection {
         let selected = cache.miss_selected(
-            &state.heap,
-            &state.atoms,
-            self.domain_id(),
+            &self.heap,
+            &self.atoms,
+            domain_id,
             realm,
             Some(receiver),
             atom,
@@ -361,7 +435,7 @@ impl Runtime {
         );
         match selected {
             CacheSelection::Data(raw) => self
-                .promote_field_in_state(state, raw, keep_receiver, native)
+                .promote_field_in_state(domain_id, raw, keep_receiver, native)
                 .map_or(NamedDataSelection::ContinueLookup, NamedDataSelection::Data),
             CacheSelection::CompleteAbsent => NamedDataSelection::CompleteAbsent,
             CacheSelection::Accessor(Some(getter)) => NamedDataSelection::Accessor(getter),
@@ -376,35 +450,16 @@ impl Runtime {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn property_ic_read_fast(
-        &self,
-        base: &JsValue,
-        executable: &PublishedFunctionSnapshot,
-        pc: usize,
-        key_index: u32,
-        keep_receiver: bool,
-        native: &mut Option<LinkedNativeSelection>,
-    ) -> Option<JsValue> {
-        match self.select_linked_data(base, executable, pc, key_index, keep_receiver, native) {
-            NamedDataSelection::Data(value) => Some(value),
-            NamedDataSelection::CompleteAbsent => Some(JsValue::Undefined),
-            NamedDataSelection::Accessor(_)
-            | NamedDataSelection::ContinueLookup
-            | NamedDataSelection::NeedsObservation => None,
-        }
-    }
-
     fn uncached_field_in_state(
         &self,
-        state: &RuntimeState,
+        domain_id: u64,
         base: &JsValue,
         atom: crate::engine::atom::Atom,
         keep_receiver: bool,
         native: &mut Option<LinkedNativeSelection>,
     ) -> Option<JsValue> {
-        let result = super::field_in_state(state, base, atom, |raw| {
-            self.promote_field_in_state(state, raw, keep_receiver, native)
+        let result = super::field_in_state(self, base, atom, |raw| {
+            self.promote_field_in_state(domain_id, raw, keep_receiver, native)
         });
         #[cfg(feature = "profiling")]
         if result.is_some() {
@@ -421,7 +476,7 @@ impl Runtime {
     /// same promotion and native-selection contract.
     fn promote_field_in_state(
         &self,
-        state: &RuntimeState,
+        domain_id: u64,
         raw: &RawValue,
         keep_receiver: bool,
         native: &mut Option<LinkedNativeSelection>,
@@ -433,11 +488,11 @@ impl Runtime {
         match raw {
             RawValue::Object(function) => {
                 let selected = if keep_receiver {
-                    let object = state.heap.object_fast(*function);
+                    let object = self.heap.object_fast(*function);
                     match &object.payload {
                         ObjectPayload::NativeFunction { data, .. } => {
                             data.realm.and_then(|realm| {
-                                (data.operation().is_some() && state.heap.context(realm).is_ok())
+                                (data.operation().is_some() && self.heap.context(realm).is_ok())
                                     .then_some((*function, *data))
                             })
                         }
@@ -446,25 +501,25 @@ impl Runtime {
                 } else {
                     None
                 };
-                state.heap.retain_object_fast(*function);
+                self.heap.retain_object_fast(*function);
                 *native = selected.map(|(function, data)| LinkedNativeSelection {
-                    runtime: self.clone(),
+                    domain_id,
                     function,
                     data,
                 });
                 Some(JsValue::Object(*function))
             }
             RawValue::String(id) => {
-                state.heap.retain_string_shared(*id).ok()?;
+                self.heap.retain_string_shared(*id).ok()?;
                 Some(JsValue::String(*id))
             }
             RawValue::ShortBigInt(value) => Some(JsValue::ShortBigInt(*value)),
             RawValue::BigInt(id) => {
-                state.heap.retain_bigint_shared(*id).ok()?;
+                self.heap.retain_bigint_shared(*id).ok()?;
                 Some(JsValue::BigInt(*id))
             }
             RawValue::Symbol(index) => {
-                state.atoms.retain_index_shared(*index).ok()?;
+                self.atoms.retain_index_shared(*index).ok()?;
                 Some(JsValue::Symbol(*index))
             }
             RawValue::Undefined => Some(JsValue::Undefined),
@@ -487,15 +542,15 @@ impl Runtime {
     #[inline]
     pub(crate) fn property_ic_peek_number(
         &self,
+        domain_id: u64,
         receiver: ObjectId,
         executable: &PublishedFunctionSnapshot,
         pc: usize,
         key_index: u32,
     ) -> Option<Number> {
-        linked_field_atom(self, executable, key_index)?;
+        super::linked_field_atom_in_domain(domain_id, executable, key_index)?;
         let cache = executable.property_read_ic.site(pc)?;
-        let state = self.0.state.try_borrow().ok()?;
-        let raw = cache.read(&state.heap, self.domain_id(), executable.realm, receiver)?;
+        let raw = cache.read(&self.heap, domain_id, executable.realm, receiver)?;
         match raw {
             RawValue::Int(value) => Some(Number::Int(*value)),
             RawValue::Float(value) => Some(Number::Float(*value)),
@@ -506,15 +561,10 @@ impl Runtime {
 
 impl Runtime {
     pub(crate) fn try_dense_array_kept_read(&self, base: &JsValue, index: u32) -> Option<JsValue> {
-        let JsValue::Object(object) = base else {
+        let JsValue::Object(_object) = base else {
             return None;
         };
-        let state = self.0.state.borrow();
-        let data = state.heap.object(*object).ok()?;
-        if !matches!(data.kind, crate::engine::heap::ObjectKind::Array) {
-            return None;
-        }
-        super::immediate_value_jsvalue(data.dense_array_value(index)?)
+        self.0.state.borrow().try_dense_array_kept_read(base, index)
     }
 }
 
@@ -540,45 +590,22 @@ impl Runtime {
         ) {
             return Ok(false);
         }
-        let JsValue::Object(object) = base else {
+        let JsValue::Object(_object) = base else {
             return Ok(false);
         };
-        let Some(atom) = linked_field_atom(self, executable, key_index) else {
+        let Some(_atom) = linked_field_atom(self, executable, key_index) else {
             return Ok(false);
         };
         if self.slot_value_release_readiness_jsvalue(base)? != SlotReleaseReadiness::Ready {
             return Ok(false);
         }
-        let mut state = self.0.state.borrow_mut();
-        if !super::is_ordinary(state.heap.object(*object)?) {
-            return Ok(false);
-        }
-        let Some(slot) = super::locate(&state, *object, atom)? else {
-            return Ok(false);
-        };
-        if !slot.flags.writable
-            || !matches!(
-                state.heap.object(*object)?.slots.get(slot.index),
-                Some(crate::engine::heap::PropertySlot::Data(
-                    RawValue::Undefined
-                        | RawValue::Null
-                        | RawValue::Bool(_)
-                        | RawValue::Int(_)
-                        | RawValue::Float(_)
-                        | RawValue::ShortBigInt(_)
-                ))
-            )
-        {
-            return Ok(false);
-        }
-        // Both values own no edges. The shared replacement kernel preserves
-        // storage invariants without enqueueing cleanup or changing layout.
-        state.replace_property_slot(
-            *object,
-            slot.index,
-            crate::engine::heap::PropertySlot::Data(value.as_raw()),
-        )?;
-        Ok(true)
+        self.0.state.borrow_mut().try_linked_scalar_field_write(
+            self.domain_id(),
+            base,
+            value,
+            executable,
+            key_index,
+        )
     }
 
     pub(crate) fn try_dense_array_write_scalar(
@@ -599,13 +626,13 @@ impl Runtime {
         {
             return Ok(false);
         }
-        let JsValue::Object(object) = base else {
+        let JsValue::Object(_object) = base else {
             return Ok(false);
         };
-        let mut state = self.0.state.borrow_mut();
-        Ok(state
-            .heap
-            .try_replace_dense_immediate_value(*object, index, value.as_raw()))
+        self.0
+            .state
+            .borrow_mut()
+            .try_dense_array_write_scalar(base, index, value)
     }
 }
 
@@ -649,6 +676,316 @@ mod tests {
 
     fn site(runtime: &Runtime) -> (PublishedFunctionSnapshot, usize, u32) {
         site_for(runtime, "(function(o){return o.x})")
+    }
+
+    #[test]
+    fn direct_state_read_keeps_result_after_final_receiver_release() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let (code, pc, key) = site(&runtime);
+        let base = runtime
+            .into_jsvalue(context.eval("({x:{marker:42}})").unwrap())
+            .unwrap();
+        let receiver = object(&base);
+        let mut state = runtime.0.state.borrow_mut();
+        assert_eq!(state.heap.object_strong_count(receiver), Ok(1));
+        let value = state
+            .select_linked_data_into(
+                runtime.domain_id(),
+                &base,
+                &code,
+                pc,
+                key,
+                false,
+                &mut None,
+                &mut NamedSelectionMiss::ContinueLookup,
+            )
+            .unwrap();
+        let result = object(&value);
+        state.release_jsvalue(base).unwrap();
+        assert!(state.heap.object(receiver).is_err());
+        assert_eq!(state.heap.object_strong_count(result), Ok(1));
+        state.release_jsvalue(value).unwrap();
+        assert!(state.heap.object(result).is_err());
+        assert!(!runtime.0.deferred_references.has_pending());
+    }
+
+    #[test]
+    fn direct_state_selection_preserves_prototypes_and_getter_progress() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let (code, pc, key) = site(&runtime);
+        let inherited = runtime
+            .into_jsvalue(context.eval("Object.create({x:42})").unwrap())
+            .unwrap();
+        let getter = runtime.into_jsvalue(context.eval("globalThis.directGetterCalls=0;Object.create({get x(){directGetterCalls++;return 7}})").unwrap()).unwrap();
+        {
+            let mut state = runtime.0.state.borrow_mut();
+            assert_eq!(
+                state.select_linked_data_into(
+                    runtime.domain_id(),
+                    &inherited,
+                    &code,
+                    pc,
+                    key,
+                    false,
+                    &mut None,
+                    &mut NamedSelectionMiss::ContinueLookup
+                ),
+                Some(JsValue::Int(42))
+            );
+            let mut miss = NamedSelectionMiss::ContinueLookup;
+            assert!(
+                state
+                    .select_linked_data_into(
+                        runtime.domain_id(),
+                        &getter,
+                        &code,
+                        pc,
+                        key,
+                        false,
+                        &mut None,
+                        &mut miss
+                    )
+                    .is_none()
+            );
+            assert!(matches!(miss, NamedSelectionMiss::Accessor(_)));
+            state.release_jsvalue(inherited).unwrap();
+            state.release_jsvalue(getter).unwrap();
+        }
+        assert_eq!(context.eval("directGetterCalls").unwrap(), Value::Int(0));
+    }
+
+    #[test]
+    fn direct_state_string_length_requires_no_secondary_state_borrow() {
+        let runtime = Runtime::new();
+        let (code, pc, key) = site_for(&runtime, "(function(o){return o.length})");
+        let base = runtime
+            .into_jsvalue(Value::String(crate::engine::value::JsString::from_static(
+                "a🙂b",
+            )))
+            .unwrap();
+        let mut state = runtime.0.state.borrow_mut();
+        assert_eq!(
+            state.select_linked_data_into(
+                runtime.domain_id(),
+                &base,
+                &code,
+                pc,
+                key,
+                false,
+                &mut None,
+                &mut NamedSelectionMiss::ContinueLookup
+            ),
+            Some(JsValue::Int(4))
+        );
+        state.release_jsvalue(base).unwrap();
+        assert!(!runtime.0.deferred_references.has_pending());
+    }
+
+    #[test]
+    fn direct_state_failed_promotion_keeps_receiver_and_slot_owner() {
+        use crate::engine::heap::RawId;
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let (code, pc, key) = site(&runtime);
+        let base = runtime
+            .into_jsvalue(context.eval("({x:'promotion ownership'})").unwrap())
+            .unwrap();
+        let mut state = runtime.0.state.borrow_mut();
+        let atom = code.property_key_atoms.as_ref().unwrap()[key as usize];
+        let slot = super::super::locate(&state, object(&base), atom)
+            .unwrap()
+            .unwrap();
+        let crate::engine::heap::PropertySlot::Data(RawValue::String(string)) = state
+            .heap
+            .object(object(&base))
+            .unwrap()
+            .slots
+            .get(slot.index)
+            .unwrap()
+        else {
+            panic!("string slot")
+        };
+        let string = *string;
+        let previous = state.heap.strong_count(RawId::String(string)).unwrap();
+        state
+            .heap
+            .set_strong_count_for_test(RawId::String(string), u32::MAX);
+        let result = state.select_linked_data_into(
+            runtime.domain_id(),
+            &base,
+            &code,
+            pc,
+            key,
+            false,
+            &mut None,
+            &mut NamedSelectionMiss::ContinueLookup,
+        );
+        let count = state.heap.strong_count(RawId::String(string)).unwrap();
+        state
+            .heap
+            .set_strong_count_for_test(RawId::String(string), previous);
+        assert!(result.is_none());
+        assert_eq!(count, u32::MAX);
+        assert_eq!(state.heap.object_strong_count(object(&base)), Ok(1));
+        state.release_jsvalue(base).unwrap();
+        assert!(!runtime.0.deferred_references.has_pending());
+    }
+
+    #[test]
+    fn direct_state_native_fact_holds_no_runtime_owner_and_rejects_foreign_domain() {
+        let runtime = Runtime::new();
+        let foreign = Runtime::new();
+        let mut context = runtime.new_context();
+        let (code, pc, key) = site(&runtime);
+        let base = runtime
+            .into_jsvalue(context.eval("({x:Math.min})").unwrap())
+            .unwrap();
+        let owners = std::rc::Rc::strong_count(&runtime.0);
+        let mut state = runtime.0.state.borrow_mut();
+        let mut native = None;
+        let value = state
+            .select_linked_data_into(
+                runtime.domain_id(),
+                &base,
+                &code,
+                pc,
+                key,
+                true,
+                &mut native,
+                &mut NamedSelectionMiss::ContinueLookup,
+            )
+            .unwrap();
+        assert_eq!(std::rc::Rc::strong_count(&runtime.0), owners);
+        assert!(
+            native
+                .take()
+                .unwrap()
+                .into_parts_jsvalue(&foreign, object(&value))
+                .is_none()
+        );
+        assert!(
+            state
+                .select_linked_data_into(
+                    foreign.domain_id(),
+                    &base,
+                    &code,
+                    pc,
+                    key,
+                    true,
+                    &mut None,
+                    &mut NamedSelectionMiss::ContinueLookup
+                )
+                .is_none()
+        );
+        state.release_jsvalue(value).unwrap();
+        state.release_jsvalue(base).unwrap();
+    }
+
+    #[test]
+    fn direct_state_scalar_and_dense_writes_preserve_rejections() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context();
+        let (code, pc, key) = site(&runtime);
+        let base = runtime
+            .into_jsvalue(context.eval("({x:1})").unwrap())
+            .unwrap();
+        let frozen = runtime
+            .into_jsvalue(context.eval("Object.freeze({x:2})").unwrap())
+            .unwrap();
+        let dense = runtime
+            .into_jsvalue(context.eval("[1,2,3]").unwrap())
+            .unwrap();
+        let frozen_dense = runtime
+            .into_jsvalue(context.eval("Object.freeze([5])").unwrap())
+            .unwrap();
+        let typed = runtime
+            .into_jsvalue(context.eval("new Float64Array([7])").unwrap())
+            .unwrap();
+        let mut state = runtime.0.state.borrow_mut();
+        assert!(
+            state
+                .try_linked_scalar_field_write(
+                    runtime.domain_id(),
+                    &base,
+                    &JsValue::Int(42),
+                    &code,
+                    key
+                )
+                .unwrap()
+        );
+        assert!(
+            !state
+                .try_linked_scalar_field_write(
+                    runtime.domain_id(),
+                    &frozen,
+                    &JsValue::Int(42),
+                    &code,
+                    key
+                )
+                .unwrap()
+        );
+        assert_eq!(
+            state.select_linked_data_into(
+                runtime.domain_id(),
+                &frozen,
+                &code,
+                pc,
+                key,
+                false,
+                &mut None,
+                &mut NamedSelectionMiss::ContinueLookup
+            ),
+            Some(JsValue::Int(2))
+        );
+        assert_eq!(
+            state.try_array_immediate_read(&dense, 0),
+            Some(JsValue::Int(1))
+        );
+        assert!(
+            state
+                .try_dense_array_write_scalar(&dense, 0, &JsValue::Int(9))
+                .unwrap()
+        );
+        assert_eq!(
+            state.try_dense_array_kept_read(&dense, 0),
+            Some(JsValue::Int(9))
+        );
+        assert!(
+            !state
+                .try_dense_array_write_scalar(&dense, 99, &JsValue::Int(9))
+                .unwrap()
+        );
+        state
+            .try_add_array_own_number(&dense, 0, Number::Int(1))
+            .unwrap();
+        state
+            .try_replace_array_own_number(&dense, 1, Number::Int(11))
+            .unwrap();
+        assert!(matches!(
+            state.peek_dense_number(&dense, 0),
+            Some(Number::Int(10))
+        ));
+        assert!(
+            state
+                .try_replace_array_own_number(&frozen_dense, 0, Number::Int(99))
+                .is_err()
+        );
+        assert!(matches!(
+            state.peek_dense_number(&frozen_dense, 0),
+            Some(Number::Int(5))
+        ));
+        assert!(state.try_typed_array_number_write(&typed, 0, 12.0));
+        assert!(!state.try_typed_array_number_write(&typed, 99, 12.0));
+        assert_eq!(
+            state.try_array_immediate_read(&typed, 0),
+            Some(JsValue::Int(12))
+        );
+        for owner in [base, frozen, dense, frozen_dense, typed] {
+            state.release_jsvalue(owner).unwrap();
+        }
+        assert!(!runtime.0.deferred_references.has_pending());
     }
 
     #[test]
@@ -1238,5 +1575,100 @@ mod tests {
         runtime.release_jsvalue(first).unwrap();
         runtime.release_jsvalue(second).unwrap();
         runtime.release_jsvalue(base).unwrap();
+    }
+}
+
+impl RuntimeState {
+    pub(crate) fn try_dense_array_kept_read(&self, base: &JsValue, index: u32) -> Option<JsValue> {
+        let JsValue::Object(object) = base else {
+            return None;
+        };
+        let data = self.heap.object(*object).ok()?;
+        if !matches!(data.kind, crate::engine::heap::ObjectKind::Array) {
+            return None;
+        }
+        super::immediate_value_jsvalue(data.dense_array_value(index)?)
+    }
+
+    pub(crate) fn try_linked_scalar_field_write(
+        &mut self,
+        domain_id: u64,
+        base: &JsValue,
+        value: &JsValue,
+        executable: &PublishedFunctionSnapshot,
+        key_index: u32,
+    ) -> Result<bool, RuntimeError> {
+        if !matches!(
+            value,
+            JsValue::Undefined
+                | JsValue::Null
+                | JsValue::Bool(_)
+                | JsValue::Int(_)
+                | JsValue::Float(_)
+                | JsValue::ShortBigInt(_)
+        ) {
+            return Ok(false);
+        }
+        let JsValue::Object(object) = base else {
+            return Ok(false);
+        };
+        let Some(atom) = super::linked_field_atom_in_domain(domain_id, executable, key_index)
+        else {
+            return Ok(false);
+        };
+        if !super::is_ordinary(self.heap.object(*object)?) {
+            return Ok(false);
+        }
+        let Some(slot) = super::locate(self, *object, atom)? else {
+            return Ok(false);
+        };
+        if !slot.flags.writable
+            || !matches!(
+                self.heap.object(*object)?.slots.get(slot.index),
+                Some(crate::engine::heap::PropertySlot::Data(
+                    RawValue::Undefined
+                        | RawValue::Null
+                        | RawValue::Bool(_)
+                        | RawValue::Int(_)
+                        | RawValue::Float(_)
+                        | RawValue::ShortBigInt(_)
+                ))
+            )
+        {
+            return Ok(false);
+        }
+        // Both values own no edges. The shared replacement kernel preserves
+        // storage invariants without enqueueing cleanup or changing layout.
+        self.replace_property_slot(
+            *object,
+            slot.index,
+            crate::engine::heap::PropertySlot::Data(value.as_raw()),
+        )?;
+        Ok(true)
+    }
+
+    pub(crate) fn try_dense_array_write_scalar(
+        &mut self,
+        base: &JsValue,
+        index: u32,
+        value: &JsValue,
+    ) -> Result<bool, RuntimeError> {
+        if !matches!(
+            value,
+            JsValue::Undefined
+                | JsValue::Null
+                | JsValue::Bool(_)
+                | JsValue::Int(_)
+                | JsValue::Float(_)
+                | JsValue::ShortBigInt(_)
+        ) {
+            return Ok(false);
+        }
+        let JsValue::Object(object) = base else {
+            return Ok(false);
+        };
+        Ok(self
+            .heap
+            .try_replace_dense_immediate_value(*object, index, value.as_raw()))
     }
 }
