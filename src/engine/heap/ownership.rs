@@ -173,6 +173,34 @@ impl Runtime {
         if self.skip_cleanup() {
             return;
         }
+        let _unwind = self.unwind_guard();
+        #[cfg(debug_assertions)]
+        if let DeferredRefOp::Object(id) = operation
+            && std::env::var_os("QJS_TRACE_ROOTS").is_some()
+        {
+            eprintln!("[release] {id:?} at {}", std::panic::Location::caller());
+            if trace_object_matches(id) {
+                let strong = self
+                    .0
+                    .state
+                    .try_borrow()
+                    .ok()
+                    .and_then(|state| state.heap.object_strong_count(id).ok());
+                eprintln!("[o-release] {id:?} strong_before={strong:?}");
+                eprintln!(
+                    "[release-o-backtrace]\n{}",
+                    std::backtrace::Backtrace::force_capture()
+                );
+            }
+        }
+        self.apply_reference_release_or_defer(operation);
+    }
+
+    /// The caller has admitted cleanup and holds its borrowed unwind marker.
+    /// Applying or enqueueing one release cannot execute JavaScript.
+    #[inline]
+    #[track_caller]
+    fn apply_reference_release_or_defer(&self, operation: DeferredRefOp) {
         let result = if let Ok(mut state) = self.0.state.try_borrow_mut() {
             state.apply_deferred_operation(operation)
         } else {
@@ -211,7 +239,13 @@ impl Runtime {
             }
             return;
         }
-        let drain = self.drain_deferred_references();
+        // No unwind or JavaScript can intervene after the successful release.
+        // The release entry already checked admission; only pending work can
+        // require another state mutation, and quarantine still blocks that work.
+        if !self.0.deferred_references.has_pending() || self.0.poisoned.get() {
+            return;
+        }
+        let drain = self.drain_deferred_references_slow();
         if let Err(error) = &drain {
             self.0.poisoned.set(true);
             if std::env::var_os("QJS_TEARDOWN_PROBE").is_some() {
@@ -317,26 +351,6 @@ impl Runtime {
 
     #[track_caller]
     pub(crate) fn release_object_handle(&self, id: ObjectId) {
-        if self.skip_cleanup() {
-            return;
-        }
-        #[cfg(debug_assertions)]
-        if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
-            eprintln!("[release] {id:?} at {}", std::panic::Location::caller());
-            if trace_object_matches(id) {
-                let strong = self
-                    .0
-                    .state
-                    .try_borrow()
-                    .ok()
-                    .and_then(|state| state.heap.object_strong_count(id).ok());
-                eprintln!("[o-release] {id:?} strong_before={strong:?}");
-                eprintln!(
-                    "[release-o-backtrace]\n{}",
-                    std::backtrace::Backtrace::force_capture()
-                );
-            }
-        }
         self.release_or_defer(DeferredRefOp::Object(id));
     }
 
@@ -406,9 +420,10 @@ impl Runtime {
             .and_then(|state| state.atoms.brand(index).ok());
         if let Some(atom) = atom {
             // Preserve the Cell decrement fast path under shared borrows.
-            self.release_atom_handle(atom);
+            self.release_atom_after_admission(atom);
         } else {
-            self.release_or_defer(DeferredRefOp::AtomIndexRelease(index));
+            let _unwind = self.unwind_guard();
+            self.apply_reference_release_or_defer(DeferredRefOp::AtomIndexRelease(index));
         }
     }
 
@@ -416,6 +431,14 @@ impl Runtime {
         if self.skip_cleanup() {
             return;
         }
+        self.release_atom_after_admission(atom);
+    }
+
+    /// Shared atom release after cleanup admission. A valid shared decrement
+    /// only checks identity/count and changes a Cell: it cannot unwind after
+    /// mutation. Queueing/removal holds the marker before its first fallible
+    /// action; nonfinal decrements need no second panic-state read.
+    fn release_atom_after_admission(&self, atom: Atom) {
         // Shared-borrow release: the counter decrement runs immediately; when
         // the last reference drops, slot removal is deferred to the next
         // operation boundary through the existing deferred queue.  An invalid
@@ -426,6 +449,7 @@ impl Runtime {
                 Ok(hit_zero) => hit_zero,
                 Err(_) => {
                     drop(state);
+                    let _unwind = self.unwind_guard();
                     self.0
                         .deferred_references
                         .push_back(DeferredRefOp::AtomRelease(atom));
@@ -436,6 +460,7 @@ impl Runtime {
                 // The table is mutably borrowed (interning/removal in
                 // progress). Defer the whole shared-release pass; it runs at
                 // the next safe point.
+                let _unwind = self.unwind_guard();
                 self.0
                     .deferred_references
                     .push_back(DeferredRefOp::AtomRelease(atom));
@@ -443,7 +468,8 @@ impl Runtime {
             }
         };
         if hit_zero {
-            self.release_or_defer(DeferredRefOp::AtomRemove(atom));
+            let _unwind = self.unwind_guard();
+            self.apply_reference_release_or_defer(DeferredRefOp::AtomRemove(atom));
         }
     }
 
@@ -471,20 +497,6 @@ impl Runtime {
 
     #[track_caller]
     pub(crate) fn release_string_handle(&self, id: StringId) {
-        #[cfg(debug_assertions)]
-        if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
-            eprintln!("[release-s] {id:?} at {}", std::panic::Location::caller());
-            if std::env::var("QJS_TRACE_STRING_ID")
-                .ok()
-                .and_then(|value| value.parse::<u32>().ok())
-                == Some(id.index)
-            {
-                eprintln!(
-                    "[release-s-backtrace]\n{}",
-                    std::backtrace::Backtrace::force_capture()
-                );
-            }
-        }
         self.release_leaf_or_defer(DeferredRefOp::String(id), RawId::String(id));
     }
 
@@ -512,27 +524,47 @@ impl Runtime {
 
     #[track_caller]
     pub(crate) fn release_bigint_handle(&self, id: BigIntId) {
-        #[cfg(debug_assertions)]
-        if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
-            eprintln!("[release-b] {id:?} at {}", std::panic::Location::caller());
-            if std::env::var("QJS_TRACE_BIGINT_ID")
-                .ok()
-                .and_then(|value| value.parse::<u32>().ok())
-                == Some(id.index)
-            {
-                eprintln!(
-                    "[release-b-backtrace]\n{}",
-                    std::backtrace::Backtrace::force_capture()
-                );
-            }
-        }
         self.release_leaf_or_defer(DeferredRefOp::BigInt(id), RawId::BigInt(id));
     }
 
     #[inline]
+    #[track_caller]
     fn release_leaf_or_defer(&self, operation: DeferredRefOp, id: RawId) {
         if self.skip_cleanup() {
             return;
+        }
+        let _unwind = self.unwind_guard();
+        #[cfg(debug_assertions)]
+        if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
+            match id {
+                RawId::String(id) => {
+                    eprintln!("[release-s] {id:?} at {}", std::panic::Location::caller());
+                    if std::env::var("QJS_TRACE_STRING_ID")
+                        .ok()
+                        .and_then(|value| value.parse::<u32>().ok())
+                        == Some(id.index)
+                    {
+                        eprintln!(
+                            "[release-s-backtrace]\n{}",
+                            std::backtrace::Backtrace::force_capture()
+                        );
+                    }
+                }
+                RawId::BigInt(id) => {
+                    eprintln!("[release-b] {id:?} at {}", std::panic::Location::caller());
+                    if std::env::var("QJS_TRACE_BIGINT_ID")
+                        .ok()
+                        .and_then(|value| value.parse::<u32>().ok())
+                        == Some(id.index)
+                    {
+                        eprintln!(
+                            "[release-b-backtrace]\n{}",
+                            std::backtrace::Backtrace::force_capture()
+                        );
+                    }
+                }
+                _ => {}
+            }
         }
         let result = if let Ok(mut state) = self.0.state.try_borrow_mut() {
             match state.heap.try_release_leaf_reference(id) {
@@ -543,7 +575,7 @@ impl Runtime {
         } else {
             // Keep diagnostics, enqueue order, and blocked-drain behavior in
             // the existing path. The failed borrow did not alter the node.
-            self.release_or_defer(operation);
+            self.apply_reference_release_or_defer(operation);
             return;
         };
         self.finish_reference_release(operation, result);
@@ -743,6 +775,67 @@ impl RuntimeState {
 mod deferred_drain_unwind_tests {
     use super::*;
     use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    #[test]
+    fn public_object_drop_enqueue_panic_quarantines_before_later_cleanup() {
+        let runtime = Runtime::new();
+        let root = runtime.new_object(None).unwrap();
+        let root_id = root.object_id();
+        let survivor = runtime.new_object(None).unwrap();
+        let survivor_id = survivor.object_id();
+        {
+            // Public roots can drop without an enclosing RuntimeOperation.
+            // Blocking state mutation sends this release to the queue, whose
+            // existing borrow assertion supplies the cleanup panic.
+            let state = runtime.0.state.borrow();
+            let _queue = runtime.0.deferred_references.borrow();
+            let failed = catch_unwind(AssertUnwindSafe(|| drop(root)));
+            assert!(failed.is_err());
+            assert!(runtime.is_poisoned());
+            assert_eq!(state.heap.object_strong_count(root_id), Ok(1));
+        }
+        drop(survivor);
+        assert_eq!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(survivor_id),
+            Ok(1)
+        );
+        assert_eq!(runtime.heap_counts(), Err(RuntimeError::Poisoned));
+    }
+
+    #[test]
+    fn public_atom_drop_enqueue_panic_quarantines_after_shared_decrement() {
+        let runtime = Runtime::new();
+        let symbol = runtime.new_symbol(None).unwrap();
+        let atom = symbol.atom();
+        let survivor = runtime.new_object(None).unwrap();
+        let survivor_id = survivor.object_id();
+        {
+            let state = runtime.0.state.borrow();
+            let _queue = runtime.0.deferred_references.borrow();
+            let failed = catch_unwind(AssertUnwindSafe(|| drop(symbol)));
+            assert!(failed.is_err());
+            // Shared atom release mutated the table before enqueueing its
+            // slot removal. Quarantine must cover that partial retirement.
+            assert_eq!(state.atoms.resolve(atom).unwrap().ref_count, Some(0));
+            assert!(runtime.is_poisoned());
+        }
+        drop(survivor);
+        assert_eq!(
+            runtime
+                .0
+                .state
+                .borrow()
+                .heap
+                .object_strong_count(survivor_id),
+            Ok(1)
+        );
+        assert_eq!(runtime.heap_counts(), Err(RuntimeError::Poisoned));
+    }
 
     #[test]
     fn direct_drain_panic_quarantines_before_later_cleanup() {

@@ -459,16 +459,18 @@ impl Runtime {
     /// that invariant violations surface at the deferred-drain boundary.
     #[inline]
     pub(crate) fn release_jsvalue(&self, value: JsValue) -> Result<(), RuntimeError> {
-        if self.skip_cleanup() {
-            return Ok(());
-        }
         match value {
             JsValue::Undefined
             | JsValue::Null
             | JsValue::Bool(_)
             | JsValue::Int(_)
             | JsValue::Float(_)
-            | JsValue::ShortBigInt(_) => Ok(()),
+            | JsValue::ShortBigInt(_) => {
+                // Scalars own no edges, but an unwind still quarantines the
+                // runtime even when no handle release supplies admission.
+                self.skip_cleanup();
+                Ok(())
+            }
             JsValue::Object(id) => {
                 self.release_object_handle(id);
                 Ok(())
@@ -495,6 +497,26 @@ mod tests {
     use crate::engine::atom::Atom;
     use crate::engine::heap::HeapNodeKind;
     use crate::engine::value::JsString;
+
+    #[test]
+    #[cfg(panic = "unwind")]
+    fn scalar_release_during_unwind_quarantines_the_runtime() {
+        struct ReleaseScalar<'a>(&'a Runtime);
+        impl Drop for ReleaseScalar<'_> {
+            fn drop(&mut self) {
+                self.0.release_jsvalue(JsValue::Int(1)).unwrap();
+            }
+        }
+
+        let runtime = Runtime::new();
+        let failed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _scalar = ReleaseScalar(&runtime);
+            panic!("injected unwind before scalar release");
+        }));
+        assert!(failed.is_err());
+        assert!(runtime.is_poisoned());
+        assert_eq!(runtime.heap_counts(), Err(RuntimeError::Poisoned));
+    }
 
     #[test]
     fn scalars_round_trip_without_heap_edges() {
