@@ -349,6 +349,7 @@ pub(crate) enum OwnedStorageEvent {
     Move(usize),
     Clear(usize),
     Copy { heap_root: bool },
+    #[cfg(test)]
     HotRelease { heap_root: bool },
 }
 
@@ -417,6 +418,7 @@ pub(crate) fn record_owned_storage(event: OwnedStorageEvent) {
             cost.value_copies = cost.value_copies.saturating_add(1);
             cost.copied_heap_roots = cost.copied_heap_roots.saturating_add(u64::from(heap_root));
         }
+        #[cfg(test)]
         OwnedStorageEvent::HotRelease { heap_root } => {
             cost.hot_value_releases = cost.hot_value_releases.saturating_add(1);
             cost.hot_heap_root_releases = cost
