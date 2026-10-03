@@ -122,8 +122,7 @@ impl Runtime {
         self.new_native_error_without_backtrace_from_message_jsvalue(realm, kind, message)
     }
 
-    /// Internal-value form of
-    /// [`Runtime::new_native_error_without_backtrace_from_message`].
+    /// Allocate one owned native Error message without backtrace completion.
     pub(crate) fn new_native_error_without_backtrace_from_message_jsvalue(
         &self,
         realm: ContextId,
@@ -171,7 +170,8 @@ impl Runtime {
             return Err(RuntimeError::WrongRuntime("Error prototype"));
         }
         let mut state = self.0.state.borrow_mut();
-        let object = state.allocate_object_with_layout(
+        let object = state.allocate_object_with_layout_with_poison(
+            &self.0.poisoned,
             Some(prototype.object_id()),
             &[],
             Vec::new(),
@@ -236,7 +236,8 @@ impl RuntimeState {
         self.heap.retain_object(prototype)?;
         let mut prototype_owner = OwnedValueGuard::new(self, poisoned, JsValue::Object(prototype));
         let (state, prototype_owner) = prototype_owner.parts();
-        let object = state.allocate_object_with_layout(
+        let object = state.allocate_object_with_layout_with_poison(
+            poisoned,
             Some(prototype),
             &[],
             Vec::new(),
@@ -244,14 +245,32 @@ impl RuntimeState {
         )?;
         let mut object_owner = OwnedValueGuard::new(state, poisoned, JsValue::Object(object));
         let (state, object_owner) = object_owner.parts();
-        let key = state
+        state.initialize_native_error_message(poisoned, object, message)?;
+        state.release_owned_jsvalue(poisoned, prototype_owner.take().expect("prototype owner"))?;
+        let JsValue::Object(object) = object_owner.take().expect("native Error owner") else {
+            unreachable!("native Error factory allocated an object")
+        };
+        Ok(object)
+    }
+
+    /// Initialize the freshly allocated native Error before it is exposed.
+    /// Keep the producer local so publication failures quarantine before any
+    /// message/result/prototype owners can traverse partially retired state.
+    fn initialize_native_error_message(
+        &mut self,
+        poisoned: &Cell<bool>,
+        object: ObjectId,
+        message: NativeErrorMessage,
+    ) -> Result<(), RuntimeError> {
+        let key = self
             .pinned_atoms
             .get(crate::engine::atom::pinned::PinnedAtom::Message);
-        let string = state.heap.allocate_string(message.to_js_string()?)?;
+        let string = self.heap.allocate_string(message.to_js_string()?)?;
         {
-            let mut message_owner = OwnedValueGuard::new(state, poisoned, JsValue::String(string));
+            let mut message_owner = OwnedValueGuard::new(self, poisoned, JsValue::String(string));
             let (state, message_owner) = message_owner.parts();
-            let defined = state.define_raw_property(
+            let defined = state.define_raw_property_with_poison(
+                poisoned,
                 object,
                 key,
                 &PropertyDescriptor {
@@ -271,13 +290,12 @@ impl RuntimeState {
             // the producer before the prototype temporary, preserving order.
             state.release_owned_jsvalue(poisoned, message_owner.take().expect("message owner"))?;
         }
-        state.release_owned_jsvalue(poisoned, prototype_owner.take().expect("prototype owner"))?;
-        let JsValue::Object(object) = object_owner.take().expect("native Error owner") else {
-            unreachable!("native Error factory allocated an object")
-        };
-        Ok(object)
+        Ok(())
     }
 }
+
+#[cfg(test)]
+mod publication_tests;
 
 #[cfg(test)]
 mod state_factory_tests {

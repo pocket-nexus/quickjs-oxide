@@ -193,7 +193,8 @@ impl RuntimeState {
             };
             let mut producer = OwnedValueGuard::new(self, poisoned, value);
             let (state, producer) = producer.parts();
-            let defined = state.define_raw_property(
+            let defined = state.define_raw_property_with_poison(
+                poisoned,
                 object,
                 atom,
                 &PropertyDescriptor {
