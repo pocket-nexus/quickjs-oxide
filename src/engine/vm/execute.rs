@@ -281,7 +281,10 @@ pub(super) enum VmAction {
     SuperProperty(super::super_property_driver::Kind),
     ReturnDerived(u16),
     InitDerivedConstructor,
-    Construct(u16),
+    Construct {
+        arguments: u16,
+        fallthrough: FallthroughPc,
+    },
     ConvertAdd,
     ConvertPlus,
     ConvertPropertyKey,
@@ -358,7 +361,7 @@ impl VmAction {
             Self::SuperProperty(_) => "execute.action.super_property",
             Self::ReturnDerived(_) => "execute.action.return_derived",
             Self::InitDerivedConstructor => "execute.action.init_derived_constructor",
-            Self::Construct(_) => "execute.action.construct",
+            Self::Construct { .. } => "execute.action.construct",
             Self::ConvertAdd => "execute.action.convert_add",
             Self::ConvertPlus => "execute.action.convert_plus",
             Self::ConvertPropertyKey => "execute.action.convert_property_key",
@@ -2600,6 +2603,24 @@ pub(super) fn execute_frame_in_state(
                     }
                 }
             }
+            VmAction::Construct {
+                arguments,
+                fallthrough,
+            } => {
+                if !segment.enter_constructor(runtime, state, arguments, fallthrough)? {
+                    return Ok(action);
+                }
+                // The allocation is now published in a complete child frame;
+                // no temporary owner lies outside execution storage at GC.
+                state
+                    .collect_if_requested(&runtime.0.gc_pressure)
+                    .map_err(runtime_error_to_vm_error)?;
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "core.internal_construct",
+                );
+                continue;
+            }
             VmAction::Complete => match segment.finish_ordinary(runtime, state)? {
                 super::driver::ordinary::ReturnProgress::Returned => {
                     #[cfg(feature = "profiling")]
@@ -2974,7 +2995,10 @@ fn deferred_action(
         Opcode::InitializeDerivedLocal => VmAction::InitializeDerived(checked_u16(a)?),
         Opcode::ReturnDerived => VmAction::ReturnDerived(checked_u16(a)?),
         Opcode::InitDerivedConstructor => VmAction::InitDerivedConstructor,
-        Opcode::Construct | Opcode::ConstructSuper => VmAction::Construct(checked_u16(a)?),
+        Opcode::Construct | Opcode::ConstructSuper => VmAction::Construct {
+            arguments: checked_u16(a)?,
+            fallthrough,
+        },
         Opcode::Apply => VmAction::Apply(decode_apply_kind(a)?),
         Opcode::ApplySuper => VmAction::Apply(ApplyKind::Construct),
         Opcode::ApplyEval => VmAction::ApplyEval(checked_u16(a)?),

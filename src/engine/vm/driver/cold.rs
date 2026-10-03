@@ -275,7 +275,7 @@ pub(super) fn dispatch(
             define_class(&mut context, name, has_heritage)?
         }
         VmAction::ClassInitializer(mode) => class_initializer(&mut context, mode)?,
-        VmAction::Construct(count) => construct(&mut context, count)?,
+        VmAction::Construct { arguments, .. } => construct(&mut context, arguments)?,
         VmAction::Apply(kind) => apply(&mut context, kind)?,
         VmAction::InitDerivedConstructor => init_derived_constructor(&mut context)?,
         VmAction::ConvertAdd => convert(&mut context, true, false)?,

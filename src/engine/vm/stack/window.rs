@@ -114,6 +114,28 @@ impl<'a> FrameExecution<'a> {
         )
     }
 
+    pub(in crate::engine::vm) fn enter_constructor(
+        &mut self,
+        runtime: &Runtime,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        arguments: u16,
+        fallthrough: crate::engine::vm::execute::FallthroughPc,
+    ) -> Result<bool, Error> {
+        let id = self
+            .execution
+            .frames
+            .current_id()
+            .expect("an admitted execution has a current frame");
+        crate::engine::vm::construct_driver::try_ordinary_base_in_state(
+            runtime,
+            state,
+            self.execution,
+            id,
+            usize::from(arguments),
+            fallthrough,
+        )
+    }
+
     pub(in crate::engine::vm) fn finish_ordinary(
         &mut self,
         runtime: &Runtime,

@@ -20,9 +20,6 @@ pub(super) fn enter(
     _identity: u64,
 ) -> Result<CallStep, Error> {
     let count = usize::from(count);
-    if try_ordinary_base(runtime, execution, id, count)? {
-        return Ok(CallStep::Entered);
-    }
     let frame = execution.frames.current_mut(id)?;
     let realm = frame.executable.realm;
     // The classifier consumes a duplicate; the slot owner retains its edge
@@ -78,7 +75,8 @@ pub(super) fn enter(
     )
 }
 
-/// Compatibility entry while constructor opcodes move into the state-held loop.
+/// Test admission adapter for synthetic outgoing constructor operands.
+#[cfg(test)]
 fn try_ordinary_base(
     runtime: &Runtime,
     execution: &mut RunningExecution,
@@ -1109,6 +1107,7 @@ mod ordinary_constructor_tests {
             ],
             ExecutionLimits::default(),
         );
+        let call_pc = execution.frames.current_mut(id).unwrap().resume_pc;
         let (target_owners, first_owners, blocked_owners) = {
             let state = runtime.0.state.borrow();
             (
@@ -1148,7 +1147,7 @@ mod ordinary_constructor_tests {
         drop(state);
         let frame = execution.frames.current_mut(id).unwrap();
         assert_eq!(execution.slots.depth(&frame.window), 4);
-        assert_eq!(frame.resume_pc, 0);
+        assert_eq!(frame.resume_pc, call_pc);
         drop(execution);
         assert!(runtime.0.state.borrow().heap.object(first_id).is_err());
         assert!(runtime.0.state.borrow().heap.object(blocked_id).is_err());
