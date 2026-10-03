@@ -45,6 +45,17 @@ impl Heap {
             std::mem::replace(&mut var_ref.value, replacement)
         };
 
+        self.retire_var_ref_value(previous)
+    }
+
+    /// Retire a detached cell value, preserving the replacement path's
+    /// ordering: enqueue its heap edge, drain all older zero work, then hand
+    /// its atoms to the caller's cleanup. Even an immediate previous value
+    /// drains older queued work. The caller already committed the exchange.
+    pub(crate) fn retire_var_ref_value(
+        &mut self,
+        previous: RawValue,
+    ) -> Result<HeapCleanup, HeapError> {
         let mut cleanup = HeapCleanup::default();
         cleanup.atoms.extend(raw_value_atom(&previous));
         for edge in raw_value_edges(&previous) {
