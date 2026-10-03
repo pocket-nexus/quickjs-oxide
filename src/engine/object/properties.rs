@@ -230,7 +230,6 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
     ) -> Result<Option<CompleteOrdinaryPropertyDescriptor>, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         self.validate_object_and_key(object, key)?;
         self.get_own_property_in_operation(object, key)
@@ -452,7 +451,6 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
     ) -> Result<Option<JsString>, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         self.validate_object_and_key(object, key)?;
         raw_string_property_one_level(&self.0.state.borrow(), object.object_id(), key.atom())
@@ -696,7 +694,6 @@ impl Runtime {
         key: &PropertyKey,
         descriptor: &OrdinaryPropertyDescriptor,
     ) -> Result<bool, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         match self.define_own_property_in_realm(None, object, key, descriptor)? {
             PropertyDefineOutcome::Defined(defined) => Ok(defined),
@@ -1978,7 +1975,6 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
     ) -> Result<bool, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         self.validate_object_and_key(object, key)?;
         if let Some(flags) = self.ordinary_property_flags(object, key)? {
@@ -2054,7 +2050,6 @@ impl Runtime {
         object: &ObjectRef,
         key: &PropertyKey,
     ) -> Result<bool, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         self.validate_object_and_key(object, key)?;
         if self.typed_array_is_object(object)?
@@ -2257,7 +2252,6 @@ impl Runtime {
 
     /// Return a rooted own-key snapshot in ECMAScript order.
     pub fn own_property_keys(&self, object: &ObjectRef) -> Result<Vec<PropertyKey>, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("object"));
@@ -2339,7 +2333,6 @@ impl Runtime {
 
     /// Return the ordinary object's prototype as a new root.
     pub fn get_prototype_of(&self, object: &ObjectRef) -> Result<Option<ObjectRef>, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("object"));
@@ -2362,7 +2355,6 @@ impl Runtime {
         object: &ObjectRef,
         prototype: Option<&ObjectRef>,
     ) -> Result<bool, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("object"));
@@ -2405,7 +2397,6 @@ impl Runtime {
 
     /// Return the ordinary object's extensibility bit.
     pub fn is_extensible(&self, object: &ObjectRef) -> Result<bool, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("object"));
@@ -2421,7 +2412,6 @@ impl Runtime {
 
     /// Make the ordinary object non-extensible.
     pub fn prevent_extensions(&self, object: &ObjectRef) -> Result<(), RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("object"));

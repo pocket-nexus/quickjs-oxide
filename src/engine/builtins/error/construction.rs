@@ -236,7 +236,6 @@ impl Runtime {
     /// Return whether `object` carries the native Error class tag. Prototype
     /// spoofing alone does not make an object an Error.
     pub fn is_error_object(&self, object: &ObjectRef) -> Result<bool, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("object"));

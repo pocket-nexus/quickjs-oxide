@@ -421,7 +421,6 @@ impl Runtime {
         function: &FunctionBytecodeRef,
         pc: Option<usize>,
     ) -> Result<Option<(JsString, LineColumn)>, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         if !function.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("function bytecode"));
@@ -444,7 +443,6 @@ impl Runtime {
         &self,
         function: &FunctionBytecodeRef,
     ) -> Result<Option<Vec<u8>>, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         if !function.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("function bytecode"));
@@ -464,7 +462,6 @@ impl Runtime {
         &self,
         function: &FunctionBytecodeRef,
     ) -> Result<Vec<crate::engine::code::bytecode::Instruction>, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         if !function.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("function bytecode"));
@@ -500,7 +497,6 @@ impl Runtime {
         &self,
         function: &FunctionBytecodeRef,
     ) -> Result<Option<JsString>, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         if !function.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("function bytecode"));
@@ -520,7 +516,6 @@ impl Runtime {
         &self,
         function: &FunctionBytecodeRef,
     ) -> Result<Option<(usize, Option<u32>)>, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         if !function.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("function bytecode"));
@@ -551,7 +546,6 @@ impl Runtime {
         function: &FunctionBytecodeRef,
         constant_index: usize,
     ) -> Result<FunctionBytecodeRef, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         if !function.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("function bytecode"));

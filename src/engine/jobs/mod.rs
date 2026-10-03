@@ -442,7 +442,6 @@ impl Runtime {
 
     /// Return whether QuickJS's runtime-wide FIFO contains a pending job.
     pub fn is_job_pending(&self) -> Result<bool, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         Ok(!self.0.state.borrow().pending_jobs.is_empty())
     }

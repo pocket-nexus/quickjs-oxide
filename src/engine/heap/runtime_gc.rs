@@ -21,7 +21,6 @@ impl Runtime {
     }
 
     fn run_gc_admitted(&self) -> Result<GcStats, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         let mut state = self.0.state.borrow_mut();
         let stats = state.collect_cycles(&self.0.poisoned)?;

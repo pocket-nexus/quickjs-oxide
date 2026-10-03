@@ -188,7 +188,6 @@ impl Runtime {
     /// Set the runtime-wide debug information policy for future compilations.
     /// Existing bytecode is immutable and keeps the mode used when published.
     pub fn set_debug_info_mode(&self, mode: DebugInfoMode) -> Result<(), RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         self.0.state.borrow_mut().debug_info_mode = mode;
         Ok(())

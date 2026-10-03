@@ -23,7 +23,6 @@ use std::collections::HashMap;
 impl Runtime {
     /// Allocate an ordinary object whose prototype is `prototype` or null.
     pub fn new_object(&self, prototype: Option<&ObjectRef>) -> Result<ObjectRef, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         self.new_empty_object_with(prototype, ObjectData::ordinary)
     }
@@ -724,7 +723,6 @@ impl Runtime {
     /// Return whether `object` carries the genuine Array exotic class tag.
     /// Prototype spoofing alone never makes an ordinary object an Array.
     pub fn is_array_object(&self, object: &ObjectRef) -> Result<bool, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("object"));
@@ -743,7 +741,6 @@ impl Runtime {
     /// Return the object's `[[Construct]]` capability bit. Callability and
     /// constructability are intentionally independent, as in QuickJS.
     pub fn is_constructor(&self, object: &ObjectRef) -> Result<bool, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("object"));
@@ -780,7 +777,6 @@ impl Runtime {
     /// Returns `None` for objects without `[[Call]]`; runtime-domain and stale
     /// handle failures remain explicit errors.
     pub fn as_callable(&self, object: &ObjectRef) -> Result<Option<CallableRef>, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         // A public root may belong to another runtime whose arena assigned a
         // numerically equal handle; promoting it here would manufacture a

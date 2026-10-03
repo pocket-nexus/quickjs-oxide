@@ -22,7 +22,6 @@ impl Runtime {
         &self,
         function: &FunctionBytecodeRef,
     ) -> Result<bool, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         self.dynamic_import_bytecode_tree_contains(function)
     }
@@ -95,7 +94,6 @@ impl Runtime {
         allowed: bool,
         operation: impl FnOnce() -> Result<T, RuntimeError>,
     ) -> Result<T, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         struct RestoreDynamicImportPolicy<'a> {
             policy: &'a Cell<bool>,

@@ -22,7 +22,6 @@ impl Runtime {
         &self,
         text: &JsString,
     ) -> Result<PropertyKey, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         let atom = self
             .0
@@ -55,7 +54,6 @@ impl Runtime {
     /// Intern a UTF-8 property spelling without losing the exact UTF-16 path
     /// used by language-level keys.
     pub fn intern_property_key(&self, text: &str) -> Result<PropertyKey, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         self.intern_property_key_js_string(&JsString::try_from_utf8(text)?)
     }
@@ -108,7 +106,6 @@ impl Runtime {
 
     /// Create a unique ECMAScript Symbol primitive.
     pub fn new_symbol(&self, description: Option<JsString>) -> Result<SymbolRef, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         let atom = self
             .0
@@ -121,7 +118,6 @@ impl Runtime {
 
     /// Return the runtime-global symbol for an exact registry key.
     pub fn symbol_for(&self, key: &JsString) -> Result<SymbolRef, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         let atom = self
             .0
@@ -135,7 +131,6 @@ impl Runtime {
     /// Return one pinned, runtime-unique well-known symbol. It is deliberately
     /// absent from the `Symbol.for` registry.
     pub fn well_known_symbol(&self, symbol: WellKnownSymbol) -> Result<SymbolRef, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         let atom = self.0.state.borrow().well_known_symbols[&symbol];
         Ok(SymbolRef::from_owned_atom(self.clone(), atom))
@@ -143,7 +138,6 @@ impl Runtime {
 
     /// Implement the identity test used by `Symbol.keyFor`.
     pub fn symbol_key_for(&self, symbol: &SymbolRef) -> Result<Option<JsString>, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         if !symbol.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("symbol"));
@@ -162,7 +156,6 @@ impl Runtime {
     /// `%Symbol.prototype%.description`, even though both stringify as
     /// `Symbol()`.
     pub fn symbol_description(&self, symbol: &SymbolRef) -> Result<Option<JsString>, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         if !symbol.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("symbol"));
@@ -185,7 +178,6 @@ impl Runtime {
 
     /// Return the exact UTF-16 spelling or symbol description of a key.
     pub fn property_key_to_js_string(&self, key: &PropertyKey) -> Result<JsString, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         if !key.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("property key"));

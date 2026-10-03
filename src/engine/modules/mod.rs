@@ -850,7 +850,6 @@ impl Runtime {
         &self,
         module: &ModuleBytecodeRef,
     ) -> Result<bool, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         if !module.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("module bytecode"));
@@ -972,7 +971,6 @@ impl Runtime {
     where
         L: ModuleLoader + 'static,
     {
-        self.check_poison()?;
         let _operation = self.operation()?;
         let loader: Rc<dyn ModuleLoader> = Rc::new(loader);
         *self.0.module_loader.borrow_mut() = Some(Rc::downgrade(&loader));
@@ -981,7 +979,6 @@ impl Runtime {
 
     /// Remove the runtime-wide module loader without clearing Context caches.
     pub fn clear_module_loader(&self) -> Result<(), RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         self.0.module_loader.borrow_mut().take();
         Ok(())

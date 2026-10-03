@@ -132,7 +132,6 @@ impl Runtime {
         &self,
         promise: &ObjectRef,
     ) -> Result<Option<PromiseSnapshot>, RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         if !promise.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("Promise"));
@@ -163,7 +162,6 @@ impl Runtime {
     where
         F: Fn(PromiseRejectionEvent) + 'static,
     {
-        self.check_poison()?;
         let _operation = self.operation()?;
         *self.0.promise_rejection_tracker.borrow_mut() = Some(Rc::new(tracker));
         Ok(())
@@ -171,7 +169,6 @@ impl Runtime {
 
     /// Remove the runtime-wide host Promise rejection tracker.
     pub fn clear_host_promise_rejection_tracker(&self) -> Result<(), RuntimeError> {
-        self.check_poison()?;
         let _operation = self.operation()?;
         self.0.promise_rejection_tracker.borrow_mut().take();
         Ok(())
