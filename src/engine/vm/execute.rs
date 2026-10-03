@@ -3631,3 +3631,6 @@ mod execution_span_tests {
         assert_eq!(result, Value::Bool(true));
     }
 }
+
+#[cfg(all(test, feature = "profiling"))]
+mod named_native_fact_tests;
