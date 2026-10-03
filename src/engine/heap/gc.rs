@@ -4,6 +4,8 @@
 //! Cleanup returns detached atom ownership to the runtime; it never mutates the
 //! runtime atom table or invokes JavaScript callbacks while borrowing the arena.
 
+use crate::engine::hash::FxBuildHasher;
+
 use super::AuxiliaryState;
 #[cfg(debug_assertions)]
 use super::LeafSlot;
@@ -1318,7 +1320,7 @@ impl Heap {
             }
             return Ok(());
         }
-        let mut counts = HashMap::<RawId, u32>::new();
+        let mut counts = HashMap::<RawId, u32, FxBuildHasher>::default();
         for &edge in edges {
             let count = counts.entry(edge).or_default();
             *count = count.checked_add(1).ok_or(HeapError::Overflow {
