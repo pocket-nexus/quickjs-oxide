@@ -18,9 +18,7 @@ use crate::engine::heap::{
     ShapeId,
 };
 use crate::engine::object::shape::{PropertyFlags, ShapeEntry};
-use crate::engine::object::{
-    CallableRef, DescriptorField, ObjectRef, OrdinaryPropertyDescriptor, PropertyKey,
-};
+use crate::engine::object::{CallableRef, ObjectRef, PropertyKey};
 use crate::engine::realm::bindings::GlobalBindingCreationMode;
 use crate::engine::value::{JsString, JsValue, Value};
 use std::cell::Cell;
@@ -293,80 +291,38 @@ impl Runtime {
         &self,
         prototype: &ObjectRef,
         kind: PrimitiveKind,
-        mut value: JsValue,
+        value: JsValue,
         length_configurable: bool,
     ) -> Result<ObjectRef, RuntimeError> {
+        // Admission may reject before State receives the owned input. Keep
+        // that concrete transfer explicit so foreign-prototype errors still
+        // retire it once, while quarantine abandons it without traversal.
+        let mut input = Some(value);
         let result = (|| {
             let _operation = self.operation()?;
             if !prototype.belongs_to(self) {
                 return Err(RuntimeError::WrongRuntime("primitive prototype"));
             }
-            // ToObject linearizes a rope before selecting its stored primitive.
-            // Keep flat inputs' exact ID; only a genuinely new flat representation
-            // receives a new arena node. Never replace a shared input node's payload.
-            let string_length = if let (PrimitiveKind::String, JsValue::String(id)) = (kind, &value)
-            {
-                let string = self.0.state.borrow().heap.string(*id)?.clone();
-                let flat = string.linearize();
-                let length = flat.len();
-                if !string.same_representation(&flat) {
-                    let normalized = self.into_jsvalue(Value::String(flat))?;
-                    let previous = std::mem::replace(&mut value, normalized);
-                    self.release_jsvalue(previous)?;
-                }
-                Some(length)
-            } else {
-                None
-            };
-            let (data, payload_atom) = {
-                let state = self.0.state.borrow();
-                match (kind, &value) {
-                    (PrimitiveKind::Number, JsValue::Int(value)) => {
-                        (PrimitiveObjectData::Number(f64::from(*value)), None)
-                    }
-                    (PrimitiveKind::Number, JsValue::Float(value)) => {
-                        (PrimitiveObjectData::Number(*value), None)
-                    }
-                    (PrimitiveKind::String, JsValue::String(id)) => {
-                        (PrimitiveObjectData::String(*id), None)
-                    }
-                    (PrimitiveKind::Boolean, JsValue::Bool(value)) => {
-                        (PrimitiveObjectData::Boolean(*value), None)
-                    }
-                    (PrimitiveKind::Symbol, JsValue::Symbol(index)) => {
-                        let atom = state.atoms.brand(*index)?;
-                        (PrimitiveObjectData::Symbol(atom), Some(atom))
-                    }
-                    (PrimitiveKind::BigInt, JsValue::ShortBigInt(value)) => {
-                        (PrimitiveObjectData::ShortBigInt(*value), None)
-                    }
-                    (PrimitiveKind::BigInt, JsValue::BigInt(id)) => {
-                        (PrimitiveObjectData::BigInt(*id), None)
-                    }
-                    _ => {
-                        return Err(RuntimeError::Invariant(
-                            "primitive wrapper class or payload is not implemented yet",
-                        ));
-                    }
-                }
-            };
-            // allocate_object retains payload edges transactionally via object_edges.
-            self.allocate_primitive_wrapper(
-                prototype,
-                data,
-                payload_atom,
-                string_length,
+            let object = self.0.state.borrow_mut().new_primitive_object_jsvalue(
+                &self.0.poisoned,
+                prototype.object_id(),
+                kind,
+                input.take().expect("primitive input transferred once"),
                 length_configurable,
-            )
+            )?;
+            Ok(ObjectRef::from_owned_handle(self.clone(), object))
         })();
-        let released = self.release_jsvalue(value);
-        match result {
-            Err(error) => Err(error),
-            Ok(object) => {
-                released?;
-                Ok(object)
-            }
+        if let Some(value) = input {
+            let released = self.release_jsvalue(value);
+            return match result {
+                Err(error) => Err(error),
+                Ok(object) => {
+                    released?;
+                    Ok(object)
+                }
+            };
         }
+        result
     }
 
     pub(crate) fn new_string_object(
@@ -410,71 +366,6 @@ impl Runtime {
             value,
             string_length_configurable,
         )
-    }
-
-    fn allocate_primitive_wrapper(
-        &self,
-        prototype: &ObjectRef,
-        data: PrimitiveObjectData,
-        payload_atom: Option<Atom>,
-        string_length: Option<usize>,
-        string_length_configurable: bool,
-    ) -> Result<ObjectRef, RuntimeError> {
-        let mut state = self.0.state.borrow_mut();
-        let shape = state.get_or_create_shape(Some(prototype.object_id()), &[])?;
-        if let Some(atom) = payload_atom
-            && let Err(error) = state.atoms.retain(atom)
-        {
-            let cleanup = state.heap.release_shape(shape)?;
-            state.apply_cleanup(cleanup)?;
-            return Err(error.into());
-        }
-        let object =
-            match state
-                .heap
-                .allocate_object(ObjectData::primitive(shape, Vec::new(), data))
-            {
-                Ok(object) => object,
-                Err(error) => {
-                    if let Some(atom) = payload_atom {
-                        state.atoms.release(atom)?;
-                    }
-                    let cleanup = state.heap.release_shape(shape)?;
-                    state.apply_cleanup(cleanup)?;
-                    return Err(error.into());
-                }
-            };
-        let cleanup = state
-            .heap
-            .release_shape(shape)
-            .map_err(RuntimeError::from)
-            .and_then(|cleanup| state.apply_cleanup(cleanup));
-        drop(state);
-        let object = ObjectRef::from_owned_handle(self.clone(), object);
-        cleanup?;
-        if let Some(length) = string_length {
-            let length = i32::try_from(length)
-                .map(Value::Int)
-                .unwrap_or_else(|_| Value::number(length as f64));
-            let key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
-            let defined = self.define_own_property(
-                &object,
-                &key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(length),
-                    writable: DescriptorField::Present(false),
-                    enumerable: DescriptorField::Present(false),
-                    configurable: DescriptorField::Present(string_length_configurable),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )?;
-            if !defined {
-                return Err(RuntimeError::Invariant(
-                    "String wrapper length definition was rejected",
-                ));
-            }
-        }
-        Ok(object)
     }
 
     pub(crate) fn new_global_object(
@@ -1442,3 +1333,97 @@ impl RuntimeState {
         Ok(object)
     }
 }
+
+impl RuntimeState {
+    /// Consume one admitted primitive producer and return one owned wrapper.
+    /// Flat Strings retain their exact heap ID; a rope's flat representation
+    /// receives its own node, with the old producer retired before allocation.
+    pub(crate) fn new_primitive_object_jsvalue(
+        &mut self,
+        poisoned: &Cell<bool>,
+        prototype: ObjectId,
+        kind: PrimitiveKind,
+        value: JsValue,
+        length_configurable: bool,
+    ) -> Result<ObjectId, RuntimeError> {
+        let mut input_owner = OwnedValueGuard::new(self, poisoned, value);
+        let (state, input) = input_owner.parts();
+        let string_length =
+            if let (PrimitiveKind::String, Some(JsValue::String(id))) = (kind, input.as_ref()) {
+                let string = state.heap.string(*id)?.clone();
+                let flat = string.linearize();
+                let length = flat.len();
+                if !string.same_representation(&flat) {
+                    let normalized = JsValue::String(state.heap.allocate_string(flat)?);
+                    let previous = input.replace(normalized).expect("primitive input owner");
+                    state.release_owned_jsvalue(poisoned, previous)?;
+                }
+                Some(length)
+            } else {
+                None
+            };
+        let data = match (kind, input.as_ref().expect("primitive input owner")) {
+            (PrimitiveKind::Number, JsValue::Int(value)) => {
+                PrimitiveObjectData::Number(f64::from(*value))
+            }
+            (PrimitiveKind::Number, JsValue::Float(value)) => PrimitiveObjectData::Number(*value),
+            (PrimitiveKind::String, JsValue::String(id)) => PrimitiveObjectData::String(*id),
+            (PrimitiveKind::Boolean, JsValue::Bool(value)) => PrimitiveObjectData::Boolean(*value),
+            (PrimitiveKind::Symbol, JsValue::Symbol(index)) => {
+                PrimitiveObjectData::Symbol(state.atoms.brand(*index)?)
+            }
+            (PrimitiveKind::BigInt, JsValue::ShortBigInt(value)) => {
+                PrimitiveObjectData::ShortBigInt(*value)
+            }
+            (PrimitiveKind::BigInt, JsValue::BigInt(id)) => PrimitiveObjectData::BigInt(*id),
+            _ => {
+                return Err(RuntimeError::Invariant(
+                    "primitive wrapper class or payload is not implemented yet",
+                ));
+            }
+        };
+        // The one layout allocator retains payload Symbols and heap edges;
+        // this factory does not acquire a second payload atom reference.
+        let object = state.allocate_object_with_layout(
+            poisoned,
+            Some(prototype),
+            &[],
+            Vec::new(),
+            |shape, slots| ObjectData::primitive(shape, slots, data),
+        )?;
+        let mut result_owner = OwnedValueGuard::new(state, poisoned, JsValue::Object(object));
+        let (state, result_owner) = result_owner.parts();
+        if let Some(length) = string_length {
+            let length = i32::try_from(length)
+                .map(RawValue::Int)
+                .unwrap_or_else(|_| RawValue::Float(length as f64));
+            let key = state
+                .pinned_atoms
+                .get(crate::engine::atom::pinned::PinnedAtom::Length);
+            if !state.define_raw_property_with_poison(
+                poisoned,
+                object,
+                key,
+                &crate::engine::object::property::PropertyDescriptor {
+                    value: Some(length),
+                    writable: Some(false),
+                    enumerable: Some(false),
+                    configurable: Some(length_configurable),
+                    ..crate::engine::object::property::PropertyDescriptor::new()
+                },
+            )? {
+                return Err(RuntimeError::Invariant(
+                    "String wrapper length definition was rejected",
+                ));
+            }
+        }
+        state.release_owned_jsvalue(poisoned, input.take().expect("primitive input owner"))?;
+        let JsValue::Object(object) = result_owner.take().expect("primitive wrapper result") else {
+            unreachable!("primitive factory allocated an object")
+        };
+        Ok(object)
+    }
+}
+
+#[cfg(test)]
+mod primitive_state_tests;

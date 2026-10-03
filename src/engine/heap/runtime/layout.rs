@@ -1,6 +1,6 @@
 //! Publication of a prepared object layout. Language-specific builders own
 //! property order and descriptors; this boundary owns atom rollback and heap
-//! publication. Raw slots are borrowed from roots kept alive by the caller.
+//! publication. Raw slots and payloads borrow owners kept alive by the caller.
 
 use super::*;
 use crate::engine::heap::ObjectData;
@@ -18,19 +18,26 @@ impl RuntimeState {
         build: impl FnOnce(ShapeId, Vec<PropertySlot>) -> ObjectData,
     ) -> Result<ObjectId, RuntimeError> {
         let shape = self.get_or_create_shape(prototype, entries)?;
-        let atoms = match self.retain_slot_atoms(&slots) {
-            Ok(atoms) => atoms,
-            Err(error) => {
+        // Selection precedes payload atom retention, as primitive Symbol
+        // allocation requires. Concrete builders only pack their borrowed
+        // inputs; the canonical finalizer visitor names every atom owner.
+        let object = build(shape, slots);
+        let mut atoms = Vec::new();
+        for index in crate::engine::heap::gc::object_atoms(&object) {
+            if let Err(error) = self.atoms.retain_index(index) {
+                self.release_atoms(atoms)
+                    .inspect_err(|_| poisoned.set(true))?;
                 let cleanup = self
                     .heap
                     .release_shape(shape)
                     .inspect_err(|_| poisoned.set(true))?;
                 self.apply_cleanup(cleanup)
                     .inspect_err(|_| poisoned.set(true))?;
-                return Err(error);
+                return Err(error.into());
             }
-        };
-        let result = match self.heap.allocate_object_with_status(build(shape, slots)) {
+            atoms.push(Atom::from_raw(index.raw()));
+        }
+        let result = match self.heap.allocate_object_with_status(object) {
             Err(failure) if failure.published => {
                 poisoned.set(true);
                 return Err(failure.error.into());
