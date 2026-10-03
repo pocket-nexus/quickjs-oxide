@@ -395,65 +395,84 @@ pub(in crate::engine::vm) enum ReturnProgress {
     Returned,
     Property(super::CallStep),
 }
-/// Return to an ordinary parent without an outer driver turn. Decline
-/// publication roots and public continuation payloads before popping anything.
+/// Return to an ordinary parent without an outer driver turn. Tail results
+/// remain registered while successive ordinary parents retire. A publication
+/// root or public continuation leaves that current frame and result untouched
+/// for its explicit boundary, even if earlier tail frames already retired.
 pub(in crate::engine::vm) fn finish_in_state(
     runtime: &Runtime,
     state: &mut crate::engine::heap::runtime::RuntimeState,
     execution: &mut RunningExecution,
-    id: FrameId,
+    mut id: FrameId,
 ) -> Result<ReturnProgress, Error> {
-    let frame = execution.frames.current_mut(id)?;
-    let Some(target) = frame.cold.ordinary_return() else {
-        return Ok(ReturnProgress::Declined);
-    };
-    if target.operation.is_some()
-        || frame.executable.root().is_some()
-        || frame
+    loop {
+        let frame = execution.frames.current_mut(id)?;
+        let Some(target) = frame.cold.state_return() else {
+            return Ok(ReturnProgress::Declined);
+        };
+        if target.operation.is_some()
+            || frame.executable.root().is_some()
+            || frame
+                .cold
+                .rare
+                .get()
+                .is_some_and(|rare| !rare.property_keys.is_empty())
+            || execution.pending.is_none()
+        {
+            return Ok(ReturnProgress::Declined);
+        }
+        if let Err(error) = frame
             .cold
-            .rare
-            .get()
-            .is_some_and(|rare| !rare.property_keys.is_empty())
-        || execution.pending.is_none()
-    {
-        return Ok(ReturnProgress::Declined);
-    }
-    // No legacy destructor is reachable below. The result stays registered
-    // across window clearing, active-frame restoration, and parent validation.
-    let mut frame = execution.frames.pop(id)?;
-    if let Err(error) =
-        execution
-            .slots
-            .clear_frame_owned_in_state(state, &runtime.0.poisoned, frame.window.take())
-    {
-        runtime.0.poisoned.set(true);
-        return Err(error);
-    }
-    if let Err(error) = execution.call_storage.recycle(state, frame.cold) {
-        runtime.0.poisoned.set(true);
-        return Err(runtime_error_to_vm_error(error));
-    }
-    let parent = execution.frames.current_mut(target.frame()?)?;
-    if matches!(target.value_use, ReturnValue::Push) {
-        let value = execution
-            .pending
-            .as_mut()
-            .expect("registered ordinary result");
-        execution.slots.push_owned(&mut parent.window, value)?;
-        execution.pending = None;
-    } else {
-        let value = execution
-            .pending
-            .take()
-            .expect("registered discarded result");
-        if let Err(error) = state.release_jsvalue(value) {
+            .normalize_base_return_in_state(state, &mut execution.pending)
+        {
             runtime.0.poisoned.set(true);
             return Err(runtime_error_to_vm_error(error));
         }
+        // No legacy destructor is reachable below. The result stays registered
+        // across window clearing, active-frame restoration, and parent validation.
+        let mut frame = execution.frames.pop(id)?;
+        if let Err(error) = execution.slots.clear_frame_owned_in_state(
+            state,
+            &runtime.0.poisoned,
+            frame.window.take(),
+        ) {
+            runtime.0.poisoned.set(true);
+            return Err(error);
+        }
+        if let Err(error) = execution.call_storage.recycle(state, frame.cold) {
+            runtime.0.poisoned.set(true);
+            return Err(runtime_error_to_vm_error(error));
+        }
+        id = target.frame()?;
+        let parent = execution.frames.current_mut(id)?;
+        if target.tail {
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "ordinary_tail_return_direct",
+            );
+            continue;
+        }
+        if matches!(target.value_use, ReturnValue::Push) {
+            let value = execution
+                .pending
+                .as_mut()
+                .expect("registered ordinary result");
+            execution.slots.push_owned(&mut parent.window, value)?;
+            execution.pending = None;
+        } else {
+            let value = execution
+                .pending
+                .take()
+                .expect("registered discarded result");
+            if let Err(error) = state.release_jsvalue(value) {
+                runtime.0.poisoned.set(true);
+                return Err(runtime_error_to_vm_error(error));
+            }
+        }
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("ordinary_return_direct");
+        return Ok(ReturnProgress::Returned);
     }
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_execution_event("ordinary_return_direct");
-    Ok(ReturnProgress::Returned)
 }
 
 pub(super) fn finish(
@@ -725,6 +744,21 @@ mod held_state_call_tests {
         runtime.new_object(None).unwrap().into_handle()
     }
 
+    fn next_call(execution: &mut RunningExecution, id: FrameId) -> FallthroughPc {
+        let frame = execution.frames.current_mut(id).unwrap();
+        let mut pc = 0;
+        loop {
+            let decoded = frame.executable.exec.decode_published(pc).unwrap();
+            if matches!(
+                decoded.opcode,
+                Opcode::Call | Opcode::CallMethod | Opcode::TailCall | Opcode::TailCallMethod
+            ) {
+                return FallthroughPc::from_decoded(decoded);
+            }
+            pc = decoded.next_pc;
+        }
+    }
+
     #[test]
     fn method_call_and_return_hold_one_state_access_and_move_owners() {
         let runtime = Runtime::new();
@@ -885,6 +919,327 @@ mod held_state_call_tests {
         }
         drop(execution);
         assert!(runtime.0.state.borrow().heap.object(argument).is_err());
+        assert!(!runtime.is_poisoned());
+    }
+
+    #[test]
+    fn base_constructor_selects_primitive_object_and_alias_returns_under_state() {
+        for result_kind in 0..3 {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context().unwrap();
+            let callee = context.eval("(function Base(arg){return arg})").unwrap();
+            let (mut execution, parent, next) = caller(&runtime, &mut context, true);
+            let callee = runtime.into_jsvalue(callee).unwrap();
+            let receiver = object(&runtime);
+            let other = object(&runtime);
+            push(&runtime, &mut execution, parent, JsValue::Object(receiver));
+            push(&runtime, &mut execution, parent, callee);
+            push(&runtime, &mut execution, parent, JsValue::Undefined);
+            let selected = {
+                let mut state = runtime.0.state.borrow_mut();
+                assert!(matches!(
+                    enter_selected_in_state(
+                        &runtime,
+                        &mut state,
+                        &mut execution,
+                        parent,
+                        1,
+                        true,
+                        false,
+                        None,
+                        next,
+                    )
+                    .unwrap(),
+                    Entry::Ordinary
+                ));
+                let child = execution.frames.current_id().unwrap();
+                // Direct constructor admission gives input and return selection
+                // independent owners of the same receiver.
+                state.heap.retain_object(receiver).unwrap();
+                execution
+                    .frames
+                    .current_mut(child)
+                    .unwrap()
+                    .cold
+                    .constructor_return = Some(crate::engine::vm::frame::ConstructorReturn::Base(
+                    JsValue::Object(receiver),
+                ));
+                let selected = if result_kind == 0 {
+                    execution.pending = Some(JsValue::Int(7));
+                    state.release_jsvalue(JsValue::Object(other)).unwrap();
+                    receiver
+                } else if result_kind == 1 {
+                    execution.pending = Some(JsValue::Object(other));
+                    other
+                } else {
+                    execution.pending =
+                        Some(state.dup_jsvalue(&JsValue::Object(receiver)).unwrap());
+                    state.release_jsvalue(JsValue::Object(other)).unwrap();
+                    receiver
+                };
+                assert!(matches!(
+                    finish_in_state(&runtime, &mut state, &mut execution, child).unwrap(),
+                    ReturnProgress::Returned
+                ));
+                assert_eq!(state.heap.object_strong_count(selected), Ok(1));
+                if selected != receiver {
+                    assert!(state.heap.object(receiver).is_err());
+                }
+                assert!(!runtime.0.deferred_references.has_pending());
+                selected
+            };
+            drop(execution);
+            assert!(runtime.0.state.borrow().heap.object(selected).is_err());
+            assert!(!runtime.is_poisoned());
+        }
+    }
+
+    #[test]
+    fn ordinary_tail_chain_retires_under_one_state_access() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let callees = [
+            "(function outer(fn,arg){return fn(arg)})",
+            "(function middle(fn,arg){return fn(arg)})",
+            "(function leaf(arg){return arg})",
+        ]
+        .map(|source| runtime.into_jsvalue(context.eval(source).unwrap()).unwrap());
+        let callee_ids = callees.each_ref().map(|value| match value {
+            JsValue::Object(id) => *id,
+            _ => unreachable!(),
+        });
+        let (mut execution, root, next) = caller(&runtime, &mut context, false);
+        let result = object(&runtime);
+        let runtime_owners = std::rc::Rc::strong_count(&runtime.0);
+        let mut state = runtime.0.state.borrow_mut();
+        let mut parent = root;
+        let mut next = next;
+        for (index, callee) in callees.into_iter().enumerate() {
+            push(&runtime, &mut execution, parent, callee);
+            push(
+                &runtime,
+                &mut execution,
+                parent,
+                if index == 0 {
+                    JsValue::Object(result)
+                } else {
+                    JsValue::Undefined
+                },
+            );
+            assert!(matches!(
+                enter_selected_in_state(
+                    &runtime,
+                    &mut state,
+                    &mut execution,
+                    parent,
+                    1,
+                    false,
+                    index != 0,
+                    None,
+                    next,
+                )
+                .unwrap(),
+                Entry::Ordinary
+            ));
+            parent = execution.frames.current_id().unwrap();
+            assert!(
+                execution
+                    .frames
+                    .current_mut(parent)
+                    .unwrap()
+                    .cold
+                    .rare
+                    .get()
+                    .is_none()
+            );
+            if index != 2 {
+                next = next_call(&mut execution, parent);
+            }
+        }
+        execution.pending = Some(state.dup_jsvalue(&JsValue::Object(result)).unwrap());
+        assert!(matches!(
+            finish_in_state(&runtime, &mut state, &mut execution, parent,).unwrap(),
+            ReturnProgress::Returned
+        ));
+        assert_eq!(execution.frames.current_id(), Some(root));
+        assert_eq!(execution.frames.depth(), 1);
+        assert!(execution.pending.is_none());
+        assert_eq!(state.heap.object_strong_count(result), Ok(1));
+        assert!(
+            callee_ids
+                .into_iter()
+                .all(|id| state.heap.object(id).is_err())
+        );
+        assert_eq!(std::rc::Rc::strong_count(&runtime.0), runtime_owners);
+        assert!(!runtime.0.deferred_references.has_pending());
+        drop(state);
+        drop(execution);
+        assert!(runtime.0.state.borrow().heap.object(result).is_err());
+        assert!(!runtime.is_poisoned());
+    }
+
+    #[test]
+    fn tail_result_stays_registered_at_root_and_derived_boundaries() {
+        for derived in [false, true] {
+            let runtime = Runtime::new();
+            let mut context = runtime.new_context().unwrap();
+            let outer = if derived {
+                Some(
+                    runtime
+                        .into_jsvalue(
+                            context
+                                .eval("(function outer(fn,arg){return fn(arg)})")
+                                .unwrap(),
+                        )
+                        .unwrap(),
+                )
+            } else {
+                None
+            };
+            let leaf = runtime
+                .into_jsvalue(context.eval("(function leaf(arg){return arg})").unwrap())
+                .unwrap();
+            let (mut execution, root, next) = caller(&runtime, &mut context, false);
+            let result = object(&runtime);
+            let mut state = runtime.0.state.borrow_mut();
+            let (boundary, next) = if let Some(outer) = outer {
+                push(&runtime, &mut execution, root, outer);
+                push(&runtime, &mut execution, root, JsValue::Undefined);
+                assert!(matches!(
+                    enter_selected_in_state(
+                        &runtime,
+                        &mut state,
+                        &mut execution,
+                        root,
+                        1,
+                        false,
+                        false,
+                        None,
+                        next,
+                    )
+                    .unwrap(),
+                    Entry::Ordinary
+                ));
+                let outer = execution.frames.current_id().unwrap();
+                execution
+                    .frames
+                    .current_mut(outer)
+                    .unwrap()
+                    .cold
+                    .constructor_return =
+                    Some(crate::engine::vm::frame::ConstructorReturn::Derived);
+                (outer, next_call(&mut execution, outer))
+            } else {
+                (root, next)
+            };
+            push(&runtime, &mut execution, boundary, leaf);
+            push(&runtime, &mut execution, boundary, JsValue::Object(result));
+            assert!(matches!(
+                enter_selected_in_state(
+                    &runtime,
+                    &mut state,
+                    &mut execution,
+                    boundary,
+                    1,
+                    false,
+                    true,
+                    None,
+                    next,
+                )
+                .unwrap(),
+                Entry::Ordinary
+            ));
+            let leaf = execution.frames.current_id().unwrap();
+            execution.pending = Some(state.dup_jsvalue(&JsValue::Object(result)).unwrap());
+            assert!(matches!(
+                finish_in_state(&runtime, &mut state, &mut execution, leaf,).unwrap(),
+                ReturnProgress::Declined
+            ));
+            assert_eq!(execution.frames.current_id(), Some(boundary));
+            assert!(matches!(execution.pending, Some(JsValue::Object(id)) if id == result));
+            assert_eq!(state.heap.object_strong_count(result), Ok(1));
+            assert!(!runtime.0.deferred_references.has_pending());
+            drop(state);
+            drop(execution);
+            assert!(runtime.0.state.borrow().heap.object(result).is_err());
+            assert!(!runtime.is_poisoned());
+        }
+    }
+
+    #[test]
+    fn base_constructor_selects_receiver_after_tail_result_propagation() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let outer = runtime
+            .into_jsvalue(
+                context
+                    .eval("(function Base(fn,arg){return fn(arg)})")
+                    .unwrap(),
+            )
+            .unwrap();
+        let leaf = runtime
+            .into_jsvalue(context.eval("(function leaf(arg){return arg})").unwrap())
+            .unwrap();
+        let (mut execution, root, next) = caller(&runtime, &mut context, false);
+        let receiver = object(&runtime);
+        let mut state = runtime.0.state.borrow_mut();
+        push(&runtime, &mut execution, root, outer);
+        push(&runtime, &mut execution, root, JsValue::Undefined);
+        assert!(matches!(
+            enter_selected_in_state(
+                &runtime,
+                &mut state,
+                &mut execution,
+                root,
+                1,
+                false,
+                false,
+                None,
+                next,
+            )
+            .unwrap(),
+            Entry::Ordinary
+        ));
+        let outer = execution.frames.current_id().unwrap();
+        execution
+            .frames
+            .current_mut(outer)
+            .unwrap()
+            .cold
+            .constructor_return = Some(crate::engine::vm::frame::ConstructorReturn::Base(
+            JsValue::Object(receiver),
+        ));
+        let next = next_call(&mut execution, outer);
+        push(&runtime, &mut execution, outer, leaf);
+        push(&runtime, &mut execution, outer, JsValue::Undefined);
+        assert!(matches!(
+            enter_selected_in_state(
+                &runtime,
+                &mut state,
+                &mut execution,
+                outer,
+                1,
+                false,
+                true,
+                None,
+                next,
+            )
+            .unwrap(),
+            Entry::Ordinary
+        ));
+        let leaf = execution.frames.current_id().unwrap();
+        execution.pending = Some(JsValue::Int(7));
+        assert!(matches!(
+            finish_in_state(&runtime, &mut state, &mut execution, leaf,).unwrap(),
+            ReturnProgress::Returned
+        ));
+        assert_eq!(execution.frames.current_id(), Some(root));
+        assert_eq!(state.heap.object_strong_count(receiver), Ok(1));
+        assert!(execution.pending.is_none());
+        assert!(!runtime.0.deferred_references.has_pending());
+        drop(state);
+        drop(execution);
+        assert!(runtime.0.state.borrow().heap.object(receiver).is_err());
         assert!(!runtime.is_poisoned());
     }
 }

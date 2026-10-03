@@ -645,18 +645,77 @@ impl FrameCold {
             .and_then(|rare| rare.property_wait.as_ref())
             .map_or(0, |wait| wait.continuation_depth())
     }
+    /// Legacy ordinary returns have no constructor result to normalize.
     pub(super) fn ordinary_return(&self) -> Option<ReturnTarget> {
-        let target = self.return_to?;
+        let target = self.simple_return_target()?;
         if target.tail
-            || (target.operation.is_some()
-                && !matches!(target.operation, Some(OperationTarget::PropertyGet(_))))
+            || self
+                .rare
+                .get()
+                .is_some_and(|rare| rare.constructor_return.is_some())
+        {
+            return None;
+        }
+        Some(target)
+    }
+
+    /// A Base receiver is an explicit owned edge and can be selected under
+    /// current state access. Derived constructors keep their existing semantic
+    /// validation and unwinding path until that consumer is migrated.
+    pub(super) fn state_return(&self) -> Option<ReturnTarget> {
+        let target = self.simple_return_target()?;
+        if self
+            .rare
+            .get()
+            .is_some_and(|rare| matches!(rare.constructor_return, Some(ConstructorReturn::Derived)))
+        {
+            return None;
+        }
+        Some(target)
+    }
+
+    /// Keep the incoming result and saved Base receiver registered throughout
+    /// selection. Ordinary frames never initialize their rare storage here.
+    pub(super) fn normalize_base_return_in_state(
+        &mut self,
+        state: &mut RuntimeState,
+        pending: &mut Option<JsValue>,
+    ) -> Result<(), RuntimeError> {
+        if !self
+            .rare
+            .get()
+            .is_some_and(|rare| matches!(rare.constructor_return, Some(ConstructorReturn::Base(_))))
+        {
+            return Ok(());
+        }
+        if matches!(pending, Some(JsValue::Object(_))) {
+            return self.release_constructor_return(state);
+        }
+        let value = pending.take().expect("registered constructor result");
+        state.release_jsvalue(value)?;
+        let Some(ConstructorReturn::Base(receiver)) = self
+            .rare
+            .get_mut()
+            .expect("checked Base constructor storage")
+            .constructor_return
+            .take()
+        else {
+            unreachable!("checked Base constructor receiver")
+        };
+        *pending = Some(receiver);
+        Ok(())
+    }
+
+    fn simple_return_target(&self) -> Option<ReturnTarget> {
+        let target = self.return_to?;
+        if (target.operation.is_some()
+            && !matches!(target.operation, Some(OperationTarget::PropertyGet(_))))
             || !matches!(target.owner, ReturnOwner::Frame(_))
         {
             return None;
         }
         if self.rare.get().is_some_and(|rare| {
-            rare.constructor_return.is_some()
-                || rare.property_wait.is_some()
+            rare.property_wait.is_some()
                 || rare.iterator_wait.is_some()
                 || rare.conversion.is_some()
                 || !rare.regions.is_empty()
