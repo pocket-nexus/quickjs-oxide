@@ -74,7 +74,9 @@ impl CallStorage {
         runtime: &crate::engine::api::Runtime,
         mut cold: ColdFrame,
     ) -> Result<(), crate::engine::api::runtime_error::RuntimeError> {
+        runtime.check_poison()?;
         cold.release_legacy();
+        runtime.check_poison()?;
         let publication = cold.executable.take_optional();
         {
             let mut state = runtime.0.state.borrow_mut();

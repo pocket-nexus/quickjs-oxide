@@ -123,7 +123,9 @@ pub(super) struct FrameEntry {
 
 impl FrameEntry {
     pub(super) fn release(mut self, runtime: &Runtime) -> Result<(), RuntimeError> {
+        runtime.check_poison()?;
         self.cold.release_legacy();
+        runtime.check_poison()?;
         {
             let mut state = runtime.0.state.borrow_mut();
             super::stack::release_frame_storage_in_state(&mut state, self.storage)?;
@@ -247,6 +249,9 @@ impl Drop for RetiredFrame<'_> {
         }
         if let Some(mut frame) = self.frame.take() {
             frame.cold.release_legacy();
+            if self.runtime.is_poisoned() {
+                return;
+            }
             let result = frame
                 .cold
                 .release_owned(&mut self.runtime.0.state.borrow_mut());

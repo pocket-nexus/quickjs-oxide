@@ -288,7 +288,7 @@ impl Drop for RunningExecution {
         }
         let _unwind = runtime.unwind_guard();
         if let Some(pending) = self.pending.take() {
-            if runtime.release_jsvalue(pending).is_err() {
+            if runtime.release_jsvalue(pending).is_err() || runtime.is_poisoned() {
                 runtime.0.poisoned.set(true);
                 return;
             }
@@ -296,13 +296,16 @@ impl Drop for RunningExecution {
         if let Some(super::Completion::Return(value) | super::Completion::Throw(value)) =
             self.pending_completion.take()
         {
-            if runtime.release_jsvalue(value).is_err() {
+            if runtime.release_jsvalue(value).is_err() || runtime.is_poisoned() {
                 runtime.0.poisoned.set(true);
                 return;
             }
         }
         if let Some(selected) = self.selected_named_read.take() {
             selected.release(&runtime);
+            if runtime.is_poisoned() {
+                return;
+            }
         }
         while let Some(mut frame) = self.frames.pop_current() {
             // Clear this child's captures and operands while its activation
@@ -321,6 +324,7 @@ impl Drop for RunningExecution {
                 .call_storage
                 .recycle_legacy(&runtime, frame.cold)
                 .is_err()
+                || runtime.is_poisoned()
             {
                 runtime.0.poisoned.set(true);
                 return;
@@ -618,5 +622,130 @@ mod tests {
             assert_eq!(context.eval("reenter()").unwrap(), Value::Int(41));
             assert_eq!(context.eval("6*7").unwrap(), Value::Int(42));
         }
+    }
+}
+
+#[cfg(all(test, not(target_family = "wasm"), panic = "unwind"))]
+mod cleanup_poison_tests {
+    use super::{ExecutionLimits, RunningExecution};
+    use crate::engine::{
+        api::{Runtime, RuntimeError},
+        code::runtime::PublishedFunctionSnapshot,
+        value::JsValue,
+        vm::{
+            CallInput, Completion,
+            closure::FrameFunction,
+            frame::{ColdFrame, FrameCold, FrameEntry},
+            frames::ActiveFrameToken,
+            property_driver::{OwnedGetterSelection, SelectedNamedRead},
+            stack::FrameStorage,
+        },
+    };
+
+    #[test]
+    fn failed_execution_owner_release_stops_before_frame_cleanup() {
+        for case in ["pending", "completion", "selected-getter"] {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "engine::vm::execution::cleanup_poison_tests::cleanup_child",
+                    "--nocapture",
+                ])
+                .env("QJS_CLEANUP_POISON_CHILD", case)
+                // Exercise the release-build path without a diagnostic panic.
+                // The child alone gets this setting; parallel tests are isolated.
+                .env("QJS_TEARDOWN_PROBE", "1")
+                .status()
+                .unwrap();
+            assert!(status.success(), "cleanup subprocess {case}: {status}");
+        }
+    }
+
+    #[test]
+    fn cleanup_child() {
+        let Ok(case) = std::env::var("QJS_CLEANUP_POISON_CHILD") else {
+            return;
+        };
+        let runtime = Runtime::new();
+        let context = runtime.new_context().unwrap();
+        let frame_owner = runtime.new_object(None).unwrap().into_handle();
+        let function = runtime.new_object(None).unwrap();
+        let function_id = function.object_id();
+        let mut executable = PublishedFunctionSnapshot::empty_for_test(context.realm_id());
+        executable.metadata.max_stack = 1;
+        let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
+        crate::engine::vm::driver::push_frame(
+            &runtime,
+            &mut execution,
+            FrameEntry {
+                initialize_bindings: false,
+                property_generation: 0,
+                iterator_generation: 0,
+                caller_realm: context.realm_id(),
+                active_frame: ActiveFrameToken::unmaterialized(),
+                executable,
+                cold: ColdFrame::new(FrameCold {
+                    rare: Default::default(),
+                    return_to: None,
+                    entry_guard: None,
+                    function: FrameFunction::new(function, Default::default())
+                        .unwrap()
+                        .into(),
+                    reusable_captured_locals: Vec::new(),
+                    input: CallInput::new(&runtime, JsValue::Undefined, JsValue::Undefined, None)
+                        .into(),
+                }),
+                storage: FrameStorage {
+                    original_arguments: Vec::new(),
+                    parameters: Vec::new(),
+                    locals: Vec::new(),
+                    operands: vec![JsValue::Object(frame_owner)],
+                },
+            },
+        )
+        .unwrap();
+        let stale = runtime.new_object(None).unwrap().into_handle();
+        match case.as_str() {
+            "pending" => execution.pending = Some(JsValue::Object(stale)),
+            "completion" => {
+                execution.pending_completion = Some(Completion::Throw(JsValue::Object(stale)));
+            }
+            "selected-getter" => {
+                let mut state = runtime.0.state.borrow_mut();
+                let selected = OwnedGetterSelection::prepare(
+                    &mut state,
+                    &runtime.0.poisoned,
+                    &JsValue::Object(frame_owner),
+                    stale,
+                )
+                .unwrap();
+                execution.selected_named_read = Some(SelectedNamedRead::Getter(selected));
+                // Remove the original edge, leaving the selected getter edge.
+                state.release_jsvalue(JsValue::Object(stale)).unwrap();
+            }
+            _ => panic!("unknown cleanup subprocess"),
+        }
+        // Corrupt only the owner being released first. All later owners remain
+        // valid; cleanup must stop instead of touching them after quarantine.
+        runtime
+            .0
+            .state
+            .borrow_mut()
+            .release_jsvalue(JsValue::Object(stale))
+            .unwrap();
+        drop(execution);
+        assert!(runtime.is_poisoned());
+        let state = runtime.0.state.borrow();
+        assert_eq!(state.heap.object_strong_count(function_id), Ok(1));
+        assert_eq!(
+            state.heap.object_strong_count(frame_owner),
+            Ok(if case == "selected-getter" { 2 } else { 1 })
+        );
+        drop(state);
+        assert!(matches!(runtime.new_context(), Err(RuntimeError::Poisoned)));
+        assert_eq!(runtime.0.raw_execution_owners.get(), 0);
+        drop(context);
+        drop(runtime);
+        assert!(super::ACTIVE_EXECUTIONS.with(|active| active.borrow().is_empty()));
     }
 }
