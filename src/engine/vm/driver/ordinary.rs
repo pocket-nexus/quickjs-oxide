@@ -56,7 +56,7 @@ pub(in crate::engine::vm) fn prepare_ordinary_in_state(
     fault_pc: usize,
     count: usize,
     method: bool,
-    native_hint: Option<&crate::engine::object::LinkedNativeSelection>,
+    native_hint: &mut Option<crate::engine::object::LinkedNativeSelection>,
 ) -> Result<
     Option<(
         crate::engine::vm::call::ordinary::OrdinaryCall,
@@ -75,7 +75,10 @@ pub(in crate::engine::vm) fn prepare_ordinary_in_state(
         crate::engine::api::profiling::record_owned_execution_event("core.call_decline.general");
         return Ok(None);
     };
-    if native_hint.is_some_and(|hint| hint.matches_in_domain(runtime.domain_id(), *function)) {
+    if native_hint
+        .as_ref()
+        .is_some_and(|hint| hint.matches_in_domain(runtime.domain_id(), *function))
+    {
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event(
             "core.call_decline.native_hint",
@@ -91,7 +94,9 @@ pub(in crate::engine::vm) fn prepare_ordinary_in_state(
             );
             return Ok(None);
         }
-        Ok(DirectSelection::Native(_)) => {
+        Ok(DirectSelection::Native(native)) => {
+            *native_hint =
+                Some(crate::engine::object::LinkedNativeSelection::from_direct_native(native));
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_execution_event("core.call_decline.native");
             return Ok(None);

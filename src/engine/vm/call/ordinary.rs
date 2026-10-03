@@ -34,13 +34,10 @@ pub(in crate::engine::vm) struct OrdinarySelection {
 // Only DirectSelection can create this proof: payload metadata and borrowed
 // slot/owner originate from the same heap lookup. Promotion cannot accept a caller's
 // detached metadata or an unrelated object.
-pub(in crate::engine::vm) struct NativeSelection<'a> {
+pub(crate) struct NativeSelection<'a> {
     runtime: &'a Runtime,
     function: ObjectId,
-    target: crate::engine::builtins::native::NativeFunctionId,
-    defining_realm: crate::engine::heap::ContextId,
-    min_readable_args: u8,
-    operation: crate::engine::builtins::continuation::NativeOperation,
+    data: crate::engine::builtins::native::NativeFunctionData,
 }
 impl<'a> NativeSelection<'a> {
     pub(in crate::engine::vm) fn into_parts(
@@ -56,11 +53,22 @@ impl<'a> NativeSelection<'a> {
         (
             self.runtime,
             self.function,
-            self.target,
-            self.defining_realm,
-            self.min_readable_args,
-            self.operation,
+            self.data.target,
+            self.data.realm.expect("selected native realm"),
+            self.data.min_readable_args,
+            self.data.operation().expect("selected native operation"),
         )
+    }
+
+    /// Transfer the same selected payload without another lookup or owner.
+    pub(crate) fn into_linked_parts(
+        self,
+    ) -> (
+        u64,
+        ObjectId,
+        crate::engine::builtins::native::NativeFunctionData,
+    ) {
+        (self.runtime.domain_id(), self.function, self.data)
     }
 }
 
@@ -110,10 +118,14 @@ impl<'a> DirectSelection<'a> {
         state: &crate::engine::heap::runtime::RuntimeState,
         function: ObjectId,
     ) -> Result<Self, RuntimeError> {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "direct_callee_payload_selection",
+        );
         let object = state.heap.object(function)?;
         if let ObjectPayload::NativeFunction { data, .. } = &object.payload {
             // Unregistered native kinds retain the checked general entry.
-            let Some(operation) = data.operation() else {
+            let Some(_) = data.operation() else {
                 return Ok(Self::General);
             };
             let defining_realm = data.realm.ok_or(RuntimeError::Invariant(
@@ -123,10 +135,7 @@ impl<'a> DirectSelection<'a> {
             return Ok(Self::Native(NativeSelection {
                 runtime,
                 function,
-                target: data.target,
-                defining_realm,
-                min_readable_args: data.min_readable_args,
-                operation,
+                data: *data,
             }));
         }
         let ObjectPayload::BytecodeFunction {

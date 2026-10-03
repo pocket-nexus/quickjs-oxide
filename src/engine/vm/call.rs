@@ -1,4 +1,5 @@
 pub(super) mod ordinary;
+pub(crate) use ordinary::NativeSelection;
 
 mod protocol;
 

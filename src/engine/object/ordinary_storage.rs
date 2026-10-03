@@ -35,7 +35,7 @@ pub(crate) enum NamedSelectionMiss {
     ContinueLookup,
 }
 
-/// Affine native payload fact selected together with an own property value.
+/// Affine native payload fact selected together with an owned callee value.
 /// Its callee remains retained by the result/operand owner; consumption checks
 /// runtime and generational identity, never re-reads a property or payload.
 pub(crate) struct LinkedNativeSelection {
@@ -44,6 +44,19 @@ pub(crate) struct LinkedNativeSelection {
     data: crate::engine::builtins::native::NativeFunctionData,
 }
 impl LinkedNativeSelection {
+    /// Carry a direct call's native miss to its legacy consumer. The admitted
+    /// caller slot still owns the selected callee; no extra root is acquired.
+    pub(crate) fn from_direct_native(
+        selection: crate::engine::vm::call::NativeSelection<'_>,
+    ) -> Self {
+        let (domain_id, function, data) = selection.into_linked_parts();
+        Self {
+            domain_id,
+            function,
+            data,
+        }
+    }
+
     /// Compare the already selected weak fact with a currently owned callee.
     /// No payload lookup or fact consumption is required on an ordinary
     /// argument call while an outer native method remains selected.

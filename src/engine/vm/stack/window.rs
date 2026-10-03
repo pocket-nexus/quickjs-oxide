@@ -105,7 +105,7 @@ impl<'a> FrameExecution<'a> {
                 *turn.fault_pc,
                 usize::from(arguments),
                 method,
-                turn.selected_native.as_ref(),
+                turn.selected_native,
             )?;
             (prepared, depth)
         };
