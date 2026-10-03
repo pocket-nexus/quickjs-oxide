@@ -42,7 +42,7 @@ impl Runtime {
         object: &ObjectRef,
         value: &JsValue,
     ) -> Result<Option<JsValue>, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("property object"));
         }
@@ -100,7 +100,7 @@ impl Runtime {
         &self,
         object: &ObjectRef,
     ) -> Result<Option<JsValue>, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("property object"));
         }

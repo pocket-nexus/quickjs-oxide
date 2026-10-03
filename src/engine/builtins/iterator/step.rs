@@ -66,7 +66,7 @@ impl NextStep {
         iterator: ObjectRef,
         callable: CallableRef,
     ) -> Result<Self, RuntimeError> {
-        let _operation = runtime.operation();
+        let _operation = runtime.operation()?;
         if !callable.belongs_to(runtime) {
             return Err(RuntimeError::WrongRuntime("object"));
         }

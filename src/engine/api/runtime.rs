@@ -188,7 +188,7 @@ impl Runtime {
     /// Existing bytecode is immutable and keeps the mode used when published.
     pub fn set_debug_info_mode(&self, mode: DebugInfoMode) -> Result<(), RuntimeError> {
         self.check_poison()?;
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         self.0.state.borrow_mut().debug_info_mode = mode;
         Ok(())
     }
@@ -358,10 +358,14 @@ mod poison_tests {
         subprocess("module-host-caught-panic");
     }
 
-    #[cfg(debug_assertions)]
     #[test]
-    fn panic_during_operation_entry_drain_quarantines_runtime() {
-        subprocess("entry-drain-panic");
+    fn failed_operation_entry_drain_quarantines_before_execution() {
+        subprocess("entry-drain-error");
+    }
+
+    #[test]
+    fn failed_operation_exit_drain_quarantines_remaining_queue() {
+        subprocess("exit-drain-error");
     }
 
     #[derive(Debug)]
@@ -434,29 +438,49 @@ mod poison_tests {
         let symbol = runtime.new_symbol(None).unwrap();
         let bytecode = context.compile("1").unwrap();
         match case.as_str() {
-            #[cfg(debug_assertions)]
-            "entry-drain-panic" => {
+            "entry-drain-error" | "exit-drain-error" => {
+                let survivor = runtime.new_object(None).unwrap().into_handle();
+                let operation = (case == "exit-drain-error").then(|| runtime.operation().unwrap());
                 let id = object.object_id();
                 runtime
                     .0
                     .state
                     .borrow_mut()
-                    .heap
-                    .release_object(id)
+                    .release_jsvalue(crate::engine::value::JsValue::Object(id))
                     .unwrap();
-                runtime
-                    .0
-                    .deferred_references
-                    .push_back(crate::engine::heap::runtime::DeferredRefOp::Object(id));
-                let failed = catch_unwind(AssertUnwindSafe(|| {
-                    // The drain fails before RuntimeOperation is constructed.
-                    let _operation = runtime.operation();
-                }));
-                assert!(failed.is_err());
+                let deferred = &runtime.0.deferred_references;
+                deferred.push_back(crate::engine::heap::runtime::DeferredRefOp::Object(id));
+                deferred.push_back(crate::engine::heap::runtime::DeferredRefOp::Object(
+                    survivor,
+                ));
+                if let Some(operation) = operation {
+                    drop(operation);
+                } else {
+                    // A real public entry must reject the failed drain before
+                    // allocating its requested object, in every build profile.
+                    assert!(matches!(
+                        runtime.new_object(None),
+                        Err(RuntimeError::Heap(_))
+                    ));
+                }
+                assert!(runtime.is_poisoned());
+                assert_eq!(
+                    runtime.0.state.borrow().heap.object_strong_count(survivor),
+                    Ok(1)
+                );
+                assert!(deferred.has_pending());
+                assert_eq!(
+                    runtime.drain_deferred_references(),
+                    Err(RuntimeError::Poisoned)
+                );
+                assert_eq!(
+                    runtime.0.state.borrow().heap.object_strong_count(survivor),
+                    Ok(1)
+                );
             }
             "partial-mutation" => {
                 let failed = catch_unwind(AssertUnwindSafe(|| {
-                    let _operation = runtime.operation();
+                    let _operation = runtime.operation().unwrap();
                     let mut state = runtime.0.state.borrow_mut();
                     // Simulate interrupted ownership accounting: the public
                     // root is deliberately stale after this mutation. No
@@ -470,7 +494,7 @@ mod poison_tests {
                 let boundary = crate::engine::vm::HostBoundaryGuard::enter(&runtime).unwrap();
                 let caught = catch_unwind(AssertUnwindSafe(|| {
                     let _execution = runtime.enter_execution_turn().unwrap();
-                    let _operation = runtime.operation();
+                    let _operation = runtime.operation().unwrap();
                     panic!("host catches nested engine panic");
                 }));
                 assert!(caught.is_err());

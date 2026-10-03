@@ -32,7 +32,7 @@ impl Runtime {
         &self,
         description: JsString,
     ) -> Result<PrivateNameRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         let atom = self
             .0
             .state
@@ -52,7 +52,7 @@ impl Runtime {
         name: &PrivateNameRef,
         value: JsValue,
     ) -> Result<(), RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         let result = (|| {
             self.validate_private_receiver(receiver, name)?;
             let raw = value.as_raw();
@@ -137,7 +137,7 @@ impl Runtime {
         receiver: &ObjectRef,
         name: &PrivateNameRef,
     ) -> Result<JsValue, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         self.validate_private_receiver(receiver, name)?;
         let raw = {
             let state = self.0.state.borrow();
@@ -184,7 +184,7 @@ impl Runtime {
         name: &PrivateNameRef,
         value: JsValue,
     ) -> Result<(), RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         let result = (|| {
             self.validate_private_receiver(receiver, name)?;
             let raw = value.as_raw();
@@ -244,7 +244,7 @@ impl Runtime {
         receiver: &ObjectRef,
         name: &PrivateNameRef,
     ) -> Result<bool, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         self.validate_private_receiver(receiver, name)?;
         let state = self.0.state.borrow();
         let object = state.heap.object(receiver.object_id())?;
@@ -262,7 +262,7 @@ impl Runtime {
         &self,
         name: &PrivateNameRef,
     ) -> Result<VarRefRoot, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         self.validate_private_name(name)?;
         let atom = name.atom();
         let mut state = self.0.state.borrow_mut();
@@ -293,7 +293,7 @@ impl Runtime {
         &self,
         index: AtomIdx,
     ) -> Result<VarRefRoot, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         let atom = self.0.state.borrow().atoms.brand(index)?;
         if self.0.state.borrow().atoms.kind(atom)? != AtomKind::Private {
             return Err(RuntimeError::Invariant(
@@ -326,7 +326,7 @@ impl Runtime {
         root: &impl crate::engine::heap::roots::VarRefHandle,
         name: &PrivateNameRef,
     ) -> Result<(), RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !root.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("private-name closure variable"));
         }
@@ -372,7 +372,7 @@ impl Runtime {
         &self,
         root: &impl crate::engine::heap::roots::VarRefHandle,
     ) -> Result<PrivateNameRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !root.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("private-name closure variable"));
         }
@@ -418,7 +418,7 @@ impl Runtime {
         &self,
         root: &impl crate::engine::heap::roots::VarRefHandle,
     ) -> Result<AtomIdx, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !root.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("private-name closure variable"));
         }
@@ -478,7 +478,7 @@ impl Runtime {
         callable: &CallableRef,
         kind: ClosureVariableKind,
     ) -> Result<VarRefRoot, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !Self::is_private_callable_kind(kind) {
             return Err(RuntimeError::Invariant(
                 "private-callable VarRef received a non-callable binding kind",
@@ -512,7 +512,7 @@ impl Runtime {
         callable_id: ObjectId,
         kind: ClosureVariableKind,
     ) -> Result<VarRefRoot, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !Self::is_private_callable_kind(kind) {
             return Err(RuntimeError::Invariant(
                 "private-callable VarRef received a non-callable binding kind",
@@ -547,7 +547,7 @@ impl Runtime {
         callable: &CallableRef,
         kind: ClosureVariableKind,
     ) -> Result<(), RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !root.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime(
                 "private-callable closure variable",
@@ -591,7 +591,7 @@ impl Runtime {
         root: &impl crate::engine::heap::roots::VarRefHandle,
         kind: ClosureVariableKind,
     ) -> Result<CallableRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !root.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime(
                 "private-callable closure variable",
@@ -643,7 +643,7 @@ impl Runtime {
         root: &impl crate::engine::heap::roots::VarRefHandle,
         kind: ClosureVariableKind,
     ) -> Result<ObjectId, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !root.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime(
                 "private-callable closure variable",
@@ -718,7 +718,7 @@ impl Runtime {
         &self,
         home_object: &ObjectRef,
     ) -> Result<(), RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !home_object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime(
                 "private-method brand HomeObject",
@@ -757,7 +757,7 @@ impl Runtime {
         home_object: &ObjectRef,
         receiver: &ObjectRef,
     ) -> Result<(), RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !home_object.belongs_to(self) || !receiver.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("private-method brand object"));
         }
@@ -814,7 +814,7 @@ impl Runtime {
         receiver: &ObjectRef,
         kind: ClosureVariableKind,
     ) -> Result<bool, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !receiver.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("private-method brand receiver"));
         }
@@ -836,7 +836,7 @@ impl Runtime {
         method: &CallableRef,
         kind: ClosureVariableKind,
     ) -> Result<(), RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         self.private_method_brand_atom(method, kind).map(|_| ())
     }
 

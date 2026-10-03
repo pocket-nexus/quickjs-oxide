@@ -932,7 +932,7 @@ impl Runtime {
             PropertySetAction::Call { payload } => {
                 let (setter, receiver, argument) = payload.into_parts();
 
-                let _operation = self.operation();
+                let _operation = self.operation()?;
                 match self.call_internal_jsvalue(realm, &setter, receiver, vec![argument])? {
                     Completion::Return(value) => {
                         self.release_jsvalue(value)?;

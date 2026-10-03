@@ -250,7 +250,7 @@ impl SetStep {
         receiver: JsValue,
         waiting: impl FnMut(Self),
     ) -> Result<Option<PropertySetAction>, RuntimeError> {
-        let _operation = runtime.operation();
+        let _operation = runtime.operation()?;
         let probe = match initial_set(runtime, realm, &object, &key, &value, &receiver) {
             Ok(InitialSet::Action(action)) => {
                 runtime.release_jsvalue(value)?;
@@ -279,7 +279,7 @@ impl SetStep {
         receiver: JsValue,
         waiting: impl FnMut(Self),
     ) -> Result<Option<PropertySetAction>, RuntimeError> {
-        let operation = runtime.operation();
+        let operation = runtime.operation()?;
         let object = match &receiver {
             JsValue::Object(id) => {
                 ObjectRef::from_borrowed_handle(runtime.clone(), *id).map_err(RuntimeError::from)
@@ -1510,7 +1510,7 @@ mod tests {
         let key = runtime.intern_property_key("x").unwrap();
         let released = runtime.new_object(None).unwrap();
         let released_id = released.object_id();
-        let operation = runtime.operation();
+        let operation = runtime.operation().unwrap();
         {
             let _borrow = runtime.0.state.borrow();
             drop(released);

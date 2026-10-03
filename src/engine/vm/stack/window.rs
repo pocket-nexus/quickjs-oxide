@@ -702,7 +702,11 @@ impl FrameTransaction<'_> {
         // Releasing the old duplicate also drained unrelated pending edges.
         // Preserve that observation boundary before consuming the receiver.
         if runtime.0.deferred_references.has_pending() {
-            drop(runtime.operation());
+            drop(
+                runtime
+                    .operation()
+                    .map_err(super::runtime_error_to_vm_error)?,
+            );
         }
         let receiver = if method {
             self.store.pop_current(self.window)?

@@ -851,7 +851,7 @@ impl Runtime {
         module: &ModuleBytecodeRef,
     ) -> Result<bool, RuntimeError> {
         self.check_poison()?;
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !module.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("module bytecode"));
         }
@@ -973,7 +973,7 @@ impl Runtime {
         L: ModuleLoader + 'static,
     {
         self.check_poison()?;
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         let loader: Rc<dyn ModuleLoader> = Rc::new(loader);
         *self.0.module_loader.borrow_mut() = Some(Rc::downgrade(&loader));
         Ok(ModuleLoaderRegistration { _loader: loader })
@@ -982,7 +982,7 @@ impl Runtime {
     /// Remove the runtime-wide module loader without clearing Context caches.
     pub fn clear_module_loader(&self) -> Result<(), RuntimeError> {
         self.check_poison()?;
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         self.0.module_loader.borrow_mut().take();
         Ok(())
     }
@@ -3749,7 +3749,7 @@ impl Context {
     pub fn compile_module(&mut self, source: &str) -> Result<ModuleBytecodeRef, RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         self.compile_module_with_options(source, &CompileOptions::default())
     }
 
@@ -3761,7 +3761,7 @@ impl Context {
     ) -> Result<ModuleBytecodeRef, RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         self.compile_module_bytes_with_options(source, &CompileOptions::default())
     }
 
@@ -3773,7 +3773,7 @@ impl Context {
     ) -> Result<ModuleBytecodeRef, RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         self.compile_module_with_options(source, &CompileOptions::new(filename))
     }
 
@@ -3786,7 +3786,7 @@ impl Context {
     ) -> Result<ModuleBytecodeRef, RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         self.compile_module_bytes_with_options(source, &CompileOptions::new(filename))
     }
 
@@ -3803,7 +3803,7 @@ impl Context {
     ) -> Result<ModuleBytecodeRef, RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         let _turn = self.runtime.enter_execution_turn()?;
         let compilation =
             self.runtime
@@ -3824,7 +3824,7 @@ impl Context {
     ) -> Result<ModuleBytecodeRef, RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         let _turn = self.runtime.enter_execution_turn()?;
         let compilation =
             self.runtime
@@ -3858,7 +3858,7 @@ impl Context {
     ) -> Result<ObjectRef, RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         if !module.belongs_to(&self.runtime) {
             return Err(RuntimeError::WrongRuntime("module bytecode"));
         }
@@ -3871,7 +3871,7 @@ impl Context {
     pub fn execute_module(&mut self, module: &ModuleBytecodeRef) -> Result<Value, RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         let _turn = self.runtime.enter_execution_turn()?;
         self.runtime.execute_module(self.realm, module)
     }
@@ -3883,7 +3883,7 @@ impl Context {
     pub fn link_module(&mut self, module: &ModuleBytecodeRef) -> Result<(), RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         let _turn = self.runtime.enter_execution_turn()?;
         if !module.belongs_to(&self.runtime) {
             return Err(RuntimeError::WrongRuntime("module bytecode"));

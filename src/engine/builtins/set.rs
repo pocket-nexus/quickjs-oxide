@@ -263,7 +263,7 @@ impl Runtime {
         &self,
         prototype: &ObjectRef,
     ) -> Result<ObjectRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !prototype.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("Set prototype"));
         }

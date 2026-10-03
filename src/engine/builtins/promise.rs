@@ -133,7 +133,7 @@ impl Runtime {
         promise: &ObjectRef,
     ) -> Result<Option<PromiseSnapshot>, RuntimeError> {
         self.check_poison()?;
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !promise.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("Promise"));
         }
@@ -164,7 +164,7 @@ impl Runtime {
         F: Fn(PromiseRejectionEvent) + 'static,
     {
         self.check_poison()?;
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         *self.0.promise_rejection_tracker.borrow_mut() = Some(Rc::new(tracker));
         Ok(())
     }
@@ -172,7 +172,7 @@ impl Runtime {
     /// Remove the runtime-wide host Promise rejection tracker.
     pub fn clear_host_promise_rejection_tracker(&self) -> Result<(), RuntimeError> {
         self.check_poison()?;
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         self.0.promise_rejection_tracker.borrow_mut().take();
         Ok(())
     }
@@ -334,7 +334,7 @@ impl Runtime {
     }
 
     fn new_promise_object(&self, prototype: &ObjectRef) -> Result<ObjectRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !prototype.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("Promise prototype"));
         }
@@ -365,7 +365,7 @@ impl Runtime {
         length: i32,
         internal: InternalCallableData,
     ) -> Result<CallableRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         let function_prototype = self
             .0
             .state
@@ -809,7 +809,7 @@ impl Runtime {
                     false,
                 )?;
             }
-            prepared_jobs.publish();
+            prepared_jobs.publish()?;
             Ok(())
         })();
         self.release_jsvalue(result)?;

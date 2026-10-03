@@ -210,7 +210,7 @@ impl Runtime {
         &self,
         prototype: &ObjectRef,
     ) -> Result<ObjectRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !prototype.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("Error prototype"));
         }
@@ -237,7 +237,7 @@ impl Runtime {
     /// spoofing alone does not make an object an Error.
     pub fn is_error_object(&self, object: &ObjectRef) -> Result<bool, RuntimeError> {
         self.check_poison()?;
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("object"));
         }

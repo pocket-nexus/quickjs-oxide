@@ -129,20 +129,15 @@ pub(crate) fn compact_backtrace() -> String {
 
 impl Runtime {
     #[inline]
-    pub(crate) fn operation(&self) -> RuntimeOperation<'_> {
+    pub(crate) fn operation(&self) -> Result<RuntimeOperation<'_>, RuntimeError> {
         let _unwind = self.unwind_guard();
-        if !self.skip_cleanup() {
-            let result = self.drain_deferred_references();
-            debug_assert!(result.is_ok(), "deferred root release failed: {result:?}");
-        }
-        RuntimeOperation(self)
+        self.drain_deferred_references()?;
+        Ok(RuntimeOperation(self))
     }
 
     #[inline]
     pub(crate) fn drain_deferred_references(&self) -> Result<(), RuntimeError> {
-        if self.skip_cleanup() {
-            return Ok(());
-        }
+        self.check_poison()?;
         if !self.0.deferred_references.has_pending() {
             return Ok(());
         }
@@ -163,7 +158,9 @@ impl Runtime {
             let Some(operation) = deferred.pop_front() else {
                 break;
             };
-            state.apply_deferred_operation(operation)?;
+            state.apply_deferred_operation(operation).inspect_err(|_| {
+                self.0.poisoned.set(true);
+            })?;
         }
         Ok(())
     }
@@ -210,6 +207,7 @@ impl Runtime {
             } else {
                 debug_assert!(false, "invalid root release {operation:?}: {error:?}");
             }
+            return;
         }
         let drain = self.drain_deferred_references();
         if let Err(error) = &drain {

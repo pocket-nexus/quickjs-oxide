@@ -21,7 +21,7 @@ impl Runtime {
         body: impl FnOnce() -> Result<T, RuntimeError>,
     ) -> Result<T, RuntimeError> {
         self.check_poison()?;
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         let turn = self.enter_execution_turn()?;
         let result = body();
         // The embedder may catch a child panic inside the closure.

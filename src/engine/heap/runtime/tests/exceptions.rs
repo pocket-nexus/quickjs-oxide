@@ -139,7 +139,7 @@ fn pending_exception_slot_owns_and_transfers_object_roots() {
     runtime
         .set_pending_exception(Value::Object(object.try_clone().expect("duplicate root")))
         .unwrap();
-    assert!(runtime.has_pending_exception());
+    assert!(runtime.has_pending_exception().unwrap());
     assert_eq!(
         runtime.0.state.borrow().heap.object_strong_count(object_id),
         Ok(2)
@@ -147,7 +147,7 @@ fn pending_exception_slot_owns_and_transfers_object_roots() {
     drop(object);
 
     let exception = runtime.take_pending_exception().unwrap().unwrap();
-    assert!(!runtime.has_pending_exception());
+    assert!(!runtime.has_pending_exception().unwrap());
     assert!(matches!(
         &exception,
         Value::Object(value) if value.object_id() == object_id

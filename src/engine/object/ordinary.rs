@@ -25,7 +25,7 @@ impl Runtime {
         key: &PropertyKey,
         value: Value,
     ) -> Result<PropertySetAction, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         self.prepare_set_property_with_receiver_in_realm(
             None,
             object,
@@ -177,7 +177,7 @@ impl Runtime {
         receiver: &JsValue,
         native: Option<&mut Option<crate::engine::object::LinkedNativeSelection>>,
     ) -> Result<OrdinaryRead, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         self.validate_object_and_key(object, key)?;
         self.prepare_ordinary_read_selected_inner(
             object.object_id(),
@@ -196,7 +196,7 @@ impl Runtime {
         receiver: &JsValue,
         native: Option<&mut Option<crate::engine::object::LinkedNativeSelection>>,
     ) -> Result<OrdinaryRead, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !key.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("property key"));
         }

@@ -106,13 +106,13 @@ fn idle_and_borrow_blocked_checkpoints_leave_the_queue_untouched() {
     assert!(state.heap.object(id).is_ok());
     drop(state);
     // The existing operation boundary, including nested boundaries, still drains.
-    let _operation = runtime.operation();
+    let _operation = runtime.operation().unwrap();
     assert!(!runtime.0.deferred_references.has_pending());
     assert!(runtime.0.state.borrow().heap.object(id).is_err());
 }
 
 #[test]
-fn failed_deferred_operation_releases_the_guard_and_keeps_remaining_work() {
+fn failed_deferred_operation_quarantines_remaining_work() {
     let runtime = Runtime::new();
     let stale = runtime.new_object(None).unwrap();
     let stale_id = stale.object_id();
@@ -129,9 +129,19 @@ fn failed_deferred_operation_releases_the_guard_and_keeps_remaining_work() {
     assert!(runtime.drain_deferred_references().is_err());
     assert!(runtime.0.deferred_references.has_pending());
     assert!(runtime.0.state.borrow().heap.object(live_id).is_ok());
-    runtime.drain_deferred_references().unwrap();
-    assert!(!runtime.0.deferred_references.has_pending());
-    assert!(runtime.0.state.borrow().heap.object(live_id).is_err());
+    assert!(runtime.is_poisoned());
+    assert_eq!(
+        runtime.drain_deferred_references(),
+        Err(crate::engine::api::RuntimeError::Poisoned)
+    );
+    assert!(runtime.0.deferred_references.has_pending());
+    assert_eq!(
+        runtime.0.state.borrow().heap.object_strong_count(live_id),
+        Ok(1)
+    );
+    // Failed servicing releases its queue lease even though state is now
+    // quarantined. No heap operation may consume the remaining work.
+    assert!(runtime.0.deferred_references.try_start_draining().is_some());
 }
 
 #[test]

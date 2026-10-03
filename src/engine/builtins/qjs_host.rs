@@ -77,7 +77,7 @@ impl Context {
     pub fn install_qjs_print(&mut self) -> Result<(), RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         self.install_qjs_print_function()
     }
 
@@ -90,7 +90,7 @@ impl Context {
     pub fn install_qjs_helpers(&mut self) -> Result<(), RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         self.install_qjs_helpers_inner(None)
     }
 
@@ -108,7 +108,7 @@ impl Context {
     ) -> Result<(), RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         self.install_qjs_helpers_inner(Some(script_args))
     }
 

@@ -113,8 +113,9 @@ impl Drop for RuntimeOperation<'_> {
             return;
         }
         let _unwind = self.0.unwind_guard();
-        let result = self.0.drain_deferred_references();
-        debug_assert!(result.is_ok(), "deferred root release failed: {result:?}");
+        if self.0.drain_deferred_references().is_err() {
+            self.0.0.poisoned.set(true);
+        }
     }
 }
 

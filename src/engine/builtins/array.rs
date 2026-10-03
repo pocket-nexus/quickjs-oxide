@@ -134,7 +134,7 @@ impl Runtime {
         object: &ObjectRef,
         kind: ArrayIteratorKind,
     ) -> Result<ObjectRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("Array Iterator target"));
         }

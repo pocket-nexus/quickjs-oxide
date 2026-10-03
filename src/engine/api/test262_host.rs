@@ -243,7 +243,7 @@ impl Context {
     pub fn install_test262_host(&mut self) -> Result<ObjectRef, RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         self.runtime.install_test262_host_in_realm(self.realm)
     }
 }

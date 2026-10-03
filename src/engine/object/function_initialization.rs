@@ -23,7 +23,7 @@ impl Runtime {
         function: &FunctionBytecodeRef,
         closure_slots: &[VarRefRoot],
     ) -> Result<CallableRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !function.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("function bytecode"));
         }

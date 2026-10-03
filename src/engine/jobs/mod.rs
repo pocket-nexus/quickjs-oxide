@@ -287,9 +287,9 @@ impl<'a> PreparedJobs<'a> {
     pub(crate) fn new(runtime: &'a Runtime, jobs: Vec<PendingJob>) -> Self {
         Self { runtime, jobs }
     }
-    pub(crate) fn publish(mut self) {
+    pub(crate) fn publish(mut self) -> Result<(), RuntimeError> {
         self.runtime
-            .publish_prepared_jobs(std::mem::take(&mut self.jobs));
+            .publish_prepared_jobs(std::mem::take(&mut self.jobs))
     }
 }
 impl Drop for PreparedJobs<'_> {
@@ -445,7 +445,7 @@ impl RuntimeState {
 
 impl Runtime {
     pub(crate) fn enqueue_pending_job(&self, job: PendingJob) -> Result<(), RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         let mut state = self.0.state.borrow_mut();
         state.retain_pending_job_roots(&job)?;
         state.pending_jobs.push_back(job);
@@ -455,7 +455,7 @@ impl Runtime {
     /// Return whether QuickJS's runtime-wide FIFO contains a pending job.
     pub fn is_job_pending(&self) -> Result<bool, RuntimeError> {
         self.check_poison()?;
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         Ok(!self.0.state.borrow().pending_jobs.is_empty())
     }
 
@@ -483,7 +483,10 @@ impl Runtime {
                 context: None,
                 error,
             })?;
-        let _operation = self.operation();
+        let _operation = self.operation().map_err(|error| PendingJobError {
+            context: None,
+            error,
+        })?;
         let Some(job) = self.0.state.borrow_mut().pending_jobs.pop_front() else {
             return Ok(PendingJobOutcome::NoJob);
         };
@@ -597,7 +600,7 @@ impl Runtime {
         argument: RawValue,
     ) -> Result<(), RuntimeError> {
         let job = self.prepare_promise_reaction_job(realm, reaction, argument)?;
-        self.publish_prepared_jobs([job]);
+        self.publish_prepared_jobs([job])?;
         Ok(())
     }
 
@@ -616,21 +619,25 @@ impl Runtime {
             reaction,
             argument,
         };
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         self.0.state.borrow_mut().retain_pending_job_roots(&job)?;
         Ok(job)
     }
 
-    pub(crate) fn publish_prepared_jobs(&self, jobs: impl IntoIterator<Item = PendingJob>) {
-        let _operation = self.operation();
+    pub(crate) fn publish_prepared_jobs(
+        &self,
+        jobs: impl IntoIterator<Item = PendingJob>,
+    ) -> Result<(), RuntimeError> {
+        let _operation = self.operation()?;
         self.0.state.borrow_mut().pending_jobs.extend(jobs);
+        Ok(())
     }
 
     pub(crate) fn discard_prepared_jobs(
         &self,
         jobs: impl IntoIterator<Item = PendingJob>,
     ) -> Result<(), RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         let mut state = self.0.state.borrow_mut();
         for job in jobs {
             state.release_pending_job_roots(&job)?;

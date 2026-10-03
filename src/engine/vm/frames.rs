@@ -68,7 +68,7 @@ impl NativeClassification {
         runtime: &Runtime,
         callable: &crate::engine::object::CallableRef,
     ) -> Result<Option<Self>, RuntimeError> {
-        let _operation = runtime.operation();
+        let _operation = runtime.operation()?;
         if !callable.belongs_to(runtime) {
             return Err(RuntimeError::WrongRuntime("callable"));
         }

@@ -558,7 +558,7 @@ impl Runtime {
         byte_offset: u32,
         fixed_byte_length: Option<u32>,
     ) -> Result<ObjectRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !prototype.belongs_to(self) || !buffer.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("DataView allocation"));
         }

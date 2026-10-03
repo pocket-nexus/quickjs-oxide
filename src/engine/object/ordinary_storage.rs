@@ -887,7 +887,7 @@ mod tests {
         let key = runtime.intern_property_key("x").unwrap();
         let other_key = runtime.intern_property_key("y").unwrap();
         let object_id = object.object_id();
-        let operation = runtime.operation();
+        let operation = runtime.operation().unwrap();
 
         // The borrowed receiver owns the producer edge while a missing slot
         // retains its self edge. Replacing the same edge must remain balanced.
@@ -1033,7 +1033,7 @@ mod dense_set_tests {
             panic!("expected array")
         };
         let key = runtime.intern_property_key("0").unwrap();
-        let operation = runtime.operation();
+        let operation = runtime.operation().unwrap();
         assert!(matches!(
             runtime
                 .ordinary_set_probe(&array, &key, &JsValue::Int(9), true)
@@ -1111,7 +1111,7 @@ mod dense_set_tests {
         let replacement_id = replacement.object_id();
         let released = runtime.new_object(None).unwrap();
         let released_id = released.object_id();
-        let operation = runtime.operation();
+        let operation = runtime.operation().unwrap();
         {
             let _borrow = runtime.0.state.borrow();
             drop(released);
@@ -1345,7 +1345,7 @@ impl Runtime {
         let JsValue::Object(object) = base else {
             return Ok(None);
         };
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         // The borrowed base already pins this object until probing finishes.
         Ok(
             match self.ordinary_read_probe_atom(*object, atom, true, native)? {

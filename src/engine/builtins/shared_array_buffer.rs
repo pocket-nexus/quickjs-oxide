@@ -593,7 +593,7 @@ impl Runtime {
         prototype: &ObjectRef,
         handle: SharedBufferHandle,
     ) -> Result<ObjectRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !prototype.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("SharedArrayBuffer prototype"));
         }
@@ -644,7 +644,7 @@ impl Context {
     ) -> Result<SharedBufferHandle, RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         self.runtime
             .shared_array_buffer_handle_if_branded(object)?
             .ok_or_else(|| {
@@ -666,7 +666,7 @@ impl Context {
     ) -> Result<ObjectRef, RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         let prototype = self
             .runtime
             .shared_array_buffer_default_prototype(self.realm)?;

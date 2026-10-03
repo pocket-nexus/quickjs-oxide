@@ -161,7 +161,7 @@ impl Runtime {
     }
 
     fn new_uninitialized_regexp(&self, prototype: &ObjectRef) -> Result<ObjectRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !prototype.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("RegExp prototype"));
         }
@@ -233,7 +233,7 @@ impl Runtime {
         pattern: JsString,
         program: Rc<CompiledRegExp>,
     ) -> Result<ObjectRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         let shape = self.regexp_realm_data(realm)?.object_shape;
         let object =
             self.0

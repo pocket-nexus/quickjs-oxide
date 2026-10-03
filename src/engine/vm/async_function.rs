@@ -152,7 +152,7 @@ impl Runtime {
         driver_realm: ContextId,
         capability: &RootedPromiseCapability,
     ) -> Result<ObjectRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         let mut state = self.0.state.borrow_mut();
         let shape = state.get_or_create_shape(None, &[])?;
         let object = match state.heap.allocate_object(ObjectData::async_function_state(

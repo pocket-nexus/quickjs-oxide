@@ -778,7 +778,7 @@ impl Runtime {
         bytes: Vec<u8>,
         max_byte_length: Option<u32>,
     ) -> Result<ObjectRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !prototype.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("ArrayBuffer prototype"));
         }
@@ -878,7 +878,7 @@ impl Context {
     pub fn new_detach_array_buffer_function(&mut self) -> Result<CallableRef, RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         let function_prototype = self.function_prototype()?;
         self.runtime.new_native_builtin(
             &function_prototype,
@@ -896,7 +896,7 @@ impl Context {
     pub fn detach_array_buffer(&mut self, value: &Value) -> Result<(), RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         self.runtime.detach_array_buffer_value(value)
     }
 }

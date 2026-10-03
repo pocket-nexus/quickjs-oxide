@@ -34,7 +34,7 @@ impl Runtime {
         &self,
         callable: &CallableRef,
     ) -> Result<CallableExecution, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !callable.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("callable"));
         }
@@ -190,7 +190,7 @@ impl Runtime {
         &self,
         callable: &CallableRef,
     ) -> Result<Option<(NativeFunctionId, ContextId, u8)>, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !callable.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("native callable"));
         }

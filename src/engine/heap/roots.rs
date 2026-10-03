@@ -17,7 +17,7 @@ impl Runtime {
         is_const: bool,
         kind: ClosureVariableKind,
     ) -> Result<VarRefRoot, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         let data = VarRefData::captured(value.into_raw(), is_lexical, is_const, kind);
         let allocation = self.0.state.borrow_mut().heap.allocate_var_ref_owned(data);
         match allocation {
@@ -48,7 +48,7 @@ impl Runtime {
     }
 
     pub(crate) fn new_uninitialized_var_ref(&self) -> Result<VarRefRoot, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         let id = self
             .0
             .state
@@ -69,7 +69,7 @@ impl Runtime {
         is_const: bool,
         kind: ClosureVariableKind,
     ) -> Result<VarRefRoot, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         let id = self
             .0
             .state
@@ -123,7 +123,7 @@ impl Runtime {
         &self,
         root: &impl crate::engine::heap::roots::VarRefHandle,
     ) -> Result<JsValue, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !root.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("closure variable"));
         }
@@ -148,7 +148,7 @@ impl Runtime {
         &self,
         root: &impl crate::engine::heap::roots::VarRefHandle,
     ) -> Result<RawValue, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !root.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("closure variable"));
         }
@@ -160,7 +160,7 @@ impl Runtime {
         root: &impl crate::engine::heap::roots::VarRefHandle,
         descriptor: ClosureVariable,
     ) -> Result<(), RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !root.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("closure variable"));
         }
@@ -184,7 +184,7 @@ impl Runtime {
         root: &impl crate::engine::heap::roots::VarRefHandle,
         value: JsValue,
     ) -> Result<(), RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         let validation = (|| {
             if !root.belongs_to(self) {
                 return Err(RuntimeError::WrongRuntime("closure variable"));

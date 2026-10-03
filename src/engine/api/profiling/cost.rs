@@ -340,17 +340,33 @@ pub(crate) fn record_owned_instruction(operand_depth: usize) {
 }
 
 pub(crate) enum OwnedStorageEvent {
-    SlotCapacity { before: usize, after: usize },
-    FrameCapacity { before: usize, after: usize },
+    SlotCapacity {
+        before: usize,
+        after: usize,
+    },
+    FrameCapacity {
+        before: usize,
+        after: usize,
+    },
     FramePush(usize),
     Initialize(usize),
-    NoneInitialization { count: usize, high_water: usize },
-    Occupancy { reserved: usize, live: usize },
+    NoneInitialization {
+        count: usize,
+        high_water: usize,
+    },
+    Occupancy {
+        reserved: usize,
+        live: usize,
+    },
     Move(usize),
     Clear(usize),
-    Copy { heap_root: bool },
+    Copy {
+        heap_root: bool,
+    },
     #[cfg(test)]
-    HotRelease { heap_root: bool },
+    HotRelease {
+        heap_root: bool,
+    },
 }
 
 pub(crate) fn record_owned_execution_layout<T>(name: &'static str) {

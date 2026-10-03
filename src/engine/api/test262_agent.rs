@@ -762,7 +762,7 @@ impl Context {
     ) -> Result<ObjectRef, RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         bind_realm(&self.runtime, self.realm, session, AgentRole::Main)?;
         self.install_test262_host()
     }

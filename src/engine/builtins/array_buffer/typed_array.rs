@@ -986,7 +986,7 @@ impl Runtime {
         fixed_byte_length: Option<u32>,
         element: TypedArrayElementKind,
     ) -> Result<ObjectRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !prototype.belongs_to(self) || !buffer.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("TypedArray allocation"));
         }

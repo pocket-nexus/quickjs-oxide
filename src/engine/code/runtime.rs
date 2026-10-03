@@ -38,7 +38,7 @@ impl Runtime {
         let _phase_timer = crate::engine::api::profiling::PhaseTimer::start(
             crate::engine::api::profiling::CompilePhase::Publish,
         );
-        let _operation = self.operation();
+        let _operation = self.operation()?;
 
         let mut frames = vec![PublishFrame::new(function)];
         self.ensure_dynamic_import_bytecode_allowed(&frames[0].code)?;
@@ -422,7 +422,7 @@ impl Runtime {
         pc: Option<usize>,
     ) -> Result<Option<(JsString, LineColumn)>, RuntimeError> {
         self.check_poison()?;
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !function.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("function bytecode"));
         }
@@ -445,7 +445,7 @@ impl Runtime {
         function: &FunctionBytecodeRef,
     ) -> Result<Option<Vec<u8>>, RuntimeError> {
         self.check_poison()?;
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !function.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("function bytecode"));
         }
@@ -465,7 +465,7 @@ impl Runtime {
         function: &FunctionBytecodeRef,
     ) -> Result<Vec<crate::engine::code::bytecode::Instruction>, RuntimeError> {
         self.check_poison()?;
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !function.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("function bytecode"));
         }
@@ -501,7 +501,7 @@ impl Runtime {
         function: &FunctionBytecodeRef,
     ) -> Result<Option<JsString>, RuntimeError> {
         self.check_poison()?;
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !function.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("function bytecode"));
         }
@@ -521,7 +521,7 @@ impl Runtime {
         function: &FunctionBytecodeRef,
     ) -> Result<Option<(usize, Option<u32>)>, RuntimeError> {
         self.check_poison()?;
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !function.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("function bytecode"));
         }
@@ -552,7 +552,7 @@ impl Runtime {
         constant_index: usize,
     ) -> Result<FunctionBytecodeRef, RuntimeError> {
         self.check_poison()?;
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !function.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("function bytecode"));
         }

@@ -203,7 +203,7 @@ impl Runtime {
         prototype: &ObjectRef,
         target: WeakCollectionKey,
     ) -> Result<ObjectRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !prototype.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("WeakRef prototype"));
         }
@@ -234,7 +234,7 @@ impl Runtime {
         callback: &CallableRef,
         realm: ContextId,
     ) -> Result<ObjectRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !prototype.belongs_to(self) || !callback.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime(
                 "FinalizationRegistry constructor input",

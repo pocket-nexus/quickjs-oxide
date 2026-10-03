@@ -96,14 +96,14 @@ impl Context {
     pub fn has_exception(&self) -> Result<bool, RuntimeError> {
         self.runtime.check_poison()?;
         let _unwind = self.runtime.unwind_guard();
-        Ok(self.runtime.has_pending_exception())
+        self.runtime.has_pending_exception()
     }
 
     /// Move the pending JavaScript exception value out of the runtime slot.
     pub fn take_exception(&mut self) -> Result<Option<Value>, RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         self.runtime.take_pending_exception()
     }
 
@@ -120,7 +120,7 @@ impl Context {
     ) -> Result<Value, RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         let error = self
             .runtime
             .new_native_error_jsvalue(self.realm, kind, message)?;

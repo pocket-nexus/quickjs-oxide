@@ -24,7 +24,7 @@ impl Runtime {
     /// Allocate an ordinary object whose prototype is `prototype` or null.
     pub fn new_object(&self, prototype: Option<&ObjectRef>) -> Result<ObjectRef, RuntimeError> {
         self.check_poison()?;
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         self.new_empty_object_with(prototype, ObjectData::ordinary)
     }
 
@@ -40,7 +40,7 @@ impl Runtime {
         prototype: Option<&ObjectRef>,
         build: fn(ShapeId, Vec<PropertySlot>) -> ObjectData,
     ) -> Result<ObjectRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if prototype.is_some_and(|prototype| !prototype.belongs_to(self)) {
             return Err(RuntimeError::WrongRuntime("prototype"));
         }
@@ -69,7 +69,7 @@ impl Runtime {
         &self,
         prototype: &ObjectRef,
     ) -> Result<ObjectRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !prototype.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("Array prototype"));
         }
@@ -217,7 +217,7 @@ impl Runtime {
         realm: ContextId,
         string: JsString,
     ) -> Result<ObjectRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         let prototype_id = self
             .0
             .state
@@ -320,7 +320,7 @@ impl Runtime {
         length_configurable: bool,
     ) -> Result<ObjectRef, RuntimeError> {
         let result = (|| {
-            let _operation = self.operation();
+            let _operation = self.operation()?;
             if !prototype.belongs_to(self) {
                 return Err(RuntimeError::WrongRuntime("primitive prototype"));
             }
@@ -413,7 +413,7 @@ impl Runtime {
         value: Value,
         string_length_configurable: bool,
     ) -> Result<ObjectRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !prototype.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("primitive prototype"));
         }
@@ -505,7 +505,7 @@ impl Runtime {
         prototype: &ObjectRef,
         uninitialized_vars: &ObjectRef,
     ) -> Result<ObjectRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !prototype.belongs_to(self) || !uninitialized_vars.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("global object edge"));
         }
@@ -535,7 +535,7 @@ impl Runtime {
         target: NativeFunctionId,
         min_readable_args: u8,
     ) -> Result<ObjectRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !prototype.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("prototype"));
         }
@@ -573,7 +573,7 @@ impl Runtime {
         target: NativeFunctionId,
         min_readable_args: u8,
     ) -> Result<CallableRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !prototype.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("prototype"));
         }
@@ -611,7 +611,7 @@ impl Runtime {
         this_value: &JsValue,
         arguments: &[JsValue],
     ) -> Result<CallableRef, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !target.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("bound function target"));
         }
@@ -725,7 +725,7 @@ impl Runtime {
     /// Prototype spoofing alone never makes an ordinary object an Array.
     pub fn is_array_object(&self, object: &ObjectRef) -> Result<bool, RuntimeError> {
         self.check_poison()?;
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("object"));
         }
@@ -744,7 +744,7 @@ impl Runtime {
     /// constructability are intentionally independent, as in QuickJS.
     pub fn is_constructor(&self, object: &ObjectRef) -> Result<bool, RuntimeError> {
         self.check_poison()?;
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("object"));
         }
@@ -764,7 +764,7 @@ impl Runtime {
         object: &ObjectRef,
         enabled: bool,
     ) -> Result<(), RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("object"));
         }
@@ -781,7 +781,7 @@ impl Runtime {
     /// handle failures remain explicit errors.
     pub fn as_callable(&self, object: &ObjectRef) -> Result<Option<CallableRef>, RuntimeError> {
         self.check_poison()?;
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         // A public root may belong to another runtime whose arena assigned a
         // numerically equal handle; promoting it here would manufacture a
         // callable for an unrelated local object. Reject foreign roots before
@@ -797,7 +797,7 @@ impl Runtime {
         &self,
         object: crate::engine::heap::ObjectId,
     ) -> Result<Option<CallableRef>, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         self.as_callable_object_after_operation(object)
     }
 
@@ -835,7 +835,7 @@ impl Runtime {
         &self,
         object: ObjectRef,
     ) -> Result<Result<CallableRef, ObjectRef>, RuntimeError> {
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         if self.object_has_call_capability(&object)? {
             Ok(Ok(CallableRef::from_validated_object(object)))
         } else {

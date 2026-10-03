@@ -12,7 +12,7 @@ impl Context {
     pub fn new_code_point_range_function(&mut self) -> Result<CallableRef, RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         let function_prototype = self.function_prototype()?;
         self.runtime.new_native_builtin(
             &function_prototype,
@@ -32,7 +32,7 @@ impl Context {
     pub fn new_test262_gc_function(&mut self) -> Result<CallableRef, RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         let function_prototype = self.function_prototype()?;
         self.runtime.new_native_builtin(
             &function_prototype,

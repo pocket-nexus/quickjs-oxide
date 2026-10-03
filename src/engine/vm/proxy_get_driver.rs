@@ -670,7 +670,7 @@ pub(super) fn start_native_with_classification(
         let realm = execution.frames.current_mut(frame)?.executable.realm;
         let result = (|| {
             {
-                let _operation = runtime.operation();
+                let _operation = runtime.operation()?;
             }
             let completion = if !execution.frames.can_push_with_continuations(0)
                 || runtime.host_stack_would_overflow()
@@ -746,7 +746,7 @@ pub(super) fn start_waitable_native_call(
     let owner = ReturnOwner::Frame(frame);
     let result = (|| {
         {
-            let _operation = runtime.operation();
+            let _operation = runtime.operation()?;
         }
         if !execution.frames.can_push_with_continuations(0) || runtime.host_stack_would_overflow() {
             release_call_operands(runtime, receiver, arguments);

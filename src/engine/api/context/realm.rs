@@ -7,7 +7,7 @@ impl Context {
     pub fn object_prototype(&self) -> Result<ObjectRef, RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         let object = self
             .runtime
             .0
@@ -26,7 +26,7 @@ impl Context {
     pub fn array_prototype(&self) -> Result<ObjectRef, RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         let object = self
             .runtime
             .0
@@ -45,7 +45,7 @@ impl Context {
     pub fn function_prototype(&self) -> Result<ObjectRef, RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         let object = self
             .runtime
             .0
@@ -65,7 +65,7 @@ impl Context {
     pub fn iterator_prototype(&self) -> Result<ObjectRef, RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         let object = self
             .runtime
             .0
@@ -84,7 +84,7 @@ impl Context {
     pub fn string_iterator_prototype(&self) -> Result<ObjectRef, RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         let object = self
             .runtime
             .0
@@ -103,7 +103,7 @@ impl Context {
     pub fn number_prototype(&self) -> Result<ObjectRef, RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         self.runtime
             .primitive_prototype_for_realm(self.realm, PrimitiveKind::Number)
     }
@@ -112,7 +112,7 @@ impl Context {
     pub fn boolean_prototype(&self) -> Result<ObjectRef, RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         self.runtime
             .primitive_prototype_for_realm(self.realm, PrimitiveKind::Boolean)
     }
@@ -121,7 +121,7 @@ impl Context {
     pub fn string_prototype(&self) -> Result<ObjectRef, RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         self.runtime
             .primitive_prototype_for_realm(self.realm, PrimitiveKind::String)
     }
@@ -130,7 +130,7 @@ impl Context {
     pub fn symbol_prototype(&self) -> Result<ObjectRef, RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         self.runtime
             .primitive_prototype_for_realm(self.realm, PrimitiveKind::Symbol)
     }
@@ -139,7 +139,7 @@ impl Context {
     pub fn bigint_prototype(&self) -> Result<ObjectRef, RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         self.runtime
             .primitive_prototype_for_realm(self.realm, PrimitiveKind::BigInt)
     }
@@ -148,7 +148,7 @@ impl Context {
     pub fn function_constructor(&self) -> Result<CallableRef, RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         let object = self
             .runtime
             .0
@@ -167,7 +167,7 @@ impl Context {
     pub fn global_object(&self) -> Result<ObjectRef, RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         let object = self
             .runtime
             .0
@@ -186,7 +186,7 @@ impl Context {
     pub fn global_var_object(&self) -> Result<ObjectRef, RuntimeError> {
         self.runtime.check_poison()?;
         let entry_runtime = self.runtime.clone();
-        let _operation = entry_runtime.operation();
+        let _operation = entry_runtime.operation()?;
         let object = self
             .runtime
             .0

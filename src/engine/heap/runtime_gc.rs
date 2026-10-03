@@ -21,13 +21,14 @@ impl Runtime {
 
     fn run_gc_admitted(&self) -> Result<GcStats, RuntimeError> {
         self.check_poison()?;
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         let mut state = self.0.state.borrow_mut();
         let stats = state.collect_cycles()?;
         drop(state);
         // The operation guard drains deferred root releases. Trim only after
         // that drain, so a release queued during collection cannot be lost.
         drop(_operation);
+        self.check_poison()?;
         let mut state = self.0.state.borrow_mut();
         if !self.0.deferred_references.has_pending() {
             state.heap.trim_empty_zero_queue_after_gc();

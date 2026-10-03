@@ -19,7 +19,7 @@ impl Runtime {
     /// partially initialized realm through its existing owners.
     pub fn new_context(&self) -> Result<Context, RuntimeError> {
         self.check_poison()?;
-        let _operation = self.operation();
+        let _operation = self.operation()?;
         let id = self.0.next_context_id.get();
         self.0
             .next_context_id

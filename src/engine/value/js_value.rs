@@ -572,7 +572,7 @@ mod tests {
         runtime.release_jsvalue(dup).unwrap();
         runtime.release_jsvalue(internal).unwrap();
         drop(root);
-        let _operation = runtime.operation();
+        let _operation = runtime.operation().unwrap();
         // The last owned edge is gone: the node was finalized and its slot
         // reclaimed, so the identity now reads as stale.
         assert!(
@@ -612,7 +612,7 @@ mod tests {
         );
 
         runtime.release_jsvalue(internal).unwrap();
-        let _operation = runtime.operation();
+        let _operation = runtime.operation().unwrap();
         // The transferred edge was the only one; the node is reclaimed.
         assert!(
             runtime
@@ -665,7 +665,7 @@ mod tests {
         assert!(reread.same_representation(string));
 
         runtime.release_jsvalue(internal).unwrap();
-        let _operation = runtime.operation();
+        let _operation = runtime.operation().unwrap();
         assert!(runtime.0.state.borrow().heap.string(id).is_err());
     }
 
@@ -689,7 +689,7 @@ mod tests {
         let rooted = runtime.root_value(&internal).unwrap();
         assert_eq!(&rooted, &value);
         runtime.release_jsvalue(internal).unwrap();
-        let _operation = runtime.operation();
+        let _operation = runtime.operation().unwrap();
         assert!(runtime.0.state.borrow().heap.bigint(id).is_err());
     }
 
@@ -734,7 +734,7 @@ mod tests {
 
         runtime.release_jsvalue(dup).unwrap();
         runtime.release_jsvalue(internal).unwrap();
-        let _operation = runtime.operation();
+        let _operation = runtime.operation().unwrap();
         let retained = runtime
             .0
             .state
@@ -788,7 +788,7 @@ mod tests {
         };
         assert!(runtime.0.state.borrow().heap.string(id).is_ok());
         runtime.release_jsvalue(internal).unwrap();
-        let _operation = runtime.operation();
+        let _operation = runtime.operation().unwrap();
         assert!(runtime.0.state.borrow().heap.string(id).is_err());
     }
 
@@ -803,7 +803,7 @@ mod tests {
             runtime.release_jsvalue(internal).unwrap();
             assert!(runtime.0.deferred_references.has_pending());
         }
-        let _operation = runtime.operation();
+        let _operation = runtime.operation().unwrap();
         assert!(!runtime.0.deferred_references.has_pending());
     }
 
