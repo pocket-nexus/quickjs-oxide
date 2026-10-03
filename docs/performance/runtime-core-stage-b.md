@@ -21,6 +21,8 @@
 
 | `d637f6f8` | 所有 own-property 表示共享状态选择器：data/accessor/VarRef、String、dense 和 TypedArray；内部直接取得 raw-owned descriptor，共享 backing 只在真实 mutex 边界离开状态。 |
 
+| `074f3898` | 字节码闭包创建、捕获发布和 function 字段初始化共享状态算法；`FClosure` 使用当前帧窗口和已解码下一条 PC，发布结果后服务分配压力，再继续解释循环。移除旧外层 driver 创建路径与失去消费者的 Runtime helper。 |
+
 这些改动沿用原有分配、描述符、帧发布和元素追加算法。状态访问权同时提供清理能力；内部结果直接交给持有 owner 的帧或调用存储。
 
 ## 已完成的验证
@@ -37,6 +39,7 @@
 - 原生帧登记：Call/CallMethod 在 token 耗尽时释放独占 owner、保留有效别名与 lower slots，故障 PC 和活动帧恢复正确；25 条验证命令通过。
 - AutoInit：10 个新见证；普通配置与 profiling 配置各通过 91 个选定用例，包含 FunctionPrototype 的 checked retain/饱和边界、realm 释放、终结失败和发布隔离。
 - Own-property：22 个新见证；普通配置通过 817 个选定顶层用例，profiling 配置通过 827 个，各自的 25 个成功子进程结果另列。覆盖 accessor 别名、checked overflow、TDZ、AutoInit、String/dense/typed/shared backing，以及清理失败先隔离。
+- 闭包：10 个新见证；29 条验证命令通过，包含普通/诊断配置相关测试、严格 workspace/all-targets Clippy 和 host feature 检查。真实调用确认没有 Runtime clone/deferred release；覆盖 capture 元数据、输出拒绝、checked retain、generator prototype 和发布失败隔离。
 - 统一布局入口：公共对象/Array 和真实 Base 构造发布失败见证确认隔离发生在边界与执行存储清理前。
 
 原始命令、受测文件摘要、失败尝试和验收回执保存在 `/home/eric/.cache/oxide-runtime-core-20261003`。采用的文件与通过验证的文件逐项核对；过滤器重叠和子进程结果不合并为独立总数。
