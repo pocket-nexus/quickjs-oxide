@@ -344,13 +344,13 @@ impl EnvironmentResume {
                             JsValue::Undefined,
                         )));
                     }
-                    Ok(EnvironmentStep::set(
+                    EnvironmentStep::set(
                         realm,
                         object,
                         key,
                         value.take().expect("environment RHS"),
                         strict,
-                    )?)
+                    )
                 })();
                 if let Some(value) = value {
                     let _ = runtime.release_jsvalue(value);

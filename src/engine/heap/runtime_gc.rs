@@ -88,7 +88,6 @@ impl Runtime {
     }
 
     /// Runtime heap population for diagnostics and lifecycle tests.
-    #[must_use]
     pub fn heap_counts(&self) -> Result<HeapCounts, RuntimeError> {
         self.check_poison()?;
         let _unwind = self.unwind_guard();

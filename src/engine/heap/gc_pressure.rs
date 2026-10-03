@@ -191,7 +191,6 @@ impl Heap {
 }
 
 impl Runtime {
-    #[must_use]
     pub fn gc_policy(&self) -> Result<GcPolicy, crate::engine::api::RuntimeError> {
         self.check_poison()?;
         Ok(self.0.gc_pressure.policy.get())

@@ -1060,7 +1060,6 @@ pub(crate) enum CallableExecution {
 /// QuickJS keeps `[[Call]]` and `[[Construct]]` independent: in particular a
 /// Proxy may carry only the latter and still dispatch its `construct` trap.
 /// Keep that capability private instead of weakening public `CallableRef`.
-
 pub(crate) struct ConstructorRef(ObjectRef);
 
 impl ConstructorRef {

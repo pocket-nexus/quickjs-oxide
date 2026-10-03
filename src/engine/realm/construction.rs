@@ -17,7 +17,6 @@ impl Runtime {
     /// Rejects a poisoned runtime, exhausted context identities or any checked
     /// heap/atom failure during initialization. Ordinary failures release the
     /// partially initialized realm through its existing owners.
-    #[must_use]
     pub fn new_context(&self) -> Result<Context, RuntimeError> {
         self.check_poison()?;
         let _operation = self.operation();

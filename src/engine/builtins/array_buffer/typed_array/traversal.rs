@@ -267,18 +267,16 @@ impl TypedTraversalResume {
             .is_ok()
     }
     fn fill_arguments(&mut self, index: u64) -> Result<(), crate::engine::api::RuntimeError> {
-        Ok({
-            let arguments = self.0.pending_effect.call_arguments.as_mut().unwrap();
-            arguments.push(
-                crate::engine::value::number::operations::Number::compact(index as f64).into(),
-            );
-            arguments.push(JsValue::Object(
-                self.0.state.target.try_clone()?.into_handle(),
-            ));
-            self.0.pending_effect.call_target = Some(DirectCallTarget::Callable(
-                self.0.state.callback.try_clone()?,
-            ));
-        })
+        let arguments = self.0.pending_effect.call_arguments.as_mut().unwrap();
+        arguments
+            .push(crate::engine::value::number::operations::Number::compact(index as f64).into());
+        arguments.push(JsValue::Object(
+            self.0.state.target.try_clone()?.into_handle(),
+        ));
+        self.0.pending_effect.call_target = Some(DirectCallTarget::Callable(
+            self.0.state.callback.try_clone()?,
+        ));
+        Ok(())
     }
     pub(crate) fn resume(
         mut self,

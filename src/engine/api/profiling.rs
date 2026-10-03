@@ -70,7 +70,6 @@ pub struct MemorySnapshot {
 impl Runtime {
     /// Observe the current state without draining deferred releases, running
     /// jobs or invoking GC. The caller determines and labels the snapshot phase.
-    #[must_use]
     pub fn memory_snapshot(&self) -> Result<MemorySnapshot, crate::engine::api::RuntimeError> {
         self.check_poison()?;
         let _unwind = self.unwind_guard();

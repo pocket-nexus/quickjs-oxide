@@ -76,7 +76,6 @@ impl Value {
     /// # Errors
     /// Object metadata access rejects poisoned state or a checked heap error.
     /// Primitive representations are evaluated without accessing runtime state.
-    #[must_use]
     pub fn to_boolean(&self) -> Result<bool, crate::engine::api::RuntimeError> {
         let Self::Object(object) = self else {
             return Ok(self.to_boolean_primitive());

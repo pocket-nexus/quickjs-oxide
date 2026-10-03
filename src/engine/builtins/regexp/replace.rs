@@ -839,7 +839,7 @@ impl RegExpReplaceResume {
                 Ok(key) => key,
                 Err(error) => {
                     runtime.release_jsvalue(value)?;
-                    return Err(error.into());
+                    return Err(error);
                 }
             };
         self.0.phase = if initial {

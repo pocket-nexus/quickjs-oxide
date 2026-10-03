@@ -571,9 +571,7 @@ fn evaluate_module(
         let url = canonical_file_url(main_module_path).map_err(EvaluationError::Host)?;
         let import_meta = context.get_module_import_meta(&module)?;
         for property in module_import_meta_properties(&url, true).map_err(RuntimeError::from)? {
-            let key = runtime
-                .intern_property_key_js_string(property.key())
-                .map_err(RuntimeError::from)?;
+            let key = runtime.intern_property_key_js_string(property.key())?;
             let defined = context.define_own_property(
                 &import_meta,
                 &key,

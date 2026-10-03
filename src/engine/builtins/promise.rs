@@ -36,7 +36,6 @@ pub(crate) mod operation;
 /// published. `handled == true` reports that a handler was attached later.
 /// The Promise and reason are rooted for the duration of the callback and may
 /// be duplicated with `try_clone` or moved into host storage when it needs to retain them.
-
 pub struct PromiseRejectionEvent {
     pub(crate) context: ContextId,
     pub(crate) promise: ObjectRef,

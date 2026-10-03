@@ -93,7 +93,6 @@ impl Context {
 
     /// Return whether this runtime currently carries a pending JavaScript
     /// exception completion.
-    #[must_use]
     pub fn has_exception(&self) -> Result<bool, RuntimeError> {
         self.runtime.check_poison()?;
         let _unwind = self.runtime.unwind_guard();

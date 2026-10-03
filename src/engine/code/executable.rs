@@ -13,8 +13,8 @@ use crate::engine::heap::{BytecodeConstant, ContextId, FunctionBytecodeData, Fun
 use std::rc::Rc;
 
 /// A rooted, immutable eval descriptor selected from its publisher's array.
-/// Cloning this view shares the array; it never copies scopes or bindings.
-
+/// Duplicating this view retains its bytecode root and shares the array; it
+/// never copies scopes or bindings.
 pub(crate) struct PublishedEvalEnvironment {
     owner: FunctionBytecodeRef,
     environments: Rc<[EvalEnvironment<Atom>]>,

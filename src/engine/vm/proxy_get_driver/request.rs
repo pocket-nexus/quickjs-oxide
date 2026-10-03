@@ -1435,96 +1435,92 @@ impl Resume {
 
             Self::RegExpMatchAll(resume) => resume
                 .set(runtime, set_result(action)?)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+                .and_then(Step::try_from),
             Self::RegExpSplit(resume) => resume
                 .set(runtime, set_result(action)?)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+                .and_then(Step::try_from),
             Self::Environment(resume) => resume
                 .set(runtime, set_result(action)?)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+                .and_then(Step::try_from),
             Self::RegExpIteratorSet { mut resume } => {
                 let key = resume.take_scheduler_set_key();
                 resume
                     .set(runtime, key, set_result(action)?)
-                    .and_then(|value| Ok(Step::try_from(value)?))
+                    .and_then(Step::try_from)
             }
 
             Self::RegExpSearch(resume) => resume
                 .set(runtime, set_result(action)?)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+                .and_then(Step::try_from),
             Self::RegExpMatch(resume) => resume
                 .set(runtime, set_result(action)?)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+                .and_then(Step::try_from),
 
             Self::ArrayConstructorSet { mut resume } => {
                 let key = resume.take_scheduler_set_key();
                 resume
                     .set(runtime, key, set_result(action)?)
-                    .and_then(|value| Ok(Step::try_from(value)?))
+                    .and_then(Step::try_from)
             }
             Self::ArraySliceSet { mut resume } => {
                 let key = resume.take_scheduler_set_key();
                 resume
                     .set(runtime, key, set_result(action)?)
-                    .and_then(|value| Ok(Step::try_from(value)?))
+                    .and_then(Step::try_from)
             }
             Self::IteratorTag(resume) => resume
                 .set(runtime, set_result(action)?)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+                .and_then(Step::try_from),
             Self::ArrayCopySet { mut resume } => {
                 let key = resume.take_scheduler_set_key();
                 resume
                     .set(runtime, key, set_result(action)?)
-                    .and_then(|value| Ok(Step::try_from(value)?))
+                    .and_then(Step::try_from)
             }
             Self::ArrayConcatSet { mut resume } => {
                 let key = resume.take_scheduler_set_key();
                 resume
                     .set(runtime, key, set_result(action)?)
-                    .and_then(|value| Ok(Step::try_from(value)?))
+                    .and_then(Step::try_from)
             }
             Self::ArrayBuildSet { mut resume } => {
                 let key = resume.take_scheduler_set_key();
                 resume
                     .set(runtime, key, set_result(action)?)
-                    .and_then(|value| Ok(Step::try_from(value)?))
+                    .and_then(Step::try_from)
             }
             Self::RegExpReplace(resume) => resume
                 .set(runtime, set_result(action)?)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+                .and_then(Step::try_from),
             Self::ArraySortSet { mut resume } => {
                 let key = resume.take_scheduler_set_key();
                 resume
                     .set(runtime, key, set_result(action)?)
-                    .and_then(|value| Ok(Step::try_from(value)?))
+                    .and_then(Step::try_from)
             }
             Self::ArrayIndexedSet { mut resume } => {
                 let key = resume.take_scheduler_set_key();
                 resume
                     .set(runtime, key, set_result(action)?)
-                    .and_then(|value| Ok(Step::try_from(value)?))
+                    .and_then(Step::try_from)
             }
             Self::ArrayReverseSet { mut resume } => {
                 let key = resume.take_scheduler_set_key();
                 resume
                     .set(runtime, key, set_result(action)?)
-                    .and_then(|value| Ok(Step::try_from(value)?))
+                    .and_then(Step::try_from)
             }
             Self::ArrayMutationSet { mut resume } => {
                 let key = resume.take_scheduler_set_key();
                 resume
                     .set(runtime, key, set_result(action)?)
-                    .and_then(|value| Ok(Step::try_from(value)?))
+                    .and_then(Step::try_from)
             }
             Self::Property(resume) => resume
                 .set(runtime, set_result(action)?)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::OrdinarySet(resume) => resume
-                .forward(action)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ProxySet(resume) => resume
-                .set(set_result(action)?)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+                .and_then(Step::try_from),
+            Self::OrdinarySet(resume) => resume.forward(action).and_then(Step::try_from),
+            Self::ProxySet(resume) => resume.set(set_result(action)?).and_then(Step::try_from),
             resume => {
                 resume.release_owned();
                 SetStep::Complete(action).release(runtime);
@@ -1548,9 +1544,7 @@ impl Resume {
                 ))),
             }))),
 
-            Self::LiteralDefinition(resume) => resume
-                .defined(result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::LiteralDefinition(resume) => resume.defined(result).and_then(Step::try_from),
             Self::PublicField => match Runtime::finish_public_class_field_definition(result)? {
                 crate::engine::object::operations::PropertyDefineOutcome::Defined(true) => {
                     Ok(Step::Complete(Some(Completion::Return(JsValue::Undefined))))
@@ -1575,44 +1569,22 @@ impl Resume {
                         NativeConversion::Throw(value) => NativeConversion::Throw(value),
                     },
                 )
-                .and_then(|value| Ok(Step::try_from(value)?)),
+                .and_then(Step::try_from),
 
-            Self::ArraySlice(resume) => resume
-                .defined(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::IteratorTag(resume) => resume
-                .defined(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArrayConcat(resume) => resume
-                .defined(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArrayFlatten(resume) => resume
-                .defined(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArrayBuild(resume) => resume
-                .defined(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArrayCallback(resume) => resume
-                .defined(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ObjectIteration(resume) => resume
-                .defined(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Predicate(resume) => resume
-                .defined(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Definitions(resume) => resume
-                .defined(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Property(resume) => resume
-                .defined(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::OrdinarySet(resume) => resume
-                .defined(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Define(resume) => resume
-                .defined(result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::ArraySlice(resume) => resume.defined(runtime, result).and_then(Step::try_from),
+            Self::IteratorTag(resume) => resume.defined(runtime, result).and_then(Step::try_from),
+            Self::ArrayConcat(resume) => resume.defined(runtime, result).and_then(Step::try_from),
+            Self::ArrayFlatten(resume) => resume.defined(runtime, result).and_then(Step::try_from),
+            Self::ArrayBuild(resume) => resume.defined(runtime, result).and_then(Step::try_from),
+            Self::ArrayCallback(resume) => resume.defined(runtime, result).and_then(Step::try_from),
+            Self::ObjectIteration(resume) => {
+                resume.defined(runtime, result).and_then(Step::try_from)
+            }
+            Self::Predicate(resume) => resume.defined(runtime, result).and_then(Step::try_from),
+            Self::Definitions(resume) => resume.defined(runtime, result).and_then(Step::try_from),
+            Self::Property(resume) => resume.defined(runtime, result).and_then(Step::try_from),
+            Self::OrdinarySet(resume) => resume.defined(runtime, result).and_then(Step::try_from),
+            Self::Define(resume) => resume.defined(result).and_then(Step::try_from),
             resume => {
                 resume.release_owned();
                 if let NativeConversion::Throw(value) = result {
@@ -1631,93 +1603,41 @@ impl Resume {
         result: NativeConversion<bool>,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
-            Self::Import(resume) => resume
-                .boolean(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ForIn(resume) => resume
-                .boolean(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Environment(resume) => resume
-                .boolean(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::Import(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
+            Self::ForIn(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
+            Self::Environment(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
 
-            Self::Bind(resume) => resume
-                .boolean(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::JsonParse(resume) => resume
-                .boolean(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::JsonStringify(resume) => resume
-                .boolean(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::Bind(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
+            Self::JsonParse(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
+            Self::JsonStringify(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
 
-            Self::Error(resume) => resume
-                .boolean(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::Error(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
 
-            Self::ArraySlice(resume) => resume
-                .boolean(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::IteratorTag(resume) => resume
-                .boolean(result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArrayCopy(resume) => resume
-                .boolean(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArrayConcat(resume) => resume
-                .boolean(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArrayFlatten(resume) => resume
-                .boolean(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ObjectCopy(resume) => resume
-                .boolean(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArraySort(resume) => resume
-                .boolean(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArrayIndexed(resume) => resume
-                .boolean(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArrayReverse(resume) => resume
-                .boolean(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArrayMutation(resume) => resume
-                .boolean(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArrayCallback(resume) => resume
-                .boolean(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::ArraySlice(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
+            Self::IteratorTag(resume) => resume.boolean(result).and_then(Step::try_from),
+            Self::ArrayCopy(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
+            Self::ArrayConcat(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
+            Self::ArrayFlatten(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
+            Self::ObjectCopy(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
+            Self::ArraySort(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
+            Self::ArrayIndexed(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
+            Self::ArrayReverse(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
+            Self::ArrayMutation(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
+            Self::ArrayCallback(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
             Self::BooleanResult { payload } => runtime
                 .finish_property_delete(result, payload.strict_delete)
                 .map(|result| Step::Complete(Some(result))),
-            Self::Definitions(resume) => resume
-                .boolean(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Predicate(resume) => resume
-                .boolean(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Keys(resume) => resume
-                .boolean(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Property(resume) => resume
-                .boolean(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::BuiltinPrototype(resume) => resume
-                .boolean(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Prototype(resume) => resume
-                .boolean(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Own(resume) => resume
-                .extensible(result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Boolean(resume) => resume
-                .boolean(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Conversion(resume) => resume
-                .has(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::Definitions(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
+            Self::Predicate(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
+            Self::Keys(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
+            Self::Property(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
+            Self::BuiltinPrototype(resume) => {
+                resume.boolean(runtime, result).and_then(Step::try_from)
+            }
+            Self::Prototype(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
+            Self::Own(resume) => resume.extensible(result).and_then(Step::try_from),
+            Self::Boolean(resume) => resume.boolean(runtime, result).and_then(Step::try_from),
+            Self::Conversion(resume) => resume.has(runtime, result).and_then(Step::try_from),
             resume => {
                 resume.release_owned();
                 if let NativeConversion::Throw(value) = result {
@@ -1736,18 +1656,12 @@ impl Resume {
         outcome: crate::engine::vm::suspend::VmRunOutcome,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
-            Self::AsyncGenerator(resume) => resume
-                .body(outcome)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Async(resume) => resume
-                .body(outcome)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::GeneratorCreate(creation) => creation
-                .initial(runtime, outcome)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Generator(resume) => resume
-                .resume(outcome)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::AsyncGenerator(resume) => resume.body(outcome).map(Step::from),
+            Self::Async(resume) => resume.body(outcome).map(Step::from),
+            Self::GeneratorCreate(creation) => {
+                creation.initial(runtime, outcome).and_then(Step::try_from)
+            }
+            Self::Generator(resume) => resume.resume(outcome).and_then(Step::try_from),
             resume => {
                 resume.release_owned();
                 match outcome {
@@ -1780,173 +1694,141 @@ impl Resume {
                     "typed root received an untyped reply",
                 ))
             }
-            Self::ModuleCallback(resume) => resume
-                .resume(completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ModuleEvaluation(resume) => resume
-                .resume(completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ModuleBody(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::ModuleCallback(resume) => resume.resume(completion).and_then(Step::try_from),
+            Self::ModuleEvaluation(resume) => resume.resume(completion).and_then(Step::try_from),
+            Self::ModuleBody(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
             Self::ModuleLink(resume) => {
                 crate::engine::modules::link::resume_reply(runtime, resume.resume(completion))
-                    .and_then(|value| Ok(Step::try_from(value)?))
+                    .and_then(Step::try_from)
             }
-            Self::Import(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::Import(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
             #[cfg(feature = "test262-host")]
-            Self::Test262Agent(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::Test262Agent(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
             #[cfg(feature = "test262-host")]
-            Self::EvalScript(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::FromSync(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::AsyncGenerator(resume) => resume
-                .resume(completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Async(resume) => resume
-                .resume(completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Promise(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::EvalScript(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
+            Self::FromSync(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
+            Self::AsyncGenerator(resume) => resume.resume(completion).map(Step::from),
+            Self::Async(resume) => resume.resume(completion).map(Step::from),
+            Self::Promise(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
             Self::GeneratorCreate(creation) => creation
                 .initial(
                     runtime,
                     crate::engine::vm::suspend::VmRunOutcome::Complete(completion),
                 )
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::GeneratorPrototype(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+                .and_then(Step::try_from),
+            Self::GeneratorPrototype(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
             Self::Generator(resume) => resume
                 .resume(crate::engine::vm::suspend::VmRunOutcome::Complete(
                     completion,
                 ))
-                .and_then(|value| Ok(Step::try_from(value)?)),
+                .and_then(Step::try_from),
             Self::ForIn(_) => Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
                 "for-in requires typed reply",
             )),
-            Self::Atomics(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::LiteralDefinition(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::Atomics(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
+            Self::LiteralDefinition(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
             Self::PublicField => Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
                 "public field requires definition reply",
             )),
 
-            Self::TypedCreate(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::TypedCollect(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::TypedIteratorMethod(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::TypedCreate(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::TypedCollect(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::TypedIteratorMethod(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
 
-            Self::BufferSlice(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::TypedWith(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Uint8Codec(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::BufferSlice(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::TypedWith(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
+            Self::Uint8Codec(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
             Self::VmNumeric(resume) => resume
                 .resume(runtime, completion)
                 .and_then(|value| Ok(Step::try_from(value)?))
                 .map_err(crate::engine::api::runtime_error::RuntimeError::Engine),
-            Self::TypedSearch(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::TypedString(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::TypedSlice(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::TypedMutation(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::StringFactory(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::TypedSearch(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::TypedString(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::TypedSlice(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
+            Self::TypedMutation(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::StringFactory(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
 
             Self::WeakConstructor(_) => {
                 Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
                     "weak constructor requires prototype reply",
                 ))
             }
-            Self::RegExpMatchAll(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::RegExpSplit(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::RegExpIterator(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::RegExpSpecies(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Environment(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::RegExpMatchAll(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::RegExpSplit(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::RegExpIterator(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::RegExpSpecies(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::Environment(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
             Self::RegExpIteratorSet { .. } => {
                 Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
                     "RegExp iterator requires Set reply",
                 ))
             }
 
-            Self::Bind(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::FunctionText(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::DynamicFunction(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::JsonParse(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::JsonStringify(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::BufferConstructor(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::DataViewConstructor(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::TypedSet(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::RegExpConstructor(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::RegExpSearch(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::RegExpMatch(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::RegExpCompile(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::StringProtocol(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::Bind(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
+            Self::FunctionText(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::DynamicFunction(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::JsonParse(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
+            Self::JsonStringify(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::BufferConstructor(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::DataViewConstructor(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::TypedSet(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
+            Self::RegExpConstructor(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::RegExpSearch(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::RegExpMatch(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::RegExpCompile(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::StringProtocol(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
             Self::ObjectConstructor(_) | Self::JsonRaw(_) => {
                 Err(crate::engine::api::runtime_error::RuntimeError::Invariant(
                     "native requires typed reply",
@@ -1958,140 +1840,112 @@ impl Resume {
                     "scalar conversion requires typed reply",
                 ))
             }
-            Self::TypedSort(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Sum(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::PrimitiveConstructor(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::DateConstructor(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::DatePrototype(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Error(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Aggregate(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::TypedSort(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
+            Self::Sum(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
+            Self::PrimitiveConstructor(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::DateConstructor(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::DatePrototype(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::Error(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
+            Self::Aggregate(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
             Self::PrimitiveConstructorValue(resume) => resume
                 .primitive(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+                .and_then(Step::try_from),
             Self::NumericPrimitive(resume) => resume
                 .primitive(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+                .and_then(Step::try_from),
             Self::DateConstructorPrimitive(resume) => resume
                 .primitive(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+                .and_then(Step::try_from),
 
-            Self::MapCallback(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::SetEach(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::SetOperation(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Collection(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::WeakComputed(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::MapCallback(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::SetEach(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
+            Self::SetOperation(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::Collection(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
+            Self::WeakComputed(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
             Self::IteratorInvalidCount(resume) => resume
                 .invalid_count(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+                .and_then(Step::try_from),
 
-            Self::ArrayConstructor(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArraySlice(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::TypedTraversal(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::TypedSpecies(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::TypedIteration(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ConstructorSource(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArrayCopy(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArrayConcat(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArrayFlatten(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ObjectCopy(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::StringText(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::StringSearch(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::StringSplit(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Instance(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::IteratorFrom(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::IteratorWrap(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::IteratorConcat(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArrayBuild(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArraySort(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArrayIndexed(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArrayReverse(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArrayString(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::RegExpExec(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::RegExpPresentation(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::RegExpReplace(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::IteratorConsume(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::IteratorHelper(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::IteratorCreate(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::ArrayConstructor(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::ArraySlice(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
+            Self::TypedTraversal(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::TypedSpecies(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::TypedIteration(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::ConstructorSource(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::ArrayCopy(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
+            Self::ArrayConcat(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::ArrayFlatten(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::ObjectCopy(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
+            Self::StringText(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
+            Self::StringSearch(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::StringSplit(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::Instance(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
+            Self::IteratorFrom(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::IteratorWrap(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::IteratorConcat(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::ArrayBuild(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
+            Self::ArraySort(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
+            Self::ArrayIndexed(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::ArrayReverse(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::ArrayString(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::RegExpExec(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
+            Self::RegExpPresentation(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::RegExpReplace(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::IteratorConsume(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::IteratorHelper(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::IteratorCreate(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
             Self::StringValue { realm, resume } => {
                 let result = match completion {
                     Completion::Return(value) => {
@@ -2103,71 +1957,53 @@ impl Resume {
                 };
                 resume.string(runtime, result)
             }
-            Self::ArrayNext(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArrayMutation(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArrayCallback(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArraySpecies(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::StringReplace(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::DataView(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::BufferMutation(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ObjectIteration(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::IteratorNext(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::IteratorClose(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ObjectIterationKey(resume) => resume
-                .key(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Arguments(resume) => resume
-                .read(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ProxyConstruct(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::ArrayNext(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
+            Self::ArrayMutation(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::ArrayCallback(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::ArraySpecies(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::StringReplace(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::DataView(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
+            Self::BufferMutation(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::ObjectIteration(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::IteratorNext(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::IteratorClose(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::ObjectIterationKey(resume) => {
+                resume.key(runtime, completion).and_then(Step::try_from)
+            }
+            Self::Arguments(resume) => resume.read(runtime, completion).and_then(Step::try_from),
+            Self::ProxyConstruct(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
             Self::ConstructorPrototype { request, resume } => {
                 super::construct::prototype(runtime, request, completion, *resume)
                     .map_err(crate::engine::api::runtime_error::RuntimeError::Engine)
             }
             Self::Identity => Ok(Step::Complete(Some(completion))),
-            Self::ObjectString(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Definitions(resume) => resume
-                .read(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::PredicateKey(resume) => resume
-                .key(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Keys(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::PropertyKey(resume) => resume
-                .key(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Property(resume) => resume
-                .read(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Primitive(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::ObjectString(resume) => {
+                resume.resume(runtime, completion).and_then(Step::try_from)
+            }
+            Self::Definitions(resume) => resume.read(runtime, completion).and_then(Step::try_from),
+            Self::PredicateKey(resume) => resume.key(runtime, completion).and_then(Step::try_from),
+            Self::Keys(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
+            Self::PropertyKey(resume) => resume.key(runtime, completion).and_then(Step::try_from),
+            Self::Property(resume) => resume.read(runtime, completion).and_then(Step::try_from),
+            Self::Primitive(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
             Self::BuiltinPrototype(_) => {
                 let (Completion::Return(value) | Completion::Throw(value)) = completion;
                 let _ = runtime.release_jsvalue(value);
@@ -2175,9 +2011,7 @@ impl Resume {
                     "prototype builtin received an untyped reply",
                 ))
             }
-            Self::Prototype(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::Prototype(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
             Self::PrototypeGetReply(resume) => {
                 let result = match completion {
                     Completion::Return(JsValue::Object(object)) => NativeConversion::Value(Some(
@@ -2209,12 +2043,8 @@ impl Resume {
                 };
                 resume.boolean(runtime, result)
             }
-            Self::ProxySet(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Define(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::ProxySet(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
+            Self::Define(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
             Self::Setter => Ok(Step::SetComplete(Some(match completion {
                 Completion::Return(value) => {
                     runtime.release_jsvalue(value)?;
@@ -2232,12 +2062,8 @@ impl Resume {
                 ))
             }
             Self::ReadOwner(_owner) => Ok(Step::Complete(Some(completion))),
-            Self::Element(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Number(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::Element(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
+            Self::Number(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
             abandoned @ (Self::IteratorConstructor(_)
             | Self::IteratorTag(_)
             | Self::ArrayConstructorSet { .. }
@@ -2267,21 +2093,11 @@ impl Resume {
                     "ordinary Set received an untyped reply",
                 ))
             }
-            Self::Get(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Call(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Own(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Conversion(resume) => resume
-                .read(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Boolean(resume) => resume
-                .resume(runtime, completion)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::Get(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
+            Self::Call(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
+            Self::Own(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
+            Self::Conversion(resume) => resume.read(runtime, completion).and_then(Step::try_from),
+            Self::Boolean(resume) => resume.resume(runtime, completion).and_then(Step::try_from),
         }
     }
     pub(super) fn descriptor(
@@ -2302,33 +2118,17 @@ impl Resume {
                     ),
                 },
             ),
-            Self::Predicate(resume) => resume
-                .descriptor(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Keys(resume) => resume
-                .descriptor(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Get(resume) => resume
-                .descriptor(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Property(resume) => resume
-                .descriptor(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Own(resume) => resume
-                .descriptor(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Boolean(resume) => resume
-                .descriptor(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::OrdinarySet(resume) => resume
-                .descriptor(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ProxySet(resume) => resume
-                .descriptor(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Define(resume) => resume
-                .descriptor(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::Predicate(resume) => resume.descriptor(runtime, result).and_then(Step::try_from),
+            Self::Keys(resume) => resume.descriptor(runtime, result).and_then(Step::try_from),
+            Self::Get(resume) => resume.descriptor(runtime, result).and_then(Step::try_from),
+            Self::Property(resume) => resume.descriptor(runtime, result).and_then(Step::try_from),
+            Self::Own(resume) => resume.descriptor(runtime, result).and_then(Step::try_from),
+            Self::Boolean(resume) => resume.descriptor(runtime, result).and_then(Step::try_from),
+            Self::OrdinarySet(resume) => {
+                resume.descriptor(runtime, result).and_then(Step::try_from)
+            }
+            Self::ProxySet(resume) => resume.descriptor(runtime, result).and_then(Step::try_from),
+            Self::Define(resume) => resume.descriptor(runtime, result).and_then(Step::try_from),
             resume => {
                 resume.release_owned();
                 if let NativeConversion::Throw(value) = result {
@@ -2352,7 +2152,7 @@ impl Resume {
         match self {
             Self::SetLength(resume) => resume
                 .array_length(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+                .and_then(Step::try_from),
             Self::DefineLength { payload } => {
                 let DefineLengthPayload {
                     object,
@@ -2409,7 +2209,7 @@ impl Resume {
                 };
                 resume
                     .special(runtime, Some(result))
-                    .and_then(|value| Ok(Step::try_from(value)?))
+                    .and_then(Step::try_from)
             }
             Self::DefineTyped { payload } => {
                 let DefineTypedPayload {
@@ -2448,21 +2248,13 @@ impl Resume {
         result: NativeConversion<Option<ObjectRef>>,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
-            Self::ForIn(resume) => resume
-                .prototype(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Instance(resume) => resume
-                .prototype(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Predicate(resume) => resume
-                .prototype(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::BuiltinPrototype(resume) => resume
-                .prototype(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Prototype(resume) => resume
-                .prototype(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::ForIn(resume) => resume.prototype(runtime, result).and_then(Step::try_from),
+            Self::Instance(resume) => resume.prototype(runtime, result).and_then(Step::try_from),
+            Self::Predicate(resume) => resume.prototype(runtime, result).and_then(Step::try_from),
+            Self::BuiltinPrototype(resume) => {
+                resume.prototype(runtime, result).and_then(Step::try_from)
+            }
+            Self::Prototype(resume) => resume.prototype(runtime, result).and_then(Step::try_from),
             resume => {
                 resume.release_owned();
                 if let NativeConversion::Throw(value) = result {
@@ -2483,15 +2275,9 @@ impl Resume {
         result: NativeConversion<crate::engine::object::OwnedPropertyDescriptor>,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
-            Self::Definitions(resume) => resume
-                .converted(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Own(resume) => resume
-                .converted(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Property(resume) => resume
-                .converted(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::Definitions(resume) => resume.converted(runtime, result).and_then(Step::try_from),
+            Self::Own(resume) => resume.converted(runtime, result).and_then(Step::try_from),
+            Self::Property(resume) => resume.converted(runtime, result).and_then(Step::try_from),
             resume => {
                 resume.release_owned();
                 if let NativeConversion::Throw(value) = result {
@@ -2513,93 +2299,39 @@ impl Resume {
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
             #[cfg(feature = "test262-host")]
-            Self::Test262Agent(resume) => resume
-                .number(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Atomics(resume) => resume
-                .number(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::StringFactory(resume) => resume
-                .number(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::Test262Agent(resume) => resume.number(runtime, result).and_then(Step::try_from),
+            Self::Atomics(resume) => resume.number(runtime, result).and_then(Step::try_from),
+            Self::StringFactory(resume) => resume.number(runtime, result).and_then(Step::try_from),
 
-            Self::JsonParse(resume) => resume
-                .number(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::JsonStringify(resume) => resume
-                .number(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::JsonParse(resume) => resume.number(runtime, result).and_then(Step::try_from),
+            Self::JsonStringify(resume) => resume.number(runtime, result).and_then(Step::try_from),
 
-            Self::TypedSort(resume) => resume
-                .number(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Math(resume) => resume
-                .number(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Global(resume) => resume
-                .number(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Numeric(resume) => resume
-                .number(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ScalarText(resume) => resume
-                .number(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::DateConstructor(resume) => resume
-                .number(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::DatePrototype(resume) => resume
-                .number(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::TypedSort(resume) => resume.number(runtime, result).and_then(Step::try_from),
+            Self::Math(resume) => resume.number(runtime, result).and_then(Step::try_from),
+            Self::Global(resume) => resume.number(runtime, result).and_then(Step::try_from),
+            Self::Numeric(resume) => resume.number(runtime, result).and_then(Step::try_from),
+            Self::ScalarText(resume) => resume.number(runtime, result).and_then(Step::try_from),
+            Self::DateConstructor(resume) => {
+                resume.number(runtime, result).and_then(Step::try_from)
+            }
+            Self::DatePrototype(resume) => resume.number(runtime, result).and_then(Step::try_from),
 
-            Self::SetOperation(resume) => resume
-                .number(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArraySlice(resume) => resume
-                .number(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArrayConcat(resume) => resume
-                .number(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArrayFlatten(resume) => resume
-                .number(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArrayBuild(resume) => resume
-                .number(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArraySort(resume) => resume
-                .number(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArrayIndexed(resume) => resume
-                .number(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArrayReverse(resume) => resume
-                .number(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArrayString(resume) => resume
-                .number(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::IteratorCreate(resume) => resume
-                .number(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArrayNext(resume) => resume
-                .number(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArrayMutation(resume) => resume
-                .number(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArrayCallback(resume) => resume
-                .number(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Arguments(resume) => resume
-                .number(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::LengthNumber(resume) => resume
-                .number(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Keys(resume) => resume
-                .number(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::SetOperation(resume) => resume.number(runtime, result).and_then(Step::try_from),
+            Self::ArraySlice(resume) => resume.number(runtime, result).and_then(Step::try_from),
+            Self::ArrayConcat(resume) => resume.number(runtime, result).and_then(Step::try_from),
+            Self::ArrayFlatten(resume) => resume.number(runtime, result).and_then(Step::try_from),
+            Self::ArrayBuild(resume) => resume.number(runtime, result).and_then(Step::try_from),
+            Self::ArraySort(resume) => resume.number(runtime, result).and_then(Step::try_from),
+            Self::ArrayIndexed(resume) => resume.number(runtime, result).and_then(Step::try_from),
+            Self::ArrayReverse(resume) => resume.number(runtime, result).and_then(Step::try_from),
+            Self::ArrayString(resume) => resume.number(runtime, result).and_then(Step::try_from),
+            Self::IteratorCreate(resume) => resume.number(runtime, result).and_then(Step::try_from),
+            Self::ArrayNext(resume) => resume.number(runtime, result).and_then(Step::try_from),
+            Self::ArrayMutation(resume) => resume.number(runtime, result).and_then(Step::try_from),
+            Self::ArrayCallback(resume) => resume.number(runtime, result).and_then(Step::try_from),
+            Self::Arguments(resume) => resume.number(runtime, result).and_then(Step::try_from),
+            Self::LengthNumber(resume) => resume.number(runtime, result).and_then(Step::try_from),
+            Self::Keys(resume) => resume.number(runtime, result).and_then(Step::try_from),
             resume => {
                 resume.release_owned();
                 if let NativeConversion::Throw(value) = result {
@@ -2617,31 +2349,15 @@ impl Resume {
         result: NativeConversion<Vec<PropertyKey>>,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
-            Self::Import(resume) => resume
-                .keys(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ForIn(resume) => resume
-                .keys(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::JsonParse(resume) => resume
-                .keys(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::JsonStringify(resume) => resume
-                .keys(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::Import(resume) => resume.keys(runtime, result).and_then(Step::try_from),
+            Self::ForIn(resume) => resume.keys(runtime, result).and_then(Step::try_from),
+            Self::JsonParse(resume) => resume.keys(runtime, result).and_then(Step::try_from),
+            Self::JsonStringify(resume) => resume.keys(runtime, result).and_then(Step::try_from),
 
-            Self::ObjectCopy(resume) => resume
-                .keys(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Definitions(resume) => resume
-                .keys(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Keys(resume) => resume
-                .keys(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Property(resume) => resume
-                .keys(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::ObjectCopy(resume) => resume.keys(runtime, result).and_then(Step::try_from),
+            Self::Definitions(resume) => resume.keys(runtime, result).and_then(Step::try_from),
+            Self::Keys(resume) => resume.keys(runtime, result).and_then(Step::try_from),
+            Self::Property(resume) => resume.keys(runtime, result).and_then(Step::try_from),
             resume => {
                 resume.release_owned();
                 if let NativeConversion::Throw(value) = result {
@@ -2662,9 +2378,7 @@ impl Resume {
         result: NativeConversion<Vec<JsValue>>,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
-            Self::Invoke(resume) => resume
-                .arguments(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::Invoke(resume) => resume.arguments(runtime, result).and_then(Step::try_from),
             resume => {
                 resume.release_owned();
                 match result {
@@ -2692,40 +2406,18 @@ impl Resume {
         result: crate::engine::builtins::ObjectIteratorStep,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
-            Self::Promise(resume) => resume
-                .next(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Sum(resume) => resume
-                .item(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Aggregate(resume) => resume
-                .item(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::Promise(resume) => resume.next(runtime, result).and_then(Step::try_from),
+            Self::Sum(resume) => resume.item(runtime, result).and_then(Step::try_from),
+            Self::Aggregate(resume) => resume.item(runtime, result).and_then(Step::try_from),
 
-            Self::SetOperation(resume) => resume
-                .parsed(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Collection(resume) => resume
-                .next(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::IteratorWrap(resume) => resume
-                .next(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::IteratorConcat(resume) => resume
-                .next(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArrayBuild(resume) => resume
-                .parsed(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::IteratorConsume(resume) => resume
-                .next(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::IteratorHelper(resume) => resume
-                .next(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ObjectIteration(resume) => resume
-                .next(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::SetOperation(resume) => resume.parsed(runtime, result).and_then(Step::try_from),
+            Self::Collection(resume) => resume.next(runtime, result).and_then(Step::try_from),
+            Self::IteratorWrap(resume) => resume.next(runtime, result).and_then(Step::try_from),
+            Self::IteratorConcat(resume) => resume.next(runtime, result).and_then(Step::try_from),
+            Self::ArrayBuild(resume) => resume.parsed(runtime, result).and_then(Step::try_from),
+            Self::IteratorConsume(resume) => resume.next(runtime, result).and_then(Step::try_from),
+            Self::IteratorHelper(resume) => resume.next(runtime, result).and_then(Step::try_from),
+            Self::ObjectIteration(resume) => resume.next(runtime, result).and_then(Step::try_from),
             resume => {
                 resume.release_owned();
                 match result {
@@ -2750,9 +2442,7 @@ impl Resume {
         result: crate::engine::vm::call::NativeInvokeOutcome,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
-            Self::IteratorNext(resume) => resume
-                .raw(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::IteratorNext(resume) => resume.raw(runtime, result).and_then(Step::try_from),
             resume => resume.resume(runtime, Runtime::ordinary_native_completion(result)?),
         }
     }
@@ -2775,7 +2465,7 @@ impl Resume {
                         NativeConversion::Throw(value) => Completion::Throw(value),
                     },
                 )
-                .and_then(|value| Ok(Step::try_from(value)?)),
+                .and_then(Step::try_from),
 
             #[cfg(feature = "test262-host")]
             resume @ (Self::EvalScript(_) | Self::Test262Agent(_)) => resume.resume(
@@ -2788,52 +2478,32 @@ impl Resume {
                 },
             ),
 
-            Self::StringFactory(resume) => resume
-                .string(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::StringFactory(resume) => resume.string(runtime, result).and_then(Step::try_from),
 
-            Self::RegExpIterator(resume) => resume
-                .string(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::RegExpIterator(resume) => resume.string(runtime, result).and_then(Step::try_from),
 
-            Self::FunctionText(resume) => resume
-                .string(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::DynamicFunction(resume) => resume
-                .string(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::JsonParse(resume) => resume
-                .string(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::JsonStringify(resume) => resume
-                .string(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::FunctionText(resume) => resume.string(runtime, result).and_then(Step::try_from),
+            Self::DynamicFunction(resume) => {
+                resume.string(runtime, result).and_then(Step::try_from)
+            }
+            Self::JsonParse(resume) => resume.string(runtime, result).and_then(Step::try_from),
+            Self::JsonStringify(resume) => resume.string(runtime, result).and_then(Step::try_from),
             Self::JsonRaw(resume) => resume
                 .string(runtime, result)
                 .map(|result| Step::Complete(Some(result))),
 
-            Self::PrimitiveConstructor(resume) => resume
-                .string(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Global(resume) => resume
-                .string(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ScalarText(resume) => resume
-                .string(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::DateConstructor(resume) => resume
-                .string(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::Error(resume) => resume
-                .string(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::PrimitiveConstructor(resume) => {
+                resume.string(runtime, result).and_then(Step::try_from)
+            }
+            Self::Global(resume) => resume.string(runtime, result).and_then(Step::try_from),
+            Self::ScalarText(resume) => resume.string(runtime, result).and_then(Step::try_from),
+            Self::DateConstructor(resume) => {
+                resume.string(runtime, result).and_then(Step::try_from)
+            }
+            Self::Error(resume) => resume.string(runtime, result).and_then(Step::try_from),
 
-            Self::ArraySort(resume) => resume
-                .string(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ArrayString(resume) => resume
-                .string(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::ArraySort(resume) => resume.string(runtime, result).and_then(Step::try_from),
+            Self::ArrayString(resume) => resume.string(runtime, result).and_then(Step::try_from),
             resume => {
                 resume.release_owned();
                 if let NativeConversion::Throw(value) = result {
@@ -2854,35 +2524,29 @@ impl Resume {
         result: NativeConversion<crate::engine::vm::call::ConstructorPrototypeSource>,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
-            Self::Promise(resume) => resume
-                .prototype(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::TypedCreate(resume) => resume
-                .prototype(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::Promise(resume) => resume.prototype(runtime, result).and_then(Step::try_from),
+            Self::TypedCreate(resume) => resume.prototype(runtime, result).and_then(Step::try_from),
 
-            Self::WeakConstructor(resume) => resume
-                .prototype(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::ObjectConstructor(resume) => resume
-                .prototype(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::BufferConstructor(resume) => resume
-                .prototype(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::DataViewConstructor(resume) => resume
-                .prototype(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::RegExpConstructor(resume) => resume
-                .prototype(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::WeakConstructor(resume) => {
+                resume.prototype(runtime, result).and_then(Step::try_from)
+            }
+            Self::ObjectConstructor(resume) => {
+                resume.prototype(runtime, result).and_then(Step::try_from)
+            }
+            Self::BufferConstructor(resume) => {
+                resume.prototype(runtime, result).and_then(Step::try_from)
+            }
+            Self::DataViewConstructor(resume) => {
+                resume.prototype(runtime, result).and_then(Step::try_from)
+            }
+            Self::RegExpConstructor(resume) => {
+                resume.prototype(runtime, result).and_then(Step::try_from)
+            }
 
-            Self::Collection(resume) => resume
-                .prototype(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::IteratorConstructor(resume) => resume
-                .prototype(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::Collection(resume) => resume.prototype(runtime, result).and_then(Step::try_from),
+            Self::IteratorConstructor(resume) => {
+                resume.prototype(runtime, result).and_then(Step::try_from)
+            }
             resume => {
                 resume.release_owned();
                 if let NativeConversion::Throw(value) = result {
@@ -2900,24 +2564,16 @@ impl Resume {
         result: NativeConversion<[u8; 8]>,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
-            Self::TypedCreate(resume) => resume
-                .element(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::TypedCreate(resume) => resume.element(runtime, result).and_then(Step::try_from),
 
-            Self::TypedMutation(resume) => resume
-                .element(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::TypedMutation(resume) => resume.element(runtime, result).and_then(Step::try_from),
 
-            Self::TypedSet(resume) => resume
-                .element(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::TypedSet(resume) => resume.element(runtime, result).and_then(Step::try_from),
 
-            Self::TypedIteration(resume) => resume
-                .element(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::TypedElement(resume) => resume
-                .element(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::TypedIteration(resume) => {
+                resume.element(runtime, result).and_then(Step::try_from)
+            }
+            Self::TypedElement(resume) => resume.element(runtime, result).and_then(Step::try_from),
             resume => {
                 resume.release_owned();
                 if let NativeConversion::Throw(value) = result {
@@ -2935,17 +2591,13 @@ impl Resume {
         result: NativeConversion<ObjectRef>,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
-            Self::TypedCreate(resume) => resume
-                .created(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::TypedCreate(resume) => resume.created(runtime, result).and_then(Step::try_from),
 
-            Self::TypedSlice(resume) => resume
-                .species(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::TypedSlice(resume) => resume.species(runtime, result).and_then(Step::try_from),
 
-            Self::TypedIteration(resume) => resume
-                .species(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::TypedIteration(resume) => {
+                resume.species(runtime, result).and_then(Step::try_from)
+            }
             resume => {
                 resume.release_owned();
                 if let NativeConversion::Throw(value) = result {
@@ -2966,12 +2618,10 @@ impl Resume {
         result: NativeConversion<crate::engine::vm::call::ConstructorRef>,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
-            Self::RegExpMatchAll(resume) => resume
-                .species(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
-            Self::RegExpSplit(resume) => resume
-                .species(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::RegExpMatchAll(resume) => {
+                resume.species(runtime, result).and_then(Step::try_from)
+            }
+            Self::RegExpSplit(resume) => resume.species(runtime, result).and_then(Step::try_from),
             resume => {
                 resume.release_owned();
                 if let NativeConversion::Throw(value) = result {
@@ -2992,9 +2642,7 @@ impl Resume {
         result: NativeConversion<Option<crate::engine::object::CallableRef>>,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
-            Self::TypedCreate(resume) => resume
-                .method(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::TypedCreate(resume) => resume.method(runtime, result).and_then(Step::try_from),
             resume => {
                 resume.release_owned();
                 if let NativeConversion::Throw(value) = result {
@@ -3012,9 +2660,7 @@ impl Resume {
         result: NativeConversion<Vec<JsValue>>,
     ) -> Result<Step, crate::engine::api::runtime_error::RuntimeError> {
         match self {
-            Self::TypedCreate(resume) => resume
-                .collected(runtime, result)
-                .and_then(|value| Ok(Step::try_from(value)?)),
+            Self::TypedCreate(resume) => resume.collected(runtime, result).and_then(Step::try_from),
             resume => {
                 resume.release_owned();
                 match result {

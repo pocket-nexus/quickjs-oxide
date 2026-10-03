@@ -199,7 +199,7 @@ impl RegExpSplitResume {
                     .sub_string(state.p.min(state.input.len()), state.input.len()),
             );
             state.append(runtime, runtime.into_jsvalue(value)?)?;
-            return Ok(state.complete()?);
+            return state.complete();
         }
         let value = JsValue::Int(i32::try_from(state.q).map_err(|_| {
             RuntimeError::Invariant("RegExp split index exceeded signed String range")
@@ -582,7 +582,7 @@ impl RegExpSplitResume {
                     .into_jsvalue(Value::String(state.input.sub_string(state.p, state.q)))?;
                 state.append(runtime, part)?;
                 if state.length == state.limit {
-                    return Ok(state.complete()?);
+                    return state.complete();
                 }
                 state.p = end;
                 let object = matched.try_clone()?;
@@ -623,7 +623,7 @@ impl RegExpSplitResume {
             } => {
                 state.append(runtime, self.0.step_pending.value.take().unwrap())?;
                 if state.length == state.limit {
-                    return Ok(state.complete()?);
+                    return state.complete();
                 }
                 self.captures(state, runtime, matched, index + 1, count)
             }
@@ -638,7 +638,7 @@ impl RegExpSplitResume {
         runtime: &Runtime,
     ) -> Result<RegExpSplitStep, RuntimeError> {
         if state.limit == 0 {
-            return Ok(state.complete()?);
+            return state.complete();
         }
         if state.input.is_empty() {
             return self.execute(state, runtime, true);

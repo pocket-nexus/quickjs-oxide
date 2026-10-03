@@ -94,18 +94,14 @@ impl CopyResume {
         }
     }
     fn to_key(&self, runtime: &Runtime) -> Result<PropertyKey, RuntimeError> {
-        Ok(
-            runtime.property_key_for_index(self.0.to.checked_add(self.relative()).ok_or(
-                RuntimeError::Invariant("Array copy target index overflowed"),
-            )?)?,
-        )
+        runtime.property_key_for_index(self.0.to.checked_add(self.relative()).ok_or(
+            RuntimeError::Invariant("Array copy target index overflowed"),
+        )?)
     }
     fn source_key(&self, runtime: &Runtime) -> Result<PropertyKey, RuntimeError> {
-        Ok(
-            runtime.property_key_for_index(self.0.from.checked_add(self.relative()).ok_or(
-                RuntimeError::Invariant("Array copy source index overflowed"),
-            )?)?,
-        )
+        runtime.property_key_for_index(self.0.from.checked_add(self.relative()).ok_or(
+            RuntimeError::Invariant("Array copy source index overflowed"),
+        )?)
     }
     fn next(mut self, runtime: &Runtime) -> Result<CopyStep, RuntimeError> {
         if self.0.offset == self.0.count {

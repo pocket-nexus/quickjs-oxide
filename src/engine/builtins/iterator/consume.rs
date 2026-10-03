@@ -319,7 +319,7 @@ impl ConsumeResume {
                                 NativeErrorKind::Type,
                                 "empty iterator",
                             )?;
-                            return Ok(self.close(Completion::Throw(error))?);
+                            return self.close(Completion::Throw(error));
                         }
                     },
                 };

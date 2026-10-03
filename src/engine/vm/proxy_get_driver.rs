@@ -1554,9 +1554,9 @@ pub(super) fn start_root(
         super::driver::RootOperation::ModuleEvaluation(step) => Step::try_from(step)?,
         super::driver::RootOperation::ModuleLink(step) => Step::try_from(step)?,
         super::driver::RootOperation::FromSync(step) => Step::try_from(step)?,
-        super::driver::RootOperation::AsyncGenerator(step) => Step::try_from(step)?,
+        super::driver::RootOperation::AsyncGenerator(step) => Step::from(step),
         super::driver::RootOperation::Promise(step) => Step::try_from(step)?,
-        super::driver::RootOperation::Async(step) => Step::try_from(step)?,
+        super::driver::RootOperation::Async(step) => Step::from(step),
     };
     let query = execution
         .query_storage

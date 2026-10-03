@@ -194,7 +194,6 @@ impl Runtime {
     }
 
     /// Return the policy which the next compilation will sample.
-    #[must_use]
     pub fn debug_info_mode(&self) -> Result<DebugInfoMode, RuntimeError> {
         self.check_poison()?;
         let _unwind = self.unwind_guard();
@@ -213,7 +212,6 @@ impl Runtime {
     }
 
     /// Return whether this runtime's host permits synchronous blocking.
-    #[must_use]
     pub fn can_block(&self) -> Result<bool, RuntimeError> {
         self.check_poison()?;
         Ok(self.0.can_block.get())
@@ -245,7 +243,6 @@ impl Runtime {
     }
 
     /// Return the configured JavaScript call-frame recursion limit.
-    #[must_use]
     pub fn recursion_limit(&self) -> Result<usize, RuntimeError> {
         self.check_poison()?;
         Ok(self.0.recursion_limit.get())

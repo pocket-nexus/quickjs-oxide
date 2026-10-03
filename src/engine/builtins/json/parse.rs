@@ -478,10 +478,7 @@ impl<'a> JsonParser<'a> {
                     return self.syntax("expecting property name");
                 }
             };
-            let key = self
-                .runtime
-                .intern_property_key_js_string(&name)
-                .map_err(RuntimeError::from)?;
+            let key = self.runtime.intern_property_key_js_string(&name)?;
             self.skip_whitespace()?;
             self.validate_current_token_lexically()?;
             if !self.consume_ascii(b':') {
