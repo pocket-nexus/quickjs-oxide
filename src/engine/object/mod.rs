@@ -71,6 +71,8 @@ impl ObjectRef {
     /// reference-retention error such as counter overflow.
     pub fn try_clone(&self) -> Result<Self, RuntimeError> {
         self.runtime().check_poison()?;
+        // Checked retention and Rc cloning do not unwind; diagnostics can.
+        #[cfg(any(debug_assertions, feature = "profiling"))]
         let _unwind = self.runtime().unwind_guard();
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_runtime_event(
