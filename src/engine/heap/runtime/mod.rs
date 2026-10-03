@@ -788,6 +788,7 @@ impl Drop for RuntimeInner {
             // graph, and ordinary Rust destruction must not destroy its owners.
             self.poisoned.set(true);
             self.state.abandon();
+            #[cfg(debug_assertions)]
             return;
         }
         #[cfg(debug_assertions)]
