@@ -2019,7 +2019,7 @@ mod tests {
             .take_validated_native_call_operands(&runtime, 0, 2, true)
             .unwrap();
         assert_eq!(window.depth, 0);
-        assert_eq!(callable.as_object().object_id(), callee_id);
+        assert_eq!(callable, callee_id);
         assert_eq!(
             runtime
                 .0
@@ -2038,7 +2038,7 @@ mod tests {
             runtime.release_jsvalue(value).unwrap();
         }
         runtime.release_jsvalue(receiver).unwrap();
-        drop(callable);
+        runtime.release_jsvalue(JsValue::Object(callable)).unwrap();
         assert_eq!(
             runtime
                 .0

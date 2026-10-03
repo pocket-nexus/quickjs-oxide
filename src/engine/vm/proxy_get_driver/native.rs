@@ -1,6 +1,7 @@
 //! Native activation owners stay local when their first shared step completes.
 use super::super::call::{
-    AdaptedNativeInvocation, NativeInvocation, NativeInvokeOutcome, PreparedNativeCall,
+    AdaptedNativeInvocation, NativeCallGuard, NativeInvocation, NativeInvokeOutcome,
+    PreparedNativeCall,
 };
 use super::super::stack::SlotStore;
 use super::*;
@@ -40,39 +41,71 @@ pub(super) fn finish_result(
     call: PreparedNativeCall,
     result: Result<NativeInvokeOutcome, Error>,
 ) -> Result<NativeInvokeOutcome, Error> {
-    // Materialize ordinary iterator results and native errors while the native
-    // activation and its selected realm are still visible.
-    let result = result
-        .map_err(crate::engine::api::runtime_error::RuntimeError::Engine)
-        .and_then(|result| match (call.activation.mode, result) {
-            (
-                super::super::call::NativeInvokeMode::Ordinary,
-                NativeInvokeOutcome::IteratorNextRaw { value, done },
-            ) => {
-                let result =
-                    runtime.new_iterator_result_jsvalue(call.activation.realm, value, done)?;
-                Ok(NativeInvokeOutcome::Completion(Completion::Return(
-                    JsValue::Object(result.into_handle()),
-                )))
-            }
-            (_, result) => Ok(result),
-        });
-    let invocation = call.invocation;
-    let (result, arguments) = call.activation.finish_reusing(result);
-    slots.recycle_native_argument_buffer(arguments);
-    if let Err(error) = invocation.release(runtime) {
-        if let Ok(result) = result {
-            let value = match result {
-                NativeInvokeOutcome::Completion(
-                    Completion::Return(value) | Completion::Throw(value),
-                )
-                | NativeInvokeOutcome::IteratorNextRaw { value, .. } => value,
-            };
-            let _ = runtime.release_jsvalue(value);
+    let call = super::super::call::NativeCallGuard::new(runtime, call);
+    let _unwind = runtime.unwind_guard();
+    let result = result.map_err(crate::engine::api::runtime_error::RuntimeError::Engine);
+    let mut state = runtime.0.state.borrow_mut();
+    let result = result.and_then(|result| match (call.activation.mode, result) {
+        (
+            super::super::call::NativeInvokeMode::Ordinary,
+            NativeInvokeOutcome::IteratorNextRaw { value, done },
+        ) => {
+            let object = state.new_iterator_result_jsvalue(
+                &runtime.0.poisoned,
+                call.activation.realm,
+                value,
+                done,
+            )?;
+            Ok(NativeInvokeOutcome::Completion(Completion::Return(
+                JsValue::Object(object),
+            )))
         }
-        return Err(runtime_error_to_vm_error(error));
-    }
+        (_, result) => Ok(result),
+    });
+    let (result, arguments) =
+        call.into_inner()
+            .finish_reusing(&mut state, &runtime.0.poisoned, result);
+    slots.recycle_native_argument_buffer(arguments);
     result.map_err(runtime_error_to_vm_error)
+}
+
+/// Already prepared migrated bodies finish through one held-State ABI turn.
+/// Query and ordinary consumers share this with the resident call algorithm;
+/// only explicitly unmigrated bodies construct a legacy callable adapter.
+fn finish_state_native_body(
+    runtime: &Runtime,
+    slots: &mut SlotStore,
+    call: NativeCallGuard<'_>,
+) -> Result<NativeInvokeOutcome, Error> {
+    let _unwind = runtime.unwind_guard();
+    let mut state = runtime.0.state.borrow_mut();
+    let mut owner = super::super::call::NativeStateGuard::new(
+        &mut state,
+        &runtime.0.poisoned,
+        call.into_inner(),
+    );
+    let result = {
+        let (state, call) = owner.parts();
+        state.invoke_state_native_body(
+            &runtime.0.poisoned,
+            call.activation.target,
+            call.activation.realm,
+            &call.invocation,
+            &call.activation.arguments,
+        )
+    };
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_owned_execution_event(
+        "native_completed_without_waiting_scope",
+    );
+    let (result, arguments) =
+        owner
+            .into_inner()
+            .finish_completion_reusing(&mut state, &runtime.0.poisoned, result);
+    slots.recycle_native_argument_buffer(arguments);
+    result
+        .map(NativeInvokeOutcome::Completion)
+        .map_err(runtime_error_to_vm_error)
 }
 
 pub(super) fn identity_completion(result: NativeInvokeOutcome) -> Result<Completion, Error> {
@@ -133,6 +166,24 @@ struct NativeInvocationUnwindGuard<'a> {
 
 impl Drop for NativeInvocationUnwindGuard<'_> {
     fn drop(&mut self) {
+        if self.runtime.skip_cleanup() {
+            return;
+        }
+        let _unwind = self.runtime.unwind_guard();
+        if let Ok(mut state) = self.runtime.0.state.try_borrow_mut() {
+            if let Some(invocation) = self.adapted.take() {
+                if invocation
+                    .release_in_state(&mut state, &self.runtime.0.poisoned)
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            if let Some(invocation) = self.prepared.take() {
+                let _ = invocation.release_in_state(&mut state, &self.runtime.0.poisoned);
+            }
+            return;
+        }
         if let Some(invocation) = self.adapted.take() {
             let _ = invocation.release(self.runtime);
         }
@@ -146,39 +197,30 @@ impl Drop for NativeInvocationUnwindGuard<'_> {
 /// The caller checked budgets before reaching any body; preparation still owns
 /// padding, metadata validation and the observable native diagnostic frame.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn begin_synchronous(
+pub(super) fn begin_synchronous_owned(
     runtime: &Runtime,
     slots: &mut SlotStore,
     realm: crate::engine::heap::ContextId,
-    callable: crate::engine::object::CallableRef,
-    target: crate::engine::builtins::native::NativeFunctionId,
-    defining_realm: crate::engine::heap::ContextId,
+    mut call: NativeCallGuard<'_>,
     min_readable_args: u8,
-    receiver: JsValue,
-    arguments: Vec<JsValue>,
     kind: crate::engine::builtins::continuation::SynchronousNative,
     selected: Option<super::super::frames::NativeClassification>,
 ) -> Result<Completion, Error> {
-    // The operand transfer reserves the reusable buffer once, before moving argv.
+    let target = call.activation.target;
     let native_realm = if target.uses_calling_realm() {
         realm
     } else {
-        defining_realm
+        call.activation.realm
     };
-    let mut call = runtime
-        .prepare_native_continuation_selected(
-            callable,
-            native_realm,
-            target,
-            min_readable_args,
-            super::super::call::NativeInvocation::Call {
-                this_value: receiver,
-            },
-            arguments,
-            super::super::call::NativeInvokeMode::Ordinary,
-            selected,
-        )
+    call.activation.realm = native_realm;
+    let mut call = call
+        .publish(min_readable_args, selected.as_ref())
         .map_err(runtime_error_to_vm_error)?;
+    if crate::engine::heap::runtime::RuntimeState::has_state_native_body(target) {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("native_synchronous_entry");
+        return finish_state_native_body(runtime, slots, call).and_then(identity_completion);
+    }
     let mut unwind = NativeInvocationUnwindGuard {
         runtime,
         prepared: Some(std::mem::replace(
@@ -213,13 +255,11 @@ pub(super) fn begin_synchronous(
                             .expect("adapted native invocation owner")
                     }
                 };
-                let started = kind.start(
-                    runtime,
-                    native_realm,
-                    invocation,
-                    &call.activation.arguments,
-                    call.activation.callable(),
-                );
+                let started =
+                    call.activation
+                        .with_legacy_callable(runtime, |callable, arguments| {
+                            kind.start(runtime, native_realm, invocation, arguments, callable)
+                        });
                 if let Some(invocation) = unwind.adapted.take() {
                     let _ = invocation.release(runtime);
                 }
@@ -242,20 +282,55 @@ pub(super) fn begin_synchronous(
     // This ABI can only produce a Completion. It has no raw iterator variant
     // and therefore requires neither the generic outcome wrapper nor an
     // identity resume adapter. Error capture and owner cleanup stay shared.
-    let invocation = call.invocation;
-    let (result, arguments) = call.activation.finish_completion_reusing(result);
+    let _unwind = runtime.unwind_guard();
+    let (result, arguments) = call.into_inner().finish_completion_reusing(
+        &mut runtime.0.state.borrow_mut(),
+        &runtime.0.poisoned,
+        result,
+    );
     slots.recycle_native_argument_buffer(arguments);
-    if let Err(error) = invocation.release(runtime) {
-        if let Ok(Completion::Return(value) | Completion::Throw(value)) = result {
-            let _ = runtime.release_jsvalue(value);
-        }
-        return Err(runtime_error_to_vm_error(error));
-    }
     result.map_err(runtime_error_to_vm_error)
 }
 
+/// Direct iterator entry protects its emitted step until all fallible
+/// query/iterator installation has completed. Domain teardown is still an
+/// explicit legacy bridge outside the state lease.
+pub(super) struct NativeStepGuard<'a> {
+    runtime: &'a Runtime,
+    step: Option<Step>,
+}
+impl<'a> NativeStepGuard<'a> {
+    pub(super) fn new(runtime: &'a Runtime, step: Step) -> Self {
+        Self {
+            runtime,
+            step: Some(step),
+        }
+    }
+    pub(super) fn into_inner(mut self) -> Step {
+        self.step.take().expect("native step owner")
+    }
+}
+impl std::ops::Deref for NativeStepGuard<'_> {
+    type Target = Step;
+    fn deref(&self) -> &Step {
+        self.step.as_ref().expect("native step owner")
+    }
+}
+impl std::ops::DerefMut for NativeStepGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Step {
+        self.step.as_mut().expect("native step owner")
+    }
+}
+impl Drop for NativeStepGuard<'_> {
+    fn drop(&mut self) {
+        let _unwind = self.runtime.unwind_guard();
+        if let Some(mut step) = self.step.take() {
+            step.release_owned(self.runtime);
+        }
+    }
+}
+
 pub(super) struct NativeWaitRecord {
-    pub(super) runtime: Option<Runtime>,
     pub(super) call: Option<PreparedNativeCall>,
     pub(super) step: Step,
     // Only a real wait in the selected nested @@replace needs this owner.
@@ -263,23 +338,56 @@ pub(super) struct NativeWaitRecord {
     pub(super) parents: Vec<ReplaceParent>,
 }
 impl NativeWaitRecord {
-    pub(super) fn release_owned(&mut self) {
-        if let Some(runtime) = self.runtime.take() {
-            self.step.release_owned(&runtime);
-        }
-        if let Some(mut call) = self.call.take() {
-            let _ = call.release_invocation();
+    fn release_owned(&mut self, runtime: &Runtime) {
+        // Legacy domain state leaves outside a state borrow. Raw activation
+        // retirement immediately follows through the shared state kernel.
+        self.step.release_owned(runtime);
+        if let Some(call) = self.call.take() {
+            call.abandon_at_boundary(runtime);
         }
         while let Some(mut parent) = self.parents.pop() {
-            if let Some(mut call) = parent.call.take() {
-                let _ = call.release_invocation();
+            if let Some(call) = parent.call.take() {
+                call.abandon_at_boundary(runtime);
             }
         }
     }
 }
-impl Drop for NativeWaitRecord {
+
+/// The whole temporary waiting buffer borrows the already-live boundary.
+/// Individual records carry no Runtime/Weak owner and have no root Drop.
+pub(super) struct NativeWaitGuard<'a> {
+    runtime: &'a Runtime,
+    records: Vec<NativeWaitRecord>,
+}
+impl<'a> NativeWaitGuard<'a> {
+    pub(super) fn new(runtime: &'a Runtime, records: Vec<NativeWaitRecord>) -> Self {
+        Self { runtime, records }
+    }
+    pub(super) fn into_empty_vec(mut self) -> Vec<NativeWaitRecord> {
+        let _unwind = self.runtime.unwind_guard();
+        for record in &mut self.records {
+            record.release_owned(self.runtime);
+        }
+        std::mem::take(&mut self.records)
+    }
+}
+impl std::ops::Deref for NativeWaitGuard<'_> {
+    type Target = Vec<NativeWaitRecord>;
+    fn deref(&self) -> &Self::Target {
+        &self.records
+    }
+}
+impl std::ops::DerefMut for NativeWaitGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.records
+    }
+}
+impl Drop for NativeWaitGuard<'_> {
     fn drop(&mut self) {
-        self.release_owned();
+        let _unwind = self.runtime.unwind_guard();
+        for record in &mut self.records {
+            record.release_owned(self.runtime);
+        }
     }
 }
 
@@ -290,22 +398,22 @@ pub(super) struct ReplaceParent {
 
 /// The synchronous ABI contains no generic Step/Resume. Their reusable owning
 /// record is allocated only after the domain selects an actual waiting effect.
-pub(super) enum LocalNativeResult {
+pub(super) enum LocalNativeResult<'a> {
     Complete(Completion),
-    Waiting(Vec<NativeWaitRecord>),
+    Waiting(NativeWaitGuard<'a>),
 }
 
 // Keep the generic waiting enum out of begin_local's stack frame. Completed
 // non-migrated domains also avoid allocation; only a true effect owns a record.
 #[inline(never)]
-fn capture_native_step(
-    runtime: &Runtime,
+fn capture_native_step<'a>(
+    runtime: &'a Runtime,
     slots: &mut SlotStore,
     storage: &mut storage::QueryStorage,
     realm: crate::engine::heap::ContextId,
     nested_budget: bool,
     step: crate::engine::builtins::continuation::NativeStep,
-    pending: &mut Option<Vec<NativeWaitRecord>>,
+    pending: &mut Option<NativeWaitGuard<'a>>,
 ) -> Result<Option<NativeInvokeOutcome>, Error> {
     use crate::engine::builtins::StringReplaceStep;
     use crate::engine::builtins::continuation::NativeStep;
@@ -441,11 +549,11 @@ fn capture_native_step(
 }
 
 #[inline(never)]
-fn capture_waiting_step(
-    runtime: &Runtime,
+fn capture_waiting_step<'a>(
+    runtime: &'a Runtime,
     storage: &mut storage::QueryStorage,
     step: crate::engine::builtins::continuation::NativeStep,
-    pending: &mut Option<Vec<NativeWaitRecord>>,
+    pending: &mut Option<NativeWaitGuard<'a>>,
 ) -> Result<Option<NativeInvokeOutcome>, Error> {
     // Completed non-migrated domains must also remain allocation-free. Only
     // after their small payload is ruled out acquire the resident wait record.
@@ -466,8 +574,8 @@ fn capture_waiting_step(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn begin_local(
-    runtime: &Runtime,
+pub(super) fn begin_local<'a>(
+    runtime: &'a Runtime,
     slots: &mut SlotStore,
     storage: &mut storage::QueryStorage,
     realm: crate::engine::heap::ContextId,
@@ -480,34 +588,61 @@ pub(super) fn begin_local(
     kind: crate::engine::builtins::continuation::NativeOperation,
     selected: Option<super::super::frames::NativeClassification>,
     nested_budget: bool,
-) -> Result<LocalNativeResult, Error> {
-    if let Err(error) = slots.reserve_native_argument_depth(runtime.0.active_frame_depth.get() + 1)
-    {
-        let _ = runtime.release_jsvalue(receiver);
-        for argument in arguments {
-            let _ = runtime.release_jsvalue(argument);
-        }
-        return Err(error);
-    }
+) -> Result<LocalNativeResult<'a>, Error> {
+    let owners = NativeCallGuard::from_callable(
+        runtime,
+        callable,
+        defining_realm,
+        target,
+        super::super::call::NativeInvokeMode::Ordinary,
+        NativeInvocation::Call {
+            this_value: receiver,
+        },
+        arguments,
+    )
+    .map_err(runtime_error_to_vm_error)?;
+    begin_local_owned(
+        runtime,
+        slots,
+        storage,
+        realm,
+        owners,
+        min_readable_args,
+        kind,
+        selected,
+        nested_budget,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn begin_local_owned<'a>(
+    runtime: &'a Runtime,
+    slots: &mut SlotStore,
+    storage: &mut storage::QueryStorage,
+    realm: crate::engine::heap::ContextId,
+    mut call: NativeCallGuard<'a>,
+    min_readable_args: u8,
+    kind: crate::engine::builtins::continuation::NativeOperation,
+    selected: Option<super::super::frames::NativeClassification>,
+    nested_budget: bool,
+) -> Result<LocalNativeResult<'a>, Error> {
+    // The unpublished raw call protects inputs before this fallible reserve.
+    slots.reserve_native_argument_depth(runtime.0.active_frame_depth.get() + 1)?;
+    let target = call.activation.target;
     let native_realm = if target.uses_calling_realm() {
         realm
     } else {
-        defining_realm
+        call.activation.realm
     };
-    let mut call = runtime
-        .prepare_native_continuation_selected(
-            callable,
-            native_realm,
-            target,
-            min_readable_args,
-            super::super::call::NativeInvocation::Call {
-                this_value: receiver,
-            },
-            arguments,
-            super::super::call::NativeInvokeMode::Ordinary,
-            selected,
-        )
+    call.activation.realm = native_realm;
+    let mut call = call
+        .publish(min_readable_args, selected.as_ref())
         .map_err(runtime_error_to_vm_error)?;
+    if crate::engine::heap::runtime::RuntimeState::has_state_native_body(target) {
+        return finish_state_native_body(runtime, slots, call)
+            .and_then(identity_completion)
+            .map(LocalNativeResult::Complete);
+    }
     let mut unwind = NativeInvocationUnwindGuard {
         runtime,
         prepared: Some(std::mem::replace(
@@ -549,25 +684,29 @@ pub(super) fn begin_local(
                         .expect("adapted native invocation owner")
                 }
             };
-            let started = kind.start_into(
-                runtime,
-                native_realm,
-                invocation,
-                &call.activation.arguments,
-                call.activation.callable(),
-                |step| match capture_native_step(
-                    runtime,
-                    slots,
-                    storage,
-                    native_realm,
-                    nested_budget,
-                    step,
-                    &mut pending,
-                ) {
-                    Ok(result) => transported_completion = result,
-                    Err(error) => pending_error = Some(error),
-                },
-            );
+            let started = call
+                .activation
+                .with_legacy_callable(runtime, |callable, arguments| {
+                    kind.start_into(
+                        runtime,
+                        native_realm,
+                        invocation,
+                        arguments,
+                        callable,
+                        |step| match capture_native_step(
+                            runtime,
+                            slots,
+                            storage,
+                            native_realm,
+                            nested_budget,
+                            step,
+                            &mut pending,
+                        ) {
+                            Ok(result) => transported_completion = result,
+                            Err(error) => pending_error = Some(error),
+                        },
+                    )
+                });
             if let Some(invocation) = unwind.adapted.take() {
                 let _ = invocation.release(runtime);
             }
@@ -609,7 +748,8 @@ pub(super) fn begin_local(
             records[0].parents.clear();
             storage.recycle_native_wait(records);
         }
-        let result = finish_result(runtime, slots, call, result).and_then(identity_completion);
+        let result =
+            finish_result(runtime, slots, call.into_inner(), result).and_then(identity_completion);
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event(
             "native_completed_without_waiting_scope",
@@ -618,9 +758,9 @@ pub(super) fn begin_local(
     }
     let mut records = pending.expect("native waiting output");
     if let Some(parent) = records[0].parents.first_mut() {
-        parent.call = Some(call);
+        parent.call = Some(call.into_inner());
     } else {
-        records[0].call = Some(call);
+        records[0].call = Some(call.into_inner());
     }
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_execution_event(
@@ -800,18 +940,21 @@ pub(super) fn start_selected_into(
         return result;
     }
     install_waiting(
+        runtime,
         query,
-        waiting_call.expect("native wait has an activation"),
+        waiting_call
+            .expect("native wait has an activation")
+            .into_inner(),
         resume,
-    );
+    )?;
     Ok(())
 }
 
 /// Shared first native step. Caller reserves continuation capacity and checks
 /// logical/native stack budgets before any invocation effect can occur.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn begin_into(
-    runtime: &Runtime,
+pub(super) fn begin_into<'a>(
+    runtime: &'a Runtime,
     slots: &mut SlotStore,
     realm: crate::engine::heap::ContextId,
     callable: crate::engine::object::CallableRef,
@@ -823,7 +966,7 @@ pub(super) fn begin_into(
     arguments: Vec<JsValue>,
     kind: crate::engine::builtins::continuation::NativeOperation,
     output: &mut Step,
-    waiting_call: &mut Option<PreparedNativeCall>,
+    waiting_call: &mut Option<NativeCallGuard<'a>>,
 ) -> Result<Option<NativeInvokeOutcome>, Error> {
     begin_selected_into(
         runtime,
@@ -844,8 +987,8 @@ pub(super) fn begin_into(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn begin_selected_into(
-    runtime: &Runtime,
+pub(super) fn begin_selected_into<'a>(
+    runtime: &'a Runtime,
     slots: &mut SlotStore,
     realm: crate::engine::heap::ContextId,
     callable: crate::engine::object::CallableRef,
@@ -857,18 +1000,10 @@ pub(super) fn begin_selected_into(
     arguments: Vec<JsValue>,
     kind: crate::engine::builtins::continuation::NativeOperation,
     output: &mut Step,
-    waiting_call: &mut Option<PreparedNativeCall>,
+    waiting_call: &mut Option<NativeCallGuard<'a>>,
     selected: Option<super::super::frames::NativeClassification>,
 ) -> Result<Option<NativeInvokeOutcome>, Error> {
     debug_assert!(waiting_call.is_none());
-    if let Err(error) = slots.reserve_native_argument_depth(runtime.0.active_frame_depth.get() + 1)
-    {
-        let _ = invocation.release(runtime);
-        for argument in arguments {
-            let _ = runtime.release_jsvalue(argument);
-        }
-        return Err(error);
-    }
     let native_realm = if matches!(mode, super::super::call::NativeInvokeMode::IteratorNextRaw)
         || target.uses_calling_realm()
     {
@@ -876,26 +1011,37 @@ pub(super) fn begin_selected_into(
     } else {
         defining_realm
     };
-    let call = runtime
-        .prepare_native_continuation_selected(
-            callable,
-            native_realm,
-            target,
-            min_readable_args,
-            invocation,
-            arguments,
-            mode,
-            selected,
-        )
+    let call = NativeCallGuard::from_callable(
+        runtime,
+        callable,
+        native_realm,
+        target,
+        mode,
+        invocation,
+        arguments,
+    )
+    .map_err(runtime_error_to_vm_error)?;
+    slots.reserve_native_argument_depth(runtime.0.active_frame_depth.get() + 1)?;
+    let mut call = call
+        .publish(min_readable_args, selected.as_ref())
         .map_err(runtime_error_to_vm_error)?;
+    if matches!(mode, super::super::call::NativeInvokeMode::Ordinary)
+        && crate::engine::heap::runtime::RuntimeState::has_state_native_body(target)
+    {
+        return finish_state_native_body(runtime, slots, call).map(Some);
+    }
     let mut waiting_written = false;
     let mut waiting_error = None;
+    let PreparedNativeCall {
+        activation,
+        invocation: prepared_invocation,
+    } = &mut *call;
     let prepared = (|| match runtime
         .adapt_native_invocation_borrowed(
             target,
             native_realm,
-            &call.invocation,
-            &call.activation.arguments,
+            prepared_invocation,
+            &activation.arguments,
         )
         .map_err(runtime_error_to_vm_error)?
     {
@@ -924,14 +1070,16 @@ pub(super) fn begin_selected_into(
                         &mut waiting,
                     )
                 }
-                kind => kind.start_into(
-                    runtime,
-                    native_realm,
-                    invocation.as_ref(),
-                    &call.activation.arguments,
-                    call.activation.callable(),
-                    &mut waiting,
-                ),
+                kind => activation.with_legacy_callable(runtime, |callable, arguments| {
+                    kind.start_into(
+                        runtime,
+                        native_realm,
+                        invocation.as_ref(),
+                        arguments,
+                        callable,
+                        &mut waiting,
+                    )
+                }),
             };
             // Only a changed-protocol adaptation owns an extra edge.
             let _ = invocation.release(runtime);
@@ -962,7 +1110,7 @@ pub(super) fn begin_selected_into(
     if let Some(result) = immediate {
         // Keep the activation at its preparation site for immediate returns.
         // Only a real wait transports this owner to a continuation container.
-        return finish_result(runtime, slots, call, result).map(Some);
+        return finish_result(runtime, slots, call.into_inner(), result).map(Some);
     }
     *waiting_call = Some(call);
     #[cfg(feature = "profiling")]
@@ -976,8 +1124,8 @@ pub(super) fn begin_selected_into(
 /// The caller performs logical/host budget checks before entering this function.
 /// Only a real selected wait transfers the native activation to its output.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn compact_array_next_into(
-    runtime: &Runtime,
+pub(super) fn compact_array_next_into<'a>(
+    runtime: &'a Runtime,
     slots: &mut SlotStore,
     realm: crate::engine::heap::ContextId,
     callable: crate::engine::object::CallableRef,
@@ -985,16 +1133,24 @@ pub(super) fn compact_array_next_into(
     min_readable_args: u8,
     receiver: JsValue,
     output: &mut Step,
-    waiting_call: &mut Option<PreparedNativeCall>,
+    waiting_call: &mut Option<NativeCallGuard<'a>>,
 ) -> Result<Option<NativeInvokeOutcome>, Error> {
     debug_assert!(waiting_call.is_none());
-    if let Err(error) = slots.reserve_native_argument_depth(runtime.0.active_frame_depth.get() + 1)
-    {
-        let _ = runtime.release_jsvalue(receiver);
-        return Err(error);
-    }
-    let call = runtime
-        .prepare_array_next_owned(callable, realm, min_readable_args, receiver)
+    let call = NativeCallGuard::from_callable(
+        runtime,
+        callable,
+        realm,
+        crate::engine::builtins::native::NativeFunctionId::ArrayIteratorNext,
+        super::super::call::NativeInvokeMode::IteratorNextRaw,
+        NativeInvocation::Call {
+            this_value: receiver,
+        },
+        Vec::new(),
+    )
+    .map_err(runtime_error_to_vm_error)?;
+    slots.reserve_native_argument_depth(runtime.0.active_frame_depth.get() + 1)?;
+    let call = call
+        .publish(min_readable_args, None)
         .map_err(runtime_error_to_vm_error)?;
     let mut waiting_written = false;
     let mut waiting_error = None;
@@ -1039,7 +1195,7 @@ pub(super) fn compact_array_next_into(
         crate::engine::api::profiling::record_owned_execution_event(
             "native_raw_completed_without_waiting_scope",
         );
-        return finish_result(runtime, slots, call, result).map(Some);
+        return finish_result(runtime, slots, call.into_inner(), result).map(Some);
     }
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_execution_event(
@@ -1049,12 +1205,28 @@ pub(super) fn compact_array_next_into(
     Ok(None)
 }
 
-pub(super) fn install_waiting(query: &mut Query, call: PreparedNativeCall, resume: Resume) {
+pub(super) fn install_waiting(
+    runtime: &Runtime,
+    query: &mut Query,
+    call: PreparedNativeCall,
+    resume: Resume,
+) -> Result<(), Error> {
+    let _unwind = runtime.unwind_guard();
+    let call = NativeCallGuard::new(runtime, call);
+    if query.native_runtime.strong_count() == 0 {
+        query.native_runtime = match runtime.register_raw_execution_owner() {
+            Ok(capability) => capability,
+            Err(error) => {
+                resume.release_owned();
+                return Err(runtime_error_to_vm_error(error));
+            }
+        };
+    }
     let realm = query.realm;
     let native_realm = call.activation.realm;
     query.saved_native_depth += 1 + query.parents.len() as u128;
     query.natives.push(NativeScope {
-        call,
+        call: call.into_inner(),
         parents: std::mem::replace(
             &mut query.parents,
             query.spare_parents.pop().unwrap_or_default(),
@@ -1063,6 +1235,7 @@ pub(super) fn install_waiting(query: &mut Query, call: PreparedNativeCall, resum
         parent_realm: realm,
     });
     query.realm = native_realm;
+    Ok(())
 }
 #[cfg(test)]
 mod tests {

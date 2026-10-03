@@ -40,26 +40,6 @@ pub(crate) struct NativeSelection<'a> {
     data: crate::engine::builtins::native::NativeFunctionData,
 }
 impl<'a> NativeSelection<'a> {
-    pub(in crate::engine::vm) fn into_parts(
-        self,
-    ) -> (
-        &'a Runtime,
-        ObjectId,
-        crate::engine::builtins::native::NativeFunctionId,
-        crate::engine::heap::ContextId,
-        u8,
-        crate::engine::builtins::continuation::NativeOperation,
-    ) {
-        (
-            self.runtime,
-            self.function,
-            self.data.target,
-            self.data.realm.expect("selected native realm"),
-            self.data.min_readable_args,
-            self.data.operation().expect("selected native operation"),
-        )
-    }
-
     /// Transfer the same selected payload without another lookup or owner.
     pub(crate) fn into_linked_parts(
         self,

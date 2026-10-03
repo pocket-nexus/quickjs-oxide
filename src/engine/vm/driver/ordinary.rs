@@ -16,54 +16,17 @@ pub(in crate::engine::vm) enum Entry {
     Ordinary,
     Native(super::CallStep),
     NativeReady,
+    NativeComplete,
+    NativeThrow,
     General,
 }
 
-/// The transferred receiver and argv still need owners while ordinary
-/// ancestors are materialized. NativeActivation accepts them only afterwards.
-struct NativeOperandsGuard<'a> {
-    runtime: &'a Runtime,
-    receiver: Option<crate::engine::value::JsValue>,
-    arguments: Vec<crate::engine::value::JsValue>,
-}
-
-impl NativeOperandsGuard<'_> {
-    fn take(
-        &mut self,
-    ) -> (
-        crate::engine::value::JsValue,
-        Vec<crate::engine::value::JsValue>,
-    ) {
-        (
-            self.receiver.take().expect("native receiver owner"),
-            std::mem::take(&mut self.arguments),
-        )
-    }
-}
-
-impl Drop for NativeOperandsGuard<'_> {
-    fn drop(&mut self) {
-        if self.receiver.is_none() && self.arguments.is_empty() {
-            return;
-        }
-        if self.runtime.skip_cleanup() {
-            return;
-        }
-        let _unwind = self.runtime.unwind_guard();
-        // Match pending native preparation: invocation before ascending argv.
-        if let Some(receiver) = self.receiver.take() {
-            let _ = self.runtime.release_jsvalue(receiver);
-            if self.runtime.is_poisoned() {
-                return;
-            }
-        }
-        for argument in self.arguments.drain(..) {
-            let _ = self.runtime.release_jsvalue(argument);
-            if self.runtime.is_poisoned() {
-                break;
-            }
-        }
-    }
+pub(in crate::engine::vm) enum StateCall {
+    Ordinary(
+        crate::engine::vm::call::ordinary::OrdinaryCall,
+        crate::engine::vm::stack::CheckedOrdinaryCallOperands,
+    ),
+    Native(crate::engine::vm::frames::NativeClassification),
 }
 
 #[cfg(all(test, feature = "profiling"))]
@@ -107,13 +70,7 @@ pub(in crate::engine::vm) fn prepare_ordinary_in_state(
     count: usize,
     method: bool,
     native_hint: &mut Option<crate::engine::object::LinkedNativeSelection>,
-) -> Result<
-    Option<(
-        crate::engine::vm::call::ordinary::OrdinaryCall,
-        crate::engine::vm::stack::CheckedOrdinaryCallOperands,
-    )>,
-    Error,
-> {
+) -> Result<Option<StateCall>, Error> {
     transaction.peek(count + usize::from(method))?;
     let callable = transaction.peek(count)?;
     #[cfg(feature = "profiling")]
@@ -129,6 +86,17 @@ pub(in crate::engine::vm) fn prepare_ordinary_in_state(
         .as_ref()
         .is_some_and(|hint| hint.matches_in_domain(runtime.domain_id(), *function))
     {
+        let hint = native_hint.as_ref().expect("matched native hint");
+        if crate::engine::heap::runtime::RuntimeState::has_state_native_body(hint.target()) {
+            transaction.validate_call_value_domains(runtime, count, method)?;
+            let selected = crate::engine::vm::frames::NativeClassification::classify_linked(
+                runtime,
+                native_hint.take().expect("matched native hint"),
+                callable,
+            )
+            .ok_or_else(|| Error::internal("linked native classification lost its callee"))?;
+            return Ok(Some(StateCall::Native(selected)));
+        }
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event(
             "core.call_decline.native_hint",
@@ -145,8 +113,16 @@ pub(in crate::engine::vm) fn prepare_ordinary_in_state(
             return Ok(None);
         }
         Ok(DirectSelection::Native(native)) => {
-            *native_hint =
-                Some(crate::engine::object::LinkedNativeSelection::from_direct_native(native));
+            let hint = crate::engine::object::LinkedNativeSelection::from_direct_native(native);
+            if crate::engine::heap::runtime::RuntimeState::has_state_native_body(hint.target()) {
+                transaction.validate_call_value_domains(runtime, count, method)?;
+                let selected = crate::engine::vm::frames::NativeClassification::classify_linked(
+                    runtime, hint, callable,
+                )
+                .ok_or_else(|| Error::internal("native classification lost its callee"))?;
+                return Ok(Some(StateCall::Native(selected)));
+            }
+            *native_hint = Some(hint);
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_execution_event("core.call_decline.native");
             return Ok(None);
@@ -170,7 +146,7 @@ pub(in crate::engine::vm) fn prepare_ordinary_in_state(
             );
             runtime_error_to_vm_error(error)
         })?;
-    Ok(Some((call, checked)))
+    Ok(Some(StateCall::Ordinary(call, checked)))
 }
 
 /// Test legacy entry still authenticates its supplied frame and window once.
@@ -361,11 +337,17 @@ pub(super) fn enter_selected(
                 count,
                 method,
             )?;
-            let mut operands = NativeOperandsGuard {
+            let operands = crate::engine::vm::call::NativeCallGuard::from_operands(
                 runtime,
-                receiver: Some(receiver),
+                callable,
+                realm,
+                target,
+                crate::engine::vm::call::NativeInvokeMode::Ordinary,
+                crate::engine::vm::call::NativeInvocation::Call {
+                    this_value: receiver,
+                },
                 arguments,
-            };
+            );
             drop(transaction);
             if !execution.frames.can_push_with_continuations(0)
                 || runtime.host_stack_would_overflow()
@@ -373,8 +355,8 @@ pub(super) fn enter_selected(
                 || native_observes_activation(
                     runtime,
                     target,
-                    operands.receiver.as_ref().expect("native receiver owner"),
-                    &operands.arguments,
+                    operands.invocation.input(),
+                    &operands.activation.arguments.readable,
                 )
             {
                 execution.frames.materialize(runtime)?;
@@ -384,17 +366,12 @@ pub(super) fn enter_selected(
                     "native_unobserved_entry",
                 );
             }
-            let (receiver, arguments) = operands.take();
-            let result = super::super::proxy_get_driver::start_native_with_classification(
+            let result = super::super::proxy_get_driver::start_native_owned(
                 runtime,
                 execution,
                 id,
-                callable,
-                target,
-                realm,
+                operands,
                 minimum,
-                receiver,
-                arguments,
                 tail,
                 depth,
                 Some(selected),
@@ -424,6 +401,15 @@ pub(super) fn enter_selected(
 /// inputs. Every callback-capable or throwing conversion retains publication.
 fn native_observes_activation(
     runtime: &Runtime,
+    target: crate::engine::builtins::native::NativeFunctionId,
+    receiver: &crate::engine::value::JsValue,
+    arguments: &[crate::engine::value::JsValue],
+) -> bool {
+    native_observes_activation_in_state(&runtime.0.state.borrow(), target, receiver, arguments)
+}
+
+pub(in crate::engine::vm) fn native_observes_activation_in_state(
+    state: &crate::engine::heap::runtime::RuntimeState,
     target: crate::engine::builtins::native::NativeFunctionId,
     receiver: &crate::engine::value::JsValue,
     arguments: &[crate::engine::value::JsValue],
@@ -462,7 +448,6 @@ fn native_observes_activation(
     let JsValue::Object(object) = receiver else {
         return true;
     };
-    let state = runtime.0.state.borrow();
     let Ok(object) = state.heap.object(*object) else {
         return true;
     };

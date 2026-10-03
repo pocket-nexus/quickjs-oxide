@@ -534,15 +534,10 @@ impl Runtime {
         realm: ContextId,
         invocation: &NativeInvocation,
     ) -> Result<Completion, RuntimeError> {
-        let NativeInvocation::Call { .. } = invocation else {
-            return Err(RuntimeError::Invariant(
-                "Math.random did not receive a generic invocation",
-            ));
-        };
-        let random = self.0.state.borrow_mut().heap.next_math_random_u64(realm)?;
-        Ok(Completion::Return(JsValue::Float(quickjs_random_fraction(
-            random,
-        ))))
+        self.0
+            .state
+            .borrow_mut()
+            .call_math_random(realm, invocation)
     }
 
     pub(crate) fn call_math_imul(
@@ -767,5 +762,23 @@ impl RuntimeState {
             unreachable!("intrinsic factory allocated an object")
         };
         Ok(object)
+    }
+}
+
+impl crate::engine::heap::runtime::RuntimeState {
+    pub(crate) fn call_math_random(
+        &mut self,
+        realm: ContextId,
+        invocation: &NativeInvocation,
+    ) -> Result<Completion, RuntimeError> {
+        let NativeInvocation::Call { .. } = invocation else {
+            return Err(RuntimeError::Invariant(
+                "Math.random did not receive a generic invocation",
+            ));
+        };
+        let random = self.heap.next_math_random_u64(realm)?;
+        Ok(Completion::Return(JsValue::Float(quickjs_random_fraction(
+            random,
+        ))))
     }
 }

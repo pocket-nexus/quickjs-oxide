@@ -233,6 +233,7 @@ impl Runtime {
         value: crate::engine::value::JsValue,
         done: bool,
     ) -> Result<ObjectRef, RuntimeError> {
+        let _unwind = self.unwind_guard();
         let outcome = (|| {
             #[cfg(test)]
             {
@@ -244,21 +245,18 @@ impl Runtime {
             }
             let prototype_id = self.0.state.borrow().heap.context(realm)?.object_prototype;
             let prototype = ObjectRef::from_borrowed_handle(self.clone(), prototype_id)?;
-            let result = self.new_object(Some(&prototype))?;
-            for (name, stored) in [
-                ("value", &value),
-                ("done", &crate::engine::value::JsValue::Bool(done)),
-            ] {
-                let key = self.intern_property_key(name)?;
-                match self.define_selected_set_data(&result, &key, stored, false)? {
-                    crate::engine::object::operations::PropertyDefineOutcome::Defined(true) => {}
-                    _ => {
-                        return Err(RuntimeError::Invariant(
-                            "iterator result property definition was rejected",
-                        ));
-                    }
-                }
-            }
+            let _operation = self.operation()?;
+            let object = self
+                .0
+                .state
+                .borrow_mut()
+                .new_iterator_result_with_prototype(
+                    &self.0.poisoned,
+                    prototype.object_id(),
+                    &value,
+                    done,
+                )?;
+            let result = ObjectRef::from_owned_handle(self.clone(), object);
             Ok(result)
         })();
         let released = self.release_jsvalue(value);
@@ -1158,6 +1156,105 @@ mod owned_callable_tests {
 }
 
 impl RuntimeState {
+    /// Ordinary IteratorNext completion owns its producer until the empty
+    /// result and both ordered data fields have been initialized. Allocation
+    /// merely requests pressure; the caller publishes before GC service.
+    pub(crate) fn new_iterator_result_jsvalue(
+        &mut self,
+        poisoned: &Cell<bool>,
+        realm: ContextId,
+        value: JsValue,
+        done: bool,
+    ) -> Result<ObjectId, RuntimeError> {
+        let mut value_owner = OwnedValueGuard::new(self, poisoned, value);
+        let (state, value) = value_owner.parts();
+        #[cfg(test)]
+        {
+            state.iterator_result_allocations = state
+                .iterator_result_allocations
+                .checked_add(1)
+                .expect("iterator-result allocation counter overflow");
+        }
+        let prototype = state.heap.context(realm)?.object_prototype;
+        state.heap.retain_object(prototype)?;
+        let mut prototype_owner = OwnedValueGuard::new(state, poisoned, JsValue::Object(prototype));
+        let (state, prototype_owner) = prototype_owner.parts();
+        let object = state.new_iterator_result_with_prototype(
+            poisoned,
+            prototype,
+            value.as_ref().expect("iterator result producer"),
+            done,
+        )?;
+        let mut object_owner = OwnedValueGuard::new(state, poisoned, JsValue::Object(object));
+        let (state, object_owner) = object_owner.parts();
+        // Preserve successful public builder order: prototype temporary, then
+        // consumed value producer, with result protected across either failure.
+        state.release_owned_jsvalue(
+            poisoned,
+            prototype_owner.take().expect("iterator prototype"),
+        )?;
+        state.release_owned_jsvalue(poisoned, value.take().expect("iterator result producer"))?;
+        let JsValue::Object(object) = object_owner.take().expect("iterator result object") else {
+            unreachable!("iterator result object")
+        };
+        Ok(object)
+    }
+
+    fn new_iterator_result_with_prototype(
+        &mut self,
+        poisoned: &Cell<bool>,
+        prototype: ObjectId,
+        value: &JsValue,
+        done: bool,
+    ) -> Result<ObjectId, RuntimeError> {
+        let object = self.allocate_object_with_layout(
+            poisoned,
+            Some(prototype),
+            &[],
+            Vec::new(),
+            ObjectData::ordinary,
+        )?;
+        let mut object_owner = OwnedValueGuard::new(self, poisoned, JsValue::Object(object));
+        let (state, object_owner) = object_owner.parts();
+        for (name, stored) in [("value", value), ("done", &JsValue::Bool(done))] {
+            let atom = state.intern_property_key_js_string(&JsString::try_from_utf8(name)?)?;
+            // The key's temporary atom edge belongs to this field transaction.
+            // OwnedValueGuard's atom-index release is the same shared cleanup
+            // kernel; no JavaScript Symbol value is published.
+            let mut key_owner = OwnedValueGuard::new(
+                state,
+                poisoned,
+                JsValue::Symbol(AtomIdx::from_raw(atom.raw())),
+            );
+            let (state, key_owner_value) = key_owner.parts();
+            let defined = state.define_raw_property_with_poison(
+                poisoned,
+                object,
+                atom,
+                &crate::engine::object::property::PropertyDescriptor {
+                    value: Some(stored.as_raw()),
+                    writable: Some(true),
+                    enumerable: Some(true),
+                    configurable: Some(true),
+                    ..crate::engine::object::property::PropertyDescriptor::new()
+                },
+            )?;
+            if !defined {
+                return Err(RuntimeError::Invariant(
+                    "iterator result property definition was rejected",
+                ));
+            }
+            state.release_owned_jsvalue(
+                poisoned,
+                key_owner_value.take().expect("iterator field key"),
+            )?;
+        }
+        let JsValue::Object(object) = object_owner.take().expect("iterator result object") else {
+            unreachable!("iterator result object")
+        };
+        Ok(object)
+    }
+
     /// Reuse the canonical Array layout: writable, non-enumerable,
     /// non-configurable length is physical slot zero, initially zero.
     pub(crate) fn new_empty_array_with_prototype(

@@ -4,7 +4,7 @@ use crate::engine::api::error::{ErrorKind, NativeErrorKind};
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 
-use crate::engine::builtins::native::{NativeCProto, NativeFunctionId};
+use crate::engine::builtins::native::NativeFunctionId;
 use crate::engine::heap::ContextId;
 use crate::engine::object::CallableRef;
 #[cfg(test)]
@@ -19,18 +19,7 @@ use crate::engine::vm::call::{
     AdaptedNativeInvocation, CallableExecution, DirectCallTarget, NativeArguments,
     NativeInvocation, NativeInvocationAdaptation, NativeInvokeOutcome,
 };
-use crate::engine::vm::frames::ActiveFrameKind;
-
-// Adapted ABI variants transport the same input owner. Only borrowed inputs
-// whose variant actually changes need an additional root handle.
-fn native_invocation_input(invocation: NativeInvocation) -> crate::engine::value::JsValue {
-    match invocation {
-        NativeInvocation::Call { this_value }
-        | NativeInvocation::Getter { this_value }
-        | NativeInvocation::Setter { this_value } => this_value,
-        NativeInvocation::Construct { new_target } => new_target,
-    }
-}
+mod native_state;
 
 impl Runtime {
     /// Move bound and caller argument edges into one internal buffer without
@@ -320,7 +309,14 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<NativeInvocationAdaptation, RuntimeError> {
-        self.adapt_native_invocation_input(target, realm, invocation, arguments)
+        let _unwind = self.unwind_guard();
+        self.0.state.borrow_mut().adapt_native_invocation(
+            &self.0.poisoned,
+            target,
+            realm,
+            invocation,
+            arguments,
+        )
     }
 
     pub(crate) fn adapt_native_invocation_borrowed<'a>(
@@ -330,185 +326,14 @@ impl Runtime {
         invocation: &'a NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<NativeInvocationAdaptation<AdaptedNativeInvocation<'a>>, RuntimeError> {
-        self.validate_native_invocation(target, realm, arguments)?;
-        let unchanged = matches!(
-            (target.descriptor().cproto, invocation),
-            (
-                NativeCProto::Generic
-                    | NativeCProto::GenericMagic
-                    | NativeCProto::UnaryF64
-                    | NativeCProto::BinaryF64
-                    | NativeCProto::IteratorNext,
-                NativeInvocation::Call { .. },
-            ) | (
-                NativeCProto::Constructor
-                    | NativeCProto::ConstructorMagic
-                    | NativeCProto::ConstructorOrFunction
-                    | NativeCProto::ConstructorOrFunctionMagic,
-                NativeInvocation::Construct { .. },
-            )
-        );
-        if unchanged {
-            return Ok(NativeInvocationAdaptation::Invoke(
-                AdaptedNativeInvocation::Borrowed(invocation),
-            ));
-        }
-        Ok(
-            match self.adapt_native_invocation_input(
-                target,
-                realm,
-                invocation.dup(self)?,
-                arguments,
-            )? {
-                NativeInvocationAdaptation::Invoke(invocation) => {
-                    NativeInvocationAdaptation::Invoke(AdaptedNativeInvocation::Owned(invocation))
-                }
-                NativeInvocationAdaptation::Complete(completion) => {
-                    NativeInvocationAdaptation::Complete(completion)
-                }
-            },
+        let _unwind = self.unwind_guard();
+        self.0.state.borrow_mut().adapt_native_invocation_borrowed(
+            &self.0.poisoned,
+            target,
+            realm,
+            invocation,
+            arguments,
         )
-    }
-
-    fn validate_native_invocation(
-        &self,
-        target: NativeFunctionId,
-        realm: ContextId,
-        arguments: &NativeArguments,
-    ) -> Result<(), RuntimeError> {
-        let frame =
-            self.0
-                .state
-                .borrow()
-                .active_frames
-                .last()
-                .copied()
-                .ok_or(RuntimeError::Invariant(
-                    "native handler ran without an active frame",
-                ))?;
-        let ActiveFrameKind::Native {
-            target: frame_target,
-            actual_arg_count,
-            readable_arg_count,
-        } = frame.kind
-        else {
-            return Err(RuntimeError::Invariant(
-                "native handler was not the top active frame",
-            ));
-        };
-        if frame.realm != realm
-            || frame_target != target
-            || actual_arg_count != arguments.actual_arg_count
-            || readable_arg_count != arguments.readable.len()
-        {
-            return Err(RuntimeError::Invariant(
-                "active native frame disagrees with handler arguments",
-            ));
-        }
-        Ok(())
-    }
-
-    fn adapt_native_invocation_input(
-        &self,
-        target: NativeFunctionId,
-        realm: ContextId,
-        invocation: NativeInvocation,
-        arguments: &NativeArguments,
-    ) -> Result<NativeInvocationAdaptation, RuntimeError> {
-        if let Err(error) = self.validate_native_invocation(target, realm, arguments) {
-            let _ = invocation.release(self);
-            return Err(error);
-        }
-        // Some handlers do not inspect their adapted this/new-target input,
-        // but keeping it rooted for the full dispatch is part of the ABI.
-        let invocation = match (target.descriptor().cproto, invocation) {
-            (
-                NativeCProto::Generic
-                | NativeCProto::GenericMagic
-                | NativeCProto::UnaryF64
-                | NativeCProto::BinaryF64,
-                invocation @ NativeInvocation::Call { .. },
-            ) => invocation,
-            (
-                NativeCProto::Generic
-                | NativeCProto::GenericMagic
-                | NativeCProto::UnaryF64
-                | NativeCProto::BinaryF64,
-                invocation @ NativeInvocation::Construct { .. },
-            ) => {
-                // QuickJS's generic and floating-point ABIs receive
-                // new.target in their receiver slot when an embedding
-                // independently enables the constructor bit on the native
-                // function object. Floating-point argument conversion stays
-                // in the handler so abrupt completions keep their defining
-                // realm and left-to-right order.
-                NativeInvocation::Call {
-                    this_value: native_invocation_input(invocation),
-                }
-            }
-            (
-                NativeCProto::Constructor | NativeCProto::ConstructorMagic,
-                invocation @ NativeInvocation::Construct { .. },
-            ) => invocation,
-            (
-                NativeCProto::Constructor | NativeCProto::ConstructorMagic,
-                NativeInvocation::Call { this_value },
-            ) => {
-                self.release_jsvalue(this_value)?;
-                let exception = self.new_native_error_jsvalue(
-                    realm,
-                    NativeErrorKind::Type,
-                    "must be called with new",
-                )?;
-                return Ok(NativeInvocationAdaptation::Complete(Completion::Throw(
-                    exception,
-                )));
-            }
-            (
-                NativeCProto::ConstructorOrFunction | NativeCProto::ConstructorOrFunctionMagic,
-                NativeInvocation::Call { this_value },
-            ) => {
-                self.release_jsvalue(this_value)?;
-                NativeInvocation::Construct {
-                    new_target: crate::engine::value::JsValue::Undefined,
-                }
-            }
-            (
-                NativeCProto::ConstructorOrFunction | NativeCProto::ConstructorOrFunctionMagic,
-                invocation @ NativeInvocation::Construct { .. },
-            ) => invocation,
-            (
-                NativeCProto::Getter | NativeCProto::GetterMagic,
-                invocation @ (NativeInvocation::Call { .. } | NativeInvocation::Construct { .. }),
-            ) => NativeInvocation::Getter {
-                this_value: native_invocation_input(invocation),
-            },
-            (
-                NativeCProto::Setter | NativeCProto::SetterMagic,
-                invocation @ (NativeInvocation::Call { .. } | NativeInvocation::Construct { .. }),
-            ) => NativeInvocation::Setter {
-                this_value: native_invocation_input(invocation),
-            },
-            (NativeCProto::IteratorNext, invocation @ NativeInvocation::Call { .. }) => invocation,
-            (NativeCProto::IteratorNext, invocation @ NativeInvocation::Construct { .. }) => {
-                // Iterator-next functions are non-constructors by default.
-                // If an embedder independently enables [[Construct]], QuickJS
-                // passes new.target through the same native receiver slot.
-                NativeInvocation::Call {
-                    this_value: native_invocation_input(invocation),
-                }
-            }
-            (
-                _,
-                invocation @ (NativeInvocation::Getter { .. } | NativeInvocation::Setter { .. }),
-            ) => {
-                invocation.release(self)?;
-                return Err(RuntimeError::Invariant(
-                    "native invocation was adapted more than once",
-                ));
-            }
-        };
-        Ok(NativeInvocationAdaptation::Invoke(invocation))
     }
 
     pub(crate) fn dispatch_native_iterator_next_raw(
@@ -575,7 +400,11 @@ impl Runtime {
             TypedArrayNativeKind as Ta,
         };
         match target {
-            NativeFunctionId::FunctionPrototype => Ok(Completion::Return(JsValue::Undefined)),
+            NativeFunctionId::FunctionPrototype => self
+                .0
+                .state
+                .borrow_mut()
+                .dispatch_state_native_body(target, realm, invocation, arguments),
             NativeFunctionId::Map(kind) => {
                 self.call_map_native_borrowed(realm, kind, invocation, arguments)
             }
@@ -761,7 +590,14 @@ impl Runtime {
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
         match target {
-            NativeFunctionId::FunctionPrototype => Ok(Completion::Return(JsValue::Undefined)),
+            NativeFunctionId::FunctionPrototype => {
+                self.dispatch_borrowed_invocation(invocation, |invocation| {
+                    self.0
+                        .state
+                        .borrow_mut()
+                        .dispatch_state_native_body(target, realm, invocation, arguments)
+                })
+            }
             NativeFunctionId::FunctionConstructor(kind) => {
                 self.call_function_constructor(realm, kind, invocation, arguments)
             }

@@ -28,6 +28,8 @@ mod dispatch_read;
 mod dispatch_write;
 
 mod native;
+#[cfg(test)]
+mod native_owner_tests;
 #[cfg(feature = "profiling")]
 mod profiling;
 mod request;
@@ -64,6 +66,7 @@ impl PendingProxyGet {
             identity: 0,
             resume: Resume::Identity,
             query: Query {
+                native_runtime: std::rc::Weak::new(),
                 #[cfg(feature = "profiling")]
                 had_callback: false,
                 realm,
@@ -119,6 +122,9 @@ impl Parents {
 }
 
 struct Query {
+    // One boundary capability for standalone teardown; no native scope owns
+    // Runtime lifetime. Upgrade before any legacy domain root is released.
+    native_runtime: std::rc::Weak<crate::engine::heap::runtime::RuntimeInner>,
     #[cfg(feature = "profiling")]
     had_callback: bool,
     realm: crate::engine::heap::ContextId,
@@ -163,6 +169,7 @@ impl Query {
             }
             return Err(Error::internal("native result has no scope"));
         };
+        let call = super::call::NativeCallGuard::new(runtime, scope.call);
         self.saved_native_depth -= 1 + scope.parents.len() as u128;
         while let Some(resume) = self.parents.pop() {
             resume.release_owned();
@@ -171,25 +178,38 @@ impl Query {
         // Reservation happens before installing the native scope.
         self.spare_parents.push(empty);
         self.realm = scope.parent_realm;
-        native::finish(runtime, slots, scope.call, scope.resume, result)
+        native::finish(runtime, slots, call.into_inner(), scope.resume, result)
     }
 }
-impl Drop for Query {
-    fn drop(&mut self) {
-        // Current domain states belong to the innermost native activation.
-        // Each saved resume/parent stack belongs to its caller, outside that
-        // activation; release them before proceeding to the next outer scope.
+impl Query {
+    fn release_native_members(&mut self, cache: bool) {
+        let capability = std::mem::take(&mut self.native_runtime);
+        let runtime = capability.upgrade().map(Runtime);
+        let _unwind = runtime.as_ref().map(Runtime::unwind_guard);
         while let Some(resume) = self.parents.pop() {
             resume.release_owned();
         }
         while let Some(mut scope) = self.natives.pop() {
-            let _ = scope.call.release_invocation();
-            drop(scope.call);
+            if let Some(runtime) = &runtime {
+                scope.call.abandon_at_boundary(runtime);
+            }
             scope.resume.release_owned();
             while let Some(resume) = scope.parents.pop() {
                 resume.release_owned();
             }
+            if cache && storage::reserve(&mut self.spare_parents, 1, "query.spare_parents").is_ok()
+            {
+                self.spare_parents.push(scope.parents);
+            }
         }
+        if let Some(runtime) = &runtime {
+            runtime.unregister_raw_execution_owner();
+        }
+    }
+}
+impl Drop for Query {
+    fn drop(&mut self) {
+        self.release_native_members(false);
     }
 }
 
@@ -660,13 +680,53 @@ pub(super) fn start_native_with_classification(
     selected: Option<super::frames::NativeClassification>,
     operation: Option<crate::engine::builtins::continuation::NativeOperation>,
 ) -> Result<CallStep, Error> {
+    let owners = super::call::NativeCallGuard::from_callable(
+        runtime,
+        callable,
+        defining_realm,
+        target,
+        super::call::NativeInvokeMode::Ordinary,
+        super::call::NativeInvocation::Call {
+            this_value: receiver,
+        },
+        arguments,
+    )
+    .map_err(runtime_error_to_vm_error)?;
+    start_native_owned(
+        runtime,
+        execution,
+        frame,
+        owners,
+        min_readable_args,
+        tail,
+        depth,
+        selected,
+        operation,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn start_native_owned(
+    runtime: &Runtime,
+    execution: &mut RunningExecution,
+    frame: FrameId,
+    mut owners: super::call::NativeCallGuard<'_>,
+    min_readable_args: u8,
+    tail: bool,
+    depth: usize,
+    selected: Option<super::frames::NativeClassification>,
+    operation: Option<crate::engine::builtins::continuation::NativeOperation>,
+) -> Result<CallStep, Error> {
     let kind = match operation {
         Some(operation) => Some(operation),
-        None => super::frames::native_operation(runtime, &callable)
-            .map_err(runtime_error_to_vm_error)?,
+        None => super::frames::native_operation_in_state(
+            &runtime.0.state.borrow(),
+            owners.activation.function(),
+        )
+        .map_err(runtime_error_to_vm_error)?,
     }
     .ok_or_else(|| Error::internal("classified native lost owned operation"))?;
-    if let Some(synchronous) = kind.synchronous(&arguments) {
+    if let Some(synchronous) = kind.synchronous(&owners.activation.arguments.readable) {
         let realm = execution.frames.current_mut(frame)?.executable.realm;
         let result = (|| {
             {
@@ -675,19 +735,15 @@ pub(super) fn start_native_with_classification(
             let completion = if !execution.frames.can_push_with_continuations(0)
                 || runtime.host_stack_would_overflow()
             {
-                release_call_operands(runtime, receiver, arguments);
+                owners.release_inputs()?;
                 overflow(runtime, realm)?
             } else {
-                native::begin_synchronous(
+                native::begin_synchronous_owned(
                     runtime,
                     &mut execution.slots,
                     realm,
-                    callable,
-                    target,
-                    defining_realm,
+                    owners,
                     min_readable_args,
-                    receiver,
-                    arguments,
                     synchronous,
                     selected,
                 )?
@@ -712,12 +768,8 @@ pub(super) fn start_native_with_classification(
         runtime,
         execution,
         frame,
-        callable,
-        target,
-        defining_realm,
+        owners,
         min_readable_args,
-        receiver,
-        arguments,
         tail,
         depth,
         selected,
@@ -731,12 +783,8 @@ pub(super) fn start_waitable_native_call(
     runtime: &Runtime,
     execution: &mut RunningExecution,
     frame: FrameId,
-    callable: crate::engine::object::CallableRef,
-    target: crate::engine::builtins::native::NativeFunctionId,
-    defining_realm: crate::engine::heap::ContextId,
+    mut owners: super::call::NativeCallGuard<'_>,
     min_readable_args: u8,
-    receiver: JsValue,
-    arguments: Vec<JsValue>,
     tail: bool,
     depth: usize,
     selected: Option<super::frames::NativeClassification>,
@@ -749,7 +797,7 @@ pub(super) fn start_waitable_native_call(
             let _operation = runtime.operation()?;
         }
         if !execution.frames.can_push_with_continuations(0) || runtime.host_stack_would_overflow() {
-            release_call_operands(runtime, receiver, arguments);
+            owners.release_inputs()?;
             return finish_call_instruction_call(
                 runtime,
                 execution,
@@ -759,17 +807,13 @@ pub(super) fn start_waitable_native_call(
                 tail,
             );
         }
-        match native::begin_local(
+        match native::begin_local_owned(
             runtime,
             &mut execution.slots,
             &mut execution.query_storage,
             realm,
-            callable,
-            target,
-            defining_realm,
+            owners,
             min_readable_args,
-            receiver,
-            arguments,
             kind,
             selected,
             execution.frames.can_push_with_continuations(1),
@@ -783,8 +827,7 @@ pub(super) fn start_waitable_native_call(
             }
             native::LocalNativeResult::Waiting(mut records) => {
                 // Take individual live fields, never pop/move the wide record.
-                let call = records[0].call.take().expect("waiting activation");
-                let mut parent = records[0].parents.pop();
+                let has_parent = !records[0].parents.is_empty();
                 let mut query = execution.query_storage.acquire(
                     realm,
                     Vec::new(),
@@ -798,24 +841,33 @@ pub(super) fn start_waitable_native_call(
                         .ok_or_else(|| Error::internal("property operation identity exhausted"))?;
                     storage::reserve(
                         &mut query.natives,
-                        1 + usize::from(parent.is_some()),
+                        1 + usize::from(has_parent),
                         "query.native_scopes",
                     )
                     .map_err(|_| Error::internal("native continuation allocation failed"))?;
                     storage::reserve(
                         &mut query.spare_parents,
-                        1 + usize::from(parent.is_some()),
+                        1 + usize::from(has_parent),
                         "query.spare_parents",
                     )
                     .map_err(|_| Error::internal("native parent storage allocation failed"))?;
                     frame_state.property_generation = identity;
                     Ok(identity)
                 })();
+                let call = super::call::NativeCallGuard::new(
+                    runtime,
+                    records[0].call.take().expect("waiting activation"),
+                );
+                let mut parent = records[0].parents.pop();
                 let identity = match identity {
                     Ok(identity) => identity,
                     Err(error) => {
-                        let mut result =
-                            native::finish_result(runtime, &mut execution.slots, call, Err(error));
+                        let mut result = native::finish_result(
+                            runtime,
+                            &mut execution.slots,
+                            call.into_inner(),
+                            Err(error),
+                        );
                         // Release the abandoned inner state while its outer
                         // activation still owns the protocol call. The reply
                         // resume is likewise consumed before the outer finish.
@@ -838,15 +890,16 @@ pub(super) fn start_waitable_native_call(
                 };
                 let resume = if let Some(mut parent) = parent.take() {
                     native::install_waiting(
+                        runtime,
                         &mut query,
                         parent.call.take().expect("outer replace activation"),
                         Resume::Identity,
-                    );
+                    )?;
                     Resume::StringReplace(parent.resume)
                 } else {
                     Resume::Identity
                 };
-                native::install_waiting(&mut query, call, resume);
+                native::install_waiting(runtime, &mut query, call.into_inner(), resume)?;
                 let step = std::mem::replace(
                     &mut records[0].step,
                     Step::Complete(Some(Completion::Return(
@@ -2512,6 +2565,7 @@ mod native_scope_tests {
                 super::super::call::NativeInvokeMode::Ordinary,
             )
             .unwrap()
+            .into_inner()
     }
 
     #[test]
@@ -2525,6 +2579,7 @@ mod native_scope_tests {
         let first = prepare(&runtime, &mut outer, "Object.getPrototypeOf");
         let second = prepare(&runtime, &mut inner, "Reflect.setPrototypeOf");
         let mut query = Query {
+            native_runtime: runtime.register_raw_execution_owner().unwrap(),
             #[cfg(feature = "profiling")]
             had_callback: false,
             realm: inner.realm,
@@ -2729,10 +2784,13 @@ pub(super) fn start_array_next_without_pending(
                 _ => return Err(Error::internal("iterator overflow did not throw")),
             })
         } else {
-            let mut waiting = Step::Complete(Some(Completion::Return(
-                crate::engine::value::JsValue::Undefined,
-            )));
             let mut waiting_call = None;
+            let mut waiting = native::NativeStepGuard::new(
+                runtime,
+                Step::Complete(Some(Completion::Return(
+                    crate::engine::value::JsValue::Undefined,
+                ))),
+            );
             let result = native::compact_array_next_into(
                 runtime,
                 &mut execution.slots,
@@ -2758,7 +2816,12 @@ pub(super) fn start_array_next_without_pending(
                 let waiting_call = waiting_call
                     .ok_or_else(|| Error::internal("Array-next wait lost activation"))?;
                 query.finish = Some(install_iterator_finish(execution, pending, true)?);
-                native::install_waiting(&mut query, waiting_call, Resume::IteratorNext(resume));
+                native::install_waiting(
+                    runtime,
+                    &mut query,
+                    waiting_call.into_inner(),
+                    Resume::IteratorNext(resume),
+                )?;
                 #[cfg(feature = "profiling")]
                 crate::engine::api::profiling::record_owned_execution_event(
                     "iterator_native_direct_wait",
@@ -2769,7 +2832,7 @@ pub(super) fn start_array_next_without_pending(
                     ReturnOwner::Frame(frame),
                     identity,
                     query,
-                    Ok(waiting),
+                    Ok(waiting.into_inner()),
                 );
             };
             resume
@@ -2843,10 +2906,13 @@ fn start_array_next_direct(
         if !execution.query_storage.reserve_cached_native_entry()? {
             return Err(Error::internal("direct native entry lost reserved storage"));
         }
-        let mut waiting = Step::Complete(Some(Completion::Return(
-            crate::engine::value::JsValue::Undefined,
-        )));
         let mut waiting_call = None;
+        let mut waiting = native::NativeStepGuard::new(
+            runtime,
+            Step::Complete(Some(Completion::Return(
+                crate::engine::value::JsValue::Undefined,
+            ))),
+        );
         let result = native::begin_into(
             runtime,
             &mut execution.slots,
@@ -2870,10 +2936,13 @@ fn start_array_next_direct(
             let finish = install_iterator_finish(execution, pending, true)?;
             let mut query = execution.query_storage.acquire(realm, Vec::new(), finish);
             native::install_waiting(
+                runtime,
                 &mut query,
-                waiting_call.expect("native wait has an activation"),
+                waiting_call
+                    .expect("native wait has an activation")
+                    .into_inner(),
                 Resume::IteratorNext(resume),
-            );
+            )?;
             #[cfg(feature = "profiling")]
             crate::engine::api::profiling::record_owned_execution_event(
                 "iterator_native_direct_wait",
@@ -2884,7 +2953,7 @@ fn start_array_next_direct(
                 ReturnOwner::Frame(frame),
                 identity,
                 query,
-                Ok(waiting),
+                Ok(waiting.into_inner()),
             );
         };
         match resume

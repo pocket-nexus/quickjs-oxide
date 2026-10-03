@@ -2755,8 +2755,30 @@ pub(super) fn execute_frame_in_state(
                         continue;
                     }
                     super::driver::ordinary::Entry::General => return Ok(action),
-                    super::driver::ordinary::Entry::Native(_)
-                    | super::driver::ordinary::Entry::NativeReady => {
+                    super::driver::ordinary::Entry::NativeReady => {
+                        state
+                            .collect_if_requested(&runtime.0.gc_pressure, &runtime.0.poisoned)
+                            .map_err(runtime_error_to_vm_error)?;
+                        continue;
+                    }
+                    super::driver::ordinary::Entry::NativeComplete => {
+                        state
+                            .collect_if_requested(&runtime.0.gc_pressure, &runtime.0.poisoned)
+                            .map_err(runtime_error_to_vm_error)?;
+                        match segment.finish_ordinary(runtime, state)? {
+                            super::driver::ordinary::ReturnProgress::Returned => continue,
+                            super::driver::ordinary::ReturnProgress::Declined => {
+                                return Ok(VmAction::Complete);
+                            }
+                            super::driver::ordinary::ReturnProgress::Property(_) => {
+                                return Err(Error::internal(
+                                    "resident native tail return crossed a property continuation",
+                                ));
+                            }
+                        }
+                    }
+                    super::driver::ordinary::Entry::NativeThrow => return Ok(VmAction::Throw),
+                    super::driver::ordinary::Entry::Native(_) => {
                         return Err(Error::internal(
                             "ordinary segment entered a native activation",
                         ));
@@ -3455,6 +3477,8 @@ mod continuous_call_tests;
 #[cfg(test)]
 mod dynamic_ret_tests;
 
+#[cfg(test)]
+mod native_state_tests;
 #[cfg(test)]
 mod object_allocation_tests;
 

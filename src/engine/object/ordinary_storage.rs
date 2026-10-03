@@ -64,6 +64,26 @@ impl LinkedNativeSelection {
         domain_id == self.domain_id && function == self.function
     }
 
+    pub(crate) fn from_classified_parts(
+        (domain_id, function, data): (
+            u64,
+            ObjectId,
+            crate::engine::builtins::native::NativeFunctionData,
+        ),
+    ) -> Self {
+        Self {
+            domain_id,
+            function,
+            data,
+        }
+    }
+
+    /// Borrow the registered immutable target without consuming an outer
+    /// method hint while its ordinary argument calls execute.
+    pub(crate) const fn target(&self) -> crate::engine::builtins::native::NativeFunctionId {
+        self.data.target
+    }
+
     pub(crate) fn into_parts_jsvalue(
         self,
         runtime: &Runtime,

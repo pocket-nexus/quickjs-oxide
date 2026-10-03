@@ -94,7 +94,14 @@ fn push(runtime: &Runtime, execution: &mut RunningExecution, id: FrameId, value:
 
 #[test]
 fn native_materialization_failure_releases_inputs_and_preserves_lower_slots() {
-    for (method, aliased) in [(false, false), (true, false), (true, true)] {
+    for (resident, method, aliased) in [
+        (false, false, false),
+        (false, true, false),
+        (false, true, true),
+        (true, false, false),
+        (true, true, false),
+        (true, true, true),
+    ] {
         let runtime = Runtime::new();
         let mut context = runtime.new_context().unwrap();
         let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
@@ -104,8 +111,12 @@ fn native_materialization_failure_releases_inputs_and_preserves_lower_slots() {
             .new_bound_native_function(
                 &prototype,
                 context.realm,
-                NativeFunctionId::ArgumentProbe,
-                2,
+                if resident {
+                    NativeFunctionId::MathRandom
+                } else {
+                    NativeFunctionId::ArgumentProbe
+                },
+                if resident { 0 } else { 2 },
             )
             .unwrap()
             .into_object()
@@ -152,18 +163,24 @@ fn native_materialization_failure_releases_inputs_and_preserves_lower_slots() {
         let saved_token = runtime.0.state.borrow().next_active_frame_token;
         runtime.0.state.borrow_mut().next_active_frame_token = u64::MAX;
         let runtime_owners = std::rc::Rc::strong_count(&runtime.0);
-        let error = enter_selected(
-            &runtime,
-            &mut execution,
-            id,
-            2,
-            method,
-            false,
-            None,
-            fallthrough,
-        )
-        .err()
-        .expect("frame token exhaustion");
+        let entry = if resident {
+            let mut state = runtime.0.state.borrow_mut();
+            crate::engine::vm::stack::FrameExecution::admit(&mut execution, id)
+                .unwrap()
+                .enter_ordinary(&runtime, &mut state, 2, method, false, fallthrough)
+        } else {
+            enter_selected(
+                &runtime,
+                &mut execution,
+                id,
+                2,
+                method,
+                false,
+                None,
+                fallthrough,
+            )
+        };
+        let error = entry.err().expect("frame token exhaustion");
         assert_eq!(
             error.message(),
             "runtime invariant failed: active-frame token space was exhausted"

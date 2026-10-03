@@ -100,7 +100,7 @@ impl<'a> FrameExecution<'a> {
         tail: bool,
         fallthrough: crate::engine::vm::execute::FallthroughPc,
     ) -> Result<crate::engine::vm::driver::ordinary::Entry, Error> {
-        use crate::engine::vm::driver::ordinary::{Entry, prepare_ordinary_in_state};
+        use crate::engine::vm::driver::ordinary::{Entry, StateCall, prepare_ordinary_in_state};
         // A weak outer method hint may remain while its ordinary arguments
         // execute. Preflight declines only if the actual callee matches it.
         let (prepared, depth) = {
@@ -118,8 +118,23 @@ impl<'a> FrameExecution<'a> {
             )?;
             (prepared, depth)
         };
-        let Some((call, checked)) = prepared else {
+        let Some(prepared) = prepared else {
             return Ok(Entry::General);
+        };
+        let (call, checked) = match prepared {
+            StateCall::Ordinary(call, checked) => (call, checked),
+            StateCall::Native(selected) => {
+                return self.enter_state_native(
+                    runtime,
+                    state,
+                    selected,
+                    usize::from(arguments),
+                    method,
+                    tail,
+                    fallthrough,
+                    depth,
+                );
+            }
         };
         if !self.execution.frames.can_push() || runtime.bytecode_call_would_overflow() {
             #[cfg(feature = "profiling")]
@@ -141,6 +156,141 @@ impl<'a> FrameExecution<'a> {
         #[cfg(not(feature = "profiling"))]
         let _ = depth;
         Ok(Entry::Ordinary)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn enter_state_native(
+        &mut self,
+        runtime: &Runtime,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        selected: crate::engine::vm::frames::NativeClassification,
+        count: usize,
+        method: bool,
+        tail: bool,
+        fallthrough: crate::engine::vm::execute::FallthroughPc,
+        depth: usize,
+    ) -> Result<crate::engine::vm::driver::ordinary::Entry, Error> {
+        use crate::engine::vm::{
+            Completion,
+            call::{NativeInvocation, NativeInvokeMode, NativeStateGuard},
+            driver::ordinary::Entry,
+        };
+        // Genuine stack overflow still uses the existing error bridge and its
+        // diagnostic scheduling. A fixed family decision never inspects argv.
+        if !self.execution.frames.can_push_with_continuations(0)
+            || runtime.host_stack_would_overflow()
+        {
+            self.execution.selected_native = Some(
+                crate::engine::object::LinkedNativeSelection::from_classified_parts(
+                    selected.into_linked_parts(),
+                ),
+            );
+            return Ok(Entry::General);
+        }
+        let logical_depth = self.execution.frames.logical_active_depth(runtime);
+        let (arguments, receiver, function) = self
+            .frame()
+            .transaction
+            .take_validated_native_call_operands_in_state(
+                runtime,
+                state,
+                logical_depth,
+                count,
+                method,
+            )?;
+        let target = selected.target();
+        let realm = if target.uses_calling_realm() {
+            self.frame().executable.realm
+        } else {
+            selected.defining_realm()
+        };
+        let mut owner = NativeStateGuard::from_operands(
+            state,
+            &runtime.0.poisoned,
+            function,
+            realm,
+            target,
+            NativeInvokeMode::Ordinary,
+            NativeInvocation::Call {
+                this_value: receiver,
+            },
+            arguments,
+        );
+        {
+            let (state, call) = owner.parts();
+            let NativeInvocation::Call { this_value } = &call.invocation else {
+                unreachable!("ordinary native receiver")
+            };
+            if runtime.0.deferred_references.has_pending()
+                || crate::engine::vm::driver::ordinary::native_observes_activation_in_state(
+                    state,
+                    target,
+                    this_value,
+                    &call.activation.arguments.readable,
+                )
+            {
+                self.execution.frames.materialize_in_state(state)?;
+            } else {
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "native_unobserved_entry",
+                );
+            }
+        }
+        owner
+            .publish(
+                runtime.domain_id(),
+                selected.minimum(),
+                true,
+                Some(&selected),
+            )
+            .map_err(super::runtime_error_to_vm_error)?;
+        let result = {
+            let (state, call) = owner.parts();
+            state.invoke_state_native_body(
+                &runtime.0.poisoned,
+                target,
+                realm,
+                &call.invocation,
+                &call.activation.arguments,
+            )
+        };
+        let call = owner.into_inner();
+        let (result, arguments) =
+            call.finish_completion_reusing(state, &runtime.0.poisoned, result);
+        self.execution
+            .slots
+            .recycle_native_argument_buffer(arguments);
+        let completion = result.map_err(super::runtime_error_to_vm_error)?;
+        let (value, action) = match completion {
+            Completion::Return(value) => (
+                value,
+                if tail {
+                    Entry::NativeComplete
+                } else {
+                    Entry::NativeReady
+                },
+            ),
+            Completion::Throw(value) => (value, Entry::NativeThrow),
+        };
+        self.execution.pending = Some(value);
+        if !matches!(action, Entry::NativeComplete) {
+            let mut turn = self.frame();
+            turn.transaction.slots().push_pending(turn.pending)?;
+            if matches!(action, Entry::NativeReady) {
+                *turn.resume_pc = fallthrough.index();
+            }
+        }
+        #[cfg(feature = "profiling")]
+        {
+            crate::engine::api::profiling::record_owned_instruction(depth);
+            crate::engine::api::profiling::record_owned_execution_event(
+                "core.internal_native_body",
+            );
+        }
+        #[cfg(not(feature = "profiling"))]
+        let _ = depth;
+        Ok(action)
     }
 
     pub(in crate::engine::vm) fn enter_constructor(
@@ -704,29 +854,46 @@ impl FrameTransaction<'_> {
         logical_active_depth: usize,
         count: usize,
         method: bool,
-    ) -> Result<(Vec<JsValue>, JsValue, crate::engine::object::CallableRef), Error> {
+    ) -> Result<(Vec<JsValue>, JsValue, crate::engine::heap::ObjectId), Error> {
+        let _unwind = runtime.unwind_guard();
+        let mut state = runtime.0.state.borrow_mut();
+        self.take_validated_native_call_operands_in_state(
+            runtime,
+            &mut state,
+            logical_active_depth,
+            count,
+            method,
+        )
+    }
+
+    pub(in crate::engine::vm) fn take_validated_native_call_operands_in_state(
+        &mut self,
+        runtime: &Runtime,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        logical_active_depth: usize,
+        count: usize,
+        method: bool,
+    ) -> Result<(Vec<JsValue>, JsValue, crate::engine::heap::ObjectId), Error> {
+        use crate::engine::heap::runtime::owned_values::{OwnedValueGuard, OwnedValuesGuard};
         self.store
             .reserve_native_argument_depth(logical_active_depth.saturating_add(1))?;
         let arguments =
             self.store
                 .take_native_arguments_current::<true>(self.window, count, method)?;
+        let mut arguments_owner = OwnedValuesGuard::new(state, &runtime.0.poisoned, arguments);
+        let (state, arguments) = arguments_owner.parts();
         let JsValue::Object(function) = self.store.pop_current(self.window)? else {
-            unreachable!("native selection authenticated the callee object")
+            unreachable!("selected native callee")
         };
-        // The slot's original edge becomes the activation's callable owner.
-        // The callee stays continuously live until normal activation cleanup,
-        // so its former retain/release pair is unnecessary.
-        let callable = crate::engine::object::CallableRef::from_validated_object(
-            crate::engine::object::ObjectRef::from_owned_handle(runtime.clone(), function),
-        );
-        // Releasing the old duplicate also drained unrelated pending edges.
-        // Preserve that observation boundary before consuming the receiver.
+        let mut function_owner =
+            OwnedValueGuard::new(state, &runtime.0.poisoned, JsValue::Object(function));
+        let (state, function_owner_value) = function_owner.parts();
+        // Keep the historical header/coordinator admission point between the
+        // transferred callee and receiver. No State kernel owns that queue.
         if runtime.0.deferred_references.has_pending() {
-            drop(
-                runtime
-                    .operation()
-                    .map_err(super::runtime_error_to_vm_error)?,
-            );
+            runtime
+                .admit_deferred_in_state(state)
+                .map_err(super::runtime_error_to_vm_error)?;
         }
         let receiver = if method {
             self.store.pop_current(self.window)?
@@ -737,7 +904,8 @@ impl FrameTransaction<'_> {
         crate::engine::api::profiling::record_owned_execution_event(
             "native_callee_owner_transferred",
         );
-        Ok((arguments, receiver, callable))
+        let _ = function_owner_value.take().expect("native callee owner");
+        Ok((std::mem::take(arguments), receiver, function))
     }
 
     pub(in crate::engine::vm) fn slots(&mut self) -> FrameSlots<'_> {

@@ -315,6 +315,11 @@ fn enter_call(
                 None
             }
             super::ordinary::Entry::NativeReady => None,
+            super::ordinary::Entry::NativeComplete | super::ordinary::Entry::NativeThrow => {
+                return Err(invariant(
+                    "legacy entry received resident native completion",
+                ));
+            }
             super::ordinary::Entry::Native(CallStep::Entered) => Some(Boundary::Entered),
             super::ordinary::Entry::Native(CallStep::Complete(completion)) => {
                 Some(Boundary::Complete(completion))

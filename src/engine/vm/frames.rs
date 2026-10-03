@@ -1,7 +1,9 @@
 mod active;
+mod native_state;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 pub(crate) use active::ActiveFrames;
+pub(in crate::engine::vm) use native_state::NativeStatePublication;
 
 use crate::engine::builtins::native::{NativeCProto, NativeFunctionId};
 use crate::engine::code::function::metadata::EvalKind;
@@ -21,9 +23,7 @@ use crate::engine::vm::BytecodePc;
 pub(in crate::engine::vm) struct NativeClassification {
     function: ObjectId,
     domain: u64,
-    target: NativeFunctionId,
-    defining_realm: ContextId,
-    min_readable_args: u8,
+    data: crate::engine::builtins::native::NativeFunctionData,
     operation: Option<crate::engine::builtins::continuation::NativeOperation>,
 }
 
@@ -33,15 +33,12 @@ impl NativeClassification {
     pub(in crate::engine::vm) fn classify_selected(
         selection: super::call::ordinary::NativeSelection<'_>,
     ) -> Self {
-        let (runtime, function, target, defining_realm, min_readable_args, operation) =
-            selection.into_parts();
+        let (domain, function, data) = selection.into_linked_parts();
         Self {
             function,
-            domain: runtime.domain_id(),
-            target,
-            defining_realm,
-            min_readable_args,
-            operation: Some(operation),
+            domain,
+            operation: data.operation(),
+            data,
         }
     }
 
@@ -57,10 +54,8 @@ impl NativeClassification {
         Some(Self {
             function: *function,
             domain: runtime.domain_id(),
-            target: data.target,
-            defining_realm: data.realm.expect("selected native realm"),
-            min_readable_args: data.min_readable_args,
             operation: data.operation(),
+            data,
         })
     }
 
@@ -81,18 +76,24 @@ impl NativeClassification {
             "native function was called before its defining realm was attached",
         ))?;
         state.heap.context(defining_realm)?;
-        let target = data.target;
-        let min_readable_args = data.min_readable_args;
+        let data = *data;
         let operation = data.operation();
         drop(state);
         Ok(Some(Self {
             function: callable.as_object().object_id(),
             domain: runtime.domain_id(),
-            target,
-            defining_realm,
-            min_readable_args,
+            data,
             operation,
         }))
+    }
+    pub(crate) fn into_linked_parts(
+        self,
+    ) -> (
+        u64,
+        ObjectId,
+        crate::engine::builtins::native::NativeFunctionData,
+    ) {
+        (self.domain, self.function, self.data)
     }
     pub(in crate::engine::vm) fn take_operation(
         &mut self,
@@ -100,13 +101,13 @@ impl NativeClassification {
         self.operation.take()
     }
     pub(in crate::engine::vm) fn target(&self) -> NativeFunctionId {
-        self.target
+        self.data.target
     }
     pub(in crate::engine::vm) fn defining_realm(&self) -> ContextId {
-        self.defining_realm
+        self.data.realm.expect("selected native realm")
     }
     pub(in crate::engine::vm) fn minimum(&self) -> u8 {
-        self.min_readable_args
+        self.data.min_readable_args
     }
 }
 
@@ -119,25 +120,26 @@ pub(in crate::engine::vm) fn native_operation(
     if !callable.belongs_to(runtime) {
         return Err(RuntimeError::WrongRuntime("callable"));
     }
-    let state = runtime.0.state.borrow();
-    let object = state.heap.object(callable.as_object().object_id())?;
+    native_operation_in_state(&runtime.0.state.borrow(), callable.as_object().object_id())
+}
+
+pub(in crate::engine::vm) fn native_operation_in_state(
+    state: &crate::engine::heap::runtime::RuntimeState,
+    function: ObjectId,
+) -> Result<Option<crate::engine::builtins::continuation::NativeOperation>, RuntimeError> {
+    let object = state.heap.object(function)?;
     Ok(match &object.payload {
         ObjectPayload::NativeFunction { data, .. } => data.operation(),
         _ => None,
     })
 }
 
-/// Scoped proof for the no-callback interval between native argv preparation
-/// and frame publication. Fields are private and the proof cannot be cloned.
-/// Runtime and rooted callable remain borrowed until publication consumes it.
+/// The external adapter borrows the public root until the shared publication
+/// proof is consumed. Internal callers pin the same edge in execution storage.
 pub(in crate::engine::vm) struct NativePublicationWitness<'a> {
     runtime: &'a Runtime,
-    callable: &'a crate::engine::object::CallableRef,
-    realm: ContextId,
-    target: NativeFunctionId,
-    min_readable_args: u8,
-    iterator_next_raw: bool,
-    realm_allowed: bool,
+    _callable: &'a crate::engine::object::CallableRef,
+    proof: NativeStatePublication,
 }
 
 impl<'a> NativePublicationWitness<'a> {
@@ -154,50 +156,18 @@ impl<'a> NativePublicationWitness<'a> {
         if !callable.belongs_to(runtime) {
             return Err(RuntimeError::WrongRuntime("native callable"));
         }
-        // The callable root held by the caller owns the native payload and its
-        // defining-realm edge for the whole invocation. Revalidate the
-        // detached snapshot before recording raw identities in the frame.
-        // Class-call and CFunctionData-style internal functions deliberately
-        // execute in `realm`, which is the calling realm rather than the
-        // separately retained defining realm.
-        let realm_allowed = {
-            let state = runtime.0.state.borrow();
-            state.heap.context(realm)?;
-            let object = state.heap.object(callable.as_object().object_id())?;
-            let ObjectPayload::NativeFunction { data, .. } = &object.payload else {
-                return Err(RuntimeError::Invariant(
-                    "native invocation target was not a native function",
-                ));
-            };
-            let defining_realm = data.realm.ok_or(RuntimeError::Invariant(
-                "native function lost its defining realm",
-            ))?;
-            if data.target != target
-                || (matches!(mode, super::call::NativeInvokeMode::Ordinary)
-                    && !target.uses_calling_realm()
-                    && defining_realm != realm)
-                || data.min_readable_args != min_readable_args
-            {
-                return Err(RuntimeError::Invariant(
-                    "native invocation metadata changed after snapshot",
-                ));
-            }
-            if defining_realm != realm {
-                state.heap.context(defining_realm)?;
-            }
-            defining_realm == realm
-                || target.uses_calling_realm()
-                || target.descriptor().cproto == NativeCProto::IteratorNext
-        };
-
-        Ok(Self {
-            runtime,
-            callable,
+        let proof = NativeStatePublication::validate(
+            &runtime.0.state.borrow(),
+            callable.as_object().object_id(),
             realm,
             target,
             min_readable_args,
-            iterator_next_raw: matches!(mode, super::call::NativeInvokeMode::IteratorNextRaw),
-            realm_allowed,
+            mode,
+        )?;
+        Ok(Self {
+            runtime,
+            _callable: callable,
+            proof,
         })
     }
 
@@ -213,35 +183,20 @@ impl<'a> NativePublicationWitness<'a> {
         if !callable.belongs_to(runtime) {
             return Err(RuntimeError::WrongRuntime("native callable"));
         }
-        if selected.domain != runtime.domain_id()
-            || selected.function != callable.as_object().object_id()
-            || selected.target != target
-            || selected.min_readable_args != min_readable_args
-            || (matches!(mode, super::call::NativeInvokeMode::Ordinary)
-                && !target.uses_calling_realm()
-                && realm != selected.defining_realm)
-        {
-            return Err(RuntimeError::Invariant(
-                "native invocation metadata changed after snapshot",
-            ));
-        }
-        // The classified function retains its defining realm. A distinct calling
-        // realm is still checked here, before padding/publication or body effects.
-        if realm != selected.defining_realm {
-            runtime.0.state.borrow().heap.context(realm)?;
-        }
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("native_classification_reused");
-        Ok(Self {
-            runtime,
-            callable,
+        let proof = NativeStatePublication::from_classification(
+            &runtime.0.state.borrow(),
+            runtime.domain_id(),
+            callable.as_object().object_id(),
             realm,
             target,
             min_readable_args,
-            iterator_next_raw: matches!(mode, super::call::NativeInvokeMode::IteratorNextRaw),
-            realm_allowed: realm == selected.defining_realm
-                || target.uses_calling_realm()
-                || target.descriptor().cproto == NativeCProto::IteratorNext,
+            mode,
+            selected,
+        )?;
+        Ok(Self {
+            runtime,
+            _callable: callable,
+            proof,
         })
     }
 
@@ -251,80 +206,24 @@ impl<'a> NativePublicationWitness<'a> {
         readable_arg_count: usize,
         continuation: bool,
     ) -> Result<ActiveFrameGuard, RuntimeError> {
-        // Keep the caller's owning frame root at the original retain site.
-        let function = self.callable.as_object().object_id();
-        if !self.realm_allowed
-            || readable_arg_count != actual_arg_count.max(usize::from(self.min_readable_args))
-        {
-            return Err(RuntimeError::Invariant(
-                "native active frame disagrees with its rooted callable",
-            ));
-        }
-        self.runtime.publish_borrowed_native_frame(
-            function,
-            self.realm,
-            ActiveFrameFlags {
-                backtrace_hidden: self.backtrace_hidden(),
-                ..Default::default()
-            },
-            ActiveFrameKind::Native {
-                target: self.target,
-                actual_arg_count,
-                readable_arg_count,
-            },
+        let restore = self.proof.publish(
+            &mut self.runtime.0.state.borrow_mut(),
+            actual_arg_count,
+            readable_arg_count,
             continuation,
-        )
-    }
-
-    /// QuickJS invokes `JS_CLASS_PROMISE_RESOLVE_FUNCTION` /
-    /// `JS_CLASS_PROMISE_REJECT_FUNCTION` through the class call table without
-    /// pushing a `JSStackFrame` (`JS_CallInternal` hands non-bytecode classes
-    /// straight to their call handler), so errors raised while resolving a
-    /// thenable must not name the resolving function in their backtrace.
-    /// `Iterator.prototype.next` raw fast-path frames are hidden for the same
-    /// reason (its `%IteratorHelperPrototype%` frames are not observable).
-    fn backtrace_hidden(&self) -> bool {
-        self.iterator_next_raw || matches!(self.target, NativeFunctionId::PromiseResolving(_))
-    }
-}
-
-impl Runtime {
-    fn publish_borrowed_native_frame(
-        &self,
-        function: ObjectId,
-        realm: ContextId,
-        flags: ActiveFrameFlags,
-        kind: ActiveFrameKind,
-        native_continuation: bool,
-    ) -> Result<ActiveFrameGuard, RuntimeError> {
-        let mut state = self.0.state.borrow_mut();
-        let token = ActiveFrameToken(state.next_active_frame_token);
-        state.next_active_frame_token =
-            state
-                .next_active_frame_token
-                .checked_add(1)
-                .ok_or(RuntimeError::Invariant(
-                    "active-frame token space was exhausted",
-                ))?;
-        let depth = state.active_frames.len();
-        state.active_frames.push_lazy_native(ActiveFrameRecord {
-            token,
-            native_continuation,
-            function,
-            realm,
-            flags,
-            kind,
-        });
+        )?;
         Ok(ActiveFrameGuard {
-            runtime: self.clone(),
-            token,
-            depth,
+            runtime: self.runtime.clone(),
+            token: restore.token,
+            depth: restore.depth,
             active: true,
             _function_root: None,
             _bytecode_root: None,
         })
     }
+}
 
+impl Runtime {
     pub(crate) fn push_active_collection_record(
         &self,
         record: ActiveCollectionRecord,
@@ -454,32 +353,19 @@ impl Runtime {
         kind: ActiveFrameKind,
         native_continuation: bool,
     ) -> Result<ActiveFrameGuard, RuntimeError> {
-        let (token, depth) = {
-            let mut state = self.0.state.borrow_mut();
-            let token = ActiveFrameToken(state.next_active_frame_token);
-            state.next_active_frame_token =
-                state
-                    .next_active_frame_token
-                    .checked_add(1)
-                    .ok_or(RuntimeError::Invariant(
-                        "active-frame token space was exhausted",
-                    ))?;
-            let depth = state.active_frames.len();
-            state.active_frames.push(ActiveFrameRecord {
-                token,
-                native_continuation,
-                function: function_root.object_id(),
-                realm,
-                flags,
-                kind,
-            });
-            (token, depth)
-        };
+        let restore = self.0.state.borrow_mut().publish_validated_active_frame(
+            function_root.object_id(),
+            realm,
+            flags,
+            kind,
+            native_continuation,
+            false,
+        )?;
 
         Ok(ActiveFrameGuard {
             runtime: self.clone(),
-            token,
-            depth,
+            token: restore.token,
+            depth: restore.depth,
             active: true,
             _function_root: Some(function_root),
             _bytecode_root: bytecode_root,
@@ -684,18 +570,7 @@ impl Runtime {
         token: ActiveFrameToken,
         depth: usize,
     ) -> Result<(), RuntimeError> {
-        let mut state = self.0.state.borrow_mut();
-        if state.active_frames.len() == depth + 1
-            && state.active_frames.last().map(|frame| frame.token) == Some(token)
-        {
-            state.active_frames.pop();
-            return Ok(());
-        }
-
-        state.active_frames.retire(token, depth);
-        Err(RuntimeError::Invariant(
-            "active frame stack was not restored in LIFO order",
-        ))
+        self.0.state.borrow_mut().pop_active_frame(token, depth)
     }
 
     pub(crate) fn pop_active_frame_fallback(&self, token: ActiveFrameToken, depth: usize) {
@@ -806,17 +681,7 @@ impl ActiveFrameRestore {
         mut self,
         state: &mut crate::engine::heap::runtime::RuntimeState,
     ) -> Result<(), RuntimeError> {
-        let restored = if state.active_frames.len() == self.depth + 1
-            && state.active_frames.last().map(|frame| frame.token) == Some(self.token)
-        {
-            state.active_frames.pop();
-            Ok(())
-        } else {
-            state.active_frames.retire(self.token, self.depth);
-            Err(RuntimeError::Invariant(
-                "active frame stack was not restored in LIFO order",
-            ))
-        };
+        let restored = state.pop_active_frame(self.token, self.depth);
         if let Some(function) = self.function.take() {
             state.release_object_handle(function)?;
         }
@@ -862,32 +727,6 @@ impl ActiveFrameGuard {
                 .map(FunctionBytecodeRef::into_execution_handle),
         }
     }
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn mark_native_continuation(&mut self) -> Result<(), RuntimeError> {
-        let mut state = self.runtime.0.state.borrow_mut();
-        let frame = state
-            .active_frames
-            .get_mut(self.depth)
-            .filter(|frame| {
-                self.active
-                    && frame.token == self.token
-                    && matches!(frame.kind, ActiveFrameKind::Native { .. })
-            })
-            .ok_or(RuntimeError::Invariant(
-                "native continuation has no matching active frame",
-            ))?;
-        if frame.native_continuation {
-            return Err(RuntimeError::Invariant(
-                "native continuation was registered twice",
-            ));
-        }
-        let token = frame.token;
-        state
-            .active_frames
-            .mark_native_continuation(self.depth, token);
-        Ok(())
-    }
-
     pub(crate) const fn token(&self) -> ActiveFrameToken {
         self.token
     }

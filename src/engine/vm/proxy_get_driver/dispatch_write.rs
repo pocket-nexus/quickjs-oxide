@@ -652,6 +652,7 @@ mod local_set_tests {
         };
         let key = runtime.property_key_for_index(0).unwrap();
         let mut query = Query {
+            native_runtime: std::rc::Weak::new(),
             #[cfg(feature = "profiling")]
             had_callback: false,
             realm: context.realm,

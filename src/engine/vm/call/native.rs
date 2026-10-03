@@ -1,26 +1,35 @@
 //! Native invocation ownership shared by synchronous consumers and owned continuations.
 //! Preparing an activation executes no builtin body; arguments and the diagnostic
 //! frame survive until completion, rejection or abandonment.
-use super::{NativeArguments, NativeInvocation, NativeInvokeMode, NativeInvokeOutcome};
+#[cfg(test)]
+use super::NativeInvokeOutcome;
+use super::{NativeArguments, NativeInvocation, NativeInvokeMode};
+#[cfg(test)]
+use crate::engine::vm::Completion;
 use crate::engine::{
-    api::{error::NativeErrorKind, runtime::Runtime, runtime_error::RuntimeError},
+    api::{runtime::Runtime, runtime_error::RuntimeError},
     builtins::native::NativeFunctionId,
-    heap::ContextId,
+    heap::{ContextId, ObjectId},
     object::CallableRef,
     value::{JsValue, Value},
-    vm::{Completion, frames::ActiveFrameGuard},
+    vm::frames::ActiveFrameRestore,
 };
 
+mod state;
+#[cfg(test)]
+mod state_tests;
+pub(in crate::engine::vm) use state::{NativeCallGuard, NativeStateGuard, RootedNativeCall};
+
+/// Internal owner record. Its storage, borrowed guard or external boundary
+/// adapter explicitly retires it; it owns no Runtime and has no root Drop.
 pub(in crate::engine::vm) struct PreparedNativeCall {
     pub activation: NativeActivation,
     pub invocation: NativeInvocation,
 }
 
 pub(in crate::engine::vm) struct NativeActivation {
-    runtime: Option<Runtime>,
-    // Retire the non-owning diagnostic descriptor before callable roots on unwind.
-    active_frame: Option<ActiveFrameGuard>,
-    callable: Option<CallableRef>,
+    active_frame: Option<ActiveFrameRestore>,
+    callable: Option<ObjectId>,
     pub realm: ContextId,
     pub target: NativeFunctionId,
     pub mode: NativeInvokeMode,
@@ -30,6 +39,7 @@ pub(in crate::engine::vm) struct NativeActivation {
 enum NativeCallableInput<'a> {
     Borrowed(&'a CallableRef),
 
+    #[cfg(test)]
     Owned(CallableRef),
 }
 
@@ -38,6 +48,7 @@ impl NativeCallableInput<'_> {
         match self {
             Self::Borrowed(callable) => callable,
 
+            #[cfg(test)]
             Self::Owned(callable) => callable,
         }
     }
@@ -47,6 +58,7 @@ impl NativeCallableInput<'_> {
             match self {
                 Self::Borrowed(callable) => callable.try_clone()?,
 
+                #[cfg(test)]
                 Self::Owned(callable) => callable,
             }
         })
@@ -62,7 +74,7 @@ enum NativeArgumentInput<'a> {
 }
 
 /// Owns the internal edges preparation took until the activation exists.
-/// `NativeActivation`'s Drop covers readable arguments after publication;
+/// The concrete boundary guard covers readable arguments after publication;
 /// before that, this guard releases both halves on every early return.
 struct PendingNativeOwners<'a> {
     runtime: &'a Runtime,
@@ -72,11 +84,38 @@ struct PendingNativeOwners<'a> {
 
 impl Drop for PendingNativeOwners<'_> {
     fn drop(&mut self) {
+        if self.runtime.skip_cleanup() {
+            return;
+        }
+        let _unwind = self.runtime.unwind_guard();
+        if let Ok(mut state) = self.runtime.0.state.try_borrow_mut() {
+            if let Some(invocation) = self.invocation.take() {
+                if invocation
+                    .release_in_state(&mut state, &self.runtime.0.poisoned)
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            for value in self.readable.drain(..) {
+                if state
+                    .release_owned_jsvalue(&self.runtime.0.poisoned, value)
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            return;
+        }
+        // A rejected external borrow keeps the existing root boundary fallback.
         if let Some(invocation) = self.invocation.take() {
             let _ = invocation.release(self.runtime);
         }
         for value in self.readable.drain(..) {
             let _ = self.runtime.release_jsvalue(value);
+            if self.runtime.is_poisoned() {
+                break;
+            }
         }
     }
 }
@@ -92,7 +131,7 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: &[Value],
         mode: NativeInvokeMode,
-    ) -> Result<PreparedNativeCall, RuntimeError> {
+    ) -> Result<RootedNativeCall, RuntimeError> {
         self.prepare_native_arguments(
             NativeCallableInput::Borrowed(callable),
             realm,
@@ -117,7 +156,7 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: Vec<Value>,
         mode: NativeInvokeMode,
-    ) -> Result<PreparedNativeCall, RuntimeError> {
+    ) -> Result<RootedNativeCall, RuntimeError> {
         self.prepare_native_arguments(
             NativeCallableInput::Owned(callable),
             realm,
@@ -141,7 +180,7 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: Vec<JsValue>,
         mode: NativeInvokeMode,
-    ) -> Result<PreparedNativeCall, RuntimeError> {
+    ) -> Result<RootedNativeCall, RuntimeError> {
         self.prepare_native_arguments(
             NativeCallableInput::Borrowed(callable),
             realm,
@@ -166,7 +205,7 @@ impl Runtime {
         invocation: NativeInvocation,
         arguments: Vec<Value>,
         mode: NativeInvokeMode,
-    ) -> Result<PreparedNativeCall, RuntimeError> {
+    ) -> Result<RootedNativeCall, RuntimeError> {
         self.prepare_native_arguments(
             NativeCallableInput::Owned(callable),
             realm,
@@ -180,61 +219,8 @@ impl Runtime {
         )
     }
 
-    /// Array iterator-next has no JavaScript arguments. Keep the same owning
-    /// activation/publication ABI without entering general argv construction.
-    pub(in crate::engine::vm) fn prepare_array_next_owned(
-        &self,
-        callable: CallableRef,
-        realm: ContextId,
-        min_readable_args: u8,
-        receiver: JsValue,
-    ) -> Result<PreparedNativeCall, RuntimeError> {
-        let target = NativeFunctionId::ArrayIteratorNext;
-        let mode = NativeInvokeMode::IteratorNextRaw;
-        let invocation = NativeInvocation::Call {
-            this_value: receiver,
-        };
-        let mut owners = PendingNativeOwners {
-            runtime: self,
-            invocation: Some(invocation),
-            readable: Vec::new(),
-        };
-        if min_readable_args != 0 {
-            return self.prepare_native_continuation_selected(
-                callable,
-                realm,
-                target,
-                min_readable_args,
-                owners.invocation.take().expect("array next invocation"),
-                Vec::new(),
-                mode,
-                None,
-            );
-        }
-        let publication = super::super::frames::NativePublicationWitness::validate(
-            self, &callable, realm, target, 0, mode,
-        )?;
-        let active_frame = publication.publish(0, 0, true)?;
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("native_activation_prepared");
-        Ok(PreparedNativeCall {
-            activation: NativeActivation {
-                runtime: Some(self.clone()),
-                callable: Some(callable),
-                realm,
-                target,
-                mode,
-                arguments: NativeArguments {
-                    actual_arg_count: 0,
-                    readable: Vec::new(),
-                },
-                active_frame: Some(active_frame),
-            },
-            invocation: owners.invocation.take().expect("array next invocation"),
-        })
-    }
-
     #[allow(clippy::too_many_arguments)]
+    #[cfg(test)]
     pub(in crate::engine::vm) fn prepare_native_continuation_selected(
         &self,
         callable: CallableRef,
@@ -245,18 +231,9 @@ impl Runtime {
         arguments: Vec<JsValue>,
         mode: NativeInvokeMode,
         selected: Option<super::super::frames::NativeClassification>,
-    ) -> Result<PreparedNativeCall, RuntimeError> {
-        self.prepare_native_arguments(
-            NativeCallableInput::Owned(callable),
-            realm,
-            target,
-            min_readable_args,
-            invocation,
-            NativeArgumentInput::Internal(arguments),
-            mode,
-            true,
-            selected,
-        )
+    ) -> Result<NativeCallGuard<'_>, RuntimeError> {
+        NativeCallGuard::from_callable(self, callable, realm, target, mode, invocation, arguments)?
+            .publish(min_readable_args, selected.as_ref())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -271,7 +248,7 @@ impl Runtime {
         mode: NativeInvokeMode,
         continuation: bool,
         selected: Option<super::super::frames::NativeClassification>,
-    ) -> Result<PreparedNativeCall, RuntimeError> {
+    ) -> Result<RootedNativeCall, RuntimeError> {
         #[cfg(feature = "profiling")]
         let _profile_phase = crate::engine::api::profiling::PhaseTimer::start_vm("native.prepare");
         let callable = callable_input.as_ref();
@@ -414,192 +391,21 @@ impl Runtime {
 
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("native_activation_prepared");
-        Ok(PreparedNativeCall {
-            activation: NativeActivation {
-                runtime: Some(self.clone()),
-                callable: Some(callable),
-                realm,
-                target,
-                mode,
-                arguments,
-                active_frame: Some(active_frame),
+        let boundary = self.clone();
+        Ok(RootedNativeCall::new(
+            boundary,
+            PreparedNativeCall {
+                activation: NativeActivation {
+                    callable: Some(callable.into_object().into_execution_handle()),
+                    realm,
+                    target,
+                    mode,
+                    arguments,
+                    active_frame: Some(active_frame.into_internal()),
+                },
+                invocation: owners.invocation.take().expect("prepared invocation owner"),
             },
-            invocation: owners.invocation.take().expect("prepared invocation owner"),
-        })
-    }
-}
-
-impl PreparedNativeCall {
-    /// Release the owned invocation edge when a prepared call is abandoned
-    /// before its dispatcher consumes it. `NativeActivation`'s own Drop already
-    /// releases the readable argument edges.
-    pub(in crate::engine::vm) fn release_invocation(&mut self) -> Result<(), RuntimeError> {
-        let invocation = std::mem::replace(
-            &mut self.invocation,
-            NativeInvocation::Getter {
-                this_value: JsValue::Undefined,
-            },
-        );
-        invocation.release(
-            self.activation
-                .runtime
-                .as_ref()
-                .expect("native runtime present"),
-        )
-    }
-}
-
-impl Drop for NativeActivation {
-    /// Release every readable argument edge still owned when the activation is
-    /// abandoned without `finish`. `finish` takes the buffer first, so a
-    /// completed activation drops an empty vector. Releases are defer-safe and
-    /// never run JavaScript.
-    fn drop(&mut self) {
-        if let Some(runtime) = self.runtime.as_ref() {
-            for value in self.arguments.readable.drain(..) {
-                let _ = runtime.release_jsvalue(value);
-            }
-        } else {
-            debug_assert!(self.arguments.readable.is_empty());
-        }
-    }
-}
-
-impl NativeActivation {
-    pub(in crate::engine::vm) fn callable(&self) -> &CallableRef {
-        self.callable.as_ref().expect("native callable present")
-    }
-
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(in crate::engine::vm) fn own_continuation(&mut self) -> Result<(), RuntimeError> {
-        self.active_frame
-            .as_mut()
-            .expect("native activation lost its active frame")
-            .mark_native_continuation()
-    }
-
-    /// Allocate JS engine errors while this native frame and its selected realm
-    /// are still visible. An existing thrown Value must not be re-materialized.
-    pub(in crate::engine::vm) fn finish(
-        self,
-        result: Result<NativeInvokeOutcome, RuntimeError>,
-    ) -> Result<NativeInvokeOutcome, RuntimeError> {
-        self.finish_reusing(result).0
-    }
-
-    /// Return only empty capacity after errors have been materialized and the
-    /// native frame has ended. This also preserves cleanup on a failed finish.
-    pub(in crate::engine::vm) fn finish_reusing(
-        self,
-        result: Result<NativeInvokeOutcome, RuntimeError>,
-    ) -> (Result<NativeInvokeOutcome, RuntimeError>, Vec<JsValue>) {
-        self.finish_reusing_with(
-            result,
-            |value| NativeInvokeOutcome::Completion(Completion::Throw(value)),
-            |outcome| match outcome {
-                NativeInvokeOutcome::Completion(
-                    Completion::Return(value) | Completion::Throw(value),
-                )
-                | NativeInvokeOutcome::IteratorNextRaw { value, .. } => value,
-            },
-        )
-    }
-
-    pub(in crate::engine::vm) fn finish_completion_reusing(
-        self,
-        result: Result<Completion, RuntimeError>,
-    ) -> (Result<Completion, RuntimeError>, Vec<JsValue>) {
-        self.finish_reusing_with(result, Completion::Throw, |completion| match completion {
-            Completion::Return(value) | Completion::Throw(value) => value,
-        })
-    }
-
-    #[inline]
-    fn finish_reusing_with<T>(
-        self,
-        result: Result<T, RuntimeError>,
-        throw: impl FnOnce(JsValue) -> T,
-        into_owned_value: impl FnOnce(T) -> JsValue,
-    ) -> (Result<T, RuntimeError>, Vec<JsValue>) {
-        match result {
-            Ok(value) => self.finish_value(value, into_owned_value),
-            Err(error) => self.finish_error(error, throw, into_owned_value),
-        }
-    }
-
-    // Keep the wide RuntimeError transport out of the successful owner handoff.
-    fn finish_value<T>(
-        mut self,
-        value: T,
-        into_owned_value: impl FnOnce(T) -> JsValue,
-    ) -> (Result<T, RuntimeError>, Vec<JsValue>) {
-        if let Err(error) = self
-            .active_frame
-            .take()
-            .expect("native activation lost its active frame")
-            .finish()
-        {
-            let _ = self
-                .runtime
-                .as_ref()
-                .expect("native runtime present")
-                .release_jsvalue(into_owned_value(value));
-            return (Err(error), self.release_arguments_reusing());
-        }
-        (Ok(value), self.release_arguments_reusing())
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn finish_error<T>(
-        mut self,
-        error: RuntimeError,
-        throw: impl FnOnce(JsValue) -> T,
-        into_owned_value: impl FnOnce(T) -> JsValue,
-    ) -> (Result<T, RuntimeError>, Vec<JsValue>) {
-        // Error construction must still see the active native frame and realm.
-        let error = match error {
-            RuntimeError::Engine(error)
-                if NativeErrorKind::from_javascript_error(error.kind()).is_some() =>
-            {
-                let kind = NativeErrorKind::from_javascript_error(error.kind())
-                    .expect("guard proved this is a JavaScript-visible native error");
-                match self
-                    .runtime
-                    .as_ref()
-                    .expect("native runtime present")
-                    .new_native_error_from_error_jsvalue(self.realm, kind, &error)
-                {
-                    Ok(value) => return self.finish_value(throw(value), into_owned_value),
-                    Err(error) => error,
-                }
-            }
-            error => error,
-        };
-        let error = match self
-            .active_frame
-            .take()
-            .expect("native activation lost its active frame")
-            .finish()
-        {
-            Ok(()) => error,
-            Err(frame_error) => frame_error,
-        };
-        (Err(error), self.release_arguments_reusing())
-    }
-
-    fn release_arguments_reusing(&mut self) -> Vec<JsValue> {
-        // finish_value/finish_error already retired the diagnostic frame. Retire
-        // the callable in place before argv, leaving the activation empty for
-        // its automatic Drop instead of moving the whole record twice.
-        debug_assert!(self.active_frame.is_none());
-        drop(self.callable.take());
-        let runtime = self.runtime.as_ref().expect("native runtime present");
-        let mut readable = std::mem::take(&mut self.arguments.readable);
-        for value in readable.drain(..) {
-            let _ = runtime.release_jsvalue(value);
-        }
-        readable
+        ))
     }
 }
 
@@ -611,11 +417,7 @@ mod tests {
         vm::call::CallableExecution,
     };
 
-    fn prepare(
-        runtime: &Runtime,
-        context: &mut Context,
-        arguments: &[Value],
-    ) -> PreparedNativeCall {
+    fn prepare(runtime: &Runtime, context: &mut Context, arguments: &[Value]) -> RootedNativeCall {
         let callable = runtime
             .callable_from_value(context.eval("Reflect.get").unwrap())
             .unwrap();
@@ -846,9 +648,7 @@ mod tests {
                     "active native frame disagrees with handler arguments"
                 ))
             ));
-            prepared.invocation.release(&runtime).unwrap();
             prepared
-                .activation
                 .finish(Ok(NativeInvokeOutcome::Completion(Completion::Return(
                     JsValue::Undefined,
                 ))))
@@ -908,8 +708,11 @@ mod tests {
                 } else {
                     Err(RuntimeError::Invariant("pool error path"))
                 };
-                prepared.invocation.release(&runtime).unwrap();
-                let (result, empty) = prepared.activation.finish_reusing(result);
+                let (result, empty) = prepared.into_inner().finish_reusing(
+                    &mut runtime.0.state.borrow_mut(),
+                    &runtime.0.poisoned,
+                    result,
+                );
                 assert!(empty.is_empty());
                 assert!(empty.capacity() >= 4);
                 assert_eq!(result.is_err(), round % 2 != 0);
@@ -979,8 +782,7 @@ mod tests {
                 .iter()
                 .map(|value| runtime.dup_jsvalue(value).unwrap())
                 .collect::<Vec<_>>();
-            borrowed.invocation.release(&runtime).unwrap();
-            drop(borrowed.activation);
+            drop(borrowed);
             let count = actual.len();
             let mut owned = Vec::with_capacity(8);
             owned.extend(
@@ -1014,9 +816,7 @@ mod tests {
             // Moving the Vec header does not move its internal values.
             assert_eq!(buffer.values_moved, 0);
             assert_eq!(buffer.slots_initialized, (expected.len() - count) as u64);
-            prepared.invocation.release(&runtime).unwrap();
             let result = prepared
-                .activation
                 .finish(Ok(NativeInvokeOutcome::Completion(Completion::Throw(
                     JsValue::Int(42),
                 ))))
@@ -1221,7 +1021,6 @@ mod tests {
         let native = prepare(&runtime, &mut defining, &[]);
         drop(defining);
         let result = native
-            .activation
             .finish(Err(RuntimeError::Engine(Error::new(
                 ErrorKind::Type,
                 "activation failure",
@@ -1250,7 +1049,6 @@ mod tests {
         let sentinel_id = sentinel.object_id();
         let native = prepare(&runtime, &mut caller, &[]);
         let result = native
-            .activation
             .finish(Ok(NativeInvokeOutcome::Completion(Completion::Throw(
                 runtime.unroot_value(&Value::Object(sentinel)).unwrap(),
             ))))
@@ -1376,7 +1174,7 @@ mod continuation_publication_tests {
                     .is_ok()
             );
             assert!(matches!(
-                call.activation.own_continuation(),
+                call.own_continuation(),
                 Err(RuntimeError::Invariant(
                     "native continuation was registered twice"
                 ))
@@ -1495,7 +1293,7 @@ mod continuation_publication_tests {
                 .unwrap()
                 .native_continuation
         );
-        legacy.activation.own_continuation().unwrap();
+        legacy.own_continuation().unwrap();
         assert!(
             runtime
                 .0
@@ -1715,7 +1513,6 @@ mod classified_preparation_tests {
             .unwrap();
         assert_eq!(prepared.activation.arguments.actual_arg_count, 2);
         prepared
-            .activation
             .finish(Ok(NativeInvokeOutcome::Completion(Completion::Return(
                 JsValue::Int(2),
             ))))

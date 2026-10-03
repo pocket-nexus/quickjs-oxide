@@ -11,7 +11,7 @@ pub(in crate::engine::vm) use request::{
 
 mod native;
 
-pub(in crate::engine::vm) use native::PreparedNativeCall;
+pub(in crate::engine::vm) use native::{NativeCallGuard, NativeStateGuard, PreparedNativeCall};
 
 pub(in crate::engine::vm) mod prepare;
 pub(crate) mod prototype;
@@ -824,10 +824,7 @@ impl Runtime {
         arguments: &[Value],
         mode: NativeInvokeMode,
     ) -> Result<NativeInvokeOutcome, RuntimeError> {
-        let native::PreparedNativeCall {
-            activation,
-            invocation,
-        } = self.prepare_native_invocation(
+        let prepared = self.prepare_native_invocation(
             callable,
             realm,
             target,
@@ -836,10 +833,7 @@ impl Runtime {
             arguments,
             mode,
         )?;
-        self.invoke_prepared_native(native::PreparedNativeCall {
-            activation,
-            invocation,
-        })
+        self.invoke_prepared_native(prepared)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -867,39 +861,79 @@ impl Runtime {
 
     fn invoke_prepared_native(
         &self,
-        prepared: native::PreparedNativeCall,
+        prepared: native::RootedNativeCall,
     ) -> Result<NativeInvokeOutcome, RuntimeError> {
-        let native::PreparedNativeCall {
-            activation,
-            invocation,
-        } = prepared;
-        let result = match activation.mode {
-            NativeInvokeMode::Ordinary => self
-                .dispatch_native_function(
-                    activation.callable(),
-                    activation.target,
-                    activation.realm,
-                    invocation,
-                    &activation.arguments,
-                )
-                .map(NativeInvokeOutcome::Completion),
+        let mut call = prepared.into_borrowed(self);
+        let invocation = std::mem::replace(
+            &mut call.invocation,
+            NativeInvocation::Getter {
+                this_value: JsValue::Undefined,
+            },
+        );
+        let mode = call.activation.mode;
+        let target = call.activation.target;
+        let realm = call.activation.realm;
+        if matches!(mode, NativeInvokeMode::Ordinary)
+            && crate::engine::heap::runtime::RuntimeState::has_state_native_body(target)
+        {
+            let _unwind = self.unwind_guard();
+            let mut state = self.0.state.borrow_mut();
+            let result = match state.adapt_native_invocation(
+                &self.0.poisoned,
+                target,
+                realm,
+                invocation,
+                &call.activation.arguments,
+            )? {
+                NativeInvocationAdaptation::Complete(result) => Ok(result),
+                NativeInvocationAdaptation::Invoke(invocation) => {
+                    let result = state.dispatch_state_native_body(
+                        target,
+                        realm,
+                        &invocation,
+                        &call.activation.arguments,
+                    );
+                    let released = invocation.release_in_state(&mut state, &self.0.poisoned);
+                    released.and(result)
+                }
+            };
+            return call
+                .into_inner()
+                .finish_completion_reusing(&mut state, &self.0.poisoned, result)
+                .0
+                .map(NativeInvokeOutcome::Completion);
+        }
+        let result = match mode {
+            NativeInvokeMode::Ordinary => {
+                call.activation
+                    .with_legacy_callable(self, |callable, arguments| {
+                        self.dispatch_native_function(
+                            callable, target, realm, invocation, arguments,
+                        )
+                        .map(NativeInvokeOutcome::Completion)
+                    })
+            }
             NativeInvokeMode::IteratorNextRaw => {
-                if activation.target.descriptor().cproto != NativeCProto::IteratorNext {
+                if target.descriptor().cproto != NativeCProto::IteratorNext {
                     invocation.release(self)?;
                     Err(RuntimeError::Invariant(
                         "raw iterator-next dispatch targeted another native cproto",
                     ))
                 } else {
                     self.dispatch_native_iterator_next_raw(
-                        activation.target,
-                        activation.realm,
+                        target,
+                        realm,
                         invocation,
-                        &activation.arguments,
+                        &call.activation.arguments,
                     )
                 }
             }
         };
-        activation.finish(result)
+        let PreparedNativeCall { activation, .. } = call.into_inner();
+        let _unwind = self.unwind_guard();
+        activation
+            .finish_reusing(&mut self.0.state.borrow_mut(), &self.0.poisoned, result)
+            .0
     }
 
     pub(crate) fn active_function(&self) -> Result<ObjectRef, RuntimeError> {
@@ -933,6 +967,48 @@ pub(crate) enum NativeInvocation {
 }
 
 impl NativeInvocation {
+    pub(in crate::engine::vm) fn input(&self) -> &crate::engine::value::JsValue {
+        match self {
+            Self::Call { this_value }
+            | Self::Getter { this_value }
+            | Self::Setter { this_value } => this_value,
+            Self::Construct { new_target } => new_target,
+        }
+    }
+    pub(crate) fn release_in_state(
+        self,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        poisoned: &std::cell::Cell<bool>,
+    ) -> Result<(), RuntimeError> {
+        let value = match self {
+            Self::Call { this_value }
+            | Self::Getter { this_value }
+            | Self::Setter { this_value } => this_value,
+            Self::Construct { new_target } => new_target,
+        };
+        state.release_owned_jsvalue(poisoned, value)
+    }
+
+    pub(crate) fn dup_in_state(
+        &self,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+    ) -> Result<Self, RuntimeError> {
+        Ok(match self {
+            Self::Call { this_value } => Self::Call {
+                this_value: state.dup_jsvalue(this_value)?,
+            },
+            Self::Getter { this_value } => Self::Getter {
+                this_value: state.dup_jsvalue(this_value)?,
+            },
+            Self::Setter { this_value } => Self::Setter {
+                this_value: state.dup_jsvalue(this_value)?,
+            },
+            Self::Construct { new_target } => Self::Construct {
+                new_target: state.dup_jsvalue(new_target)?,
+            },
+        })
+    }
+
     /// Release the internal edge this invocation owns. Boundary adapters that
     /// duplicate an invocation through [`NativeInvocation::dup`] must release
     /// their own copy once the borrowed step has captured its own edges.
@@ -984,6 +1060,17 @@ impl AdaptedNativeInvocation<'_> {
         match self {
             Self::Borrowed(invocation) => invocation,
             Self::Owned(invocation) => invocation,
+        }
+    }
+
+    pub(crate) fn release_in_state(
+        self,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        poisoned: &std::cell::Cell<bool>,
+    ) -> Result<(), RuntimeError> {
+        match self {
+            Self::Borrowed(_) => Ok(()),
+            Self::Owned(invocation) => invocation.release_in_state(state, poisoned),
         }
     }
 

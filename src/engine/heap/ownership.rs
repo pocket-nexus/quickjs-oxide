@@ -144,26 +144,51 @@ impl Runtime {
     }
 
     pub(super) fn drain_deferred_references_slow(&self) -> Result<(), RuntimeError> {
-        // The empty-queue path cannot mutate runtime state. Keep the unwind
-        // marker at the shared cleanup kernel, including direct drain callers.
+        self.drain_deferred_at_boundary(|deferred| {
+            // Acquire state before dequeue: a blocked external drain must leave
+            // restoration entries at their original priority.
+            let Ok(mut state) = self.0.state.try_borrow_mut() else {
+                return Ok(false);
+            };
+            let Some(operation) = deferred.pop_front() else {
+                return Ok(false);
+            };
+            state.apply_deferred_operation(operation)?;
+            Ok(true)
+        })
+    }
+
+    /// Header/coordinator admission at a real boundary whose caller already
+    /// holds state. Queue ownership remains outside RuntimeState; state kernels
+    /// neither poll nor drain it. Native operand transfer uses this at its
+    /// historical deferred-release observation point.
+    pub(in crate::engine) fn admit_deferred_in_state(
+        &self,
+        state: &mut RuntimeState,
+    ) -> Result<(), RuntimeError> {
+        self.check_poison()?;
+        if !self.0.deferred_references.has_pending() {
+            return Ok(());
+        }
+        self.drain_deferred_at_boundary(|deferred| {
+            let Some(operation) = deferred.pop_front() else {
+                return Ok(false);
+            };
+            state.apply_deferred_operation(operation)?;
+            Ok(true)
+        })
+    }
+
+    fn drain_deferred_at_boundary(
+        &self,
+        mut apply_next: impl FnMut(&super::deferred::DeferredOperations) -> Result<bool, RuntimeError>,
+    ) -> Result<(), RuntimeError> {
         let _unwind = self.unwind_guard();
         let deferred = &self.0.deferred_references;
         let Some(_drain) = deferred.try_start_draining() else {
             return Ok(());
         };
-        loop {
-            // Do not remove work until it can execute. In particular, blocked
-            // drains must leave restoration operations at their original priority.
-            let Ok(mut state) = self.0.state.try_borrow_mut() else {
-                return Ok(());
-            };
-            let Some(operation) = deferred.pop_front() else {
-                break;
-            };
-            state.apply_deferred_operation(operation).inspect_err(|_| {
-                self.0.poisoned.set(true);
-            })?;
-        }
+        while apply_next(deferred).inspect_err(|_| self.0.poisoned.set(true))? {}
         Ok(())
     }
 

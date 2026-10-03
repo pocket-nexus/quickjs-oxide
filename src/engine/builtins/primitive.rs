@@ -619,25 +619,10 @@ impl Runtime {
         invocation: &NativeInvocation,
         arguments: &NativeArguments,
     ) -> Result<Completion, RuntimeError> {
-        let NativeInvocation::Call { .. } = invocation else {
-            return Err(RuntimeError::Invariant(
-                "Number predicate did not receive a generic invocation",
-            ));
-        };
-        let argument = arguments.readable.first().ok_or(RuntimeError::Invariant(
-            "Number predicate argv was not padded",
-        ))?;
-        let result = argument.as_number().is_some_and(|number| match kind {
-            NumberPredicateKind::IsNaN => number.is_nan(),
-            NumberPredicateKind::IsFinite => number.is_finite(),
-            NumberPredicateKind::IsInteger => number.is_finite() && number.fract() == 0.0,
-            NumberPredicateKind::IsSafeInteger => {
-                number.is_finite()
-                    && number.fract() == 0.0
-                    && number.abs() <= 9_007_199_254_740_991.0
-            }
-        });
-        Ok(Completion::Return(JsValue::Bool(result)))
+        self.0
+            .state
+            .borrow()
+            .call_number_predicate(kind, invocation, arguments)
     }
 
     pub(crate) fn call_bigint_as_n(
@@ -820,5 +805,34 @@ impl Runtime {
             }
         }?;
         Ok(InvokeStep::Complete(completion))
+    }
+}
+
+impl crate::engine::heap::runtime::RuntimeState {
+    pub(crate) fn call_number_predicate(
+        &self,
+        kind: NumberPredicateKind,
+        invocation: &NativeInvocation,
+        arguments: &NativeArguments,
+    ) -> Result<Completion, RuntimeError> {
+        let NativeInvocation::Call { .. } = invocation else {
+            return Err(RuntimeError::Invariant(
+                "Number predicate did not receive a generic invocation",
+            ));
+        };
+        let argument = arguments.readable.first().ok_or(RuntimeError::Invariant(
+            "Number predicate argv was not padded",
+        ))?;
+        let result = argument.as_number().is_some_and(|number| match kind {
+            NumberPredicateKind::IsNaN => number.is_nan(),
+            NumberPredicateKind::IsFinite => number.is_finite(),
+            NumberPredicateKind::IsInteger => number.is_finite() && number.fract() == 0.0,
+            NumberPredicateKind::IsSafeInteger => {
+                number.is_finite()
+                    && number.fract() == 0.0
+                    && number.abs() <= 9_007_199_254_740_991.0
+            }
+        });
+        Ok(Completion::Return(JsValue::Bool(result)))
     }
 }
