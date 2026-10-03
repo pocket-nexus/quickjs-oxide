@@ -201,6 +201,9 @@ impl AsyncResume {
 }
 impl Drop for AsyncResume {
     fn drop(&mut self) {
+        if self.runtime.skip_cleanup() {
+            return;
+        }
         if self.active {
             let _ = self.runtime.complete_async_function_state(&self.state);
         }
@@ -236,11 +239,11 @@ mod tests {
     #[test]
     fn await_thenable_jobs_and_finally_stay_owned_across_gc() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let profile = CostProfile::start();
         assert_eq!(context.eval("var asyncResult=0, asyncReads=0, asyncFinally=0; async function f(){try {return 2+await {get then(){asyncReads++;return resolve=>resolve(40)}};} finally {asyncFinally=[1,2].map(x=>x+1)[1]}} f().then(x=>asyncResult=x); asyncResult").unwrap(), Value::Int(0));
         let mut jobs = 0;
-        while runtime.is_job_pending() {
+        while runtime.is_job_pending().expect("runtime state") {
             runtime.run_gc().unwrap();
             runtime.execute_pending_job().unwrap();
             jobs += 1;

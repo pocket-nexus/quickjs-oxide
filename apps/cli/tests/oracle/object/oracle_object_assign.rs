@@ -424,7 +424,7 @@ fn object_assign_autoinit_can_be_deleted_before_materialization() {
 
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let object = global_callable(&runtime, &mut context, "Object");
     let key = runtime.intern_property_key("assign").unwrap();
     let deleted = runtime
@@ -452,8 +452,8 @@ fn object_assign_autoinit_can_be_deleted_before_materialization() {
 fn object_assign_cross_realm_targets_and_error_realms_are_exact() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_object = global_callable(&runtime, &mut defining, "Object");
     let assign = property_callable(
         &runtime,
@@ -471,10 +471,16 @@ fn object_assign_cross_realm_targets_and_error_realms_are_exact() {
         .call(
             &assign,
             Value::Undefined,
-            &[Value::Object(target.clone()), Value::Object(source)],
+            &[
+                Value::Object(target.try_clone().expect("duplicate root")),
+                Value::Object(source),
+            ],
         )
         .unwrap();
-    assert_eq!(returned, Value::Object(target.clone()));
+    assert_eq!(
+        returned,
+        Value::Object(target.try_clone().expect("duplicate root"))
+    );
     assert_eq!(
         caller
             .get_property(&target, &runtime.intern_property_key("x").unwrap())
@@ -510,7 +516,7 @@ fn object_assign_cross_realm_targets_and_error_realms_are_exact() {
     let framework_error = take_exception_object(&mut caller);
     assert_eq!(
         runtime.get_prototype_of(&framework_error).unwrap(),
-        Some(defining_type_error.clone()),
+        Some(defining_type_error.try_clone().expect("duplicate root")),
     );
 
     let readonly = eval_object(
@@ -551,7 +557,7 @@ fn object_assign_cross_realm_targets_and_error_realms_are_exact() {
     let user_error = take_exception_object(&mut caller);
     assert_eq!(
         runtime.get_prototype_of(&user_error).unwrap(),
-        Some(caller_range_error.clone()),
+        Some(caller_range_error.try_clone().expect("duplicate root")),
     );
 
     let setter_target = eval_object(
@@ -582,8 +588,8 @@ fn object_assign_method_and_boxed_result_retain_then_release_their_realm() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let (assign, boxed) = {
-        let mut first = runtime.new_context();
-        let mut second = runtime.new_context();
+        let mut first = runtime.new_context().expect("create context");
+        let mut second = runtime.new_context().expect("create context");
         let first_object = global_callable(&runtime, &mut first, "Object");
         let second_object = global_callable(&runtime, &mut second, "Object");
         let first_assign =
@@ -615,20 +621,26 @@ fn object_assign_method_and_boxed_result_retain_then_release_their_realm() {
     };
 
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
     drop(assign);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
     drop(boxed);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().live, 0);
+    assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
 }
 
 #[test]
 fn object_assign_exotic_source_families_are_published() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         context
             .eval("typeof Proxy+'|'+typeof ArrayBuffer+'|'+typeof Uint8Array")
@@ -641,7 +653,7 @@ fn object_assign_exotic_source_families_are_published() {
 fn rust_graph_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let function_prototype = context.function_prototype().unwrap();
     let object = global_callable(&runtime, &mut context, "Object");
     let selected = [

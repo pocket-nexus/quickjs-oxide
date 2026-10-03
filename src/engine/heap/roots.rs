@@ -339,15 +339,14 @@ impl VarRefRoot {
     }
 }
 
-impl Clone for VarRefRoot {
-    fn clone(&self) -> Self {
-        self.runtime
-            .retain_var_ref_handle(self.id)
-            .expect("a live VarRef root must retain its cell");
-        Self {
+impl VarRefRoot {
+    pub(crate) fn try_clone(&self) -> Result<Self, RuntimeError> {
+        self.runtime.check_poison()?;
+        self.runtime.retain_var_ref_handle(self.id)?;
+        Ok(Self {
             runtime: self.runtime.clone(),
             id: self.id,
-        }
+        })
     }
 }
 
@@ -367,9 +366,12 @@ pub(crate) trait VarRefHandle: sealed::CellOwner {
     fn belongs_to(&self, runtime: &Runtime) -> bool {
         self.runtime().is_same_runtime(runtime)
     }
-    fn to_root(&self) -> VarRefRoot {
-        VarRefRoot::from_borrowed_handle(self.runtime().clone(), self.id())
-            .expect("a live cell owner must retain its cell")
+    fn to_root(&self) -> Result<VarRefRoot, RuntimeError> {
+        self.runtime().check_poison()?;
+        Ok(VarRefRoot::from_borrowed_handle(
+            self.runtime().clone(),
+            self.id(),
+        )?)
     }
 }
 impl sealed::CellOwner for VarRefRoot {}
@@ -411,7 +413,7 @@ impl<'a> VarRefView<'a> {
     pub(crate) fn belongs_to(&self, runtime: &Runtime) -> bool {
         VarRefHandle::belongs_to(self, runtime)
     }
-    pub(crate) fn clone(&self) -> VarRefRoot {
+    pub(crate) fn try_clone(&self) -> Result<VarRefRoot, RuntimeError> {
         self.to_root()
     }
 }

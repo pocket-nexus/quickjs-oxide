@@ -108,10 +108,10 @@ impl BuiltinPrototypeStep {
             };
             let object = ObjectRef::from_borrowed_handle(runtime.clone(), *id)?;
             return Ok(Self::Set {
-                object: object.clone(),
+                object: object.try_clone()?,
                 prototype,
                 resume: BuiltinPrototypeResume(Box::new(BuiltinPrototypeResumeState {
-                    object: object.clone(),
+                    object: object.try_clone()?,
                     realm,
                     kind,
                 })),
@@ -136,7 +136,10 @@ impl BuiltinPrototypeStep {
                 }
             };
         Ok(Self::Get {
-            object: candidate.unwrap_or_else(|| object.clone()),
+            object: match candidate {
+                Some(value) => value,
+                None => object.try_clone()?,
+            },
             resume: BuiltinPrototypeResume(Box::new(BuiltinPrototypeResumeState {
                 object,
                 realm,
@@ -181,7 +184,7 @@ impl BuiltinPrototypeStep {
                     }
                 };
             return Ok(Self::Get {
-                object: object.clone(),
+                object: object.try_clone()?,
                 resume: BuiltinPrototypeResume(Box::new(BuiltinPrototypeResumeState {
                     object,
                     realm,
@@ -203,10 +206,10 @@ impl BuiltinPrototypeStep {
         };
         let object = ObjectRef::from_borrowed_handle(runtime.clone(), *id)?;
         Ok(Self::Set {
-            object: object.clone(),
+            object: object.try_clone()?,
             prototype,
             resume: BuiltinPrototypeResume(Box::new(BuiltinPrototypeResumeState {
-                object: object.clone(),
+                object: object.try_clone()?,
                 realm,
                 kind,
             })),

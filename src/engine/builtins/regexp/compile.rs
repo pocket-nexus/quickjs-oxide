@@ -69,7 +69,7 @@ impl Runtime {
             return Ok(Completion::Throw(value));
         }
         Ok(Completion::Return(JsValue::Object(
-            regexp.clone().into_handle(),
+            regexp.try_clone()?.into_handle(),
         )))
     }
 }

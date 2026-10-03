@@ -97,7 +97,7 @@ fn string_unicode_intrinsics_use_pinned_generic_cproto_and_append_order() {
     }
 
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let prototype = context.string_prototype().unwrap();
     let sup = runtime.intern_property_key("sup").unwrap();
     let constructor = runtime.intern_property_key("constructor").unwrap();
@@ -187,7 +187,7 @@ fn string_unicode_intrinsics_use_pinned_generic_cproto_and_append_order() {
 #[test]
 fn string_subrange_family_publishes_generic_autoinit_entries_and_identities() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let prototype = context.string_prototype().unwrap();
     let entries = [
         ("substring", StringSubrangeKind::Substring),
@@ -248,7 +248,7 @@ fn string_subrange_family_publishes_generic_autoinit_entries_and_identities() {
 #[test]
 fn string_repeat_publishes_one_generic_autoinit_entry() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let prototype = context.string_prototype().unwrap();
     let key = runtime.intern_property_key("repeat").unwrap();
     let state = runtime.0.state.borrow();
@@ -286,7 +286,7 @@ fn string_repeat_publishes_one_generic_autoinit_entry() {
 #[test]
 fn string_pad_family_publishes_pinned_autoinit_entries_and_identities() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let prototype = context.string_prototype().unwrap();
     let entries = [
         ("padEnd", StringPadKind::End),
@@ -349,7 +349,7 @@ fn string_pad_family_publishes_pinned_autoinit_entries_and_identities() {
 #[test]
 fn string_trim_family_preserves_alias_materialization_order_and_independence() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let prototype = context.string_prototype().unwrap();
     let entries = [
         ("trim", StringTrimKind::Both),

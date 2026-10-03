@@ -158,7 +158,7 @@ fn untagged_template_values_match_pinned_quickjs() {
     for &(description, source) in VALUE_CASES {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         expose_string_prototype(&runtime, &mut context);
         let value = context
             .eval(source)
@@ -206,7 +206,7 @@ fn template_concat_lookup_order_matches_pinned_quickjs() {
     ] {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         install_concat_getter(&runtime, &mut context);
         let value = context
             .eval(source)
@@ -286,6 +286,7 @@ fn template_stack_limit_uses_reachable_bytecode_like_pinned_quickjs() {
     let accepted_boundary = format!("`{}`", "${0}".repeat(65_532));
     Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default())
         .new_context()
+        .expect("create context")
         .compile(&accepted_boundary)
         .expect("Rust rejected the reachable QuickJS template stack boundary");
     let upstream = run_oracle_file(&oracle, &accepted_boundary, "reachable-boundary");
@@ -300,7 +301,7 @@ fn template_stack_limit_uses_reachable_bytecode_like_pinned_quickjs() {
         let reachable = format!("`{substitutions}`");
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(context.compile(&reachable), Err(RuntimeError::Exception));
         assert_eq!(
             take_rust_error_name_message(&runtime, &mut context),
@@ -574,7 +575,7 @@ fn template_stack_limit_uses_reachable_bytecode_like_pinned_quickjs() {
     ] {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let rust = context.compile(&source);
         let upstream = run_oracle_file(&oracle, &source, suffix);
         if accepted {
@@ -604,7 +605,7 @@ fn template_stack_limit_uses_reachable_bytecode_like_pinned_quickjs() {
 fn tagged_templates_publish_realm_local_template_objects() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         context
             .eval(
@@ -694,7 +695,7 @@ fn install_concat_getter_source(runtime: &Runtime, context: &mut Context, source
 fn rust_getter_fault_location(source: &str) -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     install_throwing_concat_getter(&runtime, &mut context);
     assert_eq!(
         context.eval_with_filename(source, "<evalScript>"),
@@ -777,7 +778,7 @@ fn eval_script_location(stack: &str) -> String {
 fn rust_error_observation(source: &str) -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(context.eval(source), Err(RuntimeError::Exception));
     take_rust_error(&runtime, &mut context)
 }

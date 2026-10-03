@@ -377,7 +377,7 @@ mod layout_tests {
     fn nonmethod_zero_argument_call_keeps_ordinary_native_and_general_entries() {
         use crate::engine::api::{Runtime, Value};
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let source = "(()=>{function invoke(f){return f()}let calls=0;function ordinary(){calls++;return 42}let first=invoke(ordinary);let second=invoke(Math.max);let error=false;try{invoke(7)}catch(e){error=e instanceof TypeError}return first===42&&second===-Infinity&&error&&calls===1})()";
         assert_eq!(context.eval(source).unwrap(), Value::Bool(true));
         assert_eq!(runtime.0.active_frame_depth.get(), 0);
@@ -388,7 +388,7 @@ mod layout_tests {
     fn ordinary_operand_proof_preserves_method_receiver_and_proxy_fallback() {
         use crate::engine::api::{Runtime, Value};
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let source = "(()=>{let calls=0;let holder={base:40,f(x){calls++;return this.base+x}};let first=holder.f(2);let original=holder.f;holder.f=new Proxy(original,{apply(target,receiver,args){calls++;return Reflect.apply(target,receiver,args)}});let second=holder.f(2);return first===42&&second===42&&calls===3})()";
         assert_eq!(context.eval(source).unwrap(), Value::Bool(true));
         assert_eq!(runtime.0.active_frame_depth.get(), 0);
@@ -399,7 +399,7 @@ mod layout_tests {
     fn literal_method_and_native_ready_keep_receivers_errors_and_argument_order() {
         use crate::engine::api::{Runtime, Value};
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         for source in [
             "Math.min(3, 2, 1) === 1 && Math.max() === -Infinity",
             "(()=>{let i=7;let r=Math.min(i,500);return r===7})()",
@@ -431,7 +431,7 @@ mod layout_tests {
     fn variable_method_argument_preserves_native_call_result() {
         use crate::engine::api::{Runtime, Value, profiling::CostProfile};
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         // Resolve the lazy builtin before observing an ordinary method call.
         drop(context.eval("Math.min").unwrap());
         let profile = CostProfile::start();
@@ -449,7 +449,7 @@ mod layout_tests {
     fn transferred_native_call_keeps_coercion_reentry_throw_and_actual_arity() {
         use crate::engine::api::{Runtime, Value};
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         for source in [
             "(()=>{let log='',marker={};let a={valueOf(){log+='a';return 3}},b={valueOf(){log+='b';throw marker}},c={valueOf(){log+='c';return 1}};try{Math.min(a,b,c)}catch(e){return e===marker&&log==='ab'}return false})()",
             "(()=>{let map=new Map(),key={},value={};map.set(key,value);let f=Math.min;let n=0;let a={valueOf(){n++;map.set(key,{x:42});return map.get(key).x}};return f(a,50)===42&&n===1&&map.get(key).x===42})()",
@@ -468,7 +468,7 @@ mod layout_tests {
     fn native_direct_entry_records_owner_transfer_and_validation_reuse() {
         use crate::engine::api::{Runtime, Value, profiling::CostProfile};
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         drop(
             context
                 .eval("Math.min; Map.prototype.set; Map.prototype.get")

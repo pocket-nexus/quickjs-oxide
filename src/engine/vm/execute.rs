@@ -3081,7 +3081,7 @@ mod execution_span_tests {
     #[test]
     fn carried_call_continuation_resumes_nested_method_and_throwing_calls_once() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(
@@ -3103,7 +3103,7 @@ mod execution_span_tests {
     #[test]
     fn borrowed_this_field_handles_aliases_prototypes_accessors_and_primitives() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(
@@ -3186,7 +3186,7 @@ mod execution_span_tests {
     #[test]
     fn strict_local_completion_preserves_all_value_kinds() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context.eval(r#"
             (() => {
                 function eq(a,b) { const materialize={}; return a === b; }
@@ -3222,7 +3222,7 @@ mod execution_span_tests {
     #[test]
     fn strict_local_completion_preserves_operand_effects_and_throws() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context.eval(r#"
             (() => {
                 let log='';
@@ -3244,7 +3244,7 @@ mod execution_span_tests {
     #[test]
     fn strict_local_completion_releases_temporary_heap_owners() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let _ = context
             .eval(
                 r#"
@@ -3264,19 +3264,19 @@ mod execution_span_tests {
             )
             .unwrap();
         runtime.run_gc().unwrap();
-        let before = runtime.heap_counts().live;
+        let before = runtime.heap_counts().expect("runtime state").live;
         assert_eq!(
             context.eval("strictTemporaryOwners()").unwrap(),
             Value::Bool(true)
         );
         runtime.run_gc().unwrap();
-        assert_eq!(runtime.heap_counts().live, before);
+        assert_eq!(runtime.heap_counts().expect("runtime state").live, before);
     }
 
     #[test]
     fn compare_branch_guard_preserves_coercion_and_branch_result() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context
             .eval(
                 "(() => { let calls=0; function f(a,b){ if(a<b)return 1; return 2; } \
@@ -3290,7 +3290,7 @@ mod execution_span_tests {
     #[test]
     fn stack_compare_branch_falls_back_before_coercion_and_keeps_exception_order() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context
             .eval(
                 "(() => { let log=''; function f(o, y) { if (o.x < y) return 1; return 2; } \
@@ -3306,7 +3306,7 @@ mod execution_span_tests {
     #[test]
     fn discarded_local_update_preserves_postfix_and_coercion() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context
             .eval(
                 "(() => { let calls=0; function f(v) { let x=v; x++; return x; } \
@@ -3320,7 +3320,7 @@ mod execution_span_tests {
     #[test]
     fn dense_post_update_read_keeps_old_index_and_proxy_fallback() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context
             .eval(
                 "(() => { function f(a,i){ let value=a[i++]; return [value,i]; } \
@@ -3337,7 +3337,7 @@ mod execution_span_tests {
     #[test]
     fn dense_read_binary_preserves_getter_and_conversion_order_on_guard_miss() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context
             .eval(
                 "(() => { function f(a,i,x){ return a[i]+x; } \
@@ -3355,7 +3355,7 @@ mod execution_span_tests {
     #[test]
     fn dense_index_binary_falls_back_before_proxy_or_index_coercion() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context
             .eval(
                 "(() => { function f(a,i){ return a[i+1]; } \
@@ -3371,7 +3371,7 @@ mod execution_span_tests {
     #[test]
     fn dense_accumulator_index_preserves_writeback_and_guard_order() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context
             .eval(
                 "(() => { function f(a,j){let b=a,i=j,s=0; s+=b[i&3]; return s} \
@@ -3387,7 +3387,7 @@ mod execution_span_tests {
     #[test]
     fn field_accumulator_preserves_getter_proxy_and_conversion_order() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context
             .eval(
                 "(() => { function f(o,n){let b=o,s=0; for(let i=0;i<n;i++) s+=b.x; return s} \

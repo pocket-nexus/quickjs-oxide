@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn string_repeat_preserves_pinned_values_order_and_errors() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_eq!(
         context
@@ -69,8 +69,8 @@ fn string_repeat_preserves_pinned_values_order_and_errors() {
 #[test]
 fn string_repeat_reservation_oom_is_catchable_in_defining_realm_and_recovers() {
     let runtime = Runtime::new();
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let prototype = defining.string_prototype().unwrap();
     let repeat_key = runtime.intern_property_key("repeat").unwrap();
     let Value::Object(repeat_object) = defining.get_property(&prototype, &repeat_key).unwrap()

@@ -89,8 +89,8 @@ fn number_call_conversion_matches_the_pinned_quickjs_probe() {
 fn number_construct_converts_before_new_target_prototype_and_uses_its_realm() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut first = runtime.new_context();
-    let mut second = runtime.new_context();
+    let mut first = runtime.new_context().expect("create context");
+    let mut second = runtime.new_context().expect("create context");
     let first_global = first.global_object().unwrap();
     let second_global = second.global_object().unwrap();
     let first_number = global_callable(&runtime, &mut first, "Number");
@@ -108,7 +108,7 @@ fn number_construct_converts_before_new_target_prototype_and_uses_its_realm() {
     );
     assert_eq!(
         runtime.get_prototype_of(&default_wrapper).unwrap(),
-        Some(first_prototype.clone())
+        Some(first_prototype.try_clone().expect("duplicate root"))
     );
     assert!(
         runtime
@@ -134,7 +134,7 @@ fn number_construct_converts_before_new_target_prototype_and_uses_its_realm() {
         &runtime,
         &first_global,
         "customNumberPrototype",
-        Value::Object(custom_prototype.clone()),
+        Value::Object(custom_prototype.try_clone().expect("duplicate root")),
     );
 
     let conversion = eval_callable(
@@ -146,8 +146,12 @@ fn number_construct_converts_before_new_target_prototype_and_uses_its_realm() {
     define_data_key(
         &runtime,
         &argument,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(conversion.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(conversion.as_object().try_clone().expect("duplicate root")),
     );
 
     let custom_target = bound_constructor(&runtime, &mut second);
@@ -167,7 +171,7 @@ fn number_construct_converts_before_new_target_prototype_and_uses_its_realm() {
             .construct_with_new_target(
                 &first_number,
                 &custom_target,
-                &[Value::Object(argument.clone())],
+                &[Value::Object(argument.try_clone().expect("duplicate root"))],
             )
             .unwrap(),
         "custom-newTarget Number construction",
@@ -182,7 +186,11 @@ fn number_construct_converts_before_new_target_prototype_and_uses_its_realm() {
     );
     assert_number(
         first
-            .call(&second_value_of, Value::Object(custom_wrapper.clone()), &[])
+            .call(
+                &second_value_of,
+                Value::Object(custom_wrapper.try_clone().expect("duplicate root")),
+                &[],
+            )
             .unwrap(),
         7.0,
     );
@@ -204,13 +212,13 @@ fn number_construct_converts_before_new_target_prototype_and_uses_its_realm() {
     );
     assert_eq!(
         runtime.get_prototype_of(&fallback_wrapper).unwrap(),
-        Some(second_prototype.clone())
+        Some(second_prototype.try_clone().expect("duplicate root"))
     );
     assert_number(
         first
             .call(
                 &first_value_of,
-                Value::Object(fallback_wrapper.clone()),
+                Value::Object(fallback_wrapper.try_clone().expect("duplicate root")),
                 &[],
             )
             .unwrap(),
@@ -232,7 +240,11 @@ fn number_construct_converts_before_new_target_prototype_and_uses_its_realm() {
     );
     assert_number(
         first
-            .call(&first_value_of, Value::Object(cross_wrapper.clone()), &[])
+            .call(
+                &first_value_of,
+                Value::Object(cross_wrapper.try_clone().expect("duplicate root")),
+                &[],
+            )
             .unwrap(),
         11.0,
     );
@@ -253,8 +265,8 @@ fn number_construct_converts_before_new_target_prototype_and_uses_its_realm() {
 fn number_construct_preserves_conversion_and_prototype_getter_throws_in_order() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut constructor_context = runtime.new_context();
-    let mut target_context = runtime.new_context();
+    let mut constructor_context = runtime.new_context().expect("create context");
+    let mut target_context = runtime.new_context().expect("create context");
     let global = constructor_context.global_object().unwrap();
     let number = global_callable(&runtime, &mut constructor_context, "Number");
     define_global(
@@ -273,8 +285,17 @@ fn number_construct_preserves_conversion_and_prototype_getter_throws_in_order() 
     define_data_key(
         &runtime,
         &throwing_argument,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(conversion_throw.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(
+            conversion_throw
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     let target = bound_constructor(&runtime, &mut target_context);
     let getter = eval_callable(
@@ -310,8 +331,12 @@ fn number_construct_preserves_conversion_and_prototype_getter_throws_in_order() 
     define_data_key(
         &runtime,
         &argument,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(conversion.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(conversion.as_object().try_clone().expect("duplicate root")),
     );
     let getter_throw_target = bound_constructor(&runtime, &mut target_context);
     let throwing_getter = eval_callable(
@@ -347,8 +372,8 @@ fn number_construct_preserves_conversion_and_prototype_getter_throws_in_order() 
 fn number_constructor_and_brand_errors_use_the_defining_realm() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut first = runtime.new_context();
-    let mut second = runtime.new_context();
+    let mut first = runtime.new_context().expect("create context");
+    let mut second = runtime.new_context().expect("create context");
     let first_number = global_callable(&runtime, &mut first, "Number");
     let first_prototype = constructor_prototype(&runtime, &mut first, &first_number);
     let first_value_of = property_callable(&runtime, &mut first, &first_prototype, "valueOf");
@@ -366,7 +391,7 @@ fn number_constructor_and_brand_errors_use_the_defining_realm() {
     let symbol_error = take_exception_object(&mut second);
     assert_eq!(
         runtime.get_prototype_of(&symbol_error).unwrap(),
-        Some(first_type_error.clone())
+        Some(first_type_error.try_clone().expect("duplicate root"))
     );
     assert_eq!(
         error_text(&runtime, &mut second, &symbol_error, "message"),
@@ -392,8 +417,17 @@ fn number_constructor_and_brand_errors_use_the_defining_realm() {
     define_data_key(
         &runtime,
         &bad_input,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(bad_conversion.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(
+            bad_conversion
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     assert_eq!(
         second.call(&first_number, Value::Undefined, &[Value::Object(bad_input)],),
@@ -402,7 +436,7 @@ fn number_constructor_and_brand_errors_use_the_defining_realm() {
     let framework_error = take_exception_object(&mut second);
     assert_eq!(
         runtime.get_prototype_of(&framework_error).unwrap(),
-        Some(first_type_error.clone())
+        Some(first_type_error.try_clone().expect("duplicate root"))
     );
 
     // An Error explicitly thrown by user conversion code keeps that code's
@@ -416,8 +450,12 @@ fn number_constructor_and_brand_errors_use_the_defining_realm() {
     define_data_key(
         &runtime,
         &throwing_input,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(user_throw.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(user_throw.as_object().try_clone().expect("duplicate root")),
     );
     assert_eq!(
         first.call(
@@ -456,7 +494,7 @@ fn number_wrapper_keeps_its_realm_graph_alive_until_collection() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let wrapper = {
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let number = global_callable(&runtime, &mut context, "Number");
         expect_object(
             context.construct(&number, &[Value::Float(-0.0)]).unwrap(),
@@ -465,16 +503,19 @@ fn number_wrapper_keeps_its_realm_graph_alive_until_collection() {
     };
 
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
     drop(wrapper);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().live, 0);
+    assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
 }
 
 fn rust_constructor_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let number = global_callable(&runtime, &mut context, "Number");
 
@@ -552,8 +593,17 @@ fn rust_constructor_observations() -> Vec<String> {
     define_data_key(
         &runtime,
         &exotic,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(exotic_conversion.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(
+            exotic_conversion
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     let exotic_value = context
         .call(&number, Value::Undefined, &[Value::Object(exotic)])
@@ -587,13 +637,13 @@ fn rust_constructor_observations() -> Vec<String> {
         &runtime,
         &fallback,
         "valueOf",
-        Value::Object(value_of.as_object().clone()),
+        Value::Object(value_of.as_object().try_clone().expect("duplicate root")),
     );
     define_data(
         &runtime,
         &fallback,
         "toString",
-        Value::Object(to_string.as_object().clone()),
+        Value::Object(to_string.as_object().try_clone().expect("duplicate root")),
     );
     let fallback_value = context
         .call(&number, Value::Undefined, &[Value::Object(fallback)])
@@ -604,8 +654,12 @@ fn rust_constructor_observations() -> Vec<String> {
     define_data_key(
         &runtime,
         &throwing,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(thrower.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(thrower.as_object().try_clone().expect("duplicate root")),
     );
     let thrown = match context.call(&number, Value::Undefined, &[Value::Object(throwing)]) {
         Err(RuntimeError::Exception) => context.take_exception().unwrap().unwrap(),
@@ -771,7 +825,7 @@ fn assert_number(value: Value, expected: f64) {
 fn join_number_values<const N: usize>(values: &[Value; N]) -> String {
     values
         .iter()
-        .cloned()
+        .map(|value| value.try_clone().expect("duplicate root"))
         .map(number_value_text)
         .collect::<Vec<_>>()
         .join("|")

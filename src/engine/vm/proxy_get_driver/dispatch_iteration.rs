@@ -44,7 +44,7 @@ pub(super) fn advance(
                 query.parents.push(resume);
                 *step = crate::engine::builtins::RegExpSpeciesStep::start(runtime, realm, regexp)
                     .map_err(runtime_error_to_vm_error)?
-                    .into();
+                    .try_into()?;
                 continue;
             }
             Step::RegExpSpeciesComplete(result) => {
@@ -67,7 +67,7 @@ pub(super) fn advance(
                 query.parents.push(resume);
                 *step = crate::engine::builtins::AggregateStep::start(runtime, realm, iterable)
                     .map_err(runtime_error_to_vm_error)?
-                    .into();
+                    .try_into()?;
                 continue;
             }
             Step::ArraySpecies {
@@ -88,7 +88,7 @@ pub(super) fn advance(
                     runtime, realm, &source, length,
                 )
                 .map_err(runtime_error_to_vm_error)?
-                .into();
+                .try_into()?;
                 continue;
             }
             Step::ArrayPush {
@@ -115,7 +115,7 @@ pub(super) fn advance(
                     vec![value],
                 )
                 .map_err(runtime_error_to_vm_error)?
-                .into();
+                .try_into()?;
                 continue;
             }
             Step::IteratorNext {
@@ -136,7 +136,7 @@ pub(super) fn advance(
                     runtime, realm, iterator, method,
                 )
                 .map_err(runtime_error_to_vm_error)?
-                .into();
+                .try_into()?;
                 continue;
             }
             Step::IteratorNextComplete(result) => {
@@ -205,7 +205,7 @@ pub(super) fn advance(
                     runtime, realm, iterator, completion,
                 )
                 .map_err(runtime_error_to_vm_error)?
-                .into();
+                .try_into()?;
                 continue;
             }
 
@@ -227,7 +227,7 @@ pub(super) fn advance(
                         },
                     )
                     .map_err(runtime_error_to_vm_error)?
-                    .into();
+                    .try_into()?;
                 continue;
             }
             Step::RegExpExec {
@@ -247,7 +247,7 @@ pub(super) fn advance(
                     runtime, realm, regexp, input,
                 )
                 .map_err(runtime_error_to_vm_error)?
-                .into();
+                .try_into()?;
                 continue;
             }
             Step::IteratorCloseWithResume {
@@ -267,7 +267,7 @@ pub(super) fn advance(
                     runtime, realm, iterator, completion,
                 )
                 .map_err(runtime_error_to_vm_error)?
-                .into();
+                .try_into()?;
                 continue;
             }
 
@@ -292,7 +292,7 @@ pub(super) fn advance(
                     value,
                 )
                 .map_err(runtime_error_to_vm_error)?
-                .into();
+                .try_into()?;
                 continue;
             }
             Step::ParseIterator { result, resume } => {
@@ -306,7 +306,7 @@ pub(super) fn advance(
                 *step =
                     crate::engine::builtins::IteratorNextStep::parse_result(runtime, realm, result)
                         .map_err(runtime_error_to_vm_error)?
-                        .into();
+                        .try_into()?;
                 continue;
             }
             Step::ArrayCopy {
@@ -333,7 +333,7 @@ pub(super) fn advance(
                     runtime, realm, object, to, from, count, backwards,
                 )
                 .map_err(runtime_error_to_vm_error)?
-                .into();
+                .try_into()?;
                 continue;
             }
 

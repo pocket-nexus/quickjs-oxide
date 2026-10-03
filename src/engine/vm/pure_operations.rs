@@ -379,7 +379,7 @@ fn perform(
                 .closures()
                 .get(usize::from(index))
                 .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?
-                .clone();
+                .try_clone()?;
             if derived {
                 let descriptor = frame
                     .executable

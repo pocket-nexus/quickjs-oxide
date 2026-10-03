@@ -33,7 +33,7 @@ impl Runtime {
             &template,
             &raw_key,
             &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(Value::Object(raw_array.clone())),
+                value: DescriptorField::Present(Value::Object(raw_array.try_clone()?)),
                 writable: DescriptorField::Present(false),
                 enumerable: DescriptorField::Present(false),
                 configurable: DescriptorField::Present(false),

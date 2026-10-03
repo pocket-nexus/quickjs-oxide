@@ -24,7 +24,7 @@ impl Runtime {
         finish_species(
             self,
             realm,
-            TypedSpeciesStep::start(self, realm, source.clone(), source_element, length)?,
+            TypedSpeciesStep::start(self, realm, source.try_clone()?, source_element, length)?,
         )
     }
     pub(crate) fn typed_array_species_create_subarray(
@@ -42,9 +42,9 @@ impl Runtime {
             TypedSpeciesStep::start_view(
                 self,
                 realm,
-                source.clone(),
+                source.try_clone()?,
                 source_element,
-                buffer.clone(),
+                buffer.try_clone()?,
                 byte_offset,
                 length,
             )?,
@@ -334,7 +334,7 @@ impl TypedSpeciesStep {
         input: SpeciesInput,
     ) -> Result<Self, RuntimeError> {
         Ok(Self::Read {
-            object: input.source.clone(),
+            object: input.source.try_clone()?,
             key: runtime
                 .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?,
             resume: TypedSpeciesResume(Box::new(TypedSpeciesResumeState {
@@ -488,7 +488,7 @@ impl TypedSpeciesResume {
                 let object = ObjectRef::from_owned_handle(runtime.clone(), id);
                 Ok(TypedSpeciesStep::Read {
                     object,
-                    key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Species)),
+                    key: PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Species)?),
                     resume: Self(Box::new(TypedSpeciesResumeState {
                         runtime: runtime.clone(),
                         constructor_value: JsValue::Undefined,
@@ -527,20 +527,21 @@ fn finish_species(
                     realm,
                     &object,
                     &key,
-                    JsValue::Object(object.clone().into_handle()),
+                    JsValue::Object(object.try_clone()?.into_handle()),
                 )?,
             )?,
             TypedSpeciesStep::Construct {
                 constructor,
                 mut resume,
             } => {
+                let new_target = constructor.try_clone()?;
                 let arguments = resume.take_arguments();
                 resume.resume(
                     runtime,
                     runtime.construct_internal_jsvalue(
                         realm,
                         &constructor,
-                        crate::engine::vm::call::ConstructNewTarget::Validated(constructor.clone()),
+                        crate::engine::vm::call::ConstructNewTarget::Validated(new_target),
                         arguments,
                     )?,
                 )?

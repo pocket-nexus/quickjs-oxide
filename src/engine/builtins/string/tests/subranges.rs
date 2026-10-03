@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn string_subrange_preserves_pinned_clamps_utf16_and_rope_copying() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     for (source, expected) in [
         (r#""abcdef".substring(4,1)"#, "bcd"),
@@ -73,7 +73,7 @@ fn string_subrange_preserves_pinned_clamps_utf16_and_rope_copying() {
 #[test]
 fn string_subrange_preserves_conversion_order_throws_and_defining_realm() {
     let runtime = Runtime::new();
-    let mut first = runtime.new_context();
+    let mut first = runtime.new_context().expect("create context");
 
     for (method, expected) in [("substring", "bcd"), ("substr", "e"), ("slice", "")] {
         let value = first
@@ -123,7 +123,7 @@ fn string_subrange_preserves_conversion_order_throws_and_defining_realm() {
     else {
         panic!("first realm TypeError.prototype was not an object");
     };
-    let mut second = runtime.new_context();
+    let mut second = runtime.new_context().expect("create context");
     assert_eq!(
         second.call(
             &slice,

@@ -73,18 +73,35 @@ use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 /// [`Self::exception`] instead models QuickJS `JS_Throw`: its JavaScript value
 /// is propagated unchanged through static compilation or dynamic-import
 /// rejection, including object and Symbol identity.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct ModuleLoaderError {
     kind: ModuleLoaderErrorKind,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 enum ModuleLoaderErrorKind {
     Message(String),
     Exception(Value),
 }
 
 impl ModuleLoaderError {
+    ///
+    /// # Errors
+    /// Returns `RuntimeError::Poisoned` after an engine unwind, or a checked
+    /// reference-retention error such as counter overflow.
+    pub fn try_clone(&self) -> Result<Self, RuntimeError> {
+        Ok(Self {
+            kind: match &self.kind {
+                ModuleLoaderErrorKind::Message(message) => {
+                    ModuleLoaderErrorKind::Message(message.clone())
+                }
+                ModuleLoaderErrorKind::Exception(value) => {
+                    ModuleLoaderErrorKind::Exception(value.try_clone()?)
+                }
+            },
+        })
+    }
+
     #[must_use]
     pub fn new(message: impl Into<String>) -> Self {
         Self {
@@ -171,7 +188,7 @@ impl From<String> for ModuleLoaderError {
 }
 
 /// Extensible result returned by the attributes-aware module loader boundary.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 #[non_exhaustive]
 pub enum ModuleLoadResult {
     /// Ordinary well-formed UTF-8 ECMAScript module source.
@@ -227,17 +244,64 @@ pub enum ModuleLoadResult {
     Json5Bytes(Vec<u8>),
 }
 
+impl ModuleLoadResult {
+    ///
+    /// # Errors
+    /// Returns `RuntimeError::Poisoned` after an engine unwind, or a checked
+    /// reference-retention error such as counter overflow.
+    pub fn try_clone(&self) -> Result<Self, RuntimeError> {
+        Ok(match self {
+            Self::SourceText(value) => Self::SourceText(value.clone()),
+            Self::SourceBytes(value) => Self::SourceBytes(value.clone()),
+            Self::Compiled(value) => Self::Compiled(value.try_clone()?),
+            Self::SourceTextWithImportMeta { source, properties } => {
+                Self::SourceTextWithImportMeta {
+                    source: source.clone(),
+                    properties: properties
+                        .iter()
+                        .map(ModuleImportMetaProperty::try_clone)
+                        .collect::<Result<_, _>>()?,
+                }
+            }
+            Self::SourceBytesWithImportMeta { source, properties } => {
+                Self::SourceBytesWithImportMeta {
+                    source: source.clone(),
+                    properties: properties
+                        .iter()
+                        .map(ModuleImportMetaProperty::try_clone)
+                        .collect::<Result<_, _>>()?,
+                }
+            }
+            Self::JsonText(value) => Self::JsonText(value.clone()),
+            Self::JsonBytes(value) => Self::JsonBytes(value.clone()),
+            Self::Json5Text(value) => Self::Json5Text(value.clone()),
+            Self::Json5Bytes(value) => Self::Json5Bytes(value.clone()),
+        })
+    }
+}
+
 /// One host-defined data property for a source module's `import.meta` object.
 ///
 /// The exact UTF-16 key and JavaScript value are preserved. Object and Symbol
 /// values must belong to the Runtime invoking the loader.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub struct ModuleImportMetaProperty {
     key: JsString,
     value: Value,
 }
 
 impl ModuleImportMetaProperty {
+    ///
+    /// # Errors
+    /// Returns `RuntimeError::Poisoned` after an engine unwind, or a checked
+    /// reference-retention error such as counter overflow.
+    pub fn try_clone(&self) -> Result<Self, RuntimeError> {
+        Ok(Self {
+            key: self.key.clone(),
+            value: self.value.try_clone()?,
+        })
+    }
+
     #[must_use]
     pub const fn new(key: JsString, value: Value) -> Self {
         Self { key, value }
@@ -404,7 +468,7 @@ fn default_module_normalize_name(
 
 /// Opaque owning handle for one runtime-published ECMAScript module record.
 ///
-/// Clones preserve module identity and therefore share link/evaluation state.
+/// `try_clone` preserves module identity and shares link/evaluation state.
 /// The defining Context cache remains rooted for as long as any handle
 /// survives; that cache owns every raw edge of the module graph.
 pub struct ModuleBytecodeRef {
@@ -413,16 +477,20 @@ pub struct ModuleBytecodeRef {
     name: JsString,
 }
 
-impl Clone for ModuleBytecodeRef {
-    fn clone(&self) -> Self {
-        self.runtime
-            .retain_context_handle(self.raw.cache)
-            .expect("a live module handle must retain its defining cache");
-        Self {
+impl ModuleBytecodeRef {
+    ///
+    /// # Errors
+    /// Returns `RuntimeError::Poisoned` after an engine unwind, or a checked
+    /// reference-retention error such as counter overflow.
+    pub fn try_clone(&self) -> Result<Self, RuntimeError> {
+        self.runtime.check_poison()?;
+        let _unwind = self.runtime.unwind_guard();
+        self.runtime.retain_context_handle(self.raw.cache)?;
+        Ok(Self {
             runtime: self.runtime.clone(),
             raw: self.raw,
             name: self.name.clone(),
-        }
+        })
     }
 }
 
@@ -782,6 +850,8 @@ impl Runtime {
         &self,
         module: &ModuleBytecodeRef,
     ) -> Result<bool, RuntimeError> {
+        self.check_poison()?;
+        let _operation = self.operation();
         if !module.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("module bytecode"));
         }
@@ -898,18 +968,23 @@ impl Runtime {
 
     /// Install the runtime-wide module loader used by subsequent Context
     /// module resolution. Existing Context caches remain intact.
-    pub fn set_module_loader<L>(&self, loader: L) -> ModuleLoaderRegistration
+    pub fn set_module_loader<L>(&self, loader: L) -> Result<ModuleLoaderRegistration, RuntimeError>
     where
         L: ModuleLoader + 'static,
     {
+        self.check_poison()?;
+        let _operation = self.operation();
         let loader: Rc<dyn ModuleLoader> = Rc::new(loader);
         *self.0.module_loader.borrow_mut() = Some(Rc::downgrade(&loader));
-        ModuleLoaderRegistration { _loader: loader }
+        Ok(ModuleLoaderRegistration { _loader: loader })
     }
 
     /// Remove the runtime-wide module loader without clearing Context caches.
-    pub fn clear_module_loader(&self) {
+    pub fn clear_module_loader(&self) -> Result<(), RuntimeError> {
+        self.check_poison()?;
+        let _operation = self.operation();
         self.0.module_loader.borrow_mut().take();
+        Ok(())
     }
 
     /// Dynamic-import's schedule-time attribute checker. The current loader
@@ -1319,6 +1394,7 @@ impl Runtime {
         self.0.state.borrow().heap.context(realm)?;
         let parsing_module = self.publish_parsing_module_record(realm, name.clone())?;
         let outcome = catch_unwind(AssertUnwindSafe(|| {
+            let _unwind = self.unwind_guard();
             self.finish_parsing_module_compilation(
                 realm,
                 parsing_module,
@@ -1327,6 +1403,12 @@ impl Runtime {
                 import_meta_properties,
             )
         }));
+        if self.is_poisoned() {
+            return match outcome {
+                Err(payload) => resume_unwind(payload),
+                Ok(_) => Err(RuntimeError::Poisoned),
+            };
+        }
         match outcome {
             Ok(Ok(ModuleCompilation::Published(module)))
                 if same_raw_module(module, parsing_module) =>
@@ -1361,7 +1443,7 @@ impl Runtime {
         name: &JsString,
         import_meta_properties: Option<Vec<ModuleImportMetaProperty>>,
     ) -> Result<ModuleCompilation, RuntimeError> {
-        let debug_info = self.debug_info_mode();
+        let debug_info = self.debug_info_mode()?;
         // QuickJS samples the runtime's attribute checker separately for
         // every authored `with` clause, so callbacks may replace or clear it
         // before the parser reaches the next clause.
@@ -1610,6 +1692,7 @@ impl Runtime {
         }];
 
         let outcome = catch_unwind(AssertUnwindSafe(|| {
+            let _unwind = self.unwind_guard();
             while let Some(frame) = stack.last() {
                 let frame_record = self.module_record(frame.module)?;
                 if frame.next_request == frame_record.requested_modules.len() {
@@ -1762,6 +1845,12 @@ impl Runtime {
             Ok(())
         }));
 
+        if self.is_poisoned() {
+            return match outcome {
+                Err(payload) => resume_unwind(payload),
+                Ok(_) => Err(RuntimeError::Poisoned),
+            };
+        }
         let result = match outcome {
             Ok(result) => result,
             Err(payload) => {
@@ -2642,8 +2731,15 @@ impl Runtime {
     ) -> Result<ObjectRef, RuntimeError> {
         let mut created = Vec::new();
         let result = catch_unwind(AssertUnwindSafe(|| {
+            let _unwind = self.unwind_guard();
             self.build_module_namespace(module, realm, &mut created)
         }));
+        if self.is_poisoned() {
+            return match result {
+                Err(payload) => resume_unwind(payload),
+                Ok(_) => Err(RuntimeError::Poisoned),
+            };
+        }
         match result {
             Ok(Ok(namespace)) => Ok(namespace),
             Ok(Err(error)) => {
@@ -2710,7 +2806,7 @@ impl Runtime {
             )?;
         }
 
-        let tag = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag));
+        let tag = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
         // A genuine value-producing boundary: mint the string node outside the
         // store borrow, then hand its producer edge to the transactional store.
         let tag_string = {
@@ -2743,6 +2839,7 @@ impl Runtime {
     ) -> Result<VarRefRoot, RuntimeError> {
         let mut created = Vec::new();
         let result = catch_unwind(AssertUnwindSafe(|| {
+            let _unwind = self.unwind_guard();
             self.materialize_module_resolved_binding_inner(
                 binding,
                 realm,
@@ -2751,6 +2848,12 @@ impl Runtime {
                 &mut created,
             )
         }));
+        if self.is_poisoned() {
+            return match result {
+                Err(payload) => resume_unwind(payload),
+                Ok(_) => Err(RuntimeError::Poisoned),
+            };
+        }
         match result {
             Ok(Ok(slot)) => Ok(slot),
             Ok(Err(error)) => {
@@ -3644,6 +3747,9 @@ impl Context {
     /// Compile one static ECMAScript module and publish its opaque module
     /// record without linking or evaluating it.
     pub fn compile_module(&mut self, source: &str) -> Result<ModuleBytecodeRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation();
         self.compile_module_with_options(source, &CompileOptions::default())
     }
 
@@ -3653,6 +3759,9 @@ impl Context {
         &mut self,
         source: &[u8],
     ) -> Result<ModuleBytecodeRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation();
         self.compile_module_bytes_with_options(source, &CompileOptions::default())
     }
 
@@ -3662,6 +3771,9 @@ impl Context {
         source: &str,
         filename: &str,
     ) -> Result<ModuleBytecodeRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation();
         self.compile_module_with_options(source, &CompileOptions::new(filename))
     }
 
@@ -3672,6 +3784,9 @@ impl Context {
         source: &[u8],
         filename: &str,
     ) -> Result<ModuleBytecodeRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation();
         self.compile_module_bytes_with_options(source, &CompileOptions::new(filename))
     }
 
@@ -3686,6 +3801,9 @@ impl Context {
         source: &str,
         options: &CompileOptions,
     ) -> Result<ModuleBytecodeRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation();
         let _turn = self.runtime.enter_execution_turn()?;
         let compilation =
             self.runtime
@@ -3704,6 +3822,9 @@ impl Context {
         source: &[u8],
         options: &CompileOptions,
     ) -> Result<ModuleBytecodeRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation();
         let _turn = self.runtime.enter_execution_turn()?;
         let compilation =
             self.runtime
@@ -3735,6 +3856,9 @@ impl Context {
         &mut self,
         module: &ModuleBytecodeRef,
     ) -> Result<ObjectRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation();
         if !module.belongs_to(&self.runtime) {
             return Err(RuntimeError::WrongRuntime("module bytecode"));
         }
@@ -3745,6 +3869,9 @@ impl Context {
     /// Link and evaluate one runtime-published static module, returning the
     /// cycle root's cached evaluation Promise on every normal engine path.
     pub fn execute_module(&mut self, module: &ModuleBytecodeRef) -> Result<Value, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation();
         let _turn = self.runtime.enter_execution_turn()?;
         self.runtime.execute_module(self.realm, module)
     }
@@ -3754,6 +3881,9 @@ impl Context {
     /// observable to conformance harnesses while [`Self::execute_module`]
     /// retains the ordinary combined link/evaluate convenience.
     pub fn link_module(&mut self, module: &ModuleBytecodeRef) -> Result<(), RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation();
         let _turn = self.runtime.enter_execution_turn()?;
         if !module.belongs_to(&self.runtime) {
             return Err(RuntimeError::WrongRuntime("module bytecode"));

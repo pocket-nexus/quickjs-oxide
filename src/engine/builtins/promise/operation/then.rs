@@ -49,13 +49,13 @@ impl PromiseStep {
         Ok({
             let __pending_field_key = runtime
                 .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?;
-            let __pending_field_receiver = JsValue::Object(promise.clone().into_handle());
+            let __pending_field_receiver = JsValue::Object(promise.try_clone()?.into_handle());
             let __pending_field_resume = Box::new(PromiseResume {
                 runtime: runtime.clone(),
                 pending_effect: super::PromiseStepPending::default(),
                 realm,
                 phase: Phase::ThenConstructor {
-                    promise: promise.clone(),
+                    promise: promise.try_clone()?,
                     handlers,
                 },
             });
@@ -87,7 +87,7 @@ pub(super) fn constructor(
             let constructor = ObjectRef::from_owned_handle(runtime.clone(), constructor_id);
             let __pending_field_receiver = JsValue::Object(constructor.into_handle());
             let __pending_field_key =
-                PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Species));
+                PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Species)?);
             let __pending_field_resume = Box::new(PromiseResume {
                 runtime: runtime.clone(),
                 pending_effect: super::PromiseStepPending::default(),
@@ -210,7 +210,7 @@ impl PromiseStep {
         Ok({
             let __pending_field_key = runtime
                 .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Constructor)?;
-            let __pending_field_receiver = JsValue::Object(promise.clone().into_handle());
+            let __pending_field_receiver = JsValue::Object(promise.try_clone()?.into_handle());
             let __pending_field_resume = Box::new(PromiseResume {
                 runtime: runtime.clone(),
                 pending_effect: super::PromiseStepPending::default(),

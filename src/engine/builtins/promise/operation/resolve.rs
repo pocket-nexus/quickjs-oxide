@@ -116,7 +116,7 @@ fn create(
 ) -> Result<PromiseStep, RuntimeError> {
     let constructor = match runtime.constructor_from_jsvalue(
         realm,
-        JsValue::Object(state.constructor.clone().into_handle()),
+        JsValue::Object(state.constructor.try_clone()?.into_handle()),
     )? {
         NativeConversion::Throw(value) => {
             return Ok(PromiseStep::Complete(Completion::Throw(value)));

@@ -291,9 +291,18 @@ fn main() -> ExitCode {
             }
         };
         let runtime = session.runtime();
-        runtime.set_debug_info_mode(debug_info);
+        if let Err(error) = runtime.set_debug_info_mode(debug_info) {
+            eprintln!("qjs: {error}");
+            return ExitCode::FAILURE;
+        }
         {
-            let _context = runtime.new_context();
+            let _context = match runtime.new_context() {
+                Ok(context) => context,
+                Err(error) => {
+                    eprintln!("qjs: {error}");
+                    return ExitCode::FAILURE;
+                }
+            };
             let snapshot = session.snapshot_guard(&runtime);
             snapshot.phase("initialized-before-context-drop");
         }
@@ -396,10 +405,19 @@ fn evaluate(
         }
     };
     let runtime = session.runtime();
-    runtime.set_debug_info_mode(options.debug_info);
+    if let Err(error) = runtime.set_debug_info_mode(options.debug_info) {
+        eprintln!("qjs: {error}");
+        return ExitCode::FAILURE;
+    }
     // Upstream qjs installs its filesystem loader for every process, including
     // Script-goal `-e`, so dynamic import has the same host boundary everywhere.
-    let _module_loader = runtime.set_module_loader(FileModuleLoader);
+    let _module_loader = match runtime.set_module_loader(FileModuleLoader) {
+        Ok(registration) => registration,
+        Err(error) => {
+            eprintln!("qjs: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
     // Host promise rejection tracking, mirroring
     // `js_std_promise_rejection_tracker` in quickjs-libc.c: a rejection is
     // rooted in publication order and its entry is dropped as soon as the
@@ -408,17 +426,28 @@ fn evaluate(
     let pending_rejections: Rc<RefCell<Vec<(ObjectRef, Value)>>> = Rc::default();
     if options.dump_unhandled_promise_rejection {
         let pending_rejections = Rc::clone(&pending_rejections);
-        runtime.set_host_promise_rejection_tracker(move |event: PromiseRejectionEvent| {
-            let mut pending = pending_rejections.borrow_mut();
-            let promise = event.promise();
-            if event.is_handled() {
-                pending.retain(|(candidate, _)| candidate != promise);
-            } else if !pending.iter().any(|(candidate, _)| candidate == promise) {
-                pending.push((promise.clone(), event.reason().clone()));
-            }
-        });
+        if let Err(error) =
+            runtime.set_host_promise_rejection_tracker(move |event: PromiseRejectionEvent| {
+                let mut pending = pending_rejections.borrow_mut();
+                let (_, promise, reason, handled) = event.into_parts();
+                if handled {
+                    pending.retain(|(candidate, _)| candidate != &promise);
+                } else if !pending.iter().any(|(candidate, _)| candidate == &promise) {
+                    pending.push((promise, reason));
+                }
+            })
+        {
+            eprintln!("qjs: {error}");
+            return ExitCode::FAILURE;
+        }
     }
-    let mut context = runtime.new_context();
+    let mut context = match runtime.new_context() {
+        Ok(context) => context,
+        Err(error) => {
+            eprintln!("qjs: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
     let snapshot = session.snapshot_guard(&runtime);
     let script_args = match script_args
         .iter()
@@ -549,7 +578,7 @@ fn evaluate_module(
                 &import_meta,
                 &key,
                 &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(property.value().clone()),
+                    value: DescriptorField::Present(property.value().try_clone()?),
                     writable: DescriptorField::Present(true),
                     enumerable: DescriptorField::Present(true),
                     configurable: DescriptorField::Present(true),
@@ -576,9 +605,9 @@ fn evaluate_module(
                 "module evaluation returned a non-Promise object",
             ))?;
         match snapshot.state() {
-            PromiseState::Fulfilled => return Ok(snapshot.result().clone()),
+            PromiseState::Fulfilled => return Ok(snapshot.result().try_clone()?),
             PromiseState::Rejected => {
-                return Err(EvaluationError::Rejected(snapshot.result().clone()));
+                return Err(EvaluationError::Rejected(snapshot.result().try_clone()?));
             }
             PromiseState::Pending => {
                 if !runtime
@@ -660,7 +689,7 @@ mod tests {
     fn error_dump_uses_raw_shadowing_and_never_executes_getters() {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(error) = context.eval("new Error(\"boom\")").unwrap() else {
             panic!("Error constructor did not return an object");
         };
@@ -699,24 +728,31 @@ mod tests {
             );
             assert!(
                 runtime
-                    .define_own_property(&error, &key, &accessor_descriptor(getter.clone()))
+                    .define_own_property(
+                        &error,
+                        &key,
+                        &accessor_descriptor(getter.try_clone().expect("duplicate root"))
+                    )
                     .unwrap()
             );
         }
 
-        assert!(!context.has_exception());
+        assert!(!context.has_exception().expect("runtime state"));
         assert_eq!(
             format_exception(&runtime, &Value::Object(error)),
             Some(b"Error".to_vec())
         );
-        assert!(!context.has_exception(), "diagnostic getter was executed");
+        assert!(
+            !context.has_exception().expect("runtime state"),
+            "diagnostic getter was executed"
+        );
     }
 
     #[test]
     fn error_dump_reads_exactly_one_raw_prototype_level() {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(error) = context.eval("new Error()").unwrap() else {
             panic!("Error constructor did not return an object");
         };

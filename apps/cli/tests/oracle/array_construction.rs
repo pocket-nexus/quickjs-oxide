@@ -302,7 +302,7 @@ fn array_host_own_keys_and_descriptors_match_pinned_quickjs() {
         let expected = oracle_snapshot(&oracle, source, description);
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let array = eval_object(&mut context, source, description);
         assert_eq!(
             array_snapshot(&runtime, &mut context, &array),
@@ -321,7 +321,7 @@ fn array_constructor_graph_matches_pinned_quickjs() {
     let expected = oracle_constructor_graph(&oracle);
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         rust_constructor_graph(&runtime, &mut context),
         expected,
@@ -338,7 +338,7 @@ fn array_host_definitions_use_array_set_length_semantics() {
     let expected = oracle_host_mutation(&oracle);
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         rust_host_mutation(&runtime, &mut context),
         expected,
@@ -350,8 +350,8 @@ fn array_host_definitions_use_array_set_length_semantics() {
 fn array_literal_iterator_and_errors_use_the_bytecode_defining_realm() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     drop(
         defining
             .eval("Array.prototype.arrayRealm='defining';TypeError.prototype.arrayRealm='defining'")
@@ -382,7 +382,7 @@ fn compare_value_cases(group: &str, cases: &[(&str, &str)]) {
         let expected = observe_oracle(&oracle, source, description);
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
             expected,
@@ -651,7 +651,9 @@ fn own_descriptor(
 
 fn descriptor_value(descriptor: &CompleteOrdinaryPropertyDescriptor) -> Value {
     match descriptor {
-        CompleteOrdinaryPropertyDescriptor::Data { value, .. } => value.clone(),
+        CompleteOrdinaryPropertyDescriptor::Data { value, .. } => {
+            value.try_clone().expect("duplicate root")
+        }
         CompleteOrdinaryPropertyDescriptor::Accessor { .. } => {
             panic!("expected data property descriptor")
         }

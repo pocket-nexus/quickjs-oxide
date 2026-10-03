@@ -336,7 +336,7 @@ fn object_integrity_autoinit_can_be_deleted_before_materialization() {
 
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let object = global_callable(&runtime, &mut context, "Object");
     let mut values = Vec::new();
     for name in ["seal", "freeze", "isSealed", "isFrozen"] {
@@ -366,8 +366,8 @@ fn object_integrity_autoinit_can_be_deleted_before_materialization() {
 fn object_integrity_cross_realm_identity_and_constructor_error_are_exact() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_object = global_callable(&runtime, &mut defining, "Object");
     let seal = property_callable(&runtime, &mut defining, defining_object.as_object(), "seal");
     let freeze = property_callable(
@@ -395,16 +395,20 @@ fn object_integrity_cross_realm_identity_and_constructor_error_are_exact() {
     );
     assert_eq!(
         caller
-            .call(&seal, Value::Undefined, &[Value::Object(object.clone())],)
+            .call(
+                &seal,
+                Value::Undefined,
+                &[Value::Object(object.try_clone().expect("duplicate root"))],
+            )
             .unwrap(),
-        Value::Object(object.clone()),
+        Value::Object(object.try_clone().expect("duplicate root")),
     );
     assert_eq!(
         caller
             .call(
                 &is_sealed,
                 Value::Undefined,
-                &[Value::Object(object.clone())],
+                &[Value::Object(object.try_clone().expect("duplicate root"))],
             )
             .unwrap(),
         Value::Bool(true),
@@ -414,16 +418,20 @@ fn object_integrity_cross_realm_identity_and_constructor_error_are_exact() {
             .call(
                 &is_frozen,
                 Value::Undefined,
-                &[Value::Object(object.clone())],
+                &[Value::Object(object.try_clone().expect("duplicate root"))],
             )
             .unwrap(),
         Value::Bool(false),
     );
     assert_eq!(
         caller
-            .call(&freeze, Value::Undefined, &[Value::Object(object.clone())],)
+            .call(
+                &freeze,
+                Value::Undefined,
+                &[Value::Object(object.try_clone().expect("duplicate root"))],
+            )
             .unwrap(),
-        Value::Object(object.clone()),
+        Value::Object(object.try_clone().expect("duplicate root")),
     );
     assert_eq!(
         caller
@@ -453,8 +461,8 @@ fn object_integrity_methods_are_per_realm_and_retain_then_release_their_realm() 
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let (seal, freeze, is_sealed, is_frozen) = {
-        let mut first = runtime.new_context();
-        let mut second = runtime.new_context();
+        let mut first = runtime.new_context().expect("create context");
+        let mut second = runtime.new_context().expect("create context");
         let first_object = global_callable(&runtime, &mut first, "Object");
         let second_object = global_callable(&runtime, &mut second, "Object");
         let first_seal = property_callable(&runtime, &mut first, first_object.as_object(), "seal");
@@ -481,21 +489,27 @@ fn object_integrity_methods_are_per_realm_and_retain_then_release_their_realm() 
     };
 
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
     drop(seal);
     drop(freeze);
     drop(is_sealed);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
     drop(is_frozen);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().live, 0);
+    assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
 }
 
 fn rust_graph_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let function_prototype = context.function_prototype().unwrap();
     let object = global_callable(&runtime, &mut context, "Object");
     let selected = [
@@ -538,7 +552,7 @@ fn rust_graph_observations() -> Vec<String> {
             panic!("Object.{name} was not an object");
         };
         let callable = runtime.as_callable(&function).unwrap();
-        methods.push(function.clone());
+        methods.push(function.try_clone().expect("duplicate root"));
         output.push(format!(
             "{name}={}:{}:{}:{}:{}:{}:{}",
             string_property(&runtime, &mut context, &function, "name"),
@@ -553,7 +567,8 @@ fn rust_graph_observations() -> Vec<String> {
     let repeated = ["seal", "freeze", "isSealed", "isFrozen"].map(|name| {
         property_callable(&runtime, &mut context, object.as_object(), name)
             .as_object()
-            .clone()
+            .try_clone()
+            .expect("duplicate object")
     });
     output.push(format!(
         "identity={}:{}:{}:{}:{}:{}",

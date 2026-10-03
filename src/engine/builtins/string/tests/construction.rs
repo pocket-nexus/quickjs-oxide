@@ -8,7 +8,7 @@ use super::*;
 #[test]
 fn string_constructor_statics_remain_typed_autoinit_entries() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let string_key = runtime.intern_property_key("String").unwrap();
     let Value::Object(string_constructor) = context.get_property(&global, &string_key).unwrap()
@@ -49,7 +49,7 @@ fn string_constructor_statics_remain_typed_autoinit_entries() {
 #[test]
 fn string_raw_latched_overflow_preserves_pinned_observable_order() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let Value::Object(cooked) = context
         .eval(
             r#"(function(){

@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn function_bind_and_to_string_use_quickjs_payload_and_source_paths() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let function_prototype = context.function_prototype().unwrap();
     let bind_key = runtime.intern_property_key("bind").unwrap();
     let to_string_key = runtime.intern_property_key("toString").unwrap();
@@ -28,7 +28,11 @@ fn function_bind_and_to_string_use_quickjs_payload_and_source_paths() {
     };
     assert_eq!(
         context
-            .call(&to_string, Value::Object(target_object.clone()), &[],)
+            .call(
+                &to_string,
+                Value::Object(target_object.try_clone().expect("duplicate root")),
+                &[],
+            )
             .unwrap(),
         Value::String(JsString::try_from_utf8(authored).unwrap())
     );
@@ -49,14 +53,22 @@ fn function_bind_and_to_string_use_quickjs_payload_and_source_paths() {
     );
     assert_eq!(
         context
-            .call(&to_string, Value::Object(target_object.clone()), &[],)
+            .call(
+                &to_string,
+                Value::Object(target_object.try_clone().expect("duplicate root")),
+                &[],
+            )
             .unwrap(),
         Value::String(JsString::try_from_utf8(authored).unwrap()),
         "stored bytecode source must not read the mutable name property"
     );
 
     let Value::Object(zero_argument_bound) = context
-        .call(&bind, Value::Object(target_object.clone()), &[])
+        .call(
+            &bind,
+            Value::Object(target_object.try_clone().expect("duplicate root")),
+            &[],
+        )
         .unwrap()
     else {
         panic!("zero-argument bind did not return an object");
@@ -73,7 +85,7 @@ fn function_bind_and_to_string_use_quickjs_payload_and_source_paths() {
     let bound = context
         .call(
             &bind,
-            Value::Object(target_object.clone()),
+            Value::Object(target_object.try_clone().expect("duplicate root")),
             &[Value::Undefined, Value::Int(4)],
         )
         .unwrap();
@@ -87,7 +99,7 @@ fn function_bind_and_to_string_use_quickjs_payload_and_source_paths() {
     );
     assert_eq!(
         runtime.get_prototype_of(&bound_object).unwrap(),
-        Some(function_prototype.clone())
+        Some(function_prototype.try_clone().expect("duplicate root"))
     );
     assert_eq!(own_key_names(&runtime, &bound_object), ["length", "name"]);
     assert_eq!(
@@ -100,7 +112,11 @@ fn function_bind_and_to_string_use_quickjs_payload_and_source_paths() {
     );
     assert_eq!(
         context
-            .call(&to_string, Value::Object(bound_object.clone()), &[])
+            .call(
+                &to_string,
+                Value::Object(bound_object.try_clone().expect("duplicate root")),
+                &[]
+            )
             .unwrap(),
         Value::String(JsString::from_static(
             "function bound changed() {\n    [native code]\n}"
@@ -148,7 +164,9 @@ fn function_bind_and_to_string_use_quickjs_payload_and_source_paths() {
         .call(
             &bind,
             Value::Object(this_target),
-            &[Value::Object(first_this.clone())],
+            &[Value::Object(
+                first_this.try_clone().expect("duplicate root"),
+            )],
         )
         .unwrap();
     let Value::Object(inner) = inner else {
@@ -176,7 +194,7 @@ fn function_bind_and_to_string_use_quickjs_payload_and_source_paths() {
     let Value::Object(bound_constructor) = context
         .call(
             &bind,
-            Value::Object(constructor_object.clone()),
+            Value::Object(constructor_object.try_clone().expect("duplicate root")),
             &[Value::Undefined],
         )
         .unwrap()
@@ -206,7 +224,11 @@ fn function_bind_and_to_string_use_quickjs_payload_and_source_paths() {
     );
     assert_eq!(
         context
-            .call(&to_string, Value::Object(function_prototype.clone()), &[],)
+            .call(
+                &to_string,
+                Value::Object(function_prototype.try_clone().expect("duplicate root")),
+                &[],
+            )
             .unwrap(),
         Value::String(JsString::from_static("function () {\n    [native code]\n}"))
     );
@@ -265,7 +287,11 @@ fn function_bind_and_to_string_use_quickjs_payload_and_source_paths() {
             .unwrap();
         assert_eq!(
             context
-                .call(&to_string, Value::Object(callable.as_object().clone()), &[],)
+                .call(
+                    &to_string,
+                    Value::Object(callable.as_object().try_clone().expect("duplicate root")),
+                    &[],
+                )
                 .unwrap(),
             Value::String(JsString::try_from_utf8(expected).unwrap())
         );
@@ -285,7 +311,11 @@ fn function_bind_and_to_string_use_quickjs_payload_and_source_paths() {
     );
     assert_eq!(
         context
-            .call(&to_string, Value::Object(to_string_object.clone()), &[],)
+            .call(
+                &to_string,
+                Value::Object(to_string_object.try_clone().expect("duplicate root")),
+                &[],
+            )
             .unwrap(),
         Value::String(JsString::from_static(
             "function 3() {\n    [native code]\n}"
@@ -298,7 +328,9 @@ fn function_bind_and_to_string_use_quickjs_payload_and_source_paths() {
     };
     let name_getter = runtime.as_callable(&name_getter_object).unwrap().unwrap();
     let throwing_name = OrdinaryPropertyDescriptor {
-        get: DescriptorField::Present(AccessorValue::Callable(name_getter.clone())),
+        get: DescriptorField::Present(AccessorValue::Callable(
+            name_getter.try_clone().expect("duplicate root"),
+        )),
         set: DescriptorField::Present(AccessorValue::Undefined),
         enumerable: DescriptorField::Present(false),
         configurable: DescriptorField::Present(true),
@@ -362,7 +394,7 @@ fn function_bind_and_to_string_use_quickjs_payload_and_source_paths() {
 #[test]
 fn bound_function_payload_owns_symbols_and_cycles_across_layout_changes() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let function_prototype = context.function_prototype().unwrap();
     let bind_key = runtime.intern_property_key("bind").unwrap();
     let Value::Object(bind_object) = context
@@ -376,15 +408,18 @@ fn bound_function_payload_owns_symbols_and_cycles_across_layout_changes() {
     else {
         panic!("bound payload target was not a function");
     };
-    let baseline_atoms = runtime.test_atom_count();
+    let baseline_atoms = runtime.test_atom_count().expect("atom count");
     let symbol = runtime
         .new_symbol(Some(JsString::from_static("bound-payload")))
         .unwrap();
     let Value::Object(bound_object) = context
         .call(
             &bind,
-            Value::Object(target_object.clone()),
-            &[Value::Undefined, Value::Symbol(symbol.clone())],
+            Value::Object(target_object.try_clone().expect("duplicate root")),
+            &[
+                Value::Undefined,
+                Value::Symbol(symbol.try_clone().expect("duplicate root")),
+            ],
         )
         .unwrap()
     else {
@@ -408,16 +443,22 @@ fn bound_function_payload_owns_symbols_and_cycles_across_layout_changes() {
     drop(bound);
     drop(bound_object);
     drop(extra_key);
-    assert_eq!(runtime.test_atom_count(), baseline_atoms);
+    assert_eq!(
+        runtime.test_atom_count().expect("atom count"),
+        baseline_atoms
+    );
 
     runtime.run_gc().unwrap();
-    let baseline_objects = runtime.heap_counts().object_nodes;
+    let baseline_objects = runtime.heap_counts().expect("runtime state").object_nodes;
     let argument = context.new_object().unwrap();
     let Value::Object(bound_object) = context
         .call(
             &bind,
-            Value::Object(target_object.clone()),
-            &[Value::Undefined, Value::Object(argument.clone())],
+            Value::Object(target_object.try_clone().expect("duplicate root")),
+            &[
+                Value::Undefined,
+                Value::Object(argument.try_clone().expect("duplicate root")),
+            ],
         )
         .unwrap()
     else {
@@ -429,18 +470,21 @@ fn bound_function_payload_owns_symbols_and_cycles_across_layout_changes() {
             &runtime,
             &argument,
             &back_key,
-            Value::Object(bound_object.clone()),
+            Value::Object(bound_object.try_clone().expect("duplicate root")),
         )
         .unwrap()
     );
     drop(bound_object);
     drop(argument);
-    assert_eq!(runtime.heap_counts().object_nodes, baseline_objects + 2);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").object_nodes,
+        baseline_objects + 2
+    );
     let stats = runtime.run_gc().unwrap();
     assert!(stats.cleanup.finalized_objects >= 2);
     assert!(runtime.as_callable(&target_object).unwrap().is_some());
     assert_eq!(
-        runtime.heap_counts().object_nodes,
+        runtime.heap_counts().expect("runtime state").object_nodes,
         baseline_objects,
         "unexpected GC delta: {stats:?}"
     );
@@ -449,8 +493,8 @@ fn bound_function_payload_owns_symbols_and_cycles_across_layout_changes() {
 #[test]
 fn bound_function_uses_bind_realm_but_delegates_function_realm_and_has_instance() {
     let runtime = Runtime::new();
-    let mut first = runtime.new_context();
-    let mut second = runtime.new_context();
+    let mut first = runtime.new_context().expect("create context");
+    let mut second = runtime.new_context().expect("create context");
     let first_function_prototype = first.function_prototype().unwrap();
     let bind_key = runtime.intern_property_key("bind").unwrap();
     let Value::Object(bind_object) = first
@@ -464,8 +508,11 @@ fn bound_function_uses_bind_realm_but_delegates_function_realm_and_has_instance(
         panic!("second realm target was not a function");
     };
 
-    let has_instance_key =
-        PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::HasInstance));
+    let has_instance_key = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::HasInstance)
+            .expect("well-known symbol"),
+    );
     let Value::Object(custom_method) = second.eval("(function(value){return value;})").unwrap()
     else {
         panic!("custom hasInstance method was not a function");
@@ -489,7 +536,11 @@ fn bound_function_uses_bind_realm_but_delegates_function_realm_and_has_instance(
     let bound = runtime.as_callable(&bound_object).unwrap().unwrap();
     assert_eq!(
         runtime.get_prototype_of(&bound_object).unwrap(),
-        Some(first_function_prototype.clone()),
+        Some(
+            first_function_prototype
+                .try_clone()
+                .expect("duplicate root")
+        ),
         "bound [[Prototype]] must come from the bind method realm"
     );
     assert_eq!(runtime.callable_realm(&bound).unwrap(), second.realm);
@@ -497,7 +548,7 @@ fn bound_function_uses_bind_realm_but_delegates_function_realm_and_has_instance(
     let Value::Object(nested_bound_object) = first
         .call(
             &bind,
-            Value::Object(bound_object.clone()),
+            Value::Object(bound_object.try_clone().expect("duplicate root")),
             &[Value::Undefined],
         )
         .unwrap()
@@ -530,10 +581,13 @@ fn bound_function_uses_bind_realm_but_delegates_function_realm_and_has_instance(
 #[test]
 fn deep_standard_bound_has_instance_delegation_is_host_stack_safe() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let function_prototype = context.function_prototype().unwrap();
-    let has_instance_key =
-        PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::HasInstance));
+    let has_instance_key = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::HasInstance)
+            .expect("well-known symbol"),
+    );
     let Value::Object(has_instance_object) = context
         .get_property(&function_prototype, &has_instance_key)
         .unwrap()
@@ -575,7 +629,7 @@ fn deep_standard_bound_has_instance_delegation_is_host_stack_safe() {
 #[test]
 fn error_intrinsic_graph_and_lazy_methods_match_quickjs_descriptors() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let error = global_callable(&runtime, &mut context, "Error");
     let type_error = global_callable(&runtime, &mut context, "TypeError");
     let aggregate_error = global_callable(&runtime, &mut context, "AggregateError");
@@ -624,7 +678,7 @@ fn error_intrinsic_graph_and_lazy_methods_match_quickjs_descriptors() {
         panic!("AggregateError.prototype descriptor did not match QuickJS");
     };
 
-    let object_count = runtime.heap_counts().object_nodes;
+    let object_count = runtime.heap_counts().expect("runtime state").object_nodes;
     let realm_strong_count = runtime
         .0
         .state
@@ -658,7 +712,10 @@ fn error_intrinsic_graph_and_lazy_methods_match_quickjs_descriptors() {
             .has_own_property(&error_prototype, &to_string_key)
             .unwrap()
     );
-    assert_eq!(runtime.heap_counts().object_nodes, object_count);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").object_nodes,
+        object_count
+    );
 
     let CompleteOrdinaryPropertyDescriptor::Data {
         value: Value::Object(is_error),
@@ -672,7 +729,10 @@ fn error_intrinsic_graph_and_lazy_methods_match_quickjs_descriptors() {
     else {
         panic!("Error.isError did not materialize as a native data property");
     };
-    assert_eq!(runtime.heap_counts().object_nodes, object_count + 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").object_nodes,
+        object_count + 1
+    );
     assert_eq!(
         runtime
             .0
@@ -694,7 +754,10 @@ fn error_intrinsic_graph_and_lazy_methods_match_quickjs_descriptors() {
     else {
         panic!("Error.prototype.toString did not materialize as native data");
     };
-    assert_eq!(runtime.heap_counts().object_nodes, object_count + 2);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").object_nodes,
+        object_count + 2
+    );
     assert_eq!(
         runtime
             .0
@@ -732,7 +795,7 @@ fn error_intrinsic_graph_and_lazy_methods_match_quickjs_descriptors() {
     );
     assert_eq!(
         runtime.get_prototype_of(type_error.as_object()).unwrap(),
-        Some(error.as_object().clone())
+        Some(error.as_object().try_clone().expect("duplicate object"))
     );
     assert_eq!(
         runtime.get_prototype_of(&error_prototype).unwrap(),
@@ -740,19 +803,19 @@ fn error_intrinsic_graph_and_lazy_methods_match_quickjs_descriptors() {
     );
     assert_eq!(
         runtime.get_prototype_of(&type_error_prototype).unwrap(),
-        Some(error_prototype.clone())
+        Some(error_prototype.try_clone().expect("duplicate root"))
     );
     assert_eq!(
         runtime
             .get_prototype_of(aggregate_error.as_object())
             .unwrap(),
-        Some(error.as_object().clone())
+        Some(error.as_object().try_clone().expect("duplicate object"))
     );
     assert_eq!(
         runtime
             .get_prototype_of(&aggregate_error_prototype)
             .unwrap(),
-        Some(error_prototype.clone())
+        Some(error_prototype.try_clone().expect("duplicate root"))
     );
     assert!(matches!(
         runtime
@@ -805,6 +868,11 @@ fn error_intrinsic_graph_and_lazy_methods_match_quickjs_descriptors() {
         context
             .get_property(&context.global_object().unwrap(), &aggregate_key)
             .unwrap(),
-        Value::Object(aggregate_error.as_object().clone())
+        Value::Object(
+            aggregate_error
+                .as_object()
+                .try_clone()
+                .expect("duplicate root")
+        )
     );
 }

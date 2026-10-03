@@ -137,7 +137,7 @@ impl Runtime {
         let realm = *realm;
         let callee_global = self.global_object_for_realm(realm)?;
         let active_frame = self.push_bytecode_active_frame(
-            callable.as_object().clone(),
+            callable.as_object().try_clone()?,
             bytecode,
             realm,
             metadata.strict,

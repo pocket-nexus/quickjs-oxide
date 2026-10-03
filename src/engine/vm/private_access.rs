@@ -174,7 +174,7 @@ pub(super) fn step(
                 }
                 execution.slots.push(
                     &mut frame.window,
-                    JsValue::Object(method.as_object().clone().into_handle()),
+                    JsValue::Object(method.as_object().try_clone()?.into_handle()),
                 )?;
             }
             return Ok(());

@@ -21,7 +21,7 @@ fn main() -> ExitCode {
 
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     match context.eval(&source) {
         Ok(value) => {
             println!("{}", completion_text(value));

@@ -20,8 +20,12 @@ impl Runtime {
         &self,
         body: impl FnOnce() -> Result<T, RuntimeError>,
     ) -> Result<T, RuntimeError> {
+        self.check_poison()?;
+        let _operation = self.operation();
         let turn = self.enter_execution_turn()?;
         let result = body();
+        // The embedder may catch a child panic inside the closure.
+        self.check_poison()?;
         let cleanup = turn.finish();
         match result {
             Err(error) => Err(error),
@@ -30,6 +34,7 @@ impl Runtime {
     }
 
     pub(crate) fn enter_execution_turn(&self) -> Result<ExecutionTurn, RuntimeError> {
+        self.check_poison()?;
         let depth = self
             .0
             .execution_turn_depth
@@ -104,6 +109,9 @@ impl ExecutionTurn {
         let runtime = Runtime(inner);
         let depth = runtime.0.execution_turn_depth.get() - 1;
         runtime.0.execution_turn_depth.set(depth);
+        if runtime.skip_cleanup() {
+            return Ok(());
+        }
         if depth == 0 {
             runtime.0.state.borrow_mut().clear_kept_objects()?;
             runtime.drain_deferred_references()?;

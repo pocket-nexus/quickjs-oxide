@@ -525,8 +525,8 @@ fn string_pad_recursion_is_catchable_and_shared_family_recovers() {
 fn string_pad_defining_realms_and_user_throw_identity_are_exact() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_prototype = defining.string_prototype().unwrap();
     let pad_end = property_callable(&runtime, &mut defining, &defining_prototype, "padEnd");
     let pad_start = property_callable(&runtime, &mut defining, &defining_prototype, "padStart");
@@ -589,7 +589,7 @@ fn string_pad_defining_realms_and_user_throw_identity_are_exact() {
         &runtime,
         &caller.global_object().unwrap(),
         "padSentinel",
-        Value::Object(sentinel.clone()),
+        Value::Object(sentinel.try_clone().expect("duplicate root")),
     );
     let throwing_target = caller
         .eval(
@@ -613,7 +613,7 @@ fn string_pad_defining_realms_and_user_throw_identity_are_exact() {
     );
     assert_eq!(
         caller.take_exception().unwrap(),
-        Some(Value::Object(sentinel.clone())),
+        Some(Value::Object(sentinel.try_clone().expect("duplicate root"))),
         "target conversion did not preserve the user-thrown value",
     );
 
@@ -658,8 +658,8 @@ fn string_pad_callables_are_per_realm_distinct_and_collectable() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let retained = {
-        let mut first = runtime.new_context();
-        let mut second = runtime.new_context();
+        let mut first = runtime.new_context().expect("create context");
+        let mut second = runtime.new_context().expect("create context");
         let first_prototype = first.string_prototype().unwrap();
         let second_prototype = second.string_prototype().unwrap();
         let first_end = property_callable(&runtime, &mut first, &first_prototype, "padEnd");
@@ -681,18 +681,21 @@ fn string_pad_callables_are_per_realm_distinct_and_collectable() {
         (first_end, first_start)
     };
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
     drop(retained);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().live, 0);
+    assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
 }
 
 #[test]
 fn string_pad_stack_overflow_uses_the_caller_realm_and_recovers() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_prototype = defining.string_prototype().unwrap();
     let pad_end = property_callable(&runtime, &mut defining, &defining_prototype, "padEnd");
     let defining_internal_error = intrinsic_prototype(&runtime, &mut defining, "InternalError");
@@ -703,7 +706,7 @@ fn string_pad_stack_overflow_uses_the_caller_realm_and_recovers() {
         &runtime,
         &caller.global_object().unwrap(),
         "foreignPadEnd",
-        Value::Object(pad_end.as_object().clone()),
+        Value::Object(pad_end.as_object().try_clone().expect("duplicate root")),
     );
     let Value::Object(error) = caller
         .eval(

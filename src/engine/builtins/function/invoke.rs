@@ -355,8 +355,10 @@ impl InvokeResume {
                         return Ok(InvokeStep::Complete(Completion::Throw(value)));
                     }
                 };
-                let new_target =
-                    new_target.unwrap_or_else(|| ConstructNewTarget::Validated(target.clone()));
+                let new_target = match new_target {
+                    Some(value) => value,
+                    None => ConstructNewTarget::Validated(target.try_clone()?),
+                };
                 InvokeStep::Construct(Box::new(InvokeConstruct {
                     target,
                     new_target,

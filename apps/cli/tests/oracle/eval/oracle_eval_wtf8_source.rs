@@ -268,7 +268,7 @@ fn source_for(case: &Case) -> String {
 fn oxide_observation(case: &Case) -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let source = source_for(case);
     match context.eval(&source) {
         Ok(Value::String(value)) => value.to_utf8_lossy(),

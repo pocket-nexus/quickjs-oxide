@@ -223,8 +223,8 @@ fn regexp_dotall_species_flags_match_pinned_quickjs() {
 fn regexp_dotall_getter_cross_realm_brand_and_errors_use_exact_realms() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
 
     let defining_getter = eval_callable(
         &runtime,
@@ -273,7 +273,7 @@ fn regexp_dotall_getter_cross_realm_brand_and_errors_use_exact_realms() {
         defining
             .call(
                 &defining_getter,
-                Value::Object(defining_prototype.clone()),
+                Value::Object(defining_prototype.try_clone().expect("duplicate root")),
                 &[],
             )
             .unwrap(),
@@ -281,7 +281,11 @@ fn regexp_dotall_getter_cross_realm_brand_and_errors_use_exact_realms() {
     );
     assert_eq!(
         caller
-            .call(&caller_getter, Value::Object(caller_prototype.clone()), &[],)
+            .call(
+                &caller_getter,
+                Value::Object(caller_prototype.try_clone().expect("duplicate root")),
+                &[],
+            )
             .unwrap(),
         Value::Undefined,
     );

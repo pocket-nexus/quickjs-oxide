@@ -285,7 +285,7 @@ mod tests {
 
     fn assert_eval_true(source: &str) {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context.eval(source).expect("RegExp result probe threw"),
             Value::Bool(true),
@@ -297,7 +297,7 @@ mod tests {
         let runtime = Runtime::new();
         let weak = std::rc::Rc::downgrade(&runtime.0);
         {
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let Value::Object(result) = context.eval("/(?<name>abc)/d.exec('abc')").unwrap() else {
                 panic!("match result")
             };
@@ -337,7 +337,7 @@ mod tests {
     #[test]
     fn named_shape_cache_is_bounded_and_eviction_preserves_results() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(

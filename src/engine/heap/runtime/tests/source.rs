@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn eval_uses_the_compiler_and_vm_path() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(context.eval("6 * 7").unwrap(), Value::Int(42));
     assert_eq!(
         context.eval("this").unwrap(),
@@ -14,7 +14,7 @@ fn eval_uses_the_compiler_and_vm_path() {
 #[test]
 fn raw_script_context_apis_compile_and_evaluate() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     for function in [
         context.compile_bytes(b"6 * 7").unwrap(),
@@ -46,7 +46,7 @@ fn raw_script_context_apis_compile_and_evaluate() {
 #[test]
 fn raw_script_syntax_error_uses_authored_bytes_and_filename() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert!(matches!(
         context.eval_bytes_with_filename(b"/*\x80*/@", "raw-parse.js"),
         Err(RuntimeError::Exception)
@@ -75,7 +75,7 @@ fn raw_script_syntax_error_uses_authored_bytes_and_filename() {
 #[test]
 fn raw_script_function_source_respects_debug_info_mode() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let function_prototype = context.function_prototype().unwrap();
     let to_string = property_callable(&runtime, &mut context, &function_prototype, "toString");
     let raw = b"(function raw(){/*\x80X*/return 42;})";
@@ -89,7 +89,11 @@ fn raw_script_function_source_respects_debug_info_mode() {
     let expected = JsString::try_from_bytes(b"function raw(){/*\x80X*/return 42;}").unwrap();
     assert_eq!(
         context
-            .call(&to_string, Value::Object(full.clone()), &[])
+            .call(
+                &to_string,
+                Value::Object(full.try_clone().expect("duplicate root")),
+                &[]
+            )
             .unwrap(),
         Value::String(expected.clone())
     );
@@ -97,7 +101,9 @@ fn raw_script_function_source_respects_debug_info_mode() {
     assert!(expected_units.contains(&0xfffd));
     assert!(!expected_units.contains(&u16::from(b'X')));
 
-    runtime.set_debug_info_mode(DebugInfoMode::StripSource);
+    runtime
+        .set_debug_info_mode(DebugInfoMode::StripSource)
+        .expect("set runtime configuration");
     let Value::Object(source_stripped) = context
         .eval_bytes_with_filename(raw, "raw-source-stripped.js")
         .unwrap()
@@ -118,7 +124,9 @@ fn raw_script_function_source_respects_debug_info_mode() {
         ))
     );
 
-    runtime.set_debug_info_mode(DebugInfoMode::StripDebug);
+    runtime
+        .set_debug_info_mode(DebugInfoMode::StripDebug)
+        .expect("set runtime configuration");
     let Value::Object(debug_stripped) = context
         .eval_bytes_with_filename(raw, "raw-debug-stripped.js")
         .unwrap()

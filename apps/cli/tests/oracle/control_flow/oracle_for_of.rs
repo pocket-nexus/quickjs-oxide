@@ -597,7 +597,7 @@ fn for_of_accessor_protocol_matches_pinned_quickjs() {
     for &(description, source) in ACCESSOR_CASES {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         install_accessor_fixture(&runtime, &mut context);
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
@@ -646,7 +646,7 @@ fn for_of_full_strip_source_and_strip_debug_stacks_match_pinned_quickjs() {
 fn top_level_for_await_uses_pinned_quickjs_syntax_diagnostic() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let (source, expected) = ("for await(var value of 'a')value", "expecting '('");
     let Err(RuntimeError::Exception) = context.compile(source) else {
         panic!("top-level for-await was not rejected: {source}");
@@ -669,8 +669,8 @@ fn top_level_for_await_uses_pinned_quickjs_syntax_diagnostic() {
 fn for_of_cross_realm_regression() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let bytecode = defining
         .compile("(function(){var result='';for(var value of 'ab')result+=value;return result})()")
         .unwrap();
@@ -814,7 +814,7 @@ fn compare_value_cases(group: &str, cases: &[(&str, &str)]) {
     for &(description, source) in cases {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
             observe_oracle(&oracle, source, description),

@@ -44,7 +44,7 @@ fn drive_observing(
                         realm,
                         &object,
                         &key,
-                        JsValue::Object(object.clone().into_handle()),
+                        JsValue::Object(object.try_clone().expect("duplicate root").into_handle()),
                     )
                     .unwrap();
                 resume.resume(runtime, result).unwrap()
@@ -63,7 +63,9 @@ fn drive_observing(
                     .construct_internal_jsvalue(
                         realm,
                         &constructor,
-                        crate::engine::vm::call::ConstructNewTarget::Validated(constructor.clone()),
+                        crate::engine::vm::call::ConstructNewTarget::Validated(
+                            constructor.try_clone().expect("duplicate root"),
+                        ),
                         arguments,
                     )
                     .unwrap();
@@ -80,7 +82,7 @@ fn drive_observing(
                         &object,
                         &key,
                         value,
-                        JsValue::Object(object.clone().into_handle()),
+                        JsValue::Object(object.try_clone().expect("duplicate root").into_handle()),
                     )
                     .unwrap();
                 resume.set(runtime, result).unwrap()
@@ -99,7 +101,7 @@ fn drive_observing(
 #[test]
 fn regexp_split_resident_all_requests_share_one_box_and_consume_their_fields() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let invocation = NativeInvocation::Call {
         this_value: runtime
             .into_jsvalue(
@@ -171,7 +173,7 @@ fn count(runtime: &Runtime, object: &ObjectRef) -> u32 {
 #[test]
 fn regexp_split_resident_abandonment_releases_duplicate_request_and_state_owners() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let token = context.new_object().unwrap();
     let constructor = match runtime
         .constructor_from_value(context.realm, context.eval("(function(){})").unwrap())
@@ -183,10 +185,10 @@ fn regexp_split_resident_abandonment_releases_duplicate_request_and_state_owners
     let before = count(&runtime, &token);
     for request in 0..6 {
         let state = SplitState {
-            input_value: JsValue::Object(token.clone().into_handle()),
+            input_value: JsValue::Object(token.try_clone().expect("duplicate root").into_handle()),
             input: JsString::from_static("a"),
-            splitter: token.clone(),
-            result: token.clone(),
+            splitter: token.try_clone().expect("duplicate root"),
+            result: token.try_clone().expect("duplicate root"),
             unicode: false,
             limit: 10,
             length: 0,
@@ -196,34 +198,39 @@ fn regexp_split_resident_abandonment_releases_duplicate_request_and_state_owners
         let mut resume = RegExpSplitResume::new(&runtime, context.realm, Phase::Exec(state));
         // Exercise the independent raw owners too, including aliases. Dropping
         // an unconsumed request must release occurrences, not unique identities.
-        resume.0.input_value = JsValue::Object(token.clone().into_handle());
-        resume.0.limit_value = JsValue::Object(token.clone().into_handle());
+        resume.0.input_value =
+            JsValue::Object(token.try_clone().expect("duplicate root").into_handle());
+        resume.0.limit_value =
+            JsValue::Object(token.try_clone().expect("duplicate root").into_handle());
         let key = runtime.intern_property_key("test").unwrap();
         let step = match request {
             0 => RegExpSplitStep::make_primitive(
-                JsValue::Object(token.clone().into_handle()),
+                JsValue::Object(token.try_clone().expect("duplicate root").into_handle()),
                 ToPrimitiveHint::Number,
                 resume,
             ),
-            1 => RegExpSplitStep::make_read(token.clone(), key, resume),
-            2 => RegExpSplitStep::make_species(token.clone(), resume),
+            1 => {
+                RegExpSplitStep::make_read(token.try_clone().expect("duplicate root"), key, resume)
+            }
+            2 => RegExpSplitStep::make_species(token.try_clone().expect("duplicate root"), resume),
             3 => {
                 resume.0.step_pending.arguments = Some(vec![
-                    JsValue::Object(token.clone().into_handle()),
-                    JsValue::Object(token.clone().into_handle()),
+                    JsValue::Object(token.try_clone().expect("duplicate root").into_handle()),
+                    JsValue::Object(token.try_clone().expect("duplicate root").into_handle()),
                 ]);
-                resume.0.step_pending.constructor = Some(constructor.clone());
+                resume.0.step_pending.constructor =
+                    Some(constructor.try_clone().expect("duplicate root"));
                 RegExpSplitStep::Construct { resume }
             }
             4 => RegExpSplitStep::make_set(
-                token.clone(),
+                token.try_clone().expect("duplicate root"),
                 key,
-                JsValue::Object(token.clone().into_handle()),
+                JsValue::Object(token.try_clone().expect("duplicate root").into_handle()),
                 resume,
             ),
             5 => RegExpSplitStep::make_exec(
-                JsValue::Object(token.clone().into_handle()),
-                JsValue::Object(token.clone().into_handle()),
+                JsValue::Object(token.try_clone().expect("duplicate root").into_handle()),
+                JsValue::Object(token.try_clone().expect("duplicate root").into_handle()),
                 resume,
             ),
             _ => unreachable!(),
@@ -250,7 +257,7 @@ fn regexp_split_resident_abandonment_releases_duplicate_request_and_state_owners
 #[test]
 fn regexp_split_resident_preserves_selected_exec_proxy_and_capture_boundaries() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         context
             .eval(
@@ -301,7 +308,7 @@ fn regexp_split_resident_preserves_selected_exec_proxy_and_capture_boundaries() 
 #[test]
 fn regexp_split_resident_keeps_empty_unicode_limit_and_abrupt_unwind_behavior() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         context
             .eval(
@@ -335,7 +342,7 @@ fn regexp_split_resident_keeps_empty_unicode_limit_and_abrupt_unwind_behavior() 
 #[test]
 fn regexp_split_resident_results_and_late_set_errors_keep_the_defining_realm() {
     let runtime = Runtime::new();
-    let mut defining = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
     let Value::Object(function) = defining.eval("RegExp.prototype[Symbol.split]").unwrap() else {
         panic!("RegExp split was not a function");
     };
@@ -344,7 +351,7 @@ fn regexp_split_resident_results_and_late_set_errors_keep_the_defining_realm() {
     let Value::Object(type_error_prototype) = defining.eval("TypeError.prototype").unwrap() else {
         panic!("TypeError prototype was not an object");
     };
-    let mut caller = runtime.new_context();
+    let mut caller = runtime.new_context().expect("create context");
     let regexp = caller.eval("/-/").unwrap();
     let Value::Object(result) = caller
         .call(
@@ -387,7 +394,7 @@ fn regexp_split_resident_results_and_late_set_errors_keep_the_defining_realm() {
 fn regexp_split_resident_production_loop_allocates_one_box_per_split() {
     use crate::engine::api::profiling::CostProfile;
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let profile = CostProfile::start();
     assert_eq!(
         context.eval(r#"'a-b-c'.split(/(-)/).join('|')"#).unwrap(),

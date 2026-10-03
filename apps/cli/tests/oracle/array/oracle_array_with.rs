@@ -235,8 +235,8 @@ fn array_with_prototype_order_and_metadata_match_pinned_quickjs() {
 fn array_with_result_and_native_errors_use_the_defining_realm() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_array_prototype = defining.array_prototype().unwrap();
     let caller_array_prototype = caller.array_prototype().unwrap();
     let defining_range_error = eval_object(
@@ -251,7 +251,7 @@ fn array_with_result_and_native_errors_use_the_defining_realm() {
     let Value::Object(result) = caller
         .call(
             &method,
-            Value::Object(receiver.clone()),
+            Value::Object(receiver.try_clone().expect("duplicate root")),
             &[Value::Int(1), Value::Int(99)],
         )
         .expect("cross-realm Array.with call")
@@ -260,7 +260,11 @@ fn array_with_result_and_native_errors_use_the_defining_realm() {
     };
     assert_eq!(
         runtime.get_prototype_of(&result).unwrap(),
-        Some(defining_array_prototype.clone()),
+        Some(
+            defining_array_prototype
+                .try_clone()
+                .expect("duplicate root")
+        ),
         "Array.with result did not use the native defining realm",
     );
     assert_ne!(
@@ -313,7 +317,7 @@ fn array_with_result_and_native_errors_use_the_defining_realm() {
 fn rust_graph_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let array_prototype = context.array_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();
     let implemented = [

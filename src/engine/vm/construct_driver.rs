@@ -665,7 +665,7 @@ fn enter_class_parent(
     if let Err(error) = runtime.validate_class_parent(&pending.parent) {
         return finish_class_result(runtime, execution, pending.frame, Err(error));
     }
-    let parent = pending.parent.clone();
+    let parent = pending.parent.try_clone()?;
     let realm = pending.realm;
     let frame = pending.frame;
     super::proxy_get_driver::start_class_parent(
@@ -690,7 +690,7 @@ pub(super) fn finish_class_reply(
             pending.realm,
             &pending.constructor,
             &pending.name,
-            pending.parent.clone(),
+            pending.parent.try_clone()?,
             prototype,
         ),
     };
@@ -840,8 +840,8 @@ mod ordinary_constructor_tests {
         let id = crate::engine::vm::driver::push_frame(&mut execution, entry).unwrap();
         let frame = execution.frames.current_mut(id).unwrap();
         for value in [
-            JsValue::Object(target.clone().into_handle()),
-            JsValue::Object(target.clone().into_handle()),
+            JsValue::Object(target.try_clone().expect("duplicate root").into_handle()),
+            JsValue::Object(target.try_clone().expect("duplicate root").into_handle()),
         ]
         .into_iter()
         .chain(arguments)
@@ -854,7 +854,7 @@ mod ordinary_constructor_tests {
     #[test]
     fn ordinary_constructor_preserves_inputs_new_target_and_return_contracts() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         #[cfg(feature = "profiling")]
         let profile = crate::engine::api::profiling::CostProfile::start();
         for source in [
@@ -891,7 +891,7 @@ mod ordinary_constructor_tests {
     #[test]
     fn constructor_misses_preserve_bound_proxy_prototype_and_exception_order() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         for source in [
             "(()=>{function C(x){this.x=x;this.target=new.target}let Bound=C.bind(null,42);let o=new Bound();return o.x===42&&o.target===C&&o instanceof C})()",
             "(()=>{let trace='';function C(x){trace+='body';this.x=x}let P=new Proxy(C,{get(t,k,r){if(k==='prototype')trace+='prototype:';return Reflect.get(t,k,r)}});let o=new P(42);return trace==='prototype:body'&&o.x===42})()",
@@ -916,7 +916,7 @@ mod ordinary_constructor_tests {
     #[test]
     fn lazy_constructor_materializes_its_call_pc_for_an_observed_error() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(context.eval_with_filename(
             "function C(){\n this.stack = new Error('observed').stack;\n}\nfunction outer(){\n return new C();\n}\nvoid C.prototype;\nvar object=outer();\nobject.stack.includes('at C (constructor-observe.js:2:') && object.stack.includes('at outer (constructor-observe.js:5:') && object.stack.split('at C (').length===2",
             "constructor-observe.js",
@@ -927,11 +927,11 @@ mod ordinary_constructor_tests {
     #[test]
     fn ordinary_constructor_uses_its_defining_realm_and_captured_values() {
         let runtime = Runtime::new();
-        let mut defining = runtime.new_context();
+        let mut defining = runtime.new_context().expect("create context");
         let function = defining.eval("let captured={};function Foreign(){this.captured=captured;this.array=Array;this.target=new.target}void Foreign.prototype;Foreign").unwrap();
         let expected_array = defining.eval("Array").unwrap();
         let expected_capture = defining.eval("captured").unwrap();
-        let mut caller = runtime.new_context();
+        let mut caller = runtime.new_context().expect("create context");
         let global = caller.global_object().unwrap();
         for (name, value) in [
             ("Foreign", function),
@@ -955,13 +955,13 @@ mod ordinary_constructor_tests {
             "(function(){class D extends Object{};void D.prototype;return D})()",
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let Value::Object(target) = context.eval(source).unwrap() else {
                 panic!("constructor")
             };
             let arguments = vec![
-                JsValue::Object(target.clone().into_handle()),
-                JsValue::Object(target.clone().into_handle()),
+                JsValue::Object(target.try_clone().expect("duplicate root").into_handle()),
+                JsValue::Object(target.try_clone().expect("duplicate root").into_handle()),
             ];
             let (mut execution, id) = operands(
                 &runtime,
@@ -1028,7 +1028,7 @@ mod ordinary_constructor_tests {
     #[test]
     fn constructor_admission_preserves_pending_cleanup_and_depth_misses() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(target) = context
             .eval("(function(){function C(){}void C.prototype;return C})()")
             .unwrap()
@@ -1070,7 +1070,9 @@ mod ordinary_constructor_tests {
         assert_eq!(frame.resume_pc, 0);
         drop(execution);
 
-        runtime.set_recursion_limit(6);
+        runtime
+            .set_recursion_limit(6)
+            .expect("set runtime configuration");
         assert_eq!(context.eval("function C(n){if(n)new C(n-1)}void C.prototype;try{new C(Infinity);'missing'}catch(e){e.name+':'+e.message}").unwrap(), Value::String(crate::engine::value::JsString::from_static("InternalError:stack overflow")));
         assert_eq!(context.eval("new C(1);6*7").unwrap(), Value::Int(42));
         assert!(runtime.0.state.borrow().active_frames.is_empty());
@@ -1079,13 +1081,13 @@ mod ordinary_constructor_tests {
     #[test]
     fn constructor_slot_limit_failure_releases_unpublished_child_inputs() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(target) = context.eval("(function(){function C(a,b,c){let local=a;this.result=b;return local}void C.prototype;return C})()").unwrap() else {
             panic!("constructor")
         };
         let marker = runtime.new_object(None).unwrap();
         let arguments = (0..3)
-            .map(|_| JsValue::Object(marker.clone().into_handle()))
+            .map(|_| JsValue::Object(marker.try_clone().expect("duplicate root").into_handle()))
             .collect();
         let (mut execution, id) = operands(
             &runtime,
@@ -1098,7 +1100,7 @@ mod ordinary_constructor_tests {
             },
         );
         runtime.run_gc().unwrap();
-        let objects = runtime.heap_counts().object_nodes;
+        let objects = runtime.heap_counts().expect("runtime state").object_nodes;
         let target_count = runtime
             .0
             .state
@@ -1119,7 +1121,10 @@ mod ordinary_constructor_tests {
         let frame = execution.frames.current_mut(id).unwrap();
         assert_eq!(execution.slots.depth(&frame.window), 0);
         runtime.run_gc().unwrap();
-        assert_eq!(runtime.heap_counts().object_nodes, objects);
+        assert_eq!(
+            runtime.heap_counts().expect("runtime state").object_nodes,
+            objects
+        );
         assert_eq!(
             runtime
                 .0
@@ -1146,7 +1151,7 @@ mod ordinary_constructor_tests {
     #[test]
     fn constructor_allocation_preserves_inputs_until_ready_collection() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(target) = context
             .eval("(function(){function C(a){return a}void C.prototype;return C})()")
             .unwrap()
@@ -1211,7 +1216,7 @@ mod owned_definition_tests {
             "(function(){var marker={},p=new Proxy({}, {get apply(){throw marker}});try{p()}catch(e){return e===marker?42:0}})",
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let callable = runtime
                 .callable_from_value(context.eval(source).unwrap())
                 .unwrap();
@@ -1240,7 +1245,7 @@ mod owned_definition_tests {
             "(function(){var marker={},calls=0,proxy=new Proxy({}, {defineProperty(){calls++;throw marker}});class Base{constructor(){return proxy}}return function(){try{class C extends Base{x=42}new C}catch(e){return e===marker&&calls===1?42:0}return 0}})()",
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let callable = runtime
                 .callable_from_value(context.eval(source).unwrap())
                 .unwrap();

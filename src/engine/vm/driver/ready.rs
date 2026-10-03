@@ -360,7 +360,7 @@ mod tests {
     #[test]
     fn synchronous_leaves_resume_and_throw_without_losing_the_current_frame() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         #[cfg(feature = "profiling")]
         let profile = crate::engine::api::profiling::CostProfile::start();
         assert_eq!(

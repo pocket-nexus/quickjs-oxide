@@ -3,10 +3,18 @@ use super::*;
 #[test]
 fn direct_state_gc_collects_cycles_without_reborrowing_runtime() {
     let runtime = Runtime::new();
-    let baseline = runtime.heap_counts();
+    let baseline = runtime.heap_counts().expect("runtime state");
     let object = runtime.new_object(None).unwrap();
     let self_key = runtime.intern_property_key("self").unwrap();
-    assert!(set_property(&runtime, &object, &self_key, Value::Object(object.clone())).unwrap());
+    assert!(
+        set_property(
+            &runtime,
+            &object,
+            &self_key,
+            Value::Object(object.try_clone().unwrap())
+        )
+        .unwrap()
+    );
     let id = object.into_handle();
     let mut state = runtime.0.state.borrow_mut();
     state.release_jsvalue(JsValue::Object(id)).unwrap();
@@ -20,7 +28,7 @@ fn direct_state_gc_collects_cycles_without_reborrowing_runtime() {
 #[test]
 fn explicit_gc_caps_empty_zero_queue_but_ordinary_releases_reuse_it() {
     let runtime = Runtime::new();
-    let baseline = runtime.heap_counts();
+    let baseline = runtime.heap_counts().expect("runtime state");
     let roots: Vec<_> = (0..32).map(|_| runtime.new_object(None).unwrap()).collect();
     let retained_capacity = {
         let mut state = runtime.0.state.borrow_mut();
@@ -30,7 +38,10 @@ fn explicit_gc_caps_empty_zero_queue_but_ordinary_releases_reuse_it() {
     assert!(retained_capacity > 4096);
 
     drop(roots);
-    assert_eq!(runtime.heap_counts().object_nodes, baseline.object_nodes);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").object_nodes,
+        baseline.object_nodes
+    );
     assert_eq!(
         runtime.0.state.borrow().heap.zero_queue.capacity(),
         retained_capacity
@@ -45,7 +56,7 @@ fn explicit_gc_caps_empty_zero_queue_but_ordinary_releases_reuse_it() {
 #[test]
 fn explicit_gc_drains_deferred_release_before_trimming_zero_queue() {
     let runtime = Runtime::new();
-    let baseline = runtime.heap_counts();
+    let baseline = runtime.heap_counts().expect("runtime state");
     let object = runtime.new_object(None).unwrap();
     let mut state = runtime.0.state.borrow_mut();
     state.heap.zero_queue.reserve(8192);
@@ -54,7 +65,10 @@ fn explicit_gc_drains_deferred_release_before_trimming_zero_queue() {
     drop(state);
 
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().object_nodes, baseline.object_nodes);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").object_nodes,
+        baseline.object_nodes
+    );
     assert!(!runtime.0.deferred_references.has_pending());
     let state = runtime.0.state.borrow();
     assert!(state.heap.zero_queue.is_empty());
@@ -66,28 +80,50 @@ fn object_property_cycle_is_collected_only_by_explicit_gc() {
     let runtime = Runtime::new();
     let object = runtime.new_object(None).unwrap();
     let self_key = runtime.intern_property_key("self").unwrap();
-    assert!(set_property(&runtime, &object, &self_key, Value::Object(object.clone())).unwrap());
-    assert_eq!(runtime.heap_counts().object_nodes, 1);
+    assert!(
+        set_property(
+            &runtime,
+            &object,
+            &self_key,
+            Value::Object(object.try_clone().expect("duplicate root"))
+        )
+        .unwrap()
+    );
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").object_nodes,
+        1
+    );
     let state = runtime.0.state.borrow_mut();
     drop(object);
     drop(state);
     let stats = runtime.run_gc().unwrap();
     assert_eq!(stats.cleanup.finalized_objects, 1);
-    assert_eq!(runtime.heap_counts().object_nodes, 0);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").object_nodes,
+        0
+    );
 }
 
 #[test]
 fn shape_prototype_property_cycle_keeps_external_root_then_collects() {
     let runtime = Runtime::new();
-    let baseline = runtime.heap_counts();
+    let baseline = runtime.heap_counts().expect("runtime state");
     let prototype = runtime.new_object(None).unwrap();
     let object = runtime.new_object(Some(&prototype)).unwrap();
     let back = runtime.intern_property_key("back").unwrap();
-    assert!(set_property(&runtime, &prototype, &back, Value::Object(object.clone())).unwrap());
+    assert!(
+        set_property(
+            &runtime,
+            &prototype,
+            &back,
+            Value::Object(object.try_clone().expect("duplicate root"))
+        )
+        .unwrap()
+    );
     drop(prototype);
 
     runtime.run_gc().unwrap();
-    let rooted = runtime.heap_counts();
+    let rooted = runtime.heap_counts().expect("runtime state");
     assert!(rooted.object_nodes >= baseline.object_nodes + 2);
     assert!(rooted.shape_nodes >= baseline.shape_nodes + 2);
 
@@ -95,7 +131,7 @@ fn shape_prototype_property_cycle_keeps_external_root_then_collects() {
     let stats = runtime.run_gc().unwrap();
     assert!(stats.cleanup.finalized_objects >= 2);
     assert!(stats.cleanup.finalized_shapes >= 2);
-    let collected = runtime.heap_counts();
+    let collected = runtime.heap_counts().expect("runtime state");
     assert_eq!(collected.object_nodes, baseline.object_nodes);
     assert_eq!(collected.shape_nodes, baseline.shape_nodes);
 }
@@ -103,8 +139,8 @@ fn shape_prototype_property_cycle_keeps_external_root_then_collects() {
 #[test]
 fn named_function_self_capture_cycle_is_collected() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
-    let baseline = runtime.heap_counts();
+    let mut context = runtime.new_context().expect("create context");
+    let baseline = runtime.heap_counts().expect("runtime state");
     let closure = context
         .eval(
             "(function() {\
@@ -117,16 +153,16 @@ fn named_function_self_capture_cycle_is_collected() {
             })()",
         )
         .unwrap();
-    let retained = runtime.heap_counts();
+    let retained = runtime.heap_counts().expect("runtime state");
     assert!(retained.object_nodes >= baseline.object_nodes + 2);
     assert!(retained.var_ref_nodes >= baseline.var_ref_nodes + 2);
     drop(closure);
-    assert!(runtime.heap_counts().object_nodes > baseline.object_nodes);
+    assert!(runtime.heap_counts().expect("runtime state").object_nodes > baseline.object_nodes);
 
     let stats = runtime.run_gc().unwrap();
     assert!(stats.cleanup.finalized_objects >= 2);
     assert!(stats.cleanup.finalized_var_refs >= 2);
-    let collected = runtime.heap_counts();
+    let collected = runtime.heap_counts().expect("runtime state");
     assert_eq!(collected.object_nodes, baseline.object_nodes);
     assert_eq!(collected.var_ref_nodes, baseline.var_ref_nodes);
     assert_eq!(
@@ -139,7 +175,7 @@ fn named_function_self_capture_cycle_is_collected() {
 fn exceptional_vm_exit_releases_local_frame_roots_immediately() {
     let runtime = Runtime::new();
     let object = runtime.new_object(None).unwrap();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let function = eval_callable(
         &runtime,
         &mut context,
@@ -157,7 +193,7 @@ fn exceptional_vm_exit_releases_local_frame_roots_immediately() {
             .call(
                 &function,
                 Value::Undefined,
-                &[Value::Object(object.clone())]
+                &[Value::Object(object.try_clone().expect("duplicate root"))]
             )
             .is_err()
     );
@@ -183,10 +219,16 @@ fn drops_during_runtime_borrow_are_deferred_to_the_next_safe_point() {
     assert_eq!(runtime.0.deferred_references.borrow().len(), 2);
     drop(state);
 
-    let context = runtime.new_context();
+    let context = runtime.new_context().expect("create context");
     assert!(runtime.0.deferred_references.borrow().is_empty());
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
     drop(context);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().object_nodes, 0);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").object_nodes,
+        0
+    );
 }

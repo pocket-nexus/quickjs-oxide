@@ -380,7 +380,7 @@ pub(super) fn prepare_global_write(
         .map_err(|e| Error::internal(e.to_string()))?
         .clone();
     if initialize {
-        return Ok(GlobalWrite::Cell(root.clone()));
+        return Ok(GlobalWrite::Cell(root.try_clone()?));
     }
     let key = crate::engine::object::PropertyKey::from_borrowed_atom(runtime.clone(), atom)
         .map_err(|e| Error::internal(e.to_string()))?;
@@ -405,10 +405,10 @@ pub(super) fn prepare_global_write(
                 )
                 .map_err(runtime_error_to_vm_error)?);
         }
-        return Ok(GlobalWrite::Cell(root.clone()));
+        return Ok(GlobalWrite::Cell(root.try_clone()?));
     }
     if !matches!(cell.value, crate::engine::heap::RawValue::Uninitialized) && !cell.is_const {
-        return Ok(GlobalWrite::Cell(root.clone()));
+        return Ok(GlobalWrite::Cell(root.try_clone()?));
     }
     Ok(GlobalWrite::Property(key))
 }

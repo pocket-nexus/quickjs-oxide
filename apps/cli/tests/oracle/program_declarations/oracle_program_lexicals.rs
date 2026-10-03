@@ -91,7 +91,7 @@ fn program_lexical_values_match_pinned_quickjs() {
     for &(description, source) in VALUE_CASES {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let rust = observe_rust_eval(&runtime, &mut context, source, description);
         let quickjs = observe_oracle_sequence(&oracle, &[source], description);
         assert_eq!(rust, quickjs, "Program lexical drifted for {description}");
@@ -211,7 +211,7 @@ fn program_lexical_cross_eval_state_matches_pinned_quickjs() {
     for &(description, sources) in sequences {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let rust = sources
             .iter()
             .map(|source| observe_rust_eval(&runtime, &mut context, source, description))

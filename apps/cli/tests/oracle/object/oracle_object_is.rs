@@ -194,7 +194,7 @@ fn object_is_autoinit_can_be_deleted_before_materialization() {
 
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let object = global_callable(&runtime, &mut context, "Object");
     let key = runtime.intern_property_key("is").unwrap();
     let deleted = runtime.delete_property(object.as_object(), &key).unwrap();
@@ -221,8 +221,8 @@ fn object_is_autoinit_can_be_deleted_before_materialization() {
 fn object_is_cross_realm_identity_and_constructor_error_realm_are_exact() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_object = global_callable(&runtime, &mut defining, "Object");
     let object_is = property_callable(&runtime, &mut defining, defining_object.as_object(), "is");
     let source = caller.new_object().unwrap();
@@ -232,8 +232,11 @@ fn object_is_cross_realm_identity_and_constructor_error_realm_are_exact() {
         caller
             .call(
                 &object_is,
-                Value::Object(other.clone()),
-                &[Value::Object(source.clone()), Value::Object(source.clone())],
+                Value::Object(other.try_clone().expect("duplicate root")),
+                &[
+                    Value::Object(source.try_clone().expect("duplicate root")),
+                    Value::Object(source.try_clone().expect("duplicate root"))
+                ],
             )
             .unwrap(),
         Value::Bool(true),
@@ -287,8 +290,8 @@ fn object_is_methods_are_per_realm_and_retain_then_release_their_realm() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let object_is = {
-        let mut first = runtime.new_context();
-        let mut second = runtime.new_context();
+        let mut first = runtime.new_context().expect("create context");
+        let mut second = runtime.new_context().expect("create context");
         let first_object = global_callable(&runtime, &mut first, "Object");
         let second_object = global_callable(&runtime, &mut second, "Object");
         let first_is = property_callable(&runtime, &mut first, first_object.as_object(), "is");
@@ -306,16 +309,19 @@ fn object_is_methods_are_per_realm_and_retain_then_release_their_realm() {
     };
 
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
     drop(object_is);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().live, 0);
+    assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
 }
 
 fn rust_graph_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let function_prototype = context.function_prototype().unwrap();
     let object = global_callable(&runtime, &mut context, "Object");
     let selected = [

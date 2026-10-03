@@ -133,7 +133,8 @@ fn prepare_and_enter(
             .map_err(runtime_error_to_vm_error)?
         {
             NativeConversion::Value(object) => {
-                frame.cold.normalized_this = Some(JsValue::Object(object.clone().into_handle()));
+                frame.cold.normalized_this =
+                    Some(JsValue::Object(object.try_clone()?.into_handle()));
                 JsValue::Object(object.into_handle())
             }
             NativeConversion::Throw(value) => {
@@ -148,7 +149,7 @@ fn prepare_and_enter(
             .map_err(runtime_error_to_vm_error)?;
         let descriptor = frame
             .executable
-            .eval_environment(environment)
+            .eval_environment(environment)?
             .ok_or_else(|| Error::internal("eval environment index is out of bounds"))?;
         let (locals, parameters) = execution.slots.binding_counts(&frame.window)?;
         eval_bindings::validate(
@@ -442,7 +443,7 @@ mod capture_tests {
     #[test]
     fn direct_eval_preparation_captures_exact_cells_only_after_successful_string_compile() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let environment = EvalEnvironment {
             scopes: vec![
                 EvalScope {
@@ -603,7 +604,7 @@ mod capture_tests {
                     Value::Int(1),
                     Value::Int(2),
                     &[Value::Int(10)],
-                    child.clone(),
+                    child.try_clone().expect("duplicate root"),
                 )
                 .unwrap();
             let entry = FrameEntry {
@@ -618,8 +619,8 @@ mod capture_tests {
                     return_to: None,
                     entry_guard: Some(prepared.active_frame),
                     function: crate::engine::vm::closure::FrameFunction::new(
-                        callable.as_object().clone(),
-                        vec![closure.clone()].into(),
+                        callable.as_object().try_clone().expect("duplicate root"),
+                        vec![closure.try_clone().expect("duplicate root")].into(),
                     )
                     .into(),
                     reusable_captured_locals: vec![false; 2],
@@ -632,7 +633,9 @@ mod capture_tests {
                         FrameBinding::Direct(JsValue::Int(20)),
                         FrameBinding::Direct(
                             runtime
-                                .into_jsvalue(Value::Object(eval_variable_object.clone()))
+                                .into_jsvalue(Value::Object(
+                                    eval_variable_object.try_clone().expect("duplicate root"),
+                                ))
                                 .unwrap(),
                         ),
                     ],

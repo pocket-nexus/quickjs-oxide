@@ -117,7 +117,7 @@ mod tests {
         for second in [false, true] {
             let runtime = Runtime::new();
             let weak = std::rc::Rc::downgrade(&runtime.0);
-            let context = runtime.new_context();
+            let context = runtime.new_context().expect("create context");
             let original = runtime.new_object(None).unwrap();
             let id = original.object_id();
             let mut resume = take_number(

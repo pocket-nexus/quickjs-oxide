@@ -17,11 +17,13 @@ fn thrown(runtime: &Runtime, completion: Completion) -> Value {
 #[test]
 fn native_function_retains_and_dispatches_in_its_defining_realm() {
     let runtime = Runtime::new();
-    let defining_context = runtime.new_context();
+    let defining_context = runtime.new_context().expect("create context");
     let defining_realm = defining_context.realm;
     let function_prototype = defining_context.function_prototype().unwrap();
     let callable = runtime
-        .callable_from_value(Value::Object(function_prototype.clone()))
+        .callable_from_value(Value::Object(
+            function_prototype.try_clone().expect("duplicate root"),
+        ))
         .unwrap();
 
     let before_context_drop = runtime
@@ -50,7 +52,7 @@ fn native_function_retains_and_dispatches_in_its_defining_realm() {
         } if realm == defining_realm
     ));
 
-    let mut caller_context = runtime.new_context();
+    let mut caller_context = runtime.new_context().expect("create context");
     assert_eq!(
         caller_context
             .call(&callable, Value::Undefined, &[])
@@ -70,13 +72,16 @@ fn native_function_retains_and_dispatches_in_its_defining_realm() {
             .context(defining_realm)
             .is_err()
     );
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
 }
 
 #[test]
 fn native_call_preserves_actual_argc_padding_and_restores_active_frame() {
     let runtime = Runtime::new();
-    let defining_context = runtime.new_context();
+    let defining_context = runtime.new_context().expect("create context");
     let defining_realm = defining_context.realm;
     let function_prototype = defining_context.function_prototype().unwrap();
     let probe = runtime
@@ -99,7 +104,7 @@ fn native_call_preserves_actual_argc_padding_and_restores_active_frame() {
         None
     );
 
-    let caller_context = runtime.new_context();
+    let caller_context = runtime.new_context().expect("create context");
     let no_args = runtime
         .call_internal(caller_context.realm, &probe, Value::Undefined, &[])
         .unwrap();
@@ -152,7 +157,7 @@ fn native_call_preserves_actual_argc_padding_and_restores_active_frame() {
 #[test]
 fn native_constructor_bit_is_independent_from_generic_cproto() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let function_prototype = context.function_prototype().unwrap();
     let probe = runtime
         .new_bound_native_function(
@@ -185,7 +190,7 @@ fn native_constructor_bit_is_independent_from_generic_cproto() {
 #[test]
 fn native_float_cproto_construct_adapter_uses_the_call_kernel() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let math_key = runtime.intern_property_key("Math").unwrap();
     let Value::Object(math) = context.get_property(&global, &math_key).unwrap() else {
@@ -221,7 +226,7 @@ fn native_float_cproto_construct_adapter_uses_the_call_kernel() {
 #[test]
 fn native_constructor_cproto_adapters_use_defining_realm_and_restore_frames() {
     let runtime = Runtime::new();
-    let defining_context = runtime.new_context();
+    let defining_context = runtime.new_context().expect("create context");
     let defining_realm = defining_context.realm;
     let function_prototype = defining_context.function_prototype().unwrap();
     let constructor_only = runtime
@@ -240,7 +245,7 @@ fn native_constructor_cproto_adapters_use_defining_realm_and_restore_frames() {
             0,
         )
         .unwrap();
-    let caller_context = runtime.new_context();
+    let caller_context = runtime.new_context().expect("create context");
 
     let called_without_new = runtime
         .call_internal(

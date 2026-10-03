@@ -14,6 +14,8 @@ use crate::engine::vm::call::NativeInvocation;
 impl Runtime {
     /// Run QuickJS-style cycle collection for this runtime.
     pub fn run_gc(&self) -> Result<GcStats, RuntimeError> {
+        self.check_poison()?;
+        let _operation = self.operation();
         let pressure = &self.0.gc_pressure;
         if pressure.collecting.replace(true) {
             return Err(RuntimeError::Invariant("cycle collection reentered"));
@@ -89,9 +91,10 @@ impl Runtime {
 
     /// Runtime heap population for diagnostics and lifecycle tests.
     #[must_use]
-    pub fn heap_counts(&self) -> HeapCounts {
+    pub fn heap_counts(&self) -> Result<HeapCounts, RuntimeError> {
+        self.check_poison()?;
         let _operation = self.operation();
-        self.0.state.borrow().heap.counts()
+        Ok(self.0.state.borrow().heap.counts())
     }
 }
 

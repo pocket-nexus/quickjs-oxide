@@ -313,7 +313,7 @@ print('meta='+meta('flatMap')+'|'+meta('flat'));
 fn array_flatten_basic_rust_smoke() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let value = context
         .eval(r#"[[1,2],[3,[4]],,5].flat().join("|")"#)
         .expect("evaluate basic Array.flat smoke");
@@ -328,7 +328,7 @@ fn array_flatten_basic_rust_smoke() {
 fn array_flatten_recursive_mapper_stack_overflow_is_catchable_without_oracle() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     // Owned callbacks consume logical frames, so the old native-stack ceiling
     // must not reject this finite chain. Keep the legacy ceiling probe below
     // for the default VM and exercise a true infinite chain for stack-vm.
@@ -426,8 +426,8 @@ fn array_flatten_prototype_order_and_metadata_match_pinned_quickjs() {
 fn array_flatten_results_native_errors_and_user_throws_use_pinned_realms() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_array_prototype = defining.array_prototype().unwrap();
     let caller_array_prototype = caller.array_prototype().unwrap();
     let defining_type_error = eval_object(
@@ -450,14 +450,22 @@ fn array_flatten_results_native_errors_and_user_throws_use_pinned_realms() {
 
     let receiver = eval_object(&mut caller, "[[10],[20]]", "caller nested Array");
     let Value::Object(result) = caller
-        .call(&flat, Value::Object(receiver.clone()), &[])
+        .call(
+            &flat,
+            Value::Object(receiver.try_clone().expect("duplicate root")),
+            &[],
+        )
         .expect("cross-realm Array.flat call")
     else {
         panic!("cross-realm Array.flat result was not an object");
     };
     assert_eq!(
         runtime.get_prototype_of(&result).unwrap(),
-        Some(defining_array_prototype.clone()),
+        Some(
+            defining_array_prototype
+                .try_clone()
+                .expect("duplicate root")
+        ),
         "Array.flat result did not use the native defining realm",
     );
     assert_ne!(
@@ -468,7 +476,11 @@ fn array_flatten_results_native_errors_and_user_throws_use_pinned_realms() {
     assert_eq!(int_property(&runtime, &mut caller, &result, "1"), 20);
 
     assert!(matches!(
-        caller.call(&flat_map, Value::Object(receiver.clone()), &[]),
+        caller.call(
+            &flat_map,
+            Value::Object(receiver.try_clone().expect("duplicate root")),
+            &[]
+        ),
         Err(RuntimeError::Exception),
     ));
     let native_error = take_exception_object(&mut caller, "Array.flatMap mapper TypeError");
@@ -488,7 +500,9 @@ fn array_flatten_results_native_errors_and_user_throws_use_pinned_realms() {
         caller.call(
             &flat_map,
             Value::Object(receiver),
-            &[Value::Object(callback.as_object().clone())],
+            &[Value::Object(
+                callback.as_object().try_clone().expect("duplicate root")
+            )],
         ),
         Err(RuntimeError::Exception),
     ));
@@ -503,7 +517,7 @@ fn array_flatten_results_native_errors_and_user_throws_use_pinned_realms() {
 fn rust_graph_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let array_prototype = context.array_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();
     let implemented = ["copyWithin", "flatMap", "flat", "values", "keys", "entries"];

@@ -60,4 +60,20 @@ impl StateStorage {
             .expect("live runtime owns its state")
             .get_mut()
     }
+
+    /// Quarantine does not traverse a heap whose mutation was interrupted.
+    pub(crate) fn abandon(&mut self) {
+        if let Some(state) = self.0.take() {
+            std::mem::forget(state);
+        }
+    }
+}
+
+impl Drop for StateStorage {
+    fn drop(&mut self) {
+        // Covers a panic in the normal RuntimeInner teardown as well.
+        if std::thread::panicking() {
+            self.abandon();
+        }
+    }
 }

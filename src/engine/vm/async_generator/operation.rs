@@ -103,7 +103,7 @@ impl AsyncGeneratorStep {
         ))?;
         if let NativeFunctionId::AsyncGeneratorPrototypeResume(kind) = target {
             let capability = runtime.new_default_promise_capability(realm)?;
-            let promise = JsValue::Object(capability.promise.clone().into_handle());
+            let promise = JsValue::Object(capability.promise.try_clone()?.into_handle());
             let generator = match this_value {
                 JsValue::Object(generator)
                     if matches!(
@@ -199,7 +199,7 @@ impl AsyncGeneratorStep {
             pending_effect: AsyncGeneratorStepPending::default(),
             runtime: runtime.clone(),
             realm,
-            generator: Some(generator.clone()),
+            generator: Some(generator.try_clone()?),
             output: JsValue::Undefined,
             phase: Phase::Body,
             cleanup: Cleanup::None,
@@ -330,7 +330,7 @@ impl AsyncGeneratorResume {
     }
     fn pump(mut self: Box<Self>) -> Result<AsyncGeneratorStep, RuntimeError> {
         loop {
-            let generator = self.generator()?.clone();
+            let generator = self.generator()?.try_clone()?;
             let snapshot = self
                 .runtime
                 .0
@@ -470,7 +470,7 @@ impl AsyncGeneratorResume {
                 None
             }
         };
-        let generator = self.generator()?.clone();
+        let generator = self.generator()?.try_clone()?;
         let mut request = self
             .runtime
             .root_front_async_generator_request(&generator)?;

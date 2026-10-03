@@ -234,7 +234,7 @@ impl PropertyStep {
             pending_effect: PropertyStepPending::new(runtime.clone()),
             realm,
             kind,
-            object: object.clone(),
+            object: object.try_clone()?,
             phase: Phase::Result,
         }));
         match kind {
@@ -454,8 +454,8 @@ impl PropertyResume {
                 continue;
             }
             return Ok(PropertyStep::request_descriptor(
-                self.0.object.clone(),
-                key.clone(),
+                self.0.object.try_clone()?,
+                key.try_clone()?,
                 {
                     let updated_0 = Phase::IntegrityDescriptor { remaining, key };
                     self.0.phase = updated_0;
@@ -471,11 +471,14 @@ impl PropertyResume {
                 self.0.object.into_handle(),
             ))))
         } else {
-            Ok(PropertyStep::request_extensible(self.0.object.clone(), {
-                let updated_0 = Phase::Result;
-                self.0.phase = updated_0;
-                self
-            }))
+            Ok(PropertyStep::request_extensible(
+                self.0.object.try_clone()?,
+                {
+                    let updated_0 = Phase::Result;
+                    self.0.phase = updated_0;
+                    self
+                },
+            ))
         }
     }
     fn assign_source(
@@ -497,7 +500,7 @@ impl PropertyResume {
                 }
             };
             let snapshot = !runtime.is_proxy_object(&source)?;
-            return Ok(PropertyStep::request_keys(source.clone(), {
+            return Ok(PropertyStep::request_keys(source.try_clone()?, {
                 let updated_0 = Phase::AssignKeys {
                     sources,
                     source,
@@ -523,8 +526,8 @@ impl PropertyResume {
             return self.assign_read(runtime, state, key);
         }
         Ok(PropertyStep::request_descriptor(
-            state.source.clone(),
-            key.clone(),
+            state.source.try_clone()?,
+            key.try_clone()?,
             {
                 let updated_0 = Phase::AssignDescriptor { state, key };
                 self.0.phase = updated_0;
@@ -539,8 +542,8 @@ impl PropertyResume {
         key: PropertyKey,
     ) -> Result<PropertyStep, RuntimeError> {
         Ok(PropertyStep::request_read(
-            state.source.clone(),
-            key.clone(),
+            state.source.try_clone()?,
+            key.try_clone()?,
             js_object_value(runtime, &state.source)?,
             {
                 let updated_0 = Phase::AssignRead { state, key };
@@ -567,8 +570,8 @@ impl PropertyResume {
                 continue;
             }
             return Ok(PropertyStep::request_descriptor(
-                self.0.object.clone(),
-                key.clone(),
+                self.0.object.try_clone()?,
+                key.try_clone()?,
                 {
                     let updated_0 = Phase::Enumerate { state, key };
                     self.0.phase = updated_0;
@@ -628,7 +631,7 @@ impl PropertyResume {
                 "property key reply has wrong phase",
             ));
         };
-        let object = self.0.object.clone();
+        let object = self.0.object.try_clone()?;
         let resume = {
             let updated_0 = Phase::Result;
             self.0.phase = updated_0;
@@ -685,13 +688,16 @@ impl PropertyResume {
         };
         Ok(match result {
             NativeConversion::Throw(value) => PropertyStep::Complete(Completion::Throw(value)),
-            NativeConversion::Value(descriptor) => {
-                PropertyStep::request_define(self.0.object.clone(), key.clone(), descriptor, {
+            NativeConversion::Value(descriptor) => PropertyStep::request_define(
+                self.0.object.try_clone()?,
+                key.try_clone()?,
+                descriptor,
+                {
                     let updated_0 = Phase::Defined(key);
                     self.0.phase = updated_0;
                     self
-                })
-            }
+                },
+            ),
         })
     }
     pub(crate) fn defined(
@@ -795,8 +801,8 @@ impl PropertyResume {
                 descriptor.writable = crate::engine::object::DescriptorField::Present(false);
             }
             return Ok(PropertyStep::request_define(
-                self.0.object.clone(),
-                key.clone(),
+                self.0.object.try_clone()?,
+                key.try_clone()?,
                 descriptor,
                 {
                     let updated_0 = Phase::IntegrityDefine { remaining, key };
@@ -878,7 +884,7 @@ impl PropertyResume {
                 None
             };
             return Ok(PropertyStep::request_read(
-                resume.object.clone(),
+                resume.object.try_clone()?,
                 key,
                 js_object_value(runtime, &resume.object)?,
                 {
@@ -944,7 +950,7 @@ impl PropertyResume {
                     )?,
                 )))
             } else {
-                Ok(PropertyStep::request_keys(self.0.object.clone(), self))
+                Ok(PropertyStep::request_keys(self.0.object.try_clone()?, self))
             };
         }
         if !matches!(self.0.phase, Phase::Result)
@@ -1021,8 +1027,8 @@ impl PropertyResume {
                 }
             };
             return Ok(PropertyStep::request_set(
-                self.0.object.clone(),
-                key.clone(),
+                self.0.object.try_clone()?,
+                key.try_clone()?,
                 value,
                 js_object_value(runtime, &self.0.object)?,
                 {
@@ -1484,7 +1490,7 @@ mod tests {
     fn entries_keep_unpublished_pair_and_target_alive_until_reply_or_abandonment() {
         let runtime = Runtime::new();
         let weak = std::rc::Rc::downgrade(&runtime.0);
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let target = runtime.new_object(None).unwrap();
         let target_id = target.object_id();
         let arguments = NativeArguments {

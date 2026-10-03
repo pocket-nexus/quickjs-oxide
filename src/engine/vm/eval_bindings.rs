@@ -97,7 +97,7 @@ pub(super) fn materialize(
                 EvalBindingSource::Closure(index) => closure_slots
                     .get(usize::from(index))
                     .ok_or_else(|| Error::internal("eval closure slot index is out of bounds"))?
-                    .clone(),
+                    .try_clone()?,
                 source => {
                     let parent = match source {
                         EvalBindingSource::Local(index) => ClosureSource::ParentLocal(index),

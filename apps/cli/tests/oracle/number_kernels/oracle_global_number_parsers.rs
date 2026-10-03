@@ -39,7 +39,7 @@ fn global_number_parsers_match_pinned_quickjs_through_source_execution() {
     let expression = format!("'' + {}", EXPRESSIONS.join(" + '|' + "));
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let Value::String(rust) = context.eval(&expression).unwrap() else {
         panic!("Rust numeric parser probe did not return a string");
     };
@@ -77,7 +77,7 @@ fn parser_function_names_are_stable_in_native_error_stacks() {
     let source = "parseInt('10', 1n)";
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert!(
         context
             .eval_with_options(source, &EvalOptions::new("<cmdline>"))

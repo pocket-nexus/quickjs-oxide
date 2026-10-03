@@ -251,7 +251,7 @@ mod tests {
     #[test]
     fn cached_native_buffers_are_isolated_during_reentry_and_reused_after_wait() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let mut storage = QueryStorage::default();
         storage
             .acquire(context.realm, Vec::new(), Finish::Root)
@@ -271,7 +271,7 @@ mod tests {
     #[test]
     fn completed_queries_reuse_capacity_and_never_share_live_parents() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let mut storage = QueryStorage::default();
         let mut outer = storage.acquire(context.realm, Vec::new(), Finish::Root);
         outer.parents.try_reserve(12).unwrap();
@@ -291,7 +291,7 @@ mod tests {
     #[test]
     fn cached_native_inplace_preserves_capacity_until_real_wait() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let mut storage = QueryStorage::default();
         assert!(!storage.reserve_cached_native_entry().unwrap());
         storage
@@ -319,7 +319,7 @@ mod tests {
     fn cached_native_inplace_host_execution_has_independent_storage() {
         use crate::engine::vm::execution::{ExecutionLimits, HostBoundaryGuard, RunningExecution};
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let mut outer = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
         outer
             .query_storage
@@ -346,7 +346,7 @@ mod tests {
     #[test]
     fn caller_supplied_parents_do_not_accumulate_idle_buffers() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let mut storage = QueryStorage::default();
         for _ in 0..2000 {
             let query = storage.acquire(context.realm, vec![Resume::Identity], Finish::Root);

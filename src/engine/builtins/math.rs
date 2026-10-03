@@ -540,7 +540,10 @@ impl Runtime {
             self.define_native_builtin_auto_init(&math, realm, target, name, length, length)?;
         }
 
-        let to_string_tag = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag));
+        let to_string_tag = PropertyKey::from(
+            self.well_known_symbol(WellKnownSymbol::ToStringTag)
+                .expect("well-known symbol"),
+        );
         if !self.define_own_property(
             &math,
             &to_string_tag,

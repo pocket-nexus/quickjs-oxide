@@ -568,8 +568,8 @@ repeated().next().then(function (result) {
 fn cross_realm_settlement_resumes_in_the_job_realm_and_executes_in_the_body_realm() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut body = runtime.new_context();
-    let mut settler = runtime.new_context();
+    let mut body = runtime.new_context().expect("create context");
+    let mut settler = runtime.new_context().expect("create context");
     let settler_realm = settler.realm_id();
 
     let gate = object(eval(
@@ -598,13 +598,13 @@ crossRealm().next().then(undefined, function (error) {
     ));
 
     // PromiseResolve in the body realm first installs the thenable bridge.
-    while runtime.is_job_pending() {
+    while runtime.is_job_pending().expect("runtime state") {
         runtime.execute_pending_job().unwrap();
     }
     drop(eval(&mut settler, "release(1)"));
 
     let mut saw_settler_realm = false;
-    while runtime.is_job_pending() {
+    while runtime.is_job_pending().expect("runtime state") {
         let job_realm = runtime
             .execute_pending_job()
             .unwrap()

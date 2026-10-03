@@ -5,7 +5,7 @@ fn failed_resolution_unpublishes_the_root_from_the_context_cache() {
     let runtime = Runtime::new();
     let (loader, loads, _) = MapModuleLoader::new([]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert!(matches!(
         context.compile_module_with_filename("import './missing.js';", "pkg/shared.js",),
@@ -36,7 +36,7 @@ fn failed_resolution_leaves_a_permanent_module_cache_tombstone() {
     let runtime = Runtime::new();
     let (loader, _, _) = MapModuleLoader::new([]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert!(matches!(
         context.compile_module_with_filename("import './missing.js';", "pkg/failed.js"),
@@ -75,7 +75,7 @@ fn escaped_module_handle_reports_aborted_after_resolution_rollback() {
     let runtime = Runtime::new();
     let (loader, _, _) = MapModuleLoader::new([]);
     let _registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let name = JsString::from_static("pkg/aborted-entry.js");
     let ModuleCompilation::Published(raw) = runtime
         .compile_module_record_in_realm(context.realm, "import './missing.js';", &name, None)
@@ -91,7 +91,7 @@ fn escaped_module_handle_reports_aborted_after_resolution_rollback() {
     ));
     context.take_exception().unwrap();
     assert_eq!(handle.name(), &name);
-    assert_eq!(handle, handle.clone());
+    assert_eq!(handle, handle.try_clone().expect("duplicate root"));
     assert_eq!(
         context.get_module_import_meta(&handle),
         Err(RuntimeError::AbortedModule)
@@ -114,7 +114,7 @@ fn failed_resolution_rolls_back_every_active_loaded_module() {
         ("pkg/b.js", "import './missing.js'; export const b = 1;"),
     ]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert!(matches!(
         context.compile_module_with_filename("import './a.js';", "pkg/entry.js"),
@@ -152,7 +152,7 @@ fn failed_resolution_preserves_an_independently_completed_dependency() {
     let (loader, sources, loads) =
         MutableMapModuleLoader::new([("pkg/complete.js", "export const value = 42;")]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert!(matches!(
         context.compile_module_with_filename(
@@ -192,7 +192,7 @@ fn failed_resolution_unpublishes_cycle_members_that_reference_the_root() {
         ),
     ]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert!(matches!(
         context

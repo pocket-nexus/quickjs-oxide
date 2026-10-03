@@ -61,7 +61,7 @@ impl Runtime {
         self.define_function_data_property(
             global_object,
             "Proxy",
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone()?),
             true,
             true,
         )
@@ -215,7 +215,7 @@ impl Runtime {
         let result = self.new_object(Some(&object_prototype))?;
         for (name, value) in [
             ("proxy", Value::Object(proxy)),
-            ("revoke", Value::Object(revoke.as_object().clone())),
+            ("revoke", Value::Object(revoke.as_object().try_clone()?)),
         ] {
             let key = self.intern_property_key(name)?;
             if !self.define_own_property(

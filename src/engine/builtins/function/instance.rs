@@ -89,9 +89,9 @@ impl InstanceStep {
         delegate: bool,
     ) -> Result<Self, RuntimeError> {
         Ok({
-            let __pending_field_object = target.clone();
+            let __pending_field_object = target.try_clone()?;
             let __pending_field_key =
-                PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::HasInstance));
+                PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::HasInstance)?);
             let __pending_field_resume = InstanceResume(Box::new(InstanceResumeState {
                 pending_effect: InstanceStepPending::default(),
                 realm,
@@ -166,14 +166,14 @@ impl InstanceStep {
             return Ok(Self::Complete(Completion::Return(JsValue::Bool(false))));
         }
         Ok({
-            let __pending_field_object = target.as_object().clone();
+            let __pending_field_object = target.as_object().try_clone()?;
             let __pending_field_key =
                 runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Prototype)?;
             let __pending_field_resume = InstanceResume(Box::new(InstanceResumeState {
                 pending_effect: InstanceStepPending::default(),
                 realm,
                 candidate,
-                target: target.as_object().clone(),
+                target: target.as_object().try_clone()?,
                 phase: Phase::Prototype,
             }));
             Self::request_read(
@@ -408,7 +408,7 @@ impl InstanceResume {
                 Ok({
                     let __pending_field_callable = callable;
                     let __pending_field_receiver =
-                        JsValue::Object(self.0.target.clone().into_handle());
+                        JsValue::Object(self.0.target.try_clone()?.into_handle());
                     let __pending_field_arguments =
                         vec![std::mem::replace(&mut self.0.candidate, JsValue::Undefined)];
                     let __pending_field_delegate = delegate;
@@ -601,7 +601,7 @@ pub(crate) fn finish(
                     )) = standard
                     {
                         frames.push(runtime.push_native_active_frame(
-                            callable.as_object().clone(),
+                            callable.as_object().try_clone()?,
                             defining_realm,
                             NativeFunctionId::FunctionPrototypeHasInstance,
                             1,

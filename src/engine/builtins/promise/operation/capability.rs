@@ -18,8 +18,9 @@ impl PromiseResume {
         let executor = runtime.prepare_promise_capability_executor(self.realm)?;
         Ok({
             let __pending_field_target = target;
-            let __pending_field_arguments =
-                vec![JsValue::Object(executor.as_object().clone().into_handle())];
+            let __pending_field_arguments = vec![JsValue::Object(
+                executor.as_object().try_clone()?.into_handle(),
+            )];
             let __pending_field_resume = Box::new(Self {
                 runtime: runtime.clone(),
                 pending_effect: super::PromiseStepPending::default(),

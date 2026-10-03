@@ -125,10 +125,10 @@ impl Search {
             };
         }
         let rooted = runtime.root_proxy_snapshot(&proxy, data)?;
-        let read_receiver = runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?;
+        let read_receiver = runtime.into_jsvalue(Value::Object(rooted.handler.try_clone()?))?;
         Ok(ProxyCallStep::request_read(
-            rooted.handler.clone(),
-            self.key.clone(),
+            rooted.handler.try_clone()?,
+            self.key.try_clone()?,
             read_receiver,
             ProxyCallResume(Box::new(ProxyCallResumeState {
                 pending_effect: ProxyCallStepPending::new(runtime.clone()),
@@ -174,7 +174,7 @@ impl ProxyCallResume {
                 return search.read(runtime, rooted.target);
             }
             (
-                runtime.direct_call_target_from_value(Value::Object(rooted.target.clone()))?,
+                runtime.direct_call_target_from_value(Value::Object(rooted.target.try_clone()?))?,
                 search.inputs.receiver.take().expect("proxy receiver"),
                 std::mem::take(&mut search.inputs.arguments),
             )
@@ -205,9 +205,9 @@ impl ProxyCallResume {
             };
             (
                 method,
-                JsValue::Object(rooted.handler.clone().into_handle()),
+                JsValue::Object(rooted.handler.try_clone()?.into_handle()),
                 vec![
-                    JsValue::Object(rooted.target.clone().into_handle()),
+                    JsValue::Object(rooted.target.try_clone()?.into_handle()),
                     search.inputs.receiver.take().expect("proxy receiver"),
                     JsValue::Object(array.into_handle()),
                 ],
@@ -357,7 +357,7 @@ mod tests {
         for after_lookup in [false, true] {
             let runtime = Runtime::new();
             let weak = std::rc::Rc::downgrade(&runtime.0);
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let target = context.eval("(function(){return 42})").unwrap();
             let handler = runtime.new_object(None).unwrap();
             let handler_id = handler.object_id();

@@ -4,7 +4,7 @@ use crate::engine::api::{Runtime, Value};
 #[test]
 fn primitive_math_completes_without_owning_a_second_argument_vector() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let profile = CostProfile::start();
     assert_eq!(
         context
@@ -42,7 +42,7 @@ fn primitive_math_completes_without_owning_a_second_argument_vector() {
 #[test]
 fn object_suffix_conversion_keeps_order_even_after_nan() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         context
             .eval(
@@ -69,7 +69,7 @@ fn object_suffix_conversion_keeps_order_even_after_nan() {
 #[test]
 fn primitive_conversion_errors_are_catchable_and_keep_native_activation() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         context
             .eval(
@@ -93,7 +93,7 @@ fn primitive_conversion_errors_are_catchable_and_keep_native_activation() {
 #[test]
 fn global_primitive_stages_preserve_input_then_radix_order() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let profile = CostProfile::start();
     assert_eq!(
         context

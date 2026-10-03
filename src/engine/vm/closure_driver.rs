@@ -74,7 +74,7 @@ pub(super) fn instantiate(
                 .ok_or_else(|| {
                     Error::internal("relayed parent global closure index is out of bounds")
                 })?
-                .clone(),
+                .try_clone()?,
             _ => {
                 return Err(Error::internal(
                     "child closure attempted to resolve a root descriptor",

@@ -299,7 +299,7 @@ fn source_for(case: &Case) -> Vec<u8> {
 fn oxide_observation(case: &Case, source: &[u8]) -> RawScriptObservation {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let result = match case.api {
         Api::Compile => context
             .compile_bytes(source)

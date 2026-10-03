@@ -322,7 +322,7 @@ fn private_async_generator_class_method_semantics_match_pinned_quickjs() {
 fn suspended_private_class_methods_retain_home_objects_and_brands_across_gc() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     drop(eval(
         &mut context,
         r#"
@@ -375,7 +375,7 @@ staticIterator.next().then(function (result) {
 "#,
     ));
     runtime.run_gc().unwrap();
-    while runtime.is_job_pending() {
+    while runtime.is_job_pending().expect("runtime state") {
         runtime.execute_pending_job().unwrap();
         runtime.run_gc().unwrap();
     }

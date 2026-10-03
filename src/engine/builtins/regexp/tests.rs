@@ -6,7 +6,7 @@ use crate::engine::value::{Value, fail_next_replacement_reservation_for_test};
 #[test]
 fn regexp_escape_is_strict_static_generic_and_non_constructible() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let Value::String(transcript) = context
         .eval(
             r#"
@@ -55,7 +55,7 @@ fn regexp_escape_is_strict_static_generic_and_non_constructible() {
 #[test]
 fn direct_replace_uses_a_second_buffer_while_generic_replace_keeps_the_outer_error() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     drop(
         context
             .eval("RegExp.prototype.exec")

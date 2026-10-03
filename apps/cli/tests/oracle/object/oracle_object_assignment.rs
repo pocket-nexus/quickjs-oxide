@@ -574,7 +574,7 @@ fn object_assignment_parser_diagnostics_match_pinned_quickjs() {
 fn object_assignment_smoke_runs_without_an_oracle() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         observe_rust_eval(
             &runtime,
@@ -594,7 +594,7 @@ fn compare_cases(group: &str, cases: &[(&str, &str)]) {
     for &(description, source) in cases {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
             super::quickjs_object_pattern_oracle::observe_completion_strip_one_lf(

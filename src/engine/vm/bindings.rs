@@ -323,7 +323,7 @@ pub(in crate::engine::vm) fn reuse_frame_capture(
     runtime
         .validate_var_ref_metadata(root, descriptor)
         .map_err(|error| Error::internal(error.to_string()))?;
-    Ok(root.to_root())
+    Ok(root.to_root()?)
 }
 
 pub(in crate::engine::vm) fn close_frame_binding(
@@ -839,7 +839,7 @@ mod binding_value_tests {
     #[test]
     fn owned_cell_reads_keep_global_and_captured_function_identity() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         drop(
             context
                 .eval("let ownedCellGlobal = function() { return 7; };")
@@ -866,7 +866,7 @@ mod binding_value_tests {
     #[test]
     fn immediate_cell_writes_preserve_assignment_results_and_error_order() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(context.eval(r#"(()=>{
             let x=1; function read(){return x;} function set(v){return x=v;}
             if(set(2)!==2 || read()!==2)return false;
@@ -898,7 +898,7 @@ mod binding_value_tests {
     #[test]
     fn owned_cell_writes_preserve_global_and_captured_values() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         drop(context.eval("let profileWriteGlobal=1;").unwrap());
         drop(
             context
@@ -917,7 +917,7 @@ mod binding_value_tests {
     #[test]
     fn captured_reads_observe_callbacks_eval_arguments_and_tdz() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(context.eval(r#"(()=>{
             let value=1;
             function read(){return value;}
@@ -952,7 +952,7 @@ mod binding_value_tests {
     #[test]
     fn captured_reads_preserve_global_and_closure_values() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         drop(context.eval("let immediateProfileGlobal=7;").unwrap());
         assert_eq!(
             context.eval("immediateProfileGlobal").unwrap(),

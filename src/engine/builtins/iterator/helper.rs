@@ -38,6 +38,9 @@ impl RunningHelper {
 }
 impl Drop for RunningHelper {
     fn drop(&mut self) {
+        if self.runtime.skip_cleanup() {
+            return;
+        }
         if self.active {
             let _ = self
                 .runtime
@@ -247,7 +250,7 @@ impl HelperResume {
         if close_outer {
             self.0.phase = Phase::CloseOuter;
             return Ok({
-                let __pending_field_iterator = self.0.source.clone();
+                let __pending_field_iterator = self.0.source.try_clone()?;
                 let __pending_field_completion = Completion::Throw(value);
                 let __pending_field_resume = self;
                 HelperResumeStep::request_close(
@@ -272,7 +275,7 @@ impl HelperResume {
         if self.0.kind == IteratorHelperKind::Take && self.0.count <= 0 {
             self.0.phase = Phase::CloseTake;
             return Ok({
-                let __pending_field_iterator = self.0.source.clone();
+                let __pending_field_iterator = self.0.source.try_clone()?;
                 let __pending_field_completion = Completion::Return(JsValue::Undefined);
                 let __pending_field_resume = self;
                 HelperResumeStep::request_close(
@@ -288,7 +291,7 @@ impl HelperResume {
             self.method(runtime, method)
         } else {
             Ok({
-                let __pending_field_object = self.0.source.clone();
+                let __pending_field_object = self.0.source.try_clone()?;
                 let __pending_field_key =
                     runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Return)?;
                 let __pending_field_resume = self;
@@ -320,7 +323,7 @@ impl HelperResume {
         }
         self.0.phase = Phase::OuterNext { dropping };
         Ok({
-            let __pending_field_iterator = self.0.source.clone();
+            let __pending_field_iterator = self.0.source.try_clone()?;
             let __pending_field_method = runtime.dup_jsvalue(&self.0.method)?;
             let __pending_field_resume = self;
             HelperResumeStep::request_next(
@@ -334,7 +337,9 @@ impl HelperResume {
         let object = self
             .0
             .inner
-            .clone()
+            .as_ref()
+            .map(|value| value.try_clone())
+            .transpose()?
             .ok_or(RuntimeError::Invariant("flatMap inner iterator missing"))?;
         self.0.phase = Phase::InnerMethod;
         let key = runtime.intern_property_key(if self.0.mode == IteratorResumeKind::Next {
@@ -358,7 +363,9 @@ impl HelperResume {
         let iterator = self
             .0
             .inner
-            .clone()
+            .as_ref()
+            .map(|value| value.try_clone())
+            .transpose()?
             .ok_or(RuntimeError::Invariant("flatMap close inner missing"))?;
         // Even with a pending failure, this is a normal close: its exception
         // replaces the inner failure before the outer preserving close.
@@ -538,9 +545,9 @@ impl HelperResume {
                         return self.fail(runtime, error, true);
                     };
                     let mapped = ObjectRef::from_owned_handle(runtime.clone(), mapped);
-                    self.0.phase = Phase::MappedMethod(mapped.clone());
+                    self.0.phase = Phase::MappedMethod(mapped.try_clone()?);
                     let key =
-                        PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator));
+                        PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator)?);
                     Ok(HelperResumeStep::request_read(mapped, key, self))
                 }
                 _ => Err(RuntimeError::Invariant(
@@ -605,7 +612,9 @@ impl HelperResume {
                 let iterator = self
                     .0
                     .inner
-                    .clone()
+                    .as_ref()
+                    .map(|value| value.try_clone())
+                    .transpose()?
                     .ok_or(RuntimeError::Invariant("flatMap inner missing"))?;
                 self.0.phase = Phase::InnerNext;
                 let method = self.0.reply_value.take().expect("inner method");
@@ -684,7 +693,7 @@ mod tests {
     fn abandoned_helper_request_releases_running_flag_and_owned_roots() {
         let runtime = Runtime::new();
         let weak = std::rc::Rc::downgrade(&runtime.0);
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(helper) = context
             .eval("({ next() { return {value: 7, done: false}; } })")
             .unwrap()
@@ -716,7 +725,9 @@ mod tests {
         let source_id = source.object_id();
         let helper_id = helper.object_id();
         let invocation = NativeInvocation::Call {
-            this_value: runtime.into_jsvalue(Value::Object(helper.clone())).unwrap(),
+            this_value: runtime
+                .into_jsvalue(Value::Object(helper.try_clone().expect("duplicate root")))
+                .unwrap(),
         };
         let step = HelperResumeStep::start(
             &runtime,
@@ -756,7 +767,9 @@ mod tests {
                 .executing
         );
         let invocation = NativeInvocation::Call {
-            this_value: runtime.into_jsvalue(Value::Object(helper.clone())).unwrap(),
+            this_value: runtime
+                .into_jsvalue(Value::Object(helper.try_clone().expect("duplicate root")))
+                .unwrap(),
         };
         let step = HelperResumeStep::start(
             &runtime,

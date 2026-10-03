@@ -35,7 +35,7 @@ fn take_exception_object(context: &mut Context, description: &str) -> ObjectRef 
 #[test]
 fn reduce_family_matches_quickjs_accumulator_and_descriptor_contracts() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -211,7 +211,7 @@ fn reduce_family_matches_quickjs_accumulator_and_descriptor_contracts() {
 #[test]
 fn reduce_family_keeps_snapshot_range_but_reads_each_value_live() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -343,8 +343,8 @@ fn reduce_family_keeps_snapshot_range_but_reads_each_value_live() {
 #[test]
 fn reduce_errors_and_accumulators_keep_their_pinned_realms_and_identities() {
     let runtime = Runtime::new();
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_type_error = eval_object(
         &mut defining,
         "TypeError.prototype",
@@ -368,14 +368,18 @@ fn reduce_errors_and_accumulators_keep_their_pinned_realms_and_identities() {
     let empty = eval_object(&mut caller, "new Uint8Array(0)", "caller empty TypedArray");
 
     assert!(matches!(
-        caller.call(&reduce, Value::Object(empty.clone()), &[Value::Int(0)]),
+        caller.call(
+            &reduce,
+            Value::Object(empty.try_clone().expect("duplicate root")),
+            &[Value::Int(0)]
+        ),
         Err(RuntimeError::Exception),
     ));
     let invalid_callback =
         take_exception_object(&mut caller, "TypedArray reduce callback TypeError");
     assert_eq!(
         runtime.get_prototype_of(&invalid_callback).unwrap(),
-        Some(defining_type_error.clone()),
+        Some(defining_type_error.try_clone().expect("duplicate root")),
         "TypedArray reduce callback TypeError did not use the method defining realm",
     );
 
@@ -391,8 +395,10 @@ fn reduce_errors_and_accumulators_keep_their_pinned_realms_and_identities() {
     assert!(matches!(
         caller.call(
             &reduce,
-            Value::Object(empty.clone()),
-            &[Value::Object(identity.as_object().clone())],
+            Value::Object(empty.try_clone().expect("duplicate root")),
+            &[Value::Object(
+                identity.as_object().try_clone().expect("duplicate root")
+            )],
         ),
         Err(RuntimeError::Exception),
     ));
@@ -410,8 +416,8 @@ fn reduce_errors_and_accumulators_keep_their_pinned_realms_and_identities() {
                 &reduce,
                 Value::Object(empty),
                 &[
-                    Value::Object(identity.as_object().clone()),
-                    Value::Object(marker.clone()),
+                    Value::Object(identity.as_object().try_clone().expect("duplicate root")),
+                    Value::Object(marker.try_clone().expect("duplicate root")),
                 ],
             )
             .expect("empty TypedArray reduce with explicit accumulator"),
@@ -432,8 +438,11 @@ fn reduce_errors_and_accumulators_keep_their_pinned_realms_and_identities() {
     assert!(matches!(
         caller.call(
             &reduce,
-            Value::Object(one.clone()),
-            &[Value::Object(throwing.as_object().clone()), Value::Int(0)],
+            Value::Object(one.try_clone().expect("duplicate root")),
+            &[
+                Value::Object(throwing.as_object().try_clone().expect("duplicate root")),
+                Value::Int(0)
+            ],
         ),
         Err(RuntimeError::Exception),
     ));
@@ -457,7 +466,10 @@ fn reduce_errors_and_accumulators_keep_their_pinned_realms_and_identities() {
         .call(
             &reduce,
             Value::Object(one),
-            &[Value::Object(producer.as_object().clone()), Value::Int(0)],
+            &[
+                Value::Object(producer.as_object().try_clone().expect("duplicate root")),
+                Value::Int(0),
+            ],
         )
         .expect("TypedArray reduce callback-produced accumulator")
     else {

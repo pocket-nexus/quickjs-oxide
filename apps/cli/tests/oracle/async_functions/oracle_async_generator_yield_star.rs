@@ -902,7 +902,7 @@ fn async_generator_yield_star_semantics_match_pinned_quickjs() {
 fn suspended_delegation_retains_async_and_sync_iterators_across_gc() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     drop(eval(
         &mut context,
         r#"
@@ -966,7 +966,7 @@ syncIterator = null;
 
     runtime.run_gc().unwrap();
     drop(eval(&mut context, "releaseAsync(); releaseSync();"));
-    while runtime.is_job_pending() {
+    while runtime.is_job_pending().expect("runtime state") {
         runtime.execute_pending_job().unwrap();
         runtime.run_gc().unwrap();
     }

@@ -99,26 +99,28 @@ impl PrimitiveResume {
         realm: ContextId,
         value: JsValue,
         hint: ToPrimitiveHint,
-    ) -> PrimitiveStep {
-        let JsValue::Object(object) = value else {
-            return PrimitiveStep::Complete(Completion::Return(value));
-        };
-        let object = ObjectRef::from_owned_handle(runtime.clone(), object);
-        let key = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive));
-        let requested = object.clone();
-        Self(Box::new(PrimitiveResumeState {
-            runtime: runtime.clone(),
-            object,
-            realm,
-            hint,
-            phase: Phase::ExoticMethod,
-            requested_object: None,
-            requested_key: None,
-            requested_callable: None,
-            requested_receiver: None,
-            requested_arguments: Vec::new(),
-        }))
-        .get(requested, key)
+    ) -> Result<PrimitiveStep, crate::engine::api::RuntimeError> {
+        Ok({
+            let JsValue::Object(object) = value else {
+                return Ok(PrimitiveStep::Complete(Completion::Return(value)));
+            };
+            let object = ObjectRef::from_owned_handle(runtime.clone(), object);
+            let key = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)?);
+            let requested = object.try_clone()?;
+            Self(Box::new(PrimitiveResumeState {
+                runtime: runtime.clone(),
+                object,
+                realm,
+                hint,
+                phase: Phase::ExoticMethod,
+                requested_object: None,
+                requested_key: None,
+                requested_callable: None,
+                requested_receiver: None,
+                requested_arguments: Vec::new(),
+            }))
+            .get(requested, key)
+        })
     }
 
     pub(crate) fn ordinary(
@@ -155,7 +157,7 @@ impl PrimitiveResume {
         };
         let key = runtime.pinned_property_key(name)?;
         self.0.phase = Phase::OrdinaryMethod(second);
-        let object = self.0.object.clone();
+        let object = self.0.object.try_clone()?;
         Ok(self.get(object, key))
     }
 
@@ -207,7 +209,7 @@ impl PrimitiveResume {
                     },
                 )))?;
                 self.0.phase = Phase::ExoticResult;
-                let receiver = JsValue::Object(self.0.object.clone().into_handle());
+                let receiver = JsValue::Object(self.0.object.try_clone()?.into_handle());
                 Ok(self.call(callable, receiver, vec![argument]))
             }
             Phase::ExoticResult => {
@@ -229,7 +231,7 @@ impl PrimitiveResume {
                     return self.failed_method(runtime, second);
                 };
                 self.0.phase = Phase::OrdinaryResult(second);
-                let receiver = JsValue::Object(self.0.object.clone().into_handle());
+                let receiver = JsValue::Object(self.0.object.try_clone()?.into_handle());
                 Ok(self.call(callable, receiver, Vec::new()))
             }
             Phase::OrdinaryResult(second) => {
@@ -278,7 +280,7 @@ impl Runtime {
         object: &ObjectRef,
         hint: ToPrimitiveHint,
     ) -> Result<Completion, RuntimeError> {
-        let step = PrimitiveResume::ordinary(self, realm, object.clone(), hint)?;
+        let step = PrimitiveResume::ordinary(self, realm, object.try_clone()?, hint)?;
         self.finish_primitive_steps(realm, step)
     }
 }
@@ -292,11 +294,12 @@ mod resident_request_tests {
     #[test]
     fn property_and_call_requests_reuse_the_primitive_resume_allocation() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let value = context.eval("({valueOf(){return 7}})").unwrap();
         let value = runtime.unroot_value(&value).unwrap();
         let PrimitiveStep::Get { mut resume } =
             PrimitiveResume::start(&runtime, context.realm, value, ToPrimitiveHint::Number)
+                .expect("prepare primitive")
         else {
             panic!("first get")
         };

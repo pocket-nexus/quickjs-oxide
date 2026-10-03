@@ -100,7 +100,7 @@ impl RegExpSearchResume {
         let input = runtime.into_jsvalue(Value::String(input))?;
         self.phase = SearchPhase::Exec;
         Ok(RegExpSearchStep::make_exec(
-            JsValue::Object(self.regexp.clone().into_handle()),
+            JsValue::Object(self.regexp.try_clone()?.into_handle()),
             input,
             self,
         ))
@@ -151,7 +151,11 @@ impl RegExpSearchResume {
                 let key = runtime
                     .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
                 self.phase = SearchPhase::Previous(input);
-                Ok(RegExpSearchStep::make_read(self.regexp.clone(), key, self))
+                Ok(RegExpSearchStep::make_read(
+                    self.regexp.try_clone()?,
+                    key,
+                    self,
+                ))
             }
             SearchPhase::Previous(input) => {
                 self.previous = std::mem::replace(&mut self.converted, JsValue::Undefined);
@@ -167,7 +171,7 @@ impl RegExpSearchResume {
                     .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
                 self.phase = SearchPhase::InitialSet(input);
                 Ok(RegExpSearchStep::make_set(
-                    self.regexp.clone(),
+                    self.regexp.try_clone()?,
                     key,
                     JsValue::Int(0),
                     self,
@@ -178,7 +182,11 @@ impl RegExpSearchResume {
                 let key = runtime
                     .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
                 self.phase = SearchPhase::Current;
-                Ok(RegExpSearchStep::make_read(self.regexp.clone(), key, self))
+                Ok(RegExpSearchStep::make_read(
+                    self.regexp.try_clone()?,
+                    key,
+                    self,
+                ))
             }
             SearchPhase::Current => {
                 let equal = crate::engine::value::collection_key::same_value(
@@ -194,7 +202,7 @@ impl RegExpSearchResume {
                 let previous = std::mem::replace(&mut self.previous, JsValue::Undefined);
                 self.phase = SearchPhase::Restored;
                 Ok(RegExpSearchStep::make_set(
-                    self.regexp.clone(),
+                    self.regexp.try_clone()?,
                     key,
                     previous,
                     self,
@@ -271,7 +279,7 @@ impl Runtime {
                                 &object,
                                 &key,
                                 value,
-                                JsValue::Object(object.clone().into_handle()),
+                                JsValue::Object(object.try_clone()?.into_handle()),
                             )?,
                         )?
                     }

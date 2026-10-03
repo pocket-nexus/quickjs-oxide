@@ -75,6 +75,9 @@ impl Context {
     /// Install qjs's host-provided `print` function on this realm's global.
     /// Embedders which need a pure ECMAScript realm simply do not call this.
     pub fn install_qjs_print(&mut self) -> Result<(), RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation();
         self.install_qjs_print_function()
     }
 
@@ -85,6 +88,9 @@ impl Context {
     /// instead calls [`Self::install_qjs_helpers_with_script_args`], including
     /// with an empty slice when no argv entries remain.
     pub fn install_qjs_helpers(&mut self) -> Result<(), RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation();
         self.install_qjs_helpers_inner(None)
     }
 
@@ -100,6 +106,9 @@ impl Context {
         &mut self,
         script_args: &[JsString],
     ) -> Result<(), RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation();
         self.install_qjs_helpers_inner(Some(script_args))
     }
 
@@ -129,19 +138,31 @@ impl Context {
         // Finish every fallible value allocation before exposing the first
         // helper on the fresh qjs realm. Property publication itself follows
         // js_std_add_helpers: console, optional scriptArgs, then print.
-        self.define_qjs_host_property(&console, "log", Value::Object(log.as_object().clone()))?;
+        self.define_qjs_host_property(
+            &console,
+            "log",
+            Value::Object(log.as_object().try_clone()?),
+        )?;
         self.define_qjs_host_property(&global, "console", Value::Object(console))?;
         if let Some(arguments) = arguments {
             self.define_qjs_host_property(&global, "scriptArgs", Value::Object(arguments))?;
         }
-        self.define_qjs_host_property(&global, "print", Value::Object(print.as_object().clone()))
+        self.define_qjs_host_property(
+            &global,
+            "print",
+            Value::Object(print.as_object().try_clone()?),
+        )
     }
 
     fn install_qjs_print_function(&mut self) -> Result<(), RuntimeError> {
         let function_prototype = self.function_prototype()?;
         let global = self.global_object()?;
         let print = self.new_qjs_print_function(&function_prototype)?;
-        self.define_qjs_host_property(&global, "print", Value::Object(print.as_object().clone()))
+        self.define_qjs_host_property(
+            &global,
+            "print",
+            Value::Object(print.as_object().try_clone()?),
+        )
     }
 
     fn new_qjs_print_function(
@@ -192,14 +213,14 @@ mod tests {
     fn script_args_distinguishes_non_cli_helpers_from_an_empty_cli_tail() {
         let runtime = Runtime::new();
 
-        let mut embedder = runtime.new_context();
+        let mut embedder = runtime.new_context().expect("create context");
         embedder.install_qjs_helpers().unwrap();
         assert_eq!(
             embedder.eval("typeof scriptArgs").unwrap(),
             Value::String(JsString::from_static("undefined"))
         );
 
-        let mut cli = runtime.new_context();
+        let mut cli = runtime.new_context().expect("create context");
         cli.install_qjs_helpers_with_script_args(&[]).unwrap();
         assert_eq!(
             cli.eval("Array.isArray(scriptArgs) && scriptArgs.length === 0")

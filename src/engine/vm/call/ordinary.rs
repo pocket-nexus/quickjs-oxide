@@ -250,7 +250,7 @@ impl OrdinaryCall {
     ) -> Result<crate::engine::vm::frame::FrameEntry, Error> {
         let input = crate::engine::vm::CallInput::new(
             receiver.runtime(),
-            JsValue::Object(receiver.clone().into_handle()),
+            JsValue::Object(receiver.try_clone()?.into_handle()),
             new_target,
             None,
         );
@@ -486,7 +486,7 @@ mod direct_selection_tests {
     #[test]
     fn method_receiver_survives_nested_return_and_caught_throw() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context
             .eval("(function(){var token={};var receiver={mark:41,m:function(arg){var saved=this;try{arg.fail()}catch(error){if(error!==token)return -1}return saved===receiver?this.mark+arg.bump():-2}};var arg={fail:function(){throw token},bump:function(){return 1}};return receiver.m(arg)})()")
             .unwrap();
@@ -497,7 +497,7 @@ mod direct_selection_tests {
     #[test]
     fn method_receiver_general_and_native_fallback_stay_callable() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         for source in [
             "(function(){var o={m:Math.max};return o.m(41,42)===42?42:0})()",
             "(function(){var o={x:42,m:new Proxy(function(){return this.x},{})};return o.m()})()",
@@ -510,7 +510,7 @@ mod direct_selection_tests {
     #[test]
     fn authentication_cache_is_rootless_and_rejects_a_different_publication() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let first = context.eval("(function(){ return 11 })").unwrap();
         let second = context.eval("(function(){ return 22 })").unwrap();
         let selected = OrdinaryCall::authenticate(&runtime, &first)
@@ -584,7 +584,7 @@ mod direct_selection_tests {
     fn heap_authentication_cache_does_not_retain_runtime() {
         let weak = {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let value = context.eval("(function(){ return 1 })").unwrap();
             drop(OrdinaryCall::authenticate(&runtime, &value).unwrap());
             std::rc::Rc::downgrade(&runtime.0)
@@ -595,7 +595,7 @@ mod direct_selection_tests {
     #[test]
     fn direct_selection_borrows_owners_and_preserves_general_fallback() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         for (source, kind) in [
             ("(function(x){return x})", 0),
             ("Math.min", 1),

@@ -141,7 +141,7 @@ impl StringFactoryStep {
                         return Ok(Self::Complete(Completion::Throw(value)));
                     }
                 };
-                resume.cooked = Some(cooked.clone());
+                resume.cooked = Some(cooked.try_clone()?);
                 resume.phase = Phase::Raw;
                 Ok(Self::Read {
                     object: cooked,
@@ -206,7 +206,7 @@ impl StringFactoryResume {
                     .raw
                     .as_ref()
                     .ok_or(RuntimeError::Invariant("String.raw lost raw object"))?
-                    .clone(),
+                    .try_clone()?,
                 key: runtime.intern_property_key(&self.0.index.to_string())?,
                 resume: self,
             });
@@ -341,7 +341,7 @@ impl StringFactoryResume {
                         return Ok(self.abrupt(value));
                     }
                 };
-                self.0.raw = Some(raw.clone());
+                self.0.raw = Some(raw.try_clone()?);
                 self.0.phase = Phase::Length;
                 Ok(StringFactoryStep::Read {
                     object: raw,

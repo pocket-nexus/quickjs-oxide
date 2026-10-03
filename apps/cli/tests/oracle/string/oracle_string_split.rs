@@ -551,8 +551,8 @@ fn string_split_recursion_is_catchable_and_runtime_recovers() {
 fn string_split_cross_realm_results_errors_and_user_throws_are_exact() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_string_prototype = defining.string_prototype().unwrap();
     let defining_array_prototype = defining.array_prototype().unwrap();
     let caller_array_prototype = caller.array_prototype().unwrap();
@@ -602,7 +602,7 @@ fn string_split_cross_realm_results_errors_and_user_throws_are_exact() {
                 "null receiver TypeError"
             ))
             .unwrap(),
-        Some(defining_type_error.clone()),
+        Some(defining_type_error.try_clone().expect("duplicate root")),
         "String.split native TypeError did not use its defining realm",
     );
 
@@ -666,19 +666,19 @@ fn detached_string_split_and_result_retain_then_release_their_defining_realm() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let split = {
-        let mut defining = runtime.new_context();
+        let mut defining = runtime.new_context().expect("create context");
         let prototype = defining.string_prototype().unwrap();
         property_callable(&runtime, &mut defining, &prototype, "split")
     };
     runtime.run_gc().unwrap();
     assert_eq!(
-        runtime.heap_counts().context_nodes,
+        runtime.heap_counts().expect("runtime state").context_nodes,
         1,
         "detached split must retain its defining realm",
     );
 
     let result = {
-        let mut caller = runtime.new_context();
+        let mut caller = runtime.new_context().expect("create context");
         let Value::Object(result) = caller
             .call(
                 &split,
@@ -695,14 +695,14 @@ fn detached_string_split_and_result_retain_then_release_their_defining_realm() {
     drop(split);
     runtime.run_gc().unwrap();
     assert_eq!(
-        runtime.heap_counts().context_nodes,
+        runtime.heap_counts().expect("runtime state").context_nodes,
         1,
         "split result must retain its defining Array realm",
     );
     drop(result);
     runtime.run_gc().unwrap();
     assert_eq!(
-        runtime.heap_counts().live,
+        runtime.heap_counts().expect("runtime state").live,
         0,
         "split callable, result, and defining realm must be collectable",
     );
@@ -717,7 +717,7 @@ fn compare_cases(group: &str, cases: &[(&str, &str)]) {
     for &(description, source) in cases {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let actual = observe_rust_eval(&runtime, &mut context, source, description);
         let expected = observe_oracle(&oracle, source, description);
         if actual != expected {

@@ -431,8 +431,8 @@ fn regexp_match_all_iterator_errors_match_pinned_quickjs() {
 fn regexp_match_all_iterator_and_match_results_use_their_defining_realms() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
 
     let method = eval_callable(
         &runtime,
@@ -486,7 +486,11 @@ fn regexp_match_all_iterator_and_match_results_use_their_defining_realms() {
 
     let next = callable_property(&runtime, &mut caller, &iterator, "next");
     let Value::Object(iteration_result) = caller
-        .call(&next, Value::Object(iterator.clone()), &[])
+        .call(
+            &next,
+            Value::Object(iterator.try_clone().expect("duplicate root")),
+            &[],
+        )
         .expect("cross-realm RegExp String Iterator next")
     else {
         panic!("RegExp String Iterator next did not return an object");
@@ -553,7 +557,7 @@ fn compare_cases(group: &str, cases: &[(&str, &str)]) {
     for &(description, source) in cases {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let actual = observe_rust_eval(&runtime, &mut context, source, description);
         let expected = observe_oracle(&oracle, source, description);
         if actual != expected {

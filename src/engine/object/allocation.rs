@@ -23,6 +23,8 @@ use std::collections::HashMap;
 impl Runtime {
     /// Allocate an ordinary object whose prototype is `prototype` or null.
     pub fn new_object(&self, prototype: Option<&ObjectRef>) -> Result<ObjectRef, RuntimeError> {
+        self.check_poison()?;
+        let _operation = self.operation();
         self.new_empty_object_with(prototype, ObjectData::ordinary)
     }
 
@@ -722,6 +724,7 @@ impl Runtime {
     /// Return whether `object` carries the genuine Array exotic class tag.
     /// Prototype spoofing alone never makes an ordinary object an Array.
     pub fn is_array_object(&self, object: &ObjectRef) -> Result<bool, RuntimeError> {
+        self.check_poison()?;
         let _operation = self.operation();
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("object"));
@@ -740,6 +743,7 @@ impl Runtime {
     /// Return the object's `[[Construct]]` capability bit. Callability and
     /// constructability are intentionally independent, as in QuickJS.
     pub fn is_constructor(&self, object: &ObjectRef) -> Result<bool, RuntimeError> {
+        self.check_poison()?;
         let _operation = self.operation();
         if !object.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("object"));
@@ -776,6 +780,7 @@ impl Runtime {
     /// Returns `None` for objects without `[[Call]]`; runtime-domain and stale
     /// handle failures remain explicit errors.
     pub fn as_callable(&self, object: &ObjectRef) -> Result<Option<CallableRef>, RuntimeError> {
+        self.check_poison()?;
         let _operation = self.operation();
         // A public root may belong to another runtime whose arena assigned a
         // numerically equal handle; promoting it here would manufacture a
@@ -946,7 +951,7 @@ impl Runtime {
                     match descriptor.kind {
                         ClosureVariableKind::Normal if descriptor.is_lexical => {
                             if let Some(root) = first_lexical_roots.get(&name) {
-                                root.clone()
+                                root.try_clone()?
                             } else {
                                 let root = self.create_global_lexical_binding(
                                     caller_realm,
@@ -954,7 +959,7 @@ impl Runtime {
                                     descriptor.is_const,
                                     None,
                                 )?;
-                                first_lexical_roots.insert(name, root.clone());
+                                first_lexical_roots.insert(name, root.try_clone()?);
                                 root
                             }
                         }
@@ -1023,7 +1028,7 @@ mod owned_callable_tests {
     fn internal_array_adopts_edges_and_releases_rejected_input() {
         use crate::engine::value::JsValue;
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let string = runtime
             .into_jsvalue(Value::String(JsString::from_static("owned")))
             .unwrap();
@@ -1031,11 +1036,14 @@ mod owned_callable_tests {
             unreachable!()
         };
         let string_id = *string_id;
-        let before = runtime.heap_counts().string_nodes;
+        let before = runtime.heap_counts().expect("runtime state").string_nodes;
         let array = runtime
             .new_array_from_values_jsvalue(context.realm, vec![string])
             .unwrap();
-        assert_eq!(runtime.heap_counts().string_nodes, before);
+        assert_eq!(
+            runtime.heap_counts().expect("runtime state").string_nodes,
+            before
+        );
         {
             let state = runtime.0.state.borrow();
             let stored = state
@@ -1070,7 +1078,7 @@ mod owned_callable_tests {
     #[test]
     fn owned_and_borrowed_callable_promotion_share_payload_rules() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         for source in [
             "(function(){})",
             "Math.min",
@@ -1121,7 +1129,7 @@ mod owned_callable_tests {
             runtime.direct_call_target_from_value(Value::Object(runtime.new_object(None).unwrap())),
             Err(RuntimeError::Engine(_))
         ));
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let value = context
             .eval("new Proxy({}, {get(){throw 'not during classification';}})")
             .unwrap();
@@ -1142,8 +1150,8 @@ mod owned_callable_tests {
     fn public_callable_promotion_rejects_foreign_matching_handles() {
         let runtime = Runtime::new();
         let foreign = Runtime::new();
-        let mut local_context = runtime.new_context();
-        let mut foreign_context = foreign.new_context();
+        let mut local_context = runtime.new_context().expect("create context");
+        let mut foreign_context = foreign.new_context().expect("create context");
         let Value::Object(local) = local_context.eval("(function(){return 1})").unwrap() else {
             panic!("local function");
         };
@@ -1172,7 +1180,7 @@ mod owned_callable_tests {
     #[test]
     fn owned_callable_promotion_keeps_the_operation_cleanup_boundary() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(object) = context.eval("(function(){})").unwrap() else {
             panic!("expected function");
         };

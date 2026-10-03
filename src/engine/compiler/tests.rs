@@ -56,11 +56,19 @@ use super::{
 };
 
 fn evaluate(source: &str) -> Value {
-    Runtime::new().new_context().eval(source).unwrap()
+    Runtime::new()
+        .new_context()
+        .expect("create context")
+        .eval(source)
+        .unwrap()
 }
 
 fn evaluate_in_context(source: &str) -> Value {
-    Runtime::new().new_context().eval(source).unwrap()
+    Runtime::new()
+        .new_context()
+        .expect("create context")
+        .eval(source)
+        .unwrap()
 }
 
 fn evaluate_error(runtime: &Runtime, context: &mut Context, source: &str) -> (JsString, JsString) {
@@ -89,7 +97,7 @@ fn evaluate_error(runtime: &Runtime, context: &mut Context, source: &str) -> (Js
 
 fn evaluate_function_name(source: &str) -> (JsString, bool, bool, bool) {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let Value::Object(function) = context.eval(source).unwrap() else {
         panic!("source did not evaluate to a function object");
     };

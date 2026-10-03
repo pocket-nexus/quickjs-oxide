@@ -271,8 +271,8 @@ fn array_iteration_prototype_order_and_metadata_match_pinned_quickjs() {
 fn array_iteration_boxing_native_errors_and_user_throws_use_pinned_realms() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_array_prototype = defining.array_prototype().unwrap();
     let defining_string_prototype = defining.string_prototype().unwrap();
     let defining_type_error = eval_object(
@@ -298,7 +298,9 @@ fn array_iteration_boxing_native_errors_and_user_throws_use_pinned_realms() {
             .call(
                 &every,
                 Value::String(JsString::try_from_utf8("a").unwrap()),
-                &[Value::Object(capture.as_object().clone())],
+                &[Value::Object(
+                    capture.as_object().try_clone().expect("duplicate root")
+                )],
             )
             .expect("cross-realm primitive Array.every call"),
         Value::Bool(true),
@@ -337,7 +339,9 @@ fn array_iteration_boxing_native_errors_and_user_throws_use_pinned_realms() {
         caller.call(
             &every,
             Value::Object(one),
-            &[Value::Object(throwing.as_object().clone())],
+            &[Value::Object(
+                throwing.as_object().try_clone().expect("duplicate root")
+            )],
         ),
         Err(RuntimeError::Exception),
     ));
@@ -352,7 +356,7 @@ fn array_iteration_boxing_native_errors_and_user_throws_use_pinned_realms() {
 fn rust_graph_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let array_prototype = context.array_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();
     let implemented = [

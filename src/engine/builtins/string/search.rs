@@ -208,7 +208,7 @@ impl StringSearchResume {
                             Ok(StringSearchStep::Read {
                                 object: ObjectRef::from_borrowed_handle(runtime.clone(), *id)?,
                                 key: PropertyKey::from(
-                                    runtime.well_known_symbol(WellKnownSymbol::Match),
+                                    runtime.well_known_symbol(WellKnownSymbol::Match)?,
                                 ),
                                 resume: {
                                     let updated_0 = SearchPhase::Regexp(source);

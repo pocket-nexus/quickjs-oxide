@@ -200,8 +200,10 @@ fn function_constructor_matches_quickjs_oracle() {
 fn rust_observations(mode: DebugInfoMode) -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    runtime.set_debug_info_mode(mode);
-    let mut context = runtime.new_context();
+    runtime
+        .set_debug_info_mode(mode)
+        .expect("set runtime configuration");
+    let mut context = runtime.new_context().expect("create context");
     let constructor = context.function_constructor().unwrap();
     let function_prototype = context.function_prototype().unwrap();
     let object_prototype = context.object_prototype().unwrap();
@@ -220,8 +222,8 @@ fn rust_observations(mode: DebugInfoMode) -> Vec<String> {
     ));
     output.push(format!(
         "ctor-meta={}|{}|{}|{}|{}|{}",
-        value_text(length_descriptor.0.clone()),
-        value_text(name_descriptor.0.clone()),
+        value_text(length_descriptor.0.try_clone().expect("duplicate root")),
+        value_text(name_descriptor.0.try_clone().expect("duplicate root")),
         descriptor_bits(&length_descriptor),
         descriptor_bits(&name_descriptor),
         matches!(&prototype_descriptor.0, Value::Object(value) if value == &function_prototype),
@@ -267,8 +269,11 @@ fn rust_observations(mode: DebugInfoMode) -> Vec<String> {
         descriptor_bits(&fp_constructor_descriptor),
     ));
 
-    let has_instance_key =
-        PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::HasInstance));
+    let has_instance_key = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::HasInstance)
+            .expect("well-known symbol"),
+    );
     let has_instance = property_callable_by_key(
         &runtime,
         &mut context,
@@ -279,8 +284,10 @@ fn rust_observations(mode: DebugInfoMode) -> Vec<String> {
         context
             .call(
                 &has_instance,
-                Value::Object(constructor.as_object().clone()),
-                &[Value::Object(constructor.as_object().clone())],
+                Value::Object(constructor.as_object().try_clone().expect("duplicate root")),
+                &[Value::Object(
+                    constructor.as_object().try_clone().expect("duplicate root"),
+                )],
             )
             .unwrap(),
     );
@@ -288,15 +295,17 @@ fn rust_observations(mode: DebugInfoMode) -> Vec<String> {
         context
             .call(
                 &has_instance,
-                Value::Object(constructor.as_object().clone()),
-                &[Value::Object(function_prototype.clone())],
+                Value::Object(constructor.as_object().try_clone().expect("duplicate root")),
+                &[Value::Object(
+                    function_prototype.try_clone().expect("duplicate root"),
+                )],
             )
             .unwrap(),
     );
     output.push(format!(
         "graph={},{},{},{},{}",
         runtime.get_prototype_of(constructor.as_object()).unwrap()
-            == Some(function_prototype.clone()),
+            == Some(function_prototype.try_clone().expect("duplicate root")),
         runtime.get_prototype_of(&function_prototype).unwrap() == Some(object_prototype),
         runtime.is_constructor(constructor.as_object()).unwrap(),
         function_instanceof_function,
@@ -326,7 +335,8 @@ fn rust_observations(mode: DebugInfoMode) -> Vec<String> {
         property_text(&runtime, &mut context, &empty, "fileName"),
         property_text(&runtime, &mut context, &empty, "lineNumber"),
         property_text(&runtime, &mut context, &empty, "columnNumber"),
-        runtime.get_prototype_of(&empty).unwrap() == Some(function_prototype.clone()),
+        runtime.get_prototype_of(&empty).unwrap()
+            == Some(function_prototype.try_clone().expect("duplicate root")),
     ));
 
     let add = call_function_constructor(
@@ -381,7 +391,8 @@ fn rust_observations(mode: DebugInfoMode) -> Vec<String> {
     output.push(format!(
         "function-new={}|{}",
         value_text(via_new_result),
-        runtime.get_prototype_of(&via_new).unwrap() == Some(function_prototype.clone()),
+        runtime.get_prototype_of(&via_new).unwrap()
+            == Some(function_prototype.try_clone().expect("duplicate root")),
     ));
 
     let maker = call_function_constructor(&mut context, &constructor, &[string("return 1")]);
@@ -407,7 +418,7 @@ fn rust_observations(mode: DebugInfoMode) -> Vec<String> {
         &mut context,
         new_target.as_object(),
         &prototype_key,
-        Value::Object(custom_prototype.clone()),
+        Value::Object(custom_prototype.try_clone().expect("duplicate root")),
     );
     let custom = expect_object(
         context
@@ -439,7 +450,8 @@ fn rust_observations(mode: DebugInfoMode) -> Vec<String> {
         "new-target={}|{}|{}|{}",
         runtime.get_prototype_of(&custom).unwrap() == Some(custom_prototype),
         value_text(custom_value),
-        runtime.get_prototype_of(&fallback).unwrap() == Some(function_prototype.clone()),
+        runtime.get_prototype_of(&fallback).unwrap()
+            == Some(function_prototype.try_clone().expect("duplicate root")),
         value_text(fallback_value),
     ));
 
@@ -595,7 +607,7 @@ fn conversion_order_observations(
         context,
         &global,
         &custom_key,
-        Value::Object(custom_prototype.clone()),
+        Value::Object(custom_prototype.try_clone().expect("duplicate root")),
     );
 
     let (
@@ -628,13 +640,23 @@ fn conversion_order_observations(
         context,
         &parameter,
         &to_string,
-        Value::Object(parameter_to_string.as_object().clone()),
+        Value::Object(
+            parameter_to_string
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     define_writable_value(
         context,
         &body,
         &to_string,
-        Value::Object(body_to_string.as_object().clone()),
+        Value::Object(
+            body_to_string
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
 
     let bind = property_callable(runtime, context, function_prototype, "bind");
@@ -642,7 +664,7 @@ fn conversion_order_observations(
         context
             .call(
                 &bind,
-                Value::Object(constructor.as_object().clone()),
+                Value::Object(constructor.as_object().try_clone().expect("duplicate root")),
                 &[Value::Undefined],
             )
             .unwrap(),
@@ -671,8 +693,8 @@ fn conversion_order_observations(
                 constructor,
                 &new_target,
                 &[
-                    Value::Object(parameter.clone()),
-                    Value::Object(body.clone()),
+                    Value::Object(parameter.try_clone().expect("duplicate root")),
+                    Value::Object(body.try_clone().expect("duplicate root")),
                 ],
             )
             .unwrap(),
@@ -702,15 +724,20 @@ fn conversion_order_observations(
         context,
         &parameter,
         &to_string,
-        Value::Object(bad_parameter_to_string.as_object().clone()),
+        Value::Object(
+            bad_parameter_to_string
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     assert_eq!(
         context.construct_with_new_target(
             constructor,
             &new_target,
             &[
-                Value::Object(parameter.clone()),
-                Value::Object(body.clone())
+                Value::Object(parameter.try_clone().expect("duplicate root")),
+                Value::Object(body.try_clone().expect("duplicate root"))
             ],
         ),
         Err(RuntimeError::Exception)
@@ -735,7 +762,12 @@ fn conversion_order_observations(
         context,
         &parameter,
         &to_string,
-        Value::Object(throwing_to_string.as_object().clone()),
+        Value::Object(
+            throwing_to_string
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     assert_eq!(
         context.construct_with_new_target(
@@ -865,7 +897,11 @@ fn descriptor_bits(descriptor: &(Value, bool, bool, bool)) -> String {
 }
 
 fn own_key_names(runtime: &Runtime, object: &ObjectRef) -> String {
-    let has_instance = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::HasInstance));
+    let has_instance = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::HasInstance)
+            .expect("well-known symbol"),
+    );
     runtime
         .own_property_keys(object)
         .unwrap()
@@ -890,7 +926,11 @@ fn function_source_hex(
     function: &ObjectRef,
 ) -> String {
     let Value::String(source) = context
-        .call(to_string, Value::Object(function.clone()), &[])
+        .call(
+            to_string,
+            Value::Object(function.try_clone().expect("duplicate root")),
+            &[],
+        )
         .unwrap()
     else {
         panic!("Function.prototype.toString did not return a string");

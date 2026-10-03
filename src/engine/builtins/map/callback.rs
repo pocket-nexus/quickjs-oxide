@@ -127,7 +127,7 @@ impl CallbackStep {
                     CallbackResume(Box::new(CallbackResumeState {
                         runtime: runtime.clone(),
                         pending_effect: CallbackStepPending::default(),
-                        map: map.clone(),
+                        map: map.try_clone()?,
                         phase: Phase::Insert(key),
                     })),
                 ));
@@ -148,7 +148,7 @@ impl CallbackStep {
         CallbackResume(Box::new(CallbackResumeState {
             runtime: runtime.clone(),
             pending_effect: CallbackStepPending::default(),
-            map: map.clone(),
+            map: map.try_clone()?,
             phase: Phase::Each {
                 callback,
                 receiver: match arguments.readable.get(1) {
@@ -239,12 +239,12 @@ impl CallbackResume {
             }),
         );
         Ok(CallbackStep::request_call(
-            callback.clone(),
+            callback.try_clone()?,
             receiver,
             vec![
                 value,
                 key,
-                JsValue::Object(self.0.map.clone().into_handle()),
+                JsValue::Object(self.0.map.try_clone()?.into_handle()),
             ],
             self,
         ))
@@ -308,7 +308,7 @@ mod tests {
     fn abandoned_each_requests_release_records_and_collection_roots_in_lifo_order() {
         let runtime = Runtime::new();
         let weak = std::rc::Rc::downgrade(&runtime.0);
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(map) = context.eval("new Map([[{}, {}]])").unwrap() else {
             panic!("map expected")
         };

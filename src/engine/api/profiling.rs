@@ -71,7 +71,9 @@ impl Runtime {
     /// Observe the current state without draining deferred releases, running
     /// jobs or invoking GC. The caller determines and labels the snapshot phase.
     #[must_use]
-    pub fn memory_snapshot(&self) -> MemorySnapshot {
+    pub fn memory_snapshot(&self) -> Result<MemorySnapshot, crate::engine::api::RuntimeError> {
+        self.check_poison()?;
+        let _operation = self.operation();
         let state = self.0.state.borrow();
         let mut categories = state.heap.memory_categories();
         categories.push(MemoryCategory {
@@ -88,12 +90,12 @@ impl Runtime {
             capacity_bytes: None,
             basis: "unavailable: strings may be shared with atoms, bytecode and embedder values",
         });
-        MemorySnapshot {
+        Ok(MemorySnapshot {
             runtime_id: self.domain_id(),
             heap: state.heap.counts(),
             pending_jobs: state.pending_jobs.len(),
             categories,
-        }
+        })
     }
 }
 
@@ -248,10 +250,10 @@ mod tests {
     #[test]
     fn profiling_snapshot_is_read_only_and_counts_owned_storage_once() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         drop(context.eval("globalThis.buffer = new ArrayBuffer(4096); globalThis.alias = buffer; globalThis.view = new Uint8Array(buffer); globalThis.array = [1, 2, 3]; globalThis.ran = 0; Object.defineProperty(globalThis, 'trap', {get() { throw 42; }}); Promise.resolve().then(() => ran++);").unwrap());
-        let first = runtime.memory_snapshot();
-        let second = runtime.memory_snapshot();
+        let first = runtime.memory_snapshot().expect("runtime state");
+        let second = runtime.memory_snapshot().expect("runtime state");
         assert_eq!(first, second);
         assert_eq!(
             category(&first, "array_buffer_bytes").used_bytes,
@@ -266,15 +268,21 @@ mod tests {
         drop(context);
         runtime.run_gc().unwrap();
         // A pending job can retain its realm; taking a snapshot must not hide it.
-        assert!(runtime.memory_snapshot().pending_jobs > 0);
+        assert!(
+            runtime
+                .memory_snapshot()
+                .expect("runtime state")
+                .pending_jobs
+                > 0
+        );
     }
 
     #[test]
     fn profiling_accounts_for_cell_shape_arenas_and_collection_scratch() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         drop(context.eval("globalThis.captured = (() => { let value = 1; return () => value; })(); globalThis.object = { a: 1, b: 2 };").unwrap());
-        let snapshot = runtime.memory_snapshot();
+        let snapshot = runtime.memory_snapshot().expect("runtime state");
         assert!(
             category(&snapshot, "var_ref_arena_slots")
                 .capacity_bytes
@@ -289,7 +297,7 @@ mod tests {
         );
         assert!(category(&snapshot, "shape_entries").capacity_bytes.unwrap() > 0);
         runtime.run_gc().unwrap();
-        let after = runtime.memory_snapshot();
+        let after = runtime.memory_snapshot().expect("runtime state");
         assert!(
             category(&after, "collection_scratch_peak")
                 .capacity_bytes
@@ -303,7 +311,7 @@ mod tests {
     fn profiling_trace_preserves_storage_lifetime_through_cloned_runtime() {
         let (runtime, trace) =
             Runtime::new_with_allocation_trace(SystemHostServices::default(), 128);
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         drop(
             context
                 .eval("globalThis.items = []; for (let i = 0; i < 200; i++) items.push({i}); globalThis.captured = (() => { let x = 1; return () => x; })();")
@@ -352,7 +360,7 @@ mod tests {
         for limit in [0, 1, usize::MAX] {
             let (runtime, trace) =
                 Runtime::new_with_allocation_trace(SystemHostServices::default(), limit);
-            let context = runtime.new_context();
+            let context = runtime.new_context().expect("create context");
             drop(context);
             drop(runtime);
             let trace = trace.snapshot();
@@ -368,14 +376,21 @@ mod tests {
     #[test]
     fn profiling_snapshot_shares_runtime_but_does_not_retain_contexts() {
         let runtime = Runtime::new();
-        let left = runtime.new_context();
-        let right = runtime.new_context();
-        let before = runtime.memory_snapshot();
+        let left = runtime.new_context().expect("create context");
+        let right = runtime.new_context().expect("create context");
+        let before = runtime.memory_snapshot().expect("runtime state");
         assert!(before.heap.context_nodes >= 2);
         drop(left);
         drop(right);
         runtime.run_gc().unwrap();
-        assert_eq!(runtime.memory_snapshot().heap.context_nodes, 0);
+        assert_eq!(
+            runtime
+                .memory_snapshot()
+                .expect("runtime state")
+                .heap
+                .context_nodes,
+            0
+        );
         // The saved diagnostic consists only of counts, not arena roots.
         assert!(before.heap.context_nodes >= 2);
     }

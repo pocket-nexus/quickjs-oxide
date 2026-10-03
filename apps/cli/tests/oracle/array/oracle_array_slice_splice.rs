@@ -528,7 +528,7 @@ print('meta='+metadata('toSpliced'));
 fn array_slice_splice_basic_rust_smoke() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         context
             .eval(
@@ -548,7 +548,7 @@ fn array_slice_splice_basic_rust_smoke() {
 fn array_slice_recursive_getter_stack_overflow_is_catchable_without_oracle() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         context
             .eval(
@@ -635,8 +635,8 @@ fn array_slice_splice_prototype_order_metadata_and_constructability_match_pinned
 fn array_slice_splice_results_native_errors_and_user_throws_use_pinned_realms() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_array_prototype = defining.array_prototype().unwrap();
     let caller_array_prototype = caller.array_prototype().unwrap();
     let defining_type_error = eval_object(
@@ -676,7 +676,11 @@ fn array_slice_splice_results_native_errors_and_user_throws_use_pinned_realms() 
     };
     assert_eq!(
         runtime.get_prototype_of(&result).unwrap(),
-        Some(defining_array_prototype.clone()),
+        Some(
+            defining_array_prototype
+                .try_clone()
+                .expect("duplicate root")
+        ),
         "foreign intrinsic Array constructor was not replaced by the method realm",
     );
     assert_eq!(int_property(&runtime, &mut caller, &result, "0"), 2);
@@ -685,7 +689,7 @@ fn array_slice_splice_results_native_errors_and_user_throws_use_pinned_realms() 
     let Value::Object(removed) = caller
         .call(
             &splice,
-            Value::Object(receiver.clone()),
+            Value::Object(receiver.try_clone().expect("duplicate root")),
             &[Value::Int(1), Value::Int(1), Value::Int(9)],
         )
         .expect("cross-realm Array.splice")
@@ -694,7 +698,11 @@ fn array_slice_splice_results_native_errors_and_user_throws_use_pinned_realms() 
     };
     assert_eq!(
         runtime.get_prototype_of(&removed).unwrap(),
-        Some(defining_array_prototype.clone()),
+        Some(
+            defining_array_prototype
+                .try_clone()
+                .expect("duplicate root")
+        ),
         "Array.splice removed result did not use the method defining realm",
     );
     assert_eq!(int_property(&runtime, &mut caller, &removed, "0"), 2);
@@ -713,12 +721,16 @@ fn array_slice_splice_results_native_errors_and_user_throws_use_pinned_realms() 
     };
     assert_eq!(
         runtime.get_prototype_of(&result).unwrap(),
-        Some(defining_array_prototype.clone()),
+        Some(
+            defining_array_prototype
+                .try_clone()
+                .expect("duplicate root")
+        ),
         "Array.toSpliced result did not use the method defining realm",
     );
     assert_ne!(
         runtime.get_prototype_of(&result).unwrap(),
-        Some(caller_array_prototype.clone()),
+        Some(caller_array_prototype.try_clone().expect("duplicate root")),
     );
 
     let custom_species = eval_object(
@@ -802,7 +814,7 @@ fn array_slice_splice_results_native_errors_and_user_throws_use_pinned_realms() 
 fn rust_graph_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let array_prototype = context.array_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();
     let implemented = [

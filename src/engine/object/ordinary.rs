@@ -31,7 +31,7 @@ impl Runtime {
             object,
             key,
             value,
-            Value::Object(object.clone()),
+            Value::Object(object.try_clone().expect("duplicate root")),
         )
     }
 
@@ -66,7 +66,14 @@ impl Runtime {
                 return Err(error);
             }
         };
-        let mut step = SetStep::start(self, realm, object.clone(), key.clone(), value, receiver)?;
+        let mut step = SetStep::start(
+            self,
+            realm,
+            object.try_clone().expect("duplicate root"),
+            key.try_clone().expect("duplicate root"),
+            value,
+            receiver,
+        )?;
         loop {
             match step {
                 SetStep::Complete(action) => return Ok(action),

@@ -4,7 +4,7 @@ use crate::engine::value::Value;
 #[test]
 fn numeric_object_conversion_preserves_hints_order_and_abrupt_completion() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(context.eval(r#"
         (() => {
             function check(expression, hint, expected) {
@@ -45,7 +45,7 @@ fn numeric_object_conversion_preserves_hints_order_and_abrupt_completion() {
 #[test]
 fn numeric_preparation_keeps_string_bigint_and_number_semantics() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(context.eval(r#"
         (() => {
             if ('1' + 2 !== '12' || '10' < '2' !== true || 1n + 2n !== 3n) return false;

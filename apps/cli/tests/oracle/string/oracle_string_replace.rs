@@ -382,8 +382,8 @@ fn string_replace_utf16_and_substitution_match_pinned_quickjs() {
 fn string_replace_intrinsics_use_their_defining_realm() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let Some(replace) = eval_optional_callable(
         &runtime,
         &mut defining,
@@ -428,7 +428,7 @@ fn string_replace_intrinsics_use_their_defining_realm() {
     let native_error = take_exception_object(&mut caller, "defining String replace TypeError");
     assert_eq!(
         runtime.get_prototype_of(&native_error).unwrap(),
-        Some(defining_type_error.clone()),
+        Some(defining_type_error.try_clone().expect("duplicate root")),
         "String replace native TypeError used the caller realm",
     );
 

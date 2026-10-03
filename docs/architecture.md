@@ -46,6 +46,28 @@ Named reads use the published property site and the selector in `object/ordinary
 
 The ready driver materializes the frame for actions classified by `VmAction::observes_activation`: `Call` and `Complete` follow their own frame protocols, while other actions enter the materialization step. An already materialized frame publishes its current PC during that step. Driver operations own the state needed for callbacks, conversions, exceptions and suspension; return paths resume at the published operation-specific position.
 
+## Public roots and panic quarantine
+
+`Runtime` handles share one runtime through `Rc`; cloning a handle does not
+copy `RuntimeState`. Heap roots (`ObjectRef`, `CallableRef`, `PropertyKey`,
+`SymbolRef`, `Context`, and published bytecode roots) expose fallible
+`try_clone` rather than `Clone`. `new_context`, configuration and state
+queries also return `Result`. Runtime identity queries and independent
+immutable data remain available without accessing heap state.
+
+An unwind across an engine operation marks a `Cell` in the runtime header as
+poisoned. `Runtime::is_poisoned` observes that status. Subsequent state entries
+return `RuntimeError::Poisoned`; VM adapters report an engine internal error,
+so JavaScript cannot catch the corruption and continue execution. A host that
+catches a nested panic cannot resume its parent engine operation.
+
+Root, execution and cleanup destructors skip semantic traversal after poison.
+On final teardown, `StateStorage` forgets the entire interrupted state, avoiding
+a secondary panic from destructors inspecting a partially mutated heap. This
+quarantine deliberately leaks the interrupted state. Ordinary JS exceptions
+and checked resource errors still follow normal cleanup and transaction
+rollback; they do not poison the runtime.
+
 ## Heap and lifecycle
 
 The heap owns raw records, reference edges, roots, reference counts, zero-count cleanup and cycle collection. Object, Context and FunctionBytecode records occupy the shared arena. Captured cells and shapes have separate typed arenas; String and BigInt records share a leaf arena. Their IDs carry complete generation identities. Storage mutation updates owning edges; semantic object, value and builtin algorithms stay in their respective modules.

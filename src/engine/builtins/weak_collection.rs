@@ -114,7 +114,7 @@ impl Runtime {
         self.define_function_data_property(
             global_object,
             "WeakMap",
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone()?),
             true,
             true,
         )?;
@@ -163,7 +163,7 @@ impl Runtime {
         self.define_function_data_property(
             global_object,
             "WeakSet",
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone()?),
             true,
             true,
         )?;
@@ -182,7 +182,7 @@ impl Runtime {
         object: &ObjectRef,
         value: &'static str,
     ) -> Result<(), RuntimeError> {
-        let key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag));
+        let key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
         if !self.define_own_property(
             object,
             &key,

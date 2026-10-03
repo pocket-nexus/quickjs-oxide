@@ -859,7 +859,7 @@ mod primitive_transaction_tests {
     #[test]
     fn frame_transaction_keeps_owners_across_gc_and_partial_output_failure() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let mut layout = PublishedFunctionSnapshot::empty_for_test(context.realm);
         layout.metadata.max_stack = 1;
         let mut store = SlotStore::new(8);
@@ -916,7 +916,7 @@ mod primitive_transaction_tests {
     #[test]
     fn linked_owning_read_authenticates_once_and_keeps_result_after_last_base_release() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (executable, index) = linked_executable(&runtime, &mut context);
         let mut store = SlotStore::new(8);
         let mut layout = PublishedFunctionSnapshot::empty_for_test(context.realm);
@@ -981,7 +981,7 @@ mod primitive_transaction_tests {
     #[test]
     fn linked_owning_read_separates_slot_errors_from_lookup_errors_without_consumption() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (executable, index) = linked_executable(&runtime, &mut context);
         let mut layout = PublishedFunctionSnapshot::empty_for_test(context.realm);
         layout.metadata.max_stack = 1;
@@ -1030,7 +1030,7 @@ mod primitive_transaction_tests {
     #[test]
     fn linked_owning_read_pending_getter_is_selected_once_without_consuming_base() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (executable, index) = linked_executable(&runtime, &mut context);
         let mut layout = PublishedFunctionSnapshot::empty_for_test(context.realm);
         layout.metadata.max_stack = 1;
@@ -1084,7 +1084,7 @@ mod primitive_transaction_tests {
     #[test]
     fn primitive_transaction_pending_owners_survive_failed_commits() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
         owner.metadata.max_stack = 1;
         let mut store = SlotStore::new(1);
@@ -1122,7 +1122,7 @@ mod primitive_transaction_tests {
     #[test]
     fn numeric_region_peak_capacity_rejects_before_any_operand_change() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let mut layout = PublishedFunctionSnapshot::empty_for_test(context.realm);
         layout.metadata.max_stack = 2;
         layout.metadata.argument_count = 1;

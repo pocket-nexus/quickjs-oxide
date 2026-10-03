@@ -162,10 +162,12 @@ impl Drop for SplitState {
     }
 }
 impl SplitState {
-    fn complete(self) -> RegExpSplitStep {
-        RegExpSplitStep::Complete(Completion::Return(JsValue::Object(
-            self.result.clone().into_handle(),
-        )))
+    fn complete(self) -> Result<RegExpSplitStep, crate::engine::api::RuntimeError> {
+        Ok({
+            RegExpSplitStep::Complete(Completion::Return(JsValue::Object(
+                self.result.try_clone()?.into_handle(),
+            )))
+        })
     }
     fn append(&mut self, runtime: &Runtime, value: JsValue) -> Result<(), RuntimeError> {
         runtime.append_regexp_split_value(&self.result, &mut self.length, value)
@@ -197,12 +199,12 @@ impl RegExpSplitResume {
                     .sub_string(state.p.min(state.input.len()), state.input.len()),
             );
             state.append(runtime, runtime.into_jsvalue(value)?)?;
-            return Ok(state.complete());
+            return Ok(state.complete()?);
         }
         let value = JsValue::Int(i32::try_from(state.q).map_err(|_| {
             RuntimeError::Invariant("RegExp split index exceeded signed String range")
         })?);
-        let object = state.splitter.clone();
+        let object = state.splitter.try_clone()?;
         let key =
             runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
         self.0.phase = Phase::Set(state);
@@ -218,7 +220,7 @@ impl RegExpSplitResume {
     ) -> Result<RegExpSplitStep, RuntimeError> {
         debug_assert!(self.0.step_pending.is_empty());
         let input = runtime.dup_jsvalue(&state.input_value)?;
-        let regexp = JsValue::Object(state.splitter.clone().into_handle());
+        let regexp = JsValue::Object(state.splitter.try_clone()?.into_handle());
         self.0.phase = if empty {
             Phase::Empty(state)
         } else {
@@ -241,7 +243,7 @@ impl RegExpSplitResume {
             state.q = state.p;
             return self.next(state, runtime);
         }
-        let object = matched.clone();
+        let object = matched.try_clone()?;
         let key = runtime.intern_property_key(&index.to_string())?;
         self.0.phase = Phase::Capture {
             state,
@@ -313,7 +315,7 @@ impl RegExpSplitResume {
                 "RegExp split species reply in wrong phase",
             ));
         };
-        let object = regexp.clone();
+        let object = regexp.try_clone()?;
         self.0.phase = Phase::Flags {
             regexp,
             input,
@@ -387,7 +389,7 @@ impl RegExpSplitResume {
                     runtime.release_jsvalue(value)?;
                     runtime.into_jsvalue(Value::String(input.clone()))?
                 };
-                let object = regexp.clone();
+                let object = regexp.try_clone()?;
                 self.0.phase = Phase::Species { regexp, input };
                 Ok(RegExpSplitStep::make_species(object, self))
             }
@@ -526,7 +528,7 @@ impl RegExpSplitResume {
                     let input = runtime.dup_jsvalue(&state.input_value)?;
                     state.append(runtime, input)?;
                 }
-                Ok(state.complete())
+                Ok(state.complete()?)
             }
             Phase::Set(state) => {
                 runtime.release_jsvalue(self.0.step_pending.value.take().unwrap())?;
@@ -539,7 +541,7 @@ impl RegExpSplitResume {
                 }
                 JsValue::Object(id) => {
                     let matched = ObjectRef::from_owned_handle(runtime.clone(), id);
-                    let object = state.splitter.clone();
+                    let object = state.splitter.try_clone()?;
                     self.0.phase = Phase::End { state, matched };
                     let key = runtime
                         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::LastIndex)?;
@@ -580,10 +582,10 @@ impl RegExpSplitResume {
                     .into_jsvalue(Value::String(state.input.sub_string(state.p, state.q)))?;
                 state.append(runtime, part)?;
                 if state.length == state.limit {
-                    return Ok(state.complete());
+                    return Ok(state.complete()?);
                 }
                 state.p = end;
-                let object = matched.clone();
+                let object = matched.try_clone()?;
                 self.0.phase = Phase::Count { state, matched };
                 let key =
                     runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
@@ -621,7 +623,7 @@ impl RegExpSplitResume {
             } => {
                 state.append(runtime, self.0.step_pending.value.take().unwrap())?;
                 if state.length == state.limit {
-                    return Ok(state.complete());
+                    return Ok(state.complete()?);
                 }
                 self.captures(state, runtime, matched, index + 1, count)
             }
@@ -636,7 +638,7 @@ impl RegExpSplitResume {
         runtime: &Runtime,
     ) -> Result<RegExpSplitStep, RuntimeError> {
         if state.limit == 0 {
-            return Ok(state.complete());
+            return Ok(state.complete()?);
         }
         if state.input.is_empty() {
             return self.execute(state, runtime, true);
@@ -676,7 +678,7 @@ fn finish(
                         realm,
                         &object,
                         &key,
-                        JsValue::Object(object.clone().into_handle()),
+                        JsValue::Object(object.try_clone()?.into_handle()),
                     )?,
                 )?
             }
@@ -686,13 +688,14 @@ fn finish(
             }
             RegExpSplitStep::Construct { mut resume } => {
                 let constructor = resume.take_construct_constructor();
+                let new_target = constructor.try_clone()?;
                 let arguments = resume.take_construct_arguments();
                 resume.resume(
                     runtime,
                     runtime.construct_internal_jsvalue(
                         realm,
                         &constructor,
-                        crate::engine::vm::call::ConstructNewTarget::Validated(constructor.clone()),
+                        crate::engine::vm::call::ConstructNewTarget::Validated(new_target),
                         arguments,
                     )?,
                 )?
@@ -708,7 +711,7 @@ fn finish(
                         &object,
                         &key,
                         value,
-                        JsValue::Object(object.clone().into_handle()),
+                        JsValue::Object(object.try_clone()?.into_handle()),
                     )?,
                 )?
             }

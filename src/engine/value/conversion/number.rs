@@ -36,7 +36,7 @@ impl NumberStep {
         from_primitive(
             runtime,
             realm,
-            PrimitiveResume::start(runtime, realm, value, ToPrimitiveHint::Number),
+            PrimitiveResume::start(runtime, realm, value, ToPrimitiveHint::Number)?,
         )
     }
 }

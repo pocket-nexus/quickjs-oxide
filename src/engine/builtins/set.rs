@@ -117,7 +117,7 @@ impl Runtime {
         };
         let keys_key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Keys)?;
         self.define_set_alias(&set_prototype, &keys_key, &values)?;
-        let iterator_key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Iterator));
+        let iterator_key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Iterator)?);
         self.define_set_alias(&set_prototype, &iterator_key, &values)?;
         self.define_native_builtin_auto_init(
             &set_prototype,
@@ -163,7 +163,7 @@ impl Runtime {
             "get [Symbol.species]",
             0,
         )?;
-        let species = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Species));
+        let species = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Species)?);
         if !self.define_own_property(
             constructor.as_object(),
             &species,
@@ -183,7 +183,7 @@ impl Runtime {
         self.define_function_data_property(
             global_object,
             "Set",
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone()?),
             true,
             true,
         )?;
@@ -227,7 +227,7 @@ impl Runtime {
         object: &ObjectRef,
         value: &'static str,
     ) -> Result<(), RuntimeError> {
-        let key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag));
+        let key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
         if !self.define_own_property(
             object,
             &key,
@@ -974,7 +974,7 @@ mod tests {
     #[test]
     fn table_backed_symbol_atoms_return_after_set_mutations() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(function) = context
             .eval(
                 r#"(function(){
@@ -998,14 +998,14 @@ mod tests {
                 .call(&function, Value::Undefined, &[])
                 .expect("warm Set Symbol ownership probe"),
         );
-        let baseline = runtime.test_atom_count();
+        let baseline = runtime.test_atom_count().expect("atom count");
         for _ in 0..3 {
             drop(
                 context
                     .call(&function, Value::Undefined, &[])
                     .expect("repeat Set Symbol ownership probe"),
             );
-            assert_eq!(runtime.test_atom_count(), baseline);
+            assert_eq!(runtime.test_atom_count().expect("atom count"), baseline);
         }
     }
 }

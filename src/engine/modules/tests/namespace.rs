@@ -14,7 +14,7 @@ fn namespace_cache_preserves_cycles_identity_and_live_cells() {
         ),
     ]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename(
             r#"
@@ -53,7 +53,7 @@ fn self_namespace_import_export_keeps_the_preallocated_cell() {
         "import * as self from './self.js'; export { self }; export const answer = 42;",
     )]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename(
             "import * as ns from './self.js'; globalThis.__selfNamespace = ns;",
@@ -73,7 +73,7 @@ fn failed_namespace_build_rolls_back_its_placeholder_for_retry() {
     let runtime = Runtime::new();
     let (loader, _, _) = MapModuleLoader::new([("pkg/dependency.js", "export const present = 1;")]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename(
             "export { absent as publicName } from './dependency.js';",

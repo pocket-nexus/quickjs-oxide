@@ -58,10 +58,15 @@ impl FunctionBytecodeRef {
         Ok(Self { runtime, id })
     }
 
-    /// Duplicate this root while preserving a checked internal path for the
-    /// runtime and tests.  Public [`Clone`] treats failure as an invariant or
-    /// resource-exhaustion violation because a live root cannot be stale.
-    pub(crate) fn try_clone(&self) -> Result<Self, HeapError> {
+    /// Duplicate this root with checked admission and reference retention.
+    /// Poisoned runtimes reject duplication before touching state.
+    ///
+    /// # Errors
+    /// Returns `RuntimeError::Poisoned` after an engine unwind, or a checked
+    /// reference-retention error such as counter overflow.
+    pub fn try_clone(&self) -> Result<Self, crate::engine::api::RuntimeError> {
+        self.runtime.check_poison()?;
+        let _unwind = self.runtime.unwind_guard();
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_runtime_event(
             "runtime.bytecode_root.clone",
@@ -102,14 +107,6 @@ impl FunctionBytecodeRef {
     #[must_use]
     pub(crate) const fn bytecode_id(&self) -> FunctionBytecodeId {
         self.id
-    }
-}
-
-impl Clone for FunctionBytecodeRef {
-    fn clone(&self) -> Self {
-        self.try_clone().unwrap_or_else(|_| {
-            panic!("attempted to clone stale function bytecode or overflow its reference count")
-        })
     }
 }
 

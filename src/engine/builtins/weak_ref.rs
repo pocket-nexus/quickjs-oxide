@@ -70,7 +70,7 @@ impl Runtime {
         self.define_function_data_property(
             global_object,
             "WeakRef",
-            Value::Object(weak_ref_constructor.as_object().clone()),
+            Value::Object(weak_ref_constructor.as_object().try_clone()?),
             true,
             true,
         )?;
@@ -108,7 +108,7 @@ impl Runtime {
         self.define_function_data_property(
             global_object,
             "FinalizationRegistry",
-            Value::Object(finalization_registry_constructor.as_object().clone()),
+            Value::Object(finalization_registry_constructor.as_object().try_clone()?),
             true,
             true,
         )?;
@@ -132,7 +132,7 @@ impl Runtime {
         object: &ObjectRef,
         value: &'static str,
     ) -> Result<(), RuntimeError> {
-        let key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag));
+        let key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
         if !self.define_own_property(
             object,
             &key,

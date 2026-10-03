@@ -36,7 +36,7 @@ fn take_exception_object(context: &mut Context, description: &str) -> ObjectRef 
 #[test]
 fn sort_and_to_sorted_publish_the_quickjs_surface() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -126,7 +126,7 @@ fn sort_and_to_sorted_publish_the_quickjs_surface() {
 #[test]
 fn sort_and_to_sorted_keep_their_distinct_validation_order() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -219,7 +219,7 @@ fn sort_and_to_sorted_keep_their_distinct_validation_order() {
 #[test]
 fn default_sort_preserves_float_words_and_quickjs_equal_choreography() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -329,7 +329,7 @@ fn default_sort_preserves_float_words_and_quickjs_equal_choreography() {
 #[test]
 fn custom_sort_uses_a_raw_snapshot_exact_rqsort_and_stable_indices() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let layout_source = eval_object(
         &mut context,
         "new Uint8Array([10,9,8,7])",
@@ -444,7 +444,7 @@ fn custom_sort_uses_a_raw_snapshot_exact_rqsort_and_stable_indices() {
 #[test]
 fn custom_sort_propagates_user_and_conversion_throws_without_sort_writeback() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -514,7 +514,7 @@ fn custom_sort_propagates_user_and_conversion_throws_without_sort_writeback() {
 #[test]
 fn custom_sort_matches_quickjs_final_rab_state_writeback() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -617,7 +617,7 @@ fn custom_sort_matches_quickjs_final_rab_state_writeback() {
 #[test]
 fn to_sorted_ignores_species_and_returns_fixed_defining_class_storage() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -660,8 +660,8 @@ fn to_sorted_ignores_species_and_returns_fixed_defining_class_storage() {
 #[test]
 fn sort_errors_and_to_sorted_results_use_the_method_defining_realm() {
     let runtime = Runtime::new();
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_type_error = eval_object(
         &mut defining,
         "TypeError.prototype",
@@ -721,13 +721,17 @@ fn sort_errors_and_to_sorted_results_use_the_method_defining_realm() {
     );
 
     assert!(matches!(
-        caller.call(&sort, Value::Object(source.clone()), &[Value::Bool(false)],),
+        caller.call(
+            &sort,
+            Value::Object(source.try_clone().expect("duplicate root")),
+            &[Value::Bool(false)],
+        ),
         Err(RuntimeError::Exception),
     ));
     let invalid_comparator = take_exception_object(&mut caller, "invalid sort comparator");
     assert_eq!(
         runtime.get_prototype_of(&invalid_comparator).unwrap(),
-        Some(defining_type_error.clone()),
+        Some(defining_type_error.try_clone().expect("duplicate root")),
         "sort comparator TypeError did not use the method defining realm",
     );
 
@@ -781,7 +785,9 @@ fn sort_errors_and_to_sorted_results_use_the_method_defining_realm() {
         caller.call(
             &sort,
             Value::Object(source),
-            &[Value::Object(throwing.as_object().clone())],
+            &[Value::Object(
+                throwing.as_object().try_clone().expect("duplicate root")
+            )],
         ),
         Err(RuntimeError::Exception),
     ));

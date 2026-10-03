@@ -63,8 +63,8 @@ impl Runtime {
                 capture(),
             )?;
             [
-                JsValue::Object(fulfill.as_object().clone().into_handle()),
-                JsValue::Object(reject.as_object().clone().into_handle()),
+                JsValue::Object(fulfill.as_object().try_clone()?.into_handle()),
+                JsValue::Object(reject.as_object().try_clone()?.into_handle()),
             ]
         } else {
             {

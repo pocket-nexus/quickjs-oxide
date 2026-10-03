@@ -121,7 +121,7 @@ fn array_unscopables_values_identity_and_mutation_match_pinned_quickjs() {
     for &(description, source) in VALUE_CASES {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
             observe_oracle(&oracle, source, description),
@@ -147,9 +147,13 @@ fn array_unscopables_graph_matches_pinned_quickjs() {
 fn array_unscopables_are_distinct_null_prototype_objects_per_realm() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut first = runtime.new_context();
-    let mut second = runtime.new_context();
-    let key = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Unscopables));
+    let mut first = runtime.new_context().expect("create context");
+    let mut second = runtime.new_context().expect("create context");
+    let key = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::Unscopables)
+            .expect("well-known symbol"),
+    );
     let first_prototype = first.array_prototype().unwrap();
     let second_prototype = second.array_prototype().unwrap();
     let Value::Object(first_value) = first.get_property(&first_prototype, &key).unwrap() else {
@@ -189,10 +193,18 @@ fn observe_rust_eval(
 fn rust_graph_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let context = runtime.new_context();
+    let context = runtime.new_context().expect("create context");
     let prototype = context.array_prototype().unwrap();
-    let iterator = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Iterator));
-    let unscopables = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Unscopables));
+    let iterator = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::Iterator)
+            .expect("well-known symbol"),
+    );
+    let unscopables = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::Unscopables)
+            .expect("well-known symbol"),
+    );
     let own_keys = runtime.own_property_keys(&prototype).unwrap();
     let own_key_count = own_keys.len();
     let symbols = own_keys

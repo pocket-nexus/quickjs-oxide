@@ -234,7 +234,7 @@ impl Runtime {
         )?;
         if initializer_realm != constructor_realm
             || self.bytecode_function_home_object(initializer.as_object())?
-                != Some(prototype.clone())
+                != Some(prototype.try_clone()?)
         {
             return Err(RuntimeError::Invariant(
                 "class instance initializer lost its authenticated owner",
@@ -377,7 +377,7 @@ mod tests {
     #[test]
     fn computed_field_defines_cwe_own_data_without_calling_inherited_setter() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let define = computed_field_callable(&runtime, &context);
         let throwing_setter = bytecode_callable(
             &runtime,
@@ -414,13 +414,13 @@ mod tests {
                     &define,
                     Value::Undefined,
                     &[
-                        Value::Object(object.clone()),
+                        Value::Object(object.try_clone().expect("duplicate root")),
                         Value::String(JsString::from_static("field")),
                         Value::Int(42),
                     ],
                 )
                 .unwrap(),
-            Value::Object(object.clone())
+            Value::Object(object.try_clone().expect("duplicate root"))
         );
         assert_eq!(
             runtime.get_own_property(&object, &field).unwrap(),
@@ -431,7 +431,7 @@ mod tests {
                 configurable: true,
             })
         );
-        assert!(!context.has_exception());
+        assert!(!context.has_exception().expect("runtime state"));
 
         let symbol = runtime
             .new_symbol(Some(JsString::from_static("computed field")))
@@ -442,17 +442,20 @@ mod tests {
                     &define,
                     Value::Undefined,
                     &[
-                        Value::Object(object.clone()),
-                        Value::Symbol(symbol.clone()),
+                        Value::Object(object.try_clone().expect("duplicate root")),
+                        Value::Symbol(symbol.try_clone().expect("duplicate root")),
                         Value::Int(7),
                     ],
                 )
                 .unwrap(),
-            Value::Object(object.clone())
+            Value::Object(object.try_clone().expect("duplicate root"))
         );
         assert_eq!(
             runtime
-                .get_own_property(&object, &PropertyKey::from(&symbol))
+                .get_own_property(
+                    &object,
+                    &PropertyKey::try_from(&symbol).expect("symbol key")
+                )
                 .unwrap(),
             Some(CompleteOrdinaryPropertyDescriptor::Data {
                 value: Value::Int(7),
@@ -466,7 +469,7 @@ mod tests {
     #[test]
     fn computed_field_rejection_becomes_a_javascript_throw() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let define = computed_field_callable(&runtime, &context);
         let object = runtime.new_object(None).unwrap();
         runtime.prevent_extensions(&object).unwrap();
@@ -501,7 +504,7 @@ mod tests {
     #[test]
     fn computed_field_never_repeats_observable_property_key_conversion() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let define = computed_field_callable(&runtime, &context);
         let throwing_conversion = bytecode_callable(
             &runtime,
@@ -523,7 +526,10 @@ mod tests {
                     &to_string,
                     &OrdinaryPropertyDescriptor {
                         value: DescriptorField::Present(Value::Object(
-                            throwing_conversion.as_object().clone(),
+                            throwing_conversion
+                                .as_object()
+                                .try_clone()
+                                .expect("duplicate root"),
                         )),
                         writable: DescriptorField::Present(true),
                         configurable: DescriptorField::Present(true),

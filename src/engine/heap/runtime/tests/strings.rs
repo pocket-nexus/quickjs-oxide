@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn string_wrapper_exotic_indices_length_define_delete_and_order_match_quickjs() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let string_prototype_id = runtime
         .0
         .state
@@ -117,7 +117,7 @@ fn string_wrapper_exotic_indices_length_define_delete_and_order_match_quickjs() 
     ));
     assert_eq!(
         runtime.get_prototype_of(&wrapper).unwrap(),
-        Some(string_prototype.clone())
+        Some(string_prototype.try_clone().expect("duplicate root"))
     );
     assert_eq!(
         own_key_names(&runtime, &wrapper),
@@ -139,7 +139,7 @@ fn string_wrapper_exotic_indices_length_define_delete_and_order_match_quickjs() 
         assert_eq!(
             runtime.get_own_property(&wrapper, &key).unwrap(),
             Some(CompleteOrdinaryPropertyDescriptor::Data {
-                value: expected.clone(),
+                value: expected.try_clone().expect("duplicate root"),
                 writable: false,
                 enumerable: true,
                 configurable: false,
@@ -265,7 +265,7 @@ fn string_wrapper_exotic_indices_length_define_delete_and_order_match_quickjs() 
 #[test]
 fn string_method_slice_matches_quickjs_table_and_code_unit_rules() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let prototype = context.string_prototype().unwrap();
 
     assert_eq!(
@@ -574,8 +574,8 @@ fn string_method_slice_matches_quickjs_table_and_code_unit_rules() {
 #[test]
 fn string_rope_vm_and_native_concat_overflow_use_the_defining_realms() {
     let runtime = Runtime::new();
-    let mut first = runtime.new_context();
-    let mut second = runtime.new_context();
+    let mut first = runtime.new_context().expect("create context");
+    let mut second = runtime.new_context().expect("create context");
     let first_string = first.string_prototype().unwrap();
     let concat = property_callable(&runtime, &mut first, &first_string, "concat");
     let internal_error = global_callable(&runtime, &mut first, "InternalError");
@@ -614,7 +614,11 @@ fn string_rope_vm_and_native_concat_overflow_use_the_defining_realms() {
     };
     assert_eq!(
         runtime.get_prototype_of(&vm_error).unwrap(),
-        Some(first_internal_error_prototype.clone())
+        Some(
+            first_internal_error_prototype
+                .try_clone()
+                .expect("duplicate root")
+        )
     );
     let message = runtime.intern_property_key("message").unwrap();
     assert_eq!(
@@ -646,7 +650,7 @@ fn string_rope_vm_and_native_concat_overflow_use_the_defining_realms() {
 #[test]
 fn string_conversion_core_brand_lookup_object_routes_and_overrides_match_quickjs_slice() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let prototype = context.string_prototype().unwrap();
     let object_prototype = context.object_prototype().unwrap();
     let to_string = property_callable(&runtime, &mut context, &prototype, "toString");
@@ -737,13 +741,21 @@ fn string_conversion_core_brand_lookup_object_routes_and_overrides_match_quickjs
         );
         assert_eq!(
             context
-                .call(method, Value::Object(wrapper.clone()), &[])
+                .call(
+                    method,
+                    Value::Object(wrapper.try_clone().expect("duplicate root")),
+                    &[]
+                )
                 .unwrap(),
             Value::String(payload.clone())
         );
         assert_eq!(
             context
-                .call(method, Value::Object(prototype.clone()), &[])
+                .call(
+                    method,
+                    Value::Object(prototype.try_clone().expect("duplicate root")),
+                    &[]
+                )
                 .unwrap(),
             Value::String(JsString::from_static(""))
         );
@@ -770,7 +782,11 @@ fn string_conversion_core_brand_lookup_object_routes_and_overrides_match_quickjs
     );
     assert_eq!(
         context
-            .call(&value_of, Value::Object(wrapper.clone()), &[])
+            .call(
+                &value_of,
+                Value::Object(wrapper.try_clone().expect("duplicate root")),
+                &[]
+            )
             .unwrap(),
         Value::String(payload.clone())
     );
@@ -788,7 +804,10 @@ fn string_conversion_core_brand_lookup_object_routes_and_overrides_match_quickjs
                 &to_string_key,
                 &OrdinaryPropertyDescriptor {
                     value: DescriptorField::Present(Value::Object(
-                        override_to_string.as_object().clone(),
+                        override_to_string
+                            .as_object()
+                            .try_clone()
+                            .expect("duplicate root"),
                     )),
                     writable: DescriptorField::Present(true),
                     enumerable: DescriptorField::Present(false),
@@ -801,7 +820,7 @@ fn string_conversion_core_brand_lookup_object_routes_and_overrides_match_quickjs
     let completion = runtime
         .to_primitive(
             context.realm,
-            Value::Object(conversion_wrapper.clone()),
+            Value::Object(conversion_wrapper.try_clone().expect("duplicate root")),
             ToPrimitiveHint::String,
         )
         .unwrap();
@@ -864,10 +883,14 @@ fn string_conversion_core_brand_lookup_object_routes_and_overrides_match_quickjs
     assert_ne!(first_box, second_box);
     assert_eq!(
         runtime.get_prototype_of(&first_box).unwrap(),
-        Some(prototype.clone())
+        Some(prototype.try_clone().expect("duplicate root"))
     );
 
-    let tag = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToStringTag));
+    let tag = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::ToStringTag)
+            .expect("well-known symbol"),
+    );
     assert!(
         runtime
             .define_own_property(

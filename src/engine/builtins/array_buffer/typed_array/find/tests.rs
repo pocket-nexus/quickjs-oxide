@@ -14,7 +14,7 @@ fn assert_script(context: &mut Context, source: &str) {
 #[test]
 fn find_family_matches_quickjs_callback_and_descriptor_contracts() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -162,7 +162,7 @@ fn find_family_matches_quickjs_callback_and_descriptor_contracts() {
 #[test]
 fn find_family_keeps_snapshot_range_but_reads_each_value_live() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,

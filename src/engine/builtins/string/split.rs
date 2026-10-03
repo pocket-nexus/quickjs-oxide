@@ -105,7 +105,7 @@ impl StringSplitStep {
             let object = ObjectRef::from_borrowed_handle(runtime.clone(), *id)?;
             Ok(Self::make_read(
                 object,
-                PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Split)),
+                PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::Split)?),
                 resume,
             ))
         } else {
@@ -320,7 +320,7 @@ pub(super) fn finish(
                         realm,
                         &object,
                         &key,
-                        JsValue::Object(object.clone().into_handle()),
+                        JsValue::Object(object.try_clone()?.into_handle()),
                     )?,
                 )?
             }

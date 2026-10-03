@@ -535,7 +535,7 @@ mod tests {
     fn installed_wait_cache_matches_scan_across_install_take_and_both_pops() {
         use super::super::proxy_get_driver::PendingProxyGet;
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let mut frames = FrameStore::new(1, 9);
         assert_wait_depth_matches_scan(&frames);
         let (first, _first_slots) = frame(&runtime, context.realm);
@@ -574,7 +574,7 @@ mod tests {
     fn pending_errors_preserve_cache_and_put_does_not_add_a_budget_rejection() {
         use super::super::proxy_get_driver::PendingProxyGet;
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let mut frames = FrameStore::new(1, 1);
         let (first, _slots) = frame(&runtime, context.realm);
         let id = frames.push(first).unwrap();
@@ -631,7 +631,7 @@ mod tests {
     #[test]
     fn cached_cold_storage_reuses_empty_capacity_without_retaining_runtime() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let weak = std::rc::Rc::downgrade(&runtime.0);
         let mut cache = CallStorage::default();
         cache.reserve().unwrap();
@@ -684,7 +684,7 @@ mod tests {
                 runtime,
                 JsValue::Undefined,
                 JsValue::Undefined,
-                Some(function.clone()),
+                Some(function.try_clone().expect("duplicate root")),
             ))
             .into(),
             function: crate::engine::vm::closure::FrameFunction::new(function, Default::default())
@@ -711,7 +711,7 @@ mod tests {
     #[test]
     fn limits_and_stale_ids_preserve_the_active_frame_and_release_rejected_owners() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let mut frames = FrameStore::new(1, 1);
         let (first, _first_slots) = frame(&runtime, context.realm);
         let first_id = frames.push(first).unwrap();
@@ -750,7 +750,7 @@ mod tests {
     #[test]
     fn exhausted_frame_identity_rejects_before_installing_ownership() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let mut frames = FrameStore::new(1, 1);
         frames.next_generation = u64::MAX;
         let (rejected, _slots) = frame(&runtime, context.realm);
@@ -787,7 +787,7 @@ mod tests {
         };
         for exhausted_identity in [false, true] {
             let runtime = Runtime::new();
-            let context = runtime.new_context();
+            let context = runtime.new_context().expect("create context");
             let mut execution = RunningExecution::new(
                 &runtime,
                 ExecutionLimits {
@@ -855,9 +855,11 @@ mod tests {
     ) -> Runtime {
         let runtime = Runtime::new();
         let log = DropLog(name, events.clone());
-        runtime.set_host_promise_rejection_tracker(move |_| {
-            let _ = &log;
-        });
+        runtime
+            .set_host_promise_rejection_tracker(move |_| {
+                let _ = &log;
+            })
+            .expect("configure test runtime");
         runtime
     }
     #[test]
@@ -866,7 +868,7 @@ mod tests {
         let mut frames = FrameStore::new(1, 2);
         for name in ["parent", "child"] {
             let runtime = tracked_runtime(name, &events);
-            let context = runtime.new_context();
+            let context = runtime.new_context().expect("create context");
             let (frame, _slots) = frame(&runtime, context.realm);
             frames.push(frame).unwrap();
         }
@@ -882,7 +884,7 @@ mod tests {
         };
         let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
         let parent_runtime = tracked_runtime("parent", &events);
-        let parent_context = parent_runtime.new_context();
+        let parent_context = parent_runtime.new_context().expect("create context");
         let mut execution = RunningExecution::new(
             &parent_runtime,
             ExecutionLimits {
@@ -894,7 +896,7 @@ mod tests {
         push_frame(&mut execution, entry(&parent_runtime, parent_context.realm)).unwrap();
         {
             let runtime = tracked_runtime("child", &events);
-            let context = runtime.new_context();
+            let context = runtime.new_context().expect("create context");
             // Internal frame slots hold raw handles without a runtime owner;
             // the child frame's cold function root keeps the child runtime
             // alive until the frame is abandoned. The slot value belongs to

@@ -112,7 +112,10 @@ impl Runtime {
             )?;
         }
 
-        let to_string_tag = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag));
+        let to_string_tag = PropertyKey::from(
+            self.well_known_symbol(WellKnownSymbol::ToStringTag)
+                .expect("well-known symbol"),
+        );
         if !self.define_own_property(
             &prototype,
             &to_string_tag,
@@ -140,7 +143,7 @@ impl Runtime {
         self.define_function_data_property(
             global_object,
             "DataView",
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone()?),
             true,
             true,
         )?;
@@ -1167,7 +1170,7 @@ impl DataViewConstructorResume {
         Ok(DataViewConstructorStep::Complete(
             runtime.finish_data_view_construction(
                 self.0.realm,
-                self.0.buffer.clone(),
+                self.0.buffer.try_clone()?,
                 offset,
                 length,
                 prototype,

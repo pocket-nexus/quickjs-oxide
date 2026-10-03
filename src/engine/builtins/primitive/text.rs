@@ -405,7 +405,7 @@ mod local_completion_tests {
     #[test]
     fn scalar_text_primitives_complete_without_conversion_requests() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let this_value = runtime
             .into_jsvalue(Value::String(JsString::from_static("abc")))
             .unwrap();
@@ -447,7 +447,7 @@ mod local_completion_tests {
     #[test]
     fn scalar_text_local_concat_keeps_existing_rope_chunks() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let leaf = JsString::try_from_utf8(&"x".repeat(1024)).unwrap();
         let chunk = leaf.try_concat(&leaf).unwrap();
         let mut before = 0;
@@ -491,7 +491,7 @@ mod local_completion_tests {
     #[test]
     fn scalar_text_local_and_object_paths_keep_coercion_order_and_errors() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(context.eval(r#"(() => {
             let trace = '';
             const receiver = { [Symbol.toPrimitive](hint) { trace += 'r:' + hint + ';'; return 'A\ud83d\ude00'; } };

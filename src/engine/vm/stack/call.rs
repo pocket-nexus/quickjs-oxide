@@ -227,7 +227,7 @@ mod tests {
     #[test]
     fn ordinary_local_initialization_uses_published_plain_fact_and_preserves_tdz() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let function = runtime.new_object(None).unwrap();
         let definition = VariableDefinition {
             name: None,
@@ -247,7 +247,9 @@ mod tests {
             .push_frame(
                 &runtime,
                 &caller.frame_layout(),
-                storage(vec![JsValue::Object(function.clone().into_handle())]),
+                storage(vec![JsValue::Object(
+                    function.try_clone().expect("duplicate root").into_handle(),
+                )]),
             )
             .unwrap();
         assert!(executable.frame_layout().plain_local_initializers());
@@ -285,7 +287,10 @@ mod tests {
         ]);
         assert!(!executable.frame_layout().plain_local_initializers());
         slots
-            .push(&mut parent, JsValue::Object(function.clone().into_handle()))
+            .push(
+                &mut parent,
+                JsValue::Object(function.try_clone().expect("duplicate root").into_handle()),
+            )
             .unwrap();
         let checked = checked_operands(&mut slots, &mut parent, 0, false);
         let child = slots
@@ -313,7 +318,7 @@ mod tests {
     #[test]
     fn argument_transfer_preserves_arity_and_releases_overwritten_parameters() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let function = runtime.new_object(None).unwrap();
         let mut executable = PublishedFunctionSnapshot::empty_for_test(context.realm);
         executable.metadata.max_stack = 4;
@@ -323,7 +328,7 @@ mod tests {
                 &runtime,
                 &executable.frame_layout(),
                 storage(vec![
-                    JsValue::Object(function.clone().into_handle()),
+                    JsValue::Object(function.try_clone().expect("duplicate root").into_handle()),
                     JsValue::Int(7),
                 ]),
             )
@@ -356,7 +361,10 @@ mod tests {
         let marker = runtime.new_object(None).unwrap();
         let marker_id = marker.object_id();
         slots
-            .push(&mut parent, JsValue::Object(function.clone().into_handle()))
+            .push(
+                &mut parent,
+                JsValue::Object(function.try_clone().expect("duplicate root").into_handle()),
+            )
             .unwrap();
         slots
             .push(&mut parent, JsValue::Object(marker.into_handle()))
@@ -387,7 +395,7 @@ mod tests {
     #[test]
     fn ordinary_retain_failure_keeps_the_entire_parent_and_rolls_back_suffix() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let function = runtime.new_object(None).unwrap();
         let first = runtime.new_object(None).unwrap();
         let blocked = runtime.new_object(None).unwrap();
@@ -406,7 +414,7 @@ mod tests {
                 &runtime,
                 &executable.frame_layout(),
                 storage(vec![
-                    JsValue::Object(function.clone().into_handle()),
+                    JsValue::Object(function.try_clone().expect("duplicate root").into_handle()),
                     JsValue::Object(first.into_handle()),
                     JsValue::Object(stale_handle),
                 ]),
@@ -442,7 +450,7 @@ mod tests {
     #[test]
     fn method_receiver_copy_survives_operand_release_until_input_teardown() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let function = runtime.new_object(None).unwrap();
         let receiver = runtime.new_object(None).unwrap();
         let receiver_id = receiver.object_id();
@@ -455,7 +463,7 @@ mod tests {
                 &executable.frame_layout(),
                 storage(vec![
                     JsValue::Object(receiver.into_handle()),
-                    JsValue::Object(function.clone().into_handle()),
+                    JsValue::Object(function.try_clone().expect("duplicate root").into_handle()),
                 ]),
             )
             .unwrap();
@@ -518,7 +526,7 @@ mod tests {
     #[test]
     fn failed_method_argument_copy_keeps_receiver_and_rolls_back_suffix() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let function = runtime.new_object(None).unwrap();
         let receiver = runtime.new_object(None).unwrap();
         let receiver_id = receiver.object_id();
@@ -538,7 +546,7 @@ mod tests {
                 &executable.frame_layout(),
                 storage(vec![
                     JsValue::Object(receiver.into_handle()),
-                    JsValue::Object(function.clone().into_handle()),
+                    JsValue::Object(function.try_clone().expect("duplicate root").into_handle()),
                     JsValue::Object(first.into_handle()),
                     JsValue::Object(stale_handle),
                 ]),
@@ -607,7 +615,7 @@ mod tests {
     #[test]
     fn failed_named_local_retain_clears_staged_parameter_and_earlier_local() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let callee = runtime.new_object(None).unwrap();
         let receiver = runtime.new_object(None).unwrap();
         let receiver_id = receiver.object_id();
@@ -644,7 +652,7 @@ mod tests {
                 &caller.frame_layout(),
                 storage(vec![
                     JsValue::Object(receiver.into_handle()),
-                    JsValue::Object(callee.clone().into_handle()),
+                    JsValue::Object(callee.try_clone().expect("duplicate root").into_handle()),
                     JsValue::Object(argument.into_handle()),
                 ]),
             )
@@ -710,7 +718,7 @@ mod tests {
     #[test]
     fn checked_ordinary_operands_reject_depth_change_without_moving_owners() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let function = runtime.new_object(None).unwrap();
         let marker = runtime.new_object(None).unwrap();
         let marker_id = marker.object_id();
@@ -722,7 +730,7 @@ mod tests {
                 &runtime,
                 &executable.frame_layout(),
                 storage(vec![
-                    JsValue::Object(function.clone().into_handle()),
+                    JsValue::Object(function.try_clone().expect("duplicate root").into_handle()),
                     JsValue::Object(marker.into_handle()),
                 ]),
             )
@@ -757,7 +765,7 @@ mod tests {
     #[test]
     fn checked_ordinary_operands_preserve_method_domain_error_order() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let function = runtime.new_object(None).unwrap();
         let mut executable = PublishedFunctionSnapshot::empty_for_test(context.realm);
         executable.metadata.max_stack = 3;

@@ -33,7 +33,7 @@ fn dynamic_source_builder_latches_utf16_length_failure() {
 #[test]
 fn function_constructor_intrinsic_and_dynamic_source_match_quickjs() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let constructor = context.function_constructor().unwrap();
     let function_prototype = context.function_prototype().unwrap();
     let global = context.global_object().unwrap();
@@ -47,11 +47,15 @@ fn function_constructor_intrinsic_and_dynamic_source_match_quickjs() {
     assert_eq!(runtime.callable_realm(&constructor).unwrap(), context.realm);
     assert_eq!(
         runtime.get_prototype_of(constructor.as_object()).unwrap(),
-        Some(function_prototype.clone())
+        Some(function_prototype.try_clone().expect("duplicate root"))
     );
     assert_eq!(
         runtime.own_property_keys(constructor.as_object()).unwrap(),
-        vec![length.clone(), name.clone(), prototype.clone()]
+        vec![
+            length.try_clone().expect("duplicate root"),
+            name.try_clone().expect("duplicate root"),
+            prototype.try_clone().expect("duplicate root")
+        ]
     );
     assert!(matches!(
         runtime
@@ -93,7 +97,7 @@ fn function_constructor_intrinsic_and_dynamic_source_match_quickjs() {
             writable: true,
             enumerable: false,
             configurable: true,
-        }) if value == constructor.as_object().clone()
+        }) if value == constructor.as_object().try_clone().expect("duplicate root")
     ));
     assert!(matches!(
         runtime
@@ -104,7 +108,7 @@ fn function_constructor_intrinsic_and_dynamic_source_match_quickjs() {
             writable: true,
             enumerable: false,
             configurable: true,
-        }) if value == constructor.as_object().clone()
+        }) if value == constructor.as_object().try_clone().expect("duplicate root")
     ));
     {
         let state = runtime.0.state.borrow();
@@ -139,7 +143,7 @@ fn function_constructor_intrinsic_and_dynamic_source_match_quickjs() {
         context
             .call(
                 &to_string,
-                Value::Object(constructor.as_object().clone()),
+                Value::Object(constructor.as_object().try_clone().expect("duplicate root")),
                 &[],
             )
             .unwrap(),
@@ -157,7 +161,11 @@ fn function_constructor_intrinsic_and_dynamic_source_match_quickjs() {
     );
     assert_eq!(
         context
-            .call(&to_string, Value::Object(empty.clone()), &[])
+            .call(
+                &to_string,
+                Value::Object(empty.try_clone().expect("duplicate root")),
+                &[]
+            )
             .unwrap(),
         Value::String(JsString::from_static("function anonymous(\n) {\n\n}"))
     );
@@ -279,7 +287,7 @@ fn function_constructor_intrinsic_and_dynamic_source_match_quickjs() {
 #[test]
 fn function_constructor_html_comment_boundaries_match_quickjs_wrapper() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_eq!(
         context
@@ -309,8 +317,8 @@ fn function_constructor_html_comment_boundaries_match_quickjs_wrapper() {
 #[test]
 fn function_constructor_uses_defining_realm_and_new_target_prototype() {
     let runtime = Runtime::new();
-    let first = runtime.new_context();
-    let mut second = runtime.new_context();
+    let first = runtime.new_context().expect("create context");
+    let mut second = runtime.new_context().expect("create context");
     let constructor = first.function_constructor().unwrap();
     let first_function_prototype = first.function_prototype().unwrap();
     let second_function_prototype = second.function_prototype().unwrap();
@@ -360,7 +368,11 @@ fn function_constructor_uses_defining_realm_and_new_target_prototype() {
     );
     assert_eq!(
         runtime.get_prototype_of(&dynamic).unwrap(),
-        Some(first_function_prototype.clone())
+        Some(
+            first_function_prototype
+                .try_clone()
+                .expect("duplicate root")
+        )
     );
     assert_eq!(
         second
@@ -381,7 +393,9 @@ fn function_constructor_uses_defining_realm_and_new_target_prototype() {
                 new_target.as_object(),
                 &prototype_key,
                 &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(Value::Object(custom_prototype.clone())),
+                    value: DescriptorField::Present(Value::Object(
+                        custom_prototype.try_clone().expect("duplicate root")
+                    )),
                     ..OrdinaryPropertyDescriptor::new()
                 },
             )
@@ -452,7 +466,7 @@ fn function_constructor_uses_defining_realm_and_new_target_prototype() {
 #[test]
 fn function_constructor_samples_strip_mode_and_keeps_parse_locations() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let constructor = context.function_constructor().unwrap();
     let function_prototype = context.function_prototype().unwrap();
     let to_string_key = runtime.intern_property_key("toString").unwrap();
@@ -466,7 +480,9 @@ fn function_constructor_samples_strip_mode_and_keeps_parse_locations() {
     let keys = ["fileName", "lineNumber", "columnNumber"]
         .map(|name| runtime.intern_property_key(name).unwrap());
 
-    runtime.set_debug_info_mode(DebugInfoMode::StripSource);
+    runtime
+        .set_debug_info_mode(DebugInfoMode::StripSource)
+        .expect("set runtime configuration");
     let Value::Object(source_stripped) = context
         .call(
             &constructor,
@@ -489,7 +505,11 @@ fn function_constructor_samples_strip_mode_and_keeps_parse_locations() {
     }
     assert_eq!(
         context
-            .call(&to_string, Value::Object(source_stripped.clone()), &[])
+            .call(
+                &to_string,
+                Value::Object(source_stripped.try_clone().expect("duplicate root")),
+                &[]
+            )
             .unwrap(),
         Value::String(JsString::from_static(
             "function anonymous() {\n    [native code]\n}"
@@ -519,7 +539,9 @@ fn function_constructor_samples_strip_mode_and_keeps_parse_locations() {
         ))
     );
 
-    runtime.set_debug_info_mode(DebugInfoMode::StripDebug);
+    runtime
+        .set_debug_info_mode(DebugInfoMode::StripDebug)
+        .expect("set runtime configuration");
     let Value::Object(debug_stripped) = context
         .call(
             &constructor,
@@ -674,7 +696,7 @@ fn function_constructor_samples_strip_mode_and_keeps_parse_locations() {
 #[test]
 fn function_constructor_orders_source_conversion_parse_and_prototype_get() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let constructor = context.function_constructor().unwrap();
     let global = context.global_object().unwrap();
     runtime
@@ -691,7 +713,7 @@ fn function_constructor_orders_source_conversion_parse_and_prototype_get() {
         .define_function_data_property(
             &global,
             "functionCustomPrototype",
-            Value::Object(custom_prototype.clone()),
+            Value::Object(custom_prototype.try_clone().expect("duplicate root")),
             true,
             true,
         )
@@ -730,7 +752,12 @@ fn function_constructor_orders_source_conversion_parse_and_prototype_get() {
         .define_function_data_property(
             &parameter,
             "toString",
-            Value::Object(parameter_to_string.as_object().clone()),
+            Value::Object(
+                parameter_to_string
+                    .as_object()
+                    .try_clone()
+                    .expect("duplicate root"),
+            ),
             true,
             true,
         )
@@ -739,7 +766,12 @@ fn function_constructor_orders_source_conversion_parse_and_prototype_get() {
         .define_function_data_property(
             &body,
             "toString",
-            Value::Object(body_to_string.as_object().clone()),
+            Value::Object(
+                body_to_string
+                    .as_object()
+                    .try_clone()
+                    .expect("duplicate root"),
+            ),
             true,
             true,
         )
@@ -758,7 +790,7 @@ fn function_constructor_orders_source_conversion_parse_and_prototype_get() {
     let Value::Object(new_target) = context
         .call(
             &bind,
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone().expect("duplicate root")),
             &[Value::Undefined],
         )
         .unwrap()
@@ -788,8 +820,8 @@ fn function_constructor_orders_source_conversion_parse_and_prototype_get() {
             &constructor,
             &new_target,
             &[
-                Value::Object(parameter.clone()),
-                Value::Object(body.clone()),
+                Value::Object(parameter.try_clone().expect("duplicate root")),
+                Value::Object(body.try_clone().expect("duplicate root")),
             ],
         )
         .unwrap()
@@ -819,7 +851,12 @@ fn function_constructor_orders_source_conversion_parse_and_prototype_get() {
         .define_function_data_property(
             &parameter,
             "toString",
-            Value::Object(bad_parameter_to_string.as_object().clone()),
+            Value::Object(
+                bad_parameter_to_string
+                    .as_object()
+                    .try_clone()
+                    .expect("duplicate root"),
+            ),
             true,
             true,
         )
@@ -829,8 +866,8 @@ fn function_constructor_orders_source_conversion_parse_and_prototype_get() {
             &constructor,
             &new_target,
             &[
-                Value::Object(parameter.clone()),
-                Value::Object(body.clone())
+                Value::Object(parameter.try_clone().expect("duplicate root")),
+                Value::Object(body.try_clone().expect("duplicate root"))
             ],
         ),
         Err(RuntimeError::Exception)
@@ -854,7 +891,12 @@ fn function_constructor_orders_source_conversion_parse_and_prototype_get() {
         .define_function_data_property(
             &parameter,
             "toString",
-            Value::Object(throwing_to_string.as_object().clone()),
+            Value::Object(
+                throwing_to_string
+                    .as_object()
+                    .try_clone()
+                    .expect("duplicate root"),
+            ),
             true,
             true,
         )
@@ -880,7 +922,7 @@ fn function_constructor_orders_source_conversion_parse_and_prototype_get() {
 #[test]
 fn function_constructor_typed_realm_root_and_cycles_are_collectable() {
     let runtime = Runtime::new();
-    let context = runtime.new_context();
+    let context = runtime.new_context().expect("create context");
     let realm = context.realm;
     let constructor = context.function_constructor().unwrap();
     let function_prototype = context.function_prototype().unwrap();
@@ -914,7 +956,7 @@ fn function_constructor_typed_realm_root_and_cycles_are_collectable() {
     drop(context);
     runtime.run_gc().unwrap();
     assert!(runtime.0.state.borrow().heap.context(realm).is_err());
-    let counts = runtime.heap_counts();
+    let counts = runtime.heap_counts().expect("runtime state");
     assert_eq!(counts.context_nodes, 0);
     assert_eq!(counts.object_nodes, 0);
     assert_eq!(counts.shape_nodes, 0);
@@ -924,7 +966,7 @@ fn function_constructor_typed_realm_root_and_cycles_are_collectable() {
 #[test]
 fn dynamic_function_keeps_its_defining_realm_alive() {
     let runtime = Runtime::new();
-    let mut defining = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
     let defining_realm = defining.realm;
     let constructor = defining.function_constructor().unwrap();
     let Value::Object(function_object) = defining
@@ -939,7 +981,7 @@ fn dynamic_function_keeps_its_defining_realm_alive() {
     };
     let function = runtime.as_callable(&function_object).unwrap().unwrap();
     drop(function_object);
-    let mut caller = runtime.new_context();
+    let mut caller = runtime.new_context().expect("create context");
 
     drop(constructor);
     drop(defining);
@@ -969,16 +1011,19 @@ fn dynamic_function_keeps_its_defining_realm_alive() {
             .context(defining_realm)
             .is_err()
     );
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
 }
 
 #[test]
 fn function_constructor_failure_paths_release_temporary_graphs() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let constructor = context.function_constructor().unwrap();
     let live_counts = || {
-        let counts = runtime.heap_counts();
+        let counts = runtime.heap_counts().expect("runtime state");
         (
             counts.object_nodes,
             counts.shape_nodes,
@@ -990,7 +1035,7 @@ fn function_constructor_failure_paths_release_temporary_graphs() {
 
     runtime.run_gc().unwrap(); // Compare after optional construction-cache roots are cleared.
     let parse_baseline = live_counts();
-    let parse_atom_baseline = runtime.test_atom_count();
+    let parse_atom_baseline = runtime.test_atom_count().expect("atom count");
     for _ in 0..3 {
         assert_eq!(
             context.call(
@@ -1006,7 +1051,10 @@ fn function_constructor_failure_paths_release_temporary_graphs() {
         drop(context.take_exception().unwrap());
         runtime.run_gc().unwrap();
         assert_eq!(live_counts(), parse_baseline);
-        assert_eq!(runtime.test_atom_count(), parse_atom_baseline);
+        assert_eq!(
+            runtime.test_atom_count().expect("atom count"),
+            parse_atom_baseline
+        );
     }
 
     let function_prototype = context.function_prototype().unwrap();
@@ -1021,7 +1069,7 @@ fn function_constructor_failure_paths_release_temporary_graphs() {
     let Value::Object(new_target) = context
         .call(
             &bind,
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone().expect("duplicate root")),
             &[Value::Undefined],
         )
         .unwrap()
@@ -1054,7 +1102,7 @@ fn function_constructor_failure_paths_release_temporary_graphs() {
     );
     runtime.run_gc().unwrap();
     let getter_baseline = live_counts();
-    let getter_atom_baseline = runtime.test_atom_count();
+    let getter_atom_baseline = runtime.test_atom_count().expect("atom count");
     for _ in 0..3 {
         assert_eq!(
             context.construct_with_new_target(
@@ -1070,6 +1118,9 @@ fn function_constructor_failure_paths_release_temporary_graphs() {
         );
         runtime.run_gc().unwrap();
         assert_eq!(live_counts(), getter_baseline);
-        assert_eq!(runtime.test_atom_count(), getter_atom_baseline);
+        assert_eq!(
+            runtime.test_atom_count().expect("atom count"),
+            getter_atom_baseline
+        );
     }
 }

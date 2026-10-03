@@ -318,7 +318,7 @@ impl ConversionTask {
             finish,
             frame,
             identity,
-            PrimitiveResume::start(runtime, parent.executable.realm, value, hint),
+            PrimitiveResume::start(runtime, parent.executable.realm, value, hint)?,
         ))
     }
 
@@ -337,7 +337,7 @@ impl ConversionTask {
                 .dup_jsvalue(&input.key)
                 .map_err(runtime_error_to_vm_error)?,
             ToPrimitiveHint::String,
-        );
+        )?;
         Ok(Self::new(
             runtime,
             Finish::Predicate(Some(input)),
@@ -362,7 +362,7 @@ impl ConversionTask {
                 .dup_jsvalue(&input.key)
                 .map_err(runtime_error_to_vm_error)?,
             ToPrimitiveHint::String,
-        );
+        )?;
         Ok(Self::new(
             runtime,
             Finish::SuperProperty(Some(input)),
@@ -392,7 +392,7 @@ impl ConversionTask {
                 parent.executable.realm,
                 key,
                 ToPrimitiveHint::String,
-            ),
+            )?,
         ))
     }
 
@@ -423,7 +423,7 @@ impl ConversionTask {
                 parent.executable.realm,
                 key,
                 ToPrimitiveHint::String,
-            ),
+            )?,
         ))
     }
 
@@ -522,7 +522,7 @@ impl ConversionTask {
                                         realm,
                                         right,
                                         ToPrimitiveHint::Default,
-                                    ),
+                                    )?,
                                 )));
                             }
                             Finish::AddRight(left) => add_completion(
@@ -605,7 +605,7 @@ impl ConversionTask {
             PrimitiveStep::Get { mut resume } => {
                 let (object, key) = resume.take_get();
                 let read = runtime
-                    .prepare_ordinary_read(&object, &key, Value::Object(object.clone()))
+                    .prepare_ordinary_read(&object, &key, Value::Object(object.try_clone()?))
                     .map_err(runtime_error_to_vm_error)?;
                 match read {
                     OrdinaryRead::Call { getter, receiver } => invoke(
@@ -760,7 +760,7 @@ fn invoke(
                 runtime,
                 execution,
                 frame,
-                callable.as_object().clone(),
+                callable.as_object().try_clone()?,
                 operands.take_receiver(),
                 operands.take_arguments(),
                 wait,
@@ -856,7 +856,7 @@ mod primitive_store_tests {
     #[test]
     fn conversion_task_resides_across_both_operands_and_skips_primitive_property_keys() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         drop(
             context
                 .eval("var residentLeft={valueOf(){return 1}},residentRight={valueOf(){return 2}}")
@@ -896,7 +896,7 @@ mod primitive_store_tests {
     #[test]
     fn primitive_store_keeps_conversion_capture_and_throw_observations() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(

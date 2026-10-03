@@ -6,7 +6,7 @@ use crate::engine::vm::test_numeric_region_hits;
 
 fn run(source: &str, generic: bool) -> (Value, usize) {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let (result, hits) = test_numeric_region_hits(|| {
         if generic {
             without_numeric_regions(|| context.eval(source))
@@ -22,7 +22,7 @@ fn run(source: &str, generic: bool) -> (Value, usize) {
 
 fn opcodes(source: &str) -> Vec<Opcode> {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let root = context.compile(source).unwrap();
     let child = runtime.test_child_function_bytecode(&root, 0).unwrap();
     runtime.test_function_exec_opcodes(&child).unwrap()
@@ -262,7 +262,7 @@ fn dynamic_misses_attempt_the_selected_region() {
             .contains(&Opcode::NumericArrayAccumulate)
     );
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let (result, counts) = test_numeric_region_counts(|| context.eval(source));
     assert!(result.is_ok());
     assert_eq!(counts, (1, 0, 1));
@@ -374,7 +374,7 @@ fn array_update_site_handles_own_hole_accessor_and_own_transitions() {
     })()"#;
     let (generic, _) = run(source, true);
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let (optimized, counts) = test_numeric_region_counts(|| context.eval(source));
     assert_eq!(format!("{:?}", optimized.unwrap()), format!("{generic:?}"));
     assert_eq!(counts, (4, 2, 2));
@@ -555,7 +555,7 @@ fn resumed_async_frame_enters_region_after_await() {
     let source = "(function(){globalThis.m1Result=0;async function f(a,i,s){var sum=7;await 0;sum += a[i]*s;return sum;}f([2],0,3).then(value=>{m1Result=value;});})()";
     for generic in [false, true] {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (_, hits) = test_numeric_region_hits(|| {
             if generic {
                 let _ = without_numeric_regions(|| context.eval(source)).unwrap();

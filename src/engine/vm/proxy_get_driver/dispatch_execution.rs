@@ -339,7 +339,7 @@ pub(super) fn prepare(
                 let callback = callback.take().expect("selected Step field");
                 let resume = resume.take().expect("selected Step field");
                 query.parents.push(resume);
-                *step = (*callback).into();
+                *step = (*callback).try_into()?;
             }
 
             Step::ModuleBodyOperation { step: body, resume } => {
@@ -350,7 +350,7 @@ pub(super) fn prepare(
                 let body = body.take().expect("selected Step field");
                 let resume = resume.take().expect("selected Step field");
                 query.parents.push(resume);
-                *step = (*body).into();
+                *step = (*body).try_into()?;
             }
 
             Step::ModuleLink {
@@ -433,7 +433,7 @@ pub(super) fn prepare(
                 let operation = operation.take().expect("selected Step field");
                 let resume = resume.take().expect("selected Step field");
                 query.parents.push(resume);
-                *step = (*operation).into();
+                *step = (*operation).try_into()?;
                 continue;
             }
             Step::IntrinsicPromiseResolve {
@@ -451,7 +451,7 @@ pub(super) fn prepare(
                 *step = runtime
                     .prepare_intrinsic_promise_resolve(resolve_realm, value)
                     .map_err(runtime_error_to_vm_error)?
-                    .into();
+                    .try_into()?;
                 continue;
             }
             Step::Construct {
@@ -501,7 +501,7 @@ pub(super) fn prepare(
                     runtime, realm, target, new_target, arguments,
                 )
                 .map_err(runtime_error_to_vm_error)?
-                .into();
+                .try_into()?;
                 continue;
             }
             Step::IndirectEval { source, resume } => {

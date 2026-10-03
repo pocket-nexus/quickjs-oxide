@@ -42,9 +42,11 @@ fn fixture(
 fn public_field_local_completion_preserves_alias_owners_pc_and_identity() {
     for cached in [false, true] {
         let runtime = Runtime::new();
-        runtime.set_gc_policy(GcPolicy::Manual);
-        let mut context = runtime.new_context();
-        let caller = runtime.new_context();
+        runtime
+            .set_gc_policy(GcPolicy::Manual)
+            .expect("set GC policy");
+        let mut context = runtime.new_context().expect("create context");
+        let caller = runtime.new_context().expect("create context");
         let (mut execution, id) = fixture(&runtime, &mut context, &caller, 1);
         if cached {
             let query =
@@ -63,9 +65,9 @@ fn public_field_local_completion_preserves_alias_owners_pc_and_identity() {
             &runtime,
             &mut execution,
             id,
-            target.clone(),
-            key.clone(),
-            JsValue::Object(target.clone().into_handle()),
+            target.try_clone().expect("duplicate root"),
+            key.try_clone().expect("duplicate root"),
+            JsValue::Object(target.try_clone().expect("duplicate root").into_handle()),
             0,
         )
         .unwrap();
@@ -109,8 +111,8 @@ fn public_field_local_completion_preserves_alias_owners_pc_and_identity() {
 #[test]
 fn public_field_identity_exhaustion_precedes_definition_and_releases_inputs() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
-    let caller = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
+    let caller = runtime.new_context().expect("create context");
     let (mut execution, id) = fixture(&runtime, &mut context, &caller, 1);
     execution
         .frames
@@ -123,9 +125,9 @@ fn public_field_identity_exhaustion_precedes_definition_and_releases_inputs() {
         &runtime,
         &mut execution,
         id,
-        target.clone(),
-        key.clone(),
-        JsValue::Object(target.clone().into_handle()),
+        target.try_clone().expect("duplicate root"),
+        key.try_clone().expect("duplicate root"),
+        JsValue::Object(target.try_clone().expect("duplicate root").into_handle()),
         0,
     );
     let Err(error) = result else {
@@ -154,8 +156,8 @@ fn public_field_identity_exhaustion_precedes_definition_and_releases_inputs() {
 #[test]
 fn public_field_proxy_budget_still_precedes_getter_trap_and_mutation() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
-    let caller = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
+    let caller = runtime.new_context().expect("create context");
     let Value::Object(proxy) = context
         .eval("globalThis.fieldCalls=0;globalThis.fieldTarget={};new Proxy(fieldTarget,{get defineProperty(){fieldCalls++;return function(){fieldCalls++;return true}}})")
         .unwrap()
@@ -172,7 +174,7 @@ fn public_field_proxy_budget_still_precedes_getter_trap_and_mutation() {
         id,
         proxy,
         runtime.intern_property_key("x").unwrap(),
-        JsValue::Object(marker.clone().into_handle()),
+        JsValue::Object(marker.try_clone().expect("duplicate root").into_handle()),
         0,
     )
     .unwrap();
@@ -212,7 +214,7 @@ fn public_field_proxy_budget_still_precedes_getter_trap_and_mutation() {
 #[test]
 fn public_fields_keep_own_definition_and_observable_special_fallback_order() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(context.eval(r#"(function(){
         let trace='',sets=0,marker={answer:42};
         Object.defineProperty(Object.prototype,'field',{configurable:true,set(){sets++;throw 99}});
@@ -246,8 +248,8 @@ fn public_fields_keep_own_definition_and_observable_special_fallback_order() {
 #[test]
 fn public_field_rejection_uses_frame_realm_and_keeps_fault_pc() {
     let runtime = Runtime::new();
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let prototype = defining.eval("TypeError.prototype").unwrap();
     let Value::Object(target) = defining.eval("Object.preventExtensions({})").unwrap() else {
         panic!("ordinary object")
@@ -258,9 +260,9 @@ fn public_field_rejection_uses_frame_realm_and_keeps_fault_pc() {
         &runtime,
         &mut execution,
         id,
-        target.clone(),
+        target.try_clone().expect("duplicate root"),
         runtime.intern_property_key("x").unwrap(),
-        JsValue::Object(marker.clone().into_handle()),
+        JsValue::Object(marker.try_clone().expect("duplicate root").into_handle()),
         0,
     )
     .unwrap();
@@ -309,9 +311,11 @@ fn public_field_rejection_uses_frame_realm_and_keeps_fault_pc() {
 #[test]
 fn failed_public_field_domain_check_leaves_target_unmodified_and_cleans_request() {
     let runtime = Runtime::new();
-    runtime.set_gc_policy(GcPolicy::Manual);
-    let mut context = runtime.new_context();
-    let caller = runtime.new_context();
+    runtime
+        .set_gc_policy(GcPolicy::Manual)
+        .expect("set GC policy");
+    let mut context = runtime.new_context().expect("create context");
+    let caller = runtime.new_context().expect("create context");
     let (mut execution, id) = fixture(&runtime, &mut context, &caller, 1);
     let target = runtime.new_object(None).unwrap();
     let marker = runtime.new_object(None).unwrap();
@@ -321,9 +325,9 @@ fn failed_public_field_domain_check_leaves_target_unmodified_and_cleans_request(
         &runtime,
         &mut execution,
         id,
-        target.clone(),
+        target.try_clone().expect("duplicate root"),
         foreign_key,
-        JsValue::Object(marker.clone().into_handle()),
+        JsValue::Object(marker.try_clone().expect("duplicate root").into_handle()),
         0,
     );
     let Err(error) = result else {
@@ -371,9 +375,11 @@ fn failed_public_field_domain_check_leaves_target_unmodified_and_cleans_request(
 #[test]
 fn public_field_preserves_cleanup_and_ready_gc_service_with_live_definition() {
     let runtime = Runtime::new();
-    runtime.set_gc_policy(GcPolicy::Manual);
-    let mut context = runtime.new_context();
-    let caller = runtime.new_context();
+    runtime
+        .set_gc_policy(GcPolicy::Manual)
+        .expect("set GC policy");
+    let mut context = runtime.new_context().expect("create context");
+    let caller = runtime.new_context().expect("create context");
     let Value::Object(garbage) = context
         .eval("(function(){const o={};o.self=o;return o})()")
         .unwrap()
@@ -385,9 +391,9 @@ fn public_field_preserves_cleanup_and_ready_gc_service_with_live_definition() {
     let (mut execution, id) = fixture(&runtime, &mut context, &caller, 1);
     let target = runtime.new_object(None).unwrap();
     let marker = runtime.new_object(None).unwrap();
-    let object = target.clone();
+    let object = target.try_clone().expect("duplicate root");
     let key = runtime.intern_property_key("x").unwrap();
-    let value = JsValue::Object(marker.clone().into_handle());
+    let value = JsValue::Object(marker.try_clone().expect("duplicate root").into_handle());
     let pending = runtime.new_object(None).unwrap().into_handle();
     let deferred = runtime.new_object(None).unwrap();
     let deferred_id = deferred.object_id();
@@ -399,7 +405,9 @@ fn public_field_preserves_cleanup_and_ready_gc_service_with_live_definition() {
             .unwrap();
         drop(deferred);
     }
-    runtime.set_gc_policy(GcPolicy::Automatic);
+    runtime
+        .set_gc_policy(GcPolicy::Automatic)
+        .expect("set GC policy");
     runtime.0.gc_pressure.remaining.set(0);
     assert!(runtime.0.deferred_references.has_pending());
     assert!(runtime.0.state.borrow().heap.has_pending_zero_cleanup());

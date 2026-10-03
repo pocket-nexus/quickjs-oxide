@@ -162,7 +162,11 @@ impl CallbackStep {
             }
         }
         let key = runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?;
-        Ok(Self::request_read(resume.0.object.clone(), key, resume))
+        Ok(Self::request_read(
+            resume.0.object.try_clone()?,
+            key,
+            resume,
+        ))
     }
 }
 
@@ -215,7 +219,7 @@ impl CallbackResume {
                         .callback
                         .as_ref()
                         .ok_or(RuntimeError::Invariant("Array callback missing"))?
-                        .clone(),
+                        .try_clone()?,
                 );
                 self.0.pending_effect.call_receiver =
                     Some(if matches!(self.0.kind, CallbackKind::Reduce(_)) {
@@ -256,7 +260,7 @@ impl CallbackResume {
                 let receiver = if matches!(self.0.kind, CallbackKind::Find(_)) {
                     runtime.dup_jsvalue(&self.0.original)?
                 } else {
-                    JsValue::Object(self.0.object.clone().into_handle())
+                    JsValue::Object(self.0.object.try_clone()?.into_handle())
                 };
                 self.0
                     .pending_effect
@@ -368,7 +372,7 @@ impl CallbackResume {
             if matches!(kind, ArrayIterationKind::Map | ArrayIterationKind::Filter) {
                 self.0.phase = Phase::Species;
                 return Ok(CallbackStep::request_species(
-                    self.0.object.clone(),
+                    self.0.object.try_clone()?,
                     if kind == ArrayIterationKind::Map {
                         self.0.length
                     } else {
@@ -408,10 +412,18 @@ impl CallbackResume {
         let key = runtime.property_key_for_index(self.index())?;
         if matches!(self.0.kind, CallbackKind::Find(_)) {
             self.0.phase = Phase::Read;
-            Ok(CallbackStep::request_read(self.0.object.clone(), key, self))
+            Ok(CallbackStep::request_read(
+                self.0.object.try_clone()?,
+                key,
+                self,
+            ))
         } else {
             self.0.phase = Phase::Has;
-            Ok(CallbackStep::request_has(self.0.object.clone(), key, self))
+            Ok(CallbackStep::request_has(
+                self.0.object.try_clone()?,
+                key,
+                self,
+            ))
         }
     }
     pub(crate) fn boolean(
@@ -439,7 +451,11 @@ impl CallbackResume {
         }
         let key = runtime.property_key_for_index(self.index())?;
         self.0.phase = Phase::Read;
-        Ok(CallbackStep::request_read(self.0.object.clone(), key, self))
+        Ok(CallbackStep::request_read(
+            self.0.object.try_clone()?,
+            key,
+            self,
+        ))
     }
     fn define(
         mut self,
@@ -566,7 +582,7 @@ mod tests {
     fn unpublished_species_result_and_mapper_survive_wait_then_release() {
         let runtime = Runtime::new();
         let weak = std::rc::Rc::downgrade(&runtime.0);
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let mapper = context.eval("(function(value) { return value; })").unwrap();
         let Value::Object(mapper_object) = &mapper else {
             panic!("expected mapper");

@@ -111,14 +111,17 @@ impl Heap {
 
 impl Runtime {
     #[must_use]
-    pub fn gc_policy(&self) -> GcPolicy {
-        self.0.gc_pressure.policy.get()
+    pub fn gc_policy(&self) -> Result<GcPolicy, crate::engine::api::RuntimeError> {
+        self.check_poison()?;
+        Ok(self.0.gc_pressure.policy.get())
     }
 
     /// Changing policy does not collect or execute JS. Exhausted budget remains
     /// pending under Manual and will be serviced after Automatic is enabled.
-    pub fn set_gc_policy(&self, policy: GcPolicy) {
+    pub fn set_gc_policy(&self, policy: GcPolicy) -> Result<(), crate::engine::api::RuntimeError> {
+        self.check_poison()?;
         self.0.gc_pressure.policy.set(policy);
+        Ok(())
     }
 }
 
@@ -130,17 +133,19 @@ mod tests {
     #[test]
     fn cycle_budget_requests_without_collecting_and_explicit_gc_rearms() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        runtime.set_gc_policy(GcPolicy::Manual);
+        let mut context = runtime.new_context().expect("create context");
+        runtime
+            .set_gc_policy(GcPolicy::Manual)
+            .expect("set GC policy");
         drop(
             context
                 .eval("for(let i=0;i<20000;i++){let x={};x.self=x}")
                 .unwrap(),
         );
         assert_eq!(runtime.0.gc_pressure.remaining.get(), 0);
-        assert!(runtime.heap_counts().object_nodes >= 20000);
+        assert!(runtime.heap_counts().expect("runtime state").object_nodes >= 20000);
         runtime.run_gc().unwrap();
-        let n = runtime.heap_counts();
+        let n = runtime.heap_counts().expect("runtime state");
         let live = n.object_nodes
             + n.shape_nodes
             + n.var_ref_nodes
@@ -195,8 +200,10 @@ mod credit_tests {
     #[test]
     fn rc_churn_returns_budget_without_clearing_a_latched_request() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        runtime.set_gc_policy(GcPolicy::Manual);
+        let mut context = runtime.new_context().expect("create context");
+        runtime
+            .set_gc_policy(GcPolicy::Manual)
+            .expect("set GC policy");
         runtime.run_gc().unwrap();
         drop(
             context
@@ -232,7 +239,7 @@ mod net_budget_tests {
     use super::*;
 
     fn cycle_nodes(runtime: &Runtime) -> usize {
-        let n = runtime.heap_counts();
+        let n = runtime.heap_counts().expect("runtime state");
         n.object_nodes
             + n.context_nodes
             + n.function_bytecode_nodes
@@ -243,8 +250,10 @@ mod net_budget_tests {
     #[test]
     fn net_budget_matches_published_growth_across_object_shape_and_capture_lifetimes() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        runtime.set_gc_policy(GcPolicy::Manual);
+        let mut context = runtime.new_context().expect("create context");
+        runtime
+            .set_gc_policy(GcPolicy::Manual)
+            .expect("set GC policy");
         runtime.run_gc().unwrap();
         let initial = cycle_nodes(&runtime);
         let budget = runtime.0.gc_pressure.remaining.get();

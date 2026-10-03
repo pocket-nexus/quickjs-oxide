@@ -147,7 +147,7 @@ mod dense_immediate_tests {
     use crate::engine::heap::ObjectId;
 
     fn iterator(runtime: &Runtime, source: &str) -> (ObjectRef, ObjectId, ArrayIteratorKind) {
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(iterator) = context.eval(source).unwrap() else {
             panic!("fixture must return an iterator");
         };
@@ -167,7 +167,7 @@ mod dense_immediate_tests {
     #[test]
     fn callback_requests_keep_the_same_array_next_resume_allocation() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let iterator = context.eval("Array.prototype.values.call({get length(){return {valueOf(){return 1}}},get 0(){return 7}})").unwrap();
         let invocation = NativeInvocation::Call {
             this_value: runtime.into_jsvalue(iterator).unwrap(),

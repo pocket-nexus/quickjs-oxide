@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn published_exception_regions_catch_native_callee_and_accessor_throws() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     let native_error = UnlinkedFunction::fixture(
         vec![
@@ -137,7 +137,7 @@ fn pending_exception_slot_owns_and_transfers_object_roots() {
     let object = runtime.new_object(None).unwrap();
     let object_id = object.object_id();
     runtime
-        .set_pending_exception(Value::Object(object.clone()))
+        .set_pending_exception(Value::Object(object.try_clone().expect("duplicate root")))
         .unwrap();
     assert!(runtime.has_pending_exception());
     assert_eq!(
@@ -157,23 +157,30 @@ fn pending_exception_slot_owns_and_transfers_object_roots() {
         Ok(1)
     );
     drop(exception);
-    assert_eq!(runtime.heap_counts().object_nodes, 0);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").object_nodes,
+        0
+    );
 }
 
 #[test]
 fn pending_exception_roots_survive_gc_and_preserve_symbol_identity() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let object = runtime.new_object(None).unwrap();
     let object_id = object.object_id();
     let self_key = runtime.intern_property_key("self").unwrap();
     assert!(
         context
-            .set_property(&object, &self_key, Value::Object(object.clone()))
+            .set_property(
+                &object,
+                &self_key,
+                Value::Object(object.try_clone().expect("duplicate root"))
+            )
             .unwrap()
     );
     runtime
-        .set_pending_exception(Value::Object(object.clone()))
+        .set_pending_exception(Value::Object(object.try_clone().expect("duplicate root")))
         .unwrap();
     drop(object);
 
@@ -189,7 +196,7 @@ fn pending_exception_roots_survive_gc_and_preserve_symbol_identity() {
     let symbol = runtime
         .new_symbol(Some(JsString::from_static("boom")))
         .unwrap();
-    let expected = symbol.clone();
+    let expected = symbol.try_clone().expect("duplicate root");
     runtime
         .set_pending_exception(Value::Symbol(symbol))
         .unwrap();
@@ -200,17 +207,17 @@ fn pending_exception_roots_survive_gc_and_preserve_symbol_identity() {
 #[test]
 fn throw_completion_moves_the_value_into_the_runtime_exception_slot() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(context.eval("throw 9"), Err(RuntimeError::Exception));
-    assert!(context.has_exception());
+    assert!(context.has_exception().expect("runtime state"));
     assert_eq!(context.take_exception().unwrap(), Some(Value::Int(9)));
-    assert!(!context.has_exception());
+    assert!(!context.has_exception().expect("runtime state"));
 }
 
 #[test]
 fn vm_fault_materializes_a_native_error_in_the_callee_realm() {
     let runtime = Runtime::new();
-    let mut compiler_context = runtime.new_context();
+    let mut compiler_context = runtime.new_context().expect("create context");
     let function = compiler_context.compile("1n + 1").unwrap();
     let expected_prototype = runtime
         .0
@@ -221,7 +228,7 @@ fn vm_fault_materializes_a_native_error_in_the_callee_realm() {
         .unwrap()
         .native_error_prototypes[NativeErrorKind::Type.index()]
     .unwrap();
-    let mut caller_context = runtime.new_context();
+    let mut caller_context = runtime.new_context().expect("create context");
     let caller_prototype = runtime
         .0
         .state
@@ -291,7 +298,7 @@ fn vm_fault_materializes_a_native_error_in_the_callee_realm() {
 #[test]
 fn nested_fault_non_callable_and_compile_syntax_use_exception_completion() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_eq!(
         context.eval("(function(){ return 1n + 1; })()"),

@@ -232,7 +232,7 @@ fn scoped_function_conflicts_and_global_annex_order_match_quickjs() {
     }
 
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         context.eval("{function lateGlobalLexical(){}}let lateGlobalLexical;"),
         Err(RuntimeError::Exception)

@@ -633,8 +633,8 @@ fn json_stringify_wrapper_and_native_errors_use_the_method_defining_realm() {
     // realm, which supplies the root wrapper and native TypeError objects.
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_object_prototype = defining.object_prototype().unwrap();
     let defining_type_error = eval_object(
         &mut defining,
@@ -665,7 +665,7 @@ fn json_stringify_wrapper_and_native_errors_use_the_method_defining_realm() {
             &stringify,
             Value::Undefined,
             &[
-                Value::Object(input.clone()),
+                Value::Object(input.try_clone().expect("duplicate root")),
                 Value::Object(replacer),
                 Value::Undefined,
             ],
@@ -715,7 +715,7 @@ fn json_stringify_wrapper_and_native_errors_use_the_method_defining_realm() {
 fn rust_observation(case: &Case) -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     match context.eval(case.source) {
         Ok(value) => format!(
             "return|{}|{}",

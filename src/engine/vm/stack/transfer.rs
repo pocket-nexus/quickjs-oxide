@@ -272,7 +272,7 @@ mod tests {
         local: FrameBinding,
         parameter: FrameBinding,
     ) -> (SlotStore, FrameWindow) {
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let mut owner = PublishedFunctionSnapshot::empty_for_test(context.realm);
         owner.metadata.argument_count = 1;
         owner.metadata.local_count = 1;

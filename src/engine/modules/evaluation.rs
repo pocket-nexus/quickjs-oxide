@@ -105,7 +105,7 @@ impl EvaluationStep {
             ));
         }
         let capability = runtime.new_default_promise_capability(initiating_realm)?;
-        let promise = capability.promise.clone();
+        let promise = capability.promise.try_clone()?;
         runtime
             .0
             .state
@@ -199,9 +199,9 @@ impl EvaluationResume {
         self.armed = false;
         self.settling = true;
         let callable = if success {
-            self.capability.resolve.clone()
+            self.capability.resolve.try_clone()?
         } else {
-            self.capability.reject.clone()
+            self.capability.reject.try_clone()?
         };
         Ok(EvaluationStep::Call {
             callable,
@@ -219,7 +219,7 @@ impl EvaluationResume {
                     self.runtime.release_jsvalue(value)?;
                     Ok(EvaluationStep::Complete(Completion::Return(
                         self.runtime
-                            .into_jsvalue(Value::Object(self.capability.promise.clone()))?,
+                            .into_jsvalue(Value::Object(self.capability.promise.try_clone()?))?,
                     )))
                 }
                 Completion::Throw(value) => {
@@ -285,8 +285,9 @@ impl EvaluationResume {
                 match self.runtime.module_record(self.root.raw)?.evaluation {
                     ModuleEvaluationState::EvaluatingAsync => {
                         Ok(EvaluationStep::Complete(Completion::Return(
-                            self.runtime
-                                .into_jsvalue(Value::Object(self.capability.promise.clone()))?,
+                            self.runtime.into_jsvalue(Value::Object(
+                                self.capability.promise.try_clone()?,
+                            ))?,
                         )))
                     }
                     ModuleEvaluationState::Evaluated => self.settle(true, JsValue::Undefined),

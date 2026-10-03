@@ -128,29 +128,73 @@ pub(crate) enum InternalSetResult {
     RejectedProxyTrap,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) enum InternalDefineResult {
     Defined,
     RejectedOrdinary(ObjectRef),
     RejectedProxyTrap,
 }
 
+/// Descriptor validation consumes no owners. All inputs remain borrowed
+/// until the effect-free algorithm has selected the result to publish.
+#[derive(Clone, Copy)]
+pub(crate) enum ValidationValue<'a> {
+    Value(&'a Value),
+    Callable(&'a CallableRef),
+    Undefined,
+}
+impl ValidationValue<'_> {
+    pub(crate) fn same_value(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Value(left), Self::Value(right)) => left.same_value(right),
+            (Self::Callable(left), Self::Callable(right)) => left == right,
+            (Self::Callable(left), Self::Value(Value::Object(right)))
+            | (Self::Value(Value::Object(right)), Self::Callable(left)) => {
+                left.as_object() == right
+            }
+            (Self::Undefined, Self::Undefined)
+            | (Self::Undefined, Self::Value(Value::Undefined))
+            | (Self::Value(Value::Undefined), Self::Undefined) => true,
+            _ => false,
+        }
+    }
+    fn into_value(self) -> Result<Value, RuntimeError> {
+        match self {
+            Self::Value(value) => value.try_clone(),
+            Self::Callable(value) => Ok(Value::Object(value.as_object().try_clone()?)),
+            Self::Undefined => Ok(Value::Undefined),
+        }
+    }
+    fn into_callable(self) -> Result<CallableRef, RuntimeError> {
+        match self {
+            Self::Callable(value) => value.try_clone(),
+            _ => Err(RuntimeError::Invariant(
+                "validated accessor was not callable",
+            )),
+        }
+    }
+}
+
 pub(crate) fn descriptor_to_validation_record(
     descriptor: &OrdinaryPropertyDescriptor,
-) -> PropertyDescriptor<Value> {
+) -> PropertyDescriptor<ValidationValue<'_>> {
     PropertyDescriptor {
-        value: descriptor.value.as_ref().into_option().cloned(),
+        value: descriptor
+            .value
+            .as_ref()
+            .into_option()
+            .map(ValidationValue::Value),
         writable: descriptor.writable.as_ref().into_option().copied(),
-        get: descriptor.get.as_ref().into_option().map(|accessor| {
-            accessor
-                .as_callable()
-                .map(|callable| Value::Object(callable.as_object().clone()))
-        }),
-        set: descriptor.set.as_ref().into_option().map(|accessor| {
-            accessor
-                .as_callable()
-                .map(|callable| Value::Object(callable.as_object().clone()))
-        }),
+        get: descriptor
+            .get
+            .as_ref()
+            .into_option()
+            .map(|accessor| accessor.as_callable().map(ValidationValue::Callable)),
+        set: descriptor
+            .set
+            .as_ref()
+            .into_option()
+            .map(|accessor| accessor.as_callable().map(ValidationValue::Callable)),
         enumerable: descriptor.enumerable.as_ref().into_option().copied(),
         configurable: descriptor.configurable.as_ref().into_option().copied(),
     }
@@ -158,7 +202,7 @@ pub(crate) fn descriptor_to_validation_record(
 
 pub(crate) fn complete_to_validation_record(
     descriptor: &CompleteOrdinaryPropertyDescriptor,
-) -> CompletePropertyDescriptor<Value> {
+) -> CompletePropertyDescriptor<ValidationValue<'_>> {
     match descriptor {
         CompleteOrdinaryPropertyDescriptor::Data {
             value,
@@ -166,7 +210,7 @@ pub(crate) fn complete_to_validation_record(
             enumerable,
             configurable,
         } => CompletePropertyDescriptor::Data {
-            value: value.clone(),
+            value: ValidationValue::Value(value),
             writable: *writable,
             enumerable: *enumerable,
             configurable: *configurable,
@@ -177,12 +221,8 @@ pub(crate) fn complete_to_validation_record(
             enumerable,
             configurable,
         } => CompletePropertyDescriptor::Accessor {
-            get: get
-                .as_ref()
-                .map(|callable| Value::Object(callable.as_object().clone())),
-            set: set
-                .as_ref()
-                .map(|callable| Value::Object(callable.as_object().clone())),
+            get: get.as_ref().map(ValidationValue::Callable),
+            set: set.as_ref().map(ValidationValue::Callable),
             enumerable: *enumerable,
             configurable: *configurable,
         },
@@ -190,48 +230,30 @@ pub(crate) fn complete_to_validation_record(
 }
 
 pub(crate) fn validation_record_to_complete(
-    descriptor: CompletePropertyDescriptor<Value>,
+    descriptor: CompletePropertyDescriptor<ValidationValue<'_>>,
 ) -> Result<CompleteOrdinaryPropertyDescriptor, RuntimeError> {
-    match descriptor {
+    Ok(match descriptor {
         CompletePropertyDescriptor::Data {
             value,
             writable,
             enumerable,
             configurable,
-        } => Ok(CompleteOrdinaryPropertyDescriptor::Data {
-            value,
+        } => CompleteOrdinaryPropertyDescriptor::Data {
+            value: value.into_value()?,
             writable,
             enumerable,
             configurable,
-        }),
+        },
         CompletePropertyDescriptor::Accessor {
             get,
             set,
             enumerable,
             configurable,
-        } => {
-            let get = get
-                .map(|value| match value {
-                    Value::Object(object) => Ok(CallableRef::from_validated_object(object)),
-                    _ => Err(RuntimeError::Invariant(
-                        "validated accessor getter was not callable",
-                    )),
-                })
-                .transpose()?;
-            let set = set
-                .map(|value| match value {
-                    Value::Object(object) => Ok(CallableRef::from_validated_object(object)),
-                    _ => Err(RuntimeError::Invariant(
-                        "validated accessor setter was not callable",
-                    )),
-                })
-                .transpose()?;
-            Ok(CompleteOrdinaryPropertyDescriptor::Accessor {
-                get,
-                set,
-                enumerable,
-                configurable,
-            })
-        }
-    }
+        } => CompleteOrdinaryPropertyDescriptor::Accessor {
+            get: get.map(ValidationValue::into_callable).transpose()?,
+            set: set.map(ValidationValue::into_callable).transpose()?,
+            enumerable,
+            configurable,
+        },
+    })
 }

@@ -632,7 +632,7 @@ mod selected_append_tests {
     #[test]
     fn canonical_append_preserves_symbols_accessors_self_edges_and_cache_updates() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context
             .eval(
                 r#"(function () {
@@ -668,7 +668,7 @@ mod selected_append_tests {
     #[test]
     fn canonical_append_rolls_back_new_symbol_owner_on_bad_successor() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let crate::engine::value::Value::Object(owner) =
             context.eval("({old: Symbol('owned')})").unwrap()
         else {

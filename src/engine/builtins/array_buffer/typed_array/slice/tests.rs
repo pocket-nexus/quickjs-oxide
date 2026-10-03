@@ -25,7 +25,7 @@ fn eval_object(context: &mut Context, source: &str, description: &str) -> Object
 #[test]
 fn slice_and_subarray_publish_the_quickjs_surface_and_basic_results() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -86,7 +86,7 @@ fn slice_and_subarray_publish_the_quickjs_surface_and_basic_results() {
 #[test]
 fn slice_matches_quickjs_species_reentrancy_and_raw_copy_contracts() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -249,7 +249,7 @@ fn slice_matches_quickjs_species_reentrancy_and_raw_copy_contracts() {
 #[test]
 fn subarray_matches_quickjs_view_species_and_detached_contracts() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -377,8 +377,8 @@ fn subarray_matches_quickjs_view_species_and_detached_contracts() {
 #[test]
 fn slice_and_subarray_default_species_use_the_method_defining_realm() {
     let runtime = Runtime::new();
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_uint8 = eval_object(
         &mut defining,
         "Uint8Array.prototype",
@@ -415,14 +415,18 @@ fn slice_and_subarray_default_species_use_the_method_defining_realm() {
         "caller source with default species",
     );
     let Value::Object(slice_result) = caller
-        .call(&slice, Value::Object(default_source.clone()), &[])
+        .call(
+            &slice,
+            Value::Object(default_source.try_clone().expect("duplicate root")),
+            &[],
+        )
         .expect("cross-realm default slice")
     else {
         panic!("cross-realm default slice did not return an Object");
     };
     assert_eq!(
         runtime.get_prototype_of(&slice_result).unwrap(),
-        Some(defining_uint8.clone()),
+        Some(defining_uint8.try_clone().expect("duplicate root")),
         "default slice species did not use the method defining realm",
     );
     let Value::Object(subarray_result) = caller

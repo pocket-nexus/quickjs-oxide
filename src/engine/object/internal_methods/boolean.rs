@@ -131,7 +131,7 @@ fn method(
             drop(resume);
             match target {
                 None => {
-                    let object = rooted.target.clone();
+                    let object = rooted.target.try_clone()?;
                     let resume = ProxyBooleanResume(Box::new(ProxyBooleanResumeState {
                         pending_effect: ProxyBooleanStepPending::new(runtime.clone()),
                         realm,
@@ -139,7 +139,7 @@ fn method(
                             _rooted: rooted,
                             _key: match &kind {
                                 ProxyBooleanKind::Has(key) | ProxyBooleanKind::Delete(key) => {
-                                    Some(key.clone())
+                                    Some(key.try_clone()?)
                                 }
                                 _ => None,
                             },
@@ -161,11 +161,12 @@ fn method(
                     }
                 }
                 Some(target) => {
-                    let mut arguments = vec![Value::Object(rooted.target.clone())];
+                    let mut arguments = vec![Value::Object(rooted.target.try_clone()?)];
                     if let ProxyBooleanKind::Has(key) | ProxyBooleanKind::Delete(key) = &kind {
                         arguments.push(runtime.property_key_value(key)?);
                     }
-                    let receiver = runtime.into_jsvalue(Value::Object(rooted.handler.clone()))?;
+                    let receiver =
+                        runtime.into_jsvalue(Value::Object(rooted.handler.try_clone()?))?;
                     let arguments = arguments
                         .into_iter()
                         .map(|value| runtime.into_jsvalue(value))
@@ -213,8 +214,8 @@ impl ProxyBooleanResume {
                         Ok(ProxyBooleanStep::Complete(NativeConversion::Value(true)))
                     }
                     ProxyBooleanKind::Has(key) => Ok(ProxyBooleanStep::request_descriptor(
-                        rooted.target.clone(),
-                        key.clone(),
+                        rooted.target.try_clone()?,
+                        key.try_clone()?,
                         Self(Box::new(ProxyBooleanResumeState {
                             pending_effect: ProxyBooleanStepPending::new(runtime.clone()),
                             realm: self.0.realm,
@@ -227,8 +228,8 @@ impl ProxyBooleanResume {
                         Ok(ProxyBooleanStep::Complete(NativeConversion::Value(false)))
                     }
                     ProxyBooleanKind::Delete(key) => Ok(ProxyBooleanStep::request_descriptor(
-                        rooted.target.clone(),
-                        key.clone(),
+                        rooted.target.try_clone()?,
+                        key.try_clone()?,
                         Self(Box::new(ProxyBooleanResumeState {
                             pending_effect: ProxyBooleanStepPending::new(runtime.clone()),
                             realm: self.0.realm,
@@ -237,7 +238,7 @@ impl ProxyBooleanResume {
                     )),
                     ProxyBooleanKind::PreventExtensions => {
                         Ok(ProxyBooleanStep::request_extensible(
-                            rooted.target.clone(),
+                            rooted.target.try_clone()?,
                             Self(Box::new(ProxyBooleanResumeState {
                                 pending_effect: ProxyBooleanStepPending::new(runtime.clone()),
                                 realm: self.0.realm,
@@ -251,7 +252,7 @@ impl ProxyBooleanResume {
                         ))
                     }
                     ProxyBooleanKind::Extensible => Ok(ProxyBooleanStep::request_extensible(
-                        rooted.target.clone(),
+                        rooted.target.try_clone()?,
                         Self(Box::new(ProxyBooleanResumeState {
                             pending_effect: ProxyBooleanStepPending::new(runtime.clone()),
                             realm: self.0.realm,
@@ -342,7 +343,7 @@ impl ProxyBooleanResume {
             }
             // Delete consults nested [[IsExtensible]], unlike Has's pinned raw bit.
             return Ok(ProxyBooleanStep::request_extensible(
-                rooted.target.clone(),
+                rooted.target.try_clone()?,
                 Self(Box::new(ProxyBooleanResumeState {
                     pending_effect: ProxyBooleanStepPending::new(runtime.clone()),
                     realm: self.0.realm,
@@ -695,7 +696,7 @@ mod tests {
         for after_descriptor in [false, true] {
             let runtime = Runtime::new();
             let weak = std::rc::Rc::downgrade(&runtime.0);
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let Value::Object(proxy) = context.eval("new Proxy({}, {})").unwrap() else {
                 panic!("expected Proxy")
             };

@@ -24,7 +24,7 @@ mod tests {
     #[test]
     fn ordinary_number_calls_do_not_materialize_and_authenticate_once() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         drop(context.eval("function lazyLeaf(x) { return x; }").unwrap());
         let profile = CostProfile::start();
         // S13 enters the evaluated script through the same authenticated
@@ -65,7 +65,7 @@ mod tests {
     #[test]
     fn native_error_observes_lazy_ancestors_and_unwind_cleans_registry() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let value = context.eval("function lazyOuter(){return lazyInner()} function lazyInner(){return new Error('observed').stack} var s=lazyOuter(); s.includes('lazyOuter') && s.includes('lazyInner')").unwrap();
         assert_eq!(value, Value::Bool(true));
         assert!(runtime.0.state.borrow().active_frames.is_empty());

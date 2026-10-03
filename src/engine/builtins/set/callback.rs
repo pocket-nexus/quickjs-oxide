@@ -81,7 +81,7 @@ impl EachStep {
         EachResume(Box::new(EachResumeState {
             runtime: runtime.clone(),
             pending_effect: EachStepPending::default(),
-            set: set.clone(),
+            set: set.try_clone()?,
             callback,
             receiver: match arguments.readable.get(1) {
                 Some(value) => runtime.dup_jsvalue(value)?,
@@ -107,12 +107,12 @@ impl EachResume {
             }),
         );
         Ok(EachStep::request_call(
-            self.0.callback.clone(),
+            self.0.callback.try_clone()?,
             runtime.dup_jsvalue(&self.0.receiver)?,
             vec![
                 runtime.dup_jsvalue(&value)?,
                 value,
-                runtime.into_jsvalue(Value::Object(self.0.set.clone()))?,
+                runtime.into_jsvalue(Value::Object(self.0.set.try_clone()?))?,
             ],
             self,
         ))

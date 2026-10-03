@@ -144,7 +144,7 @@ impl ConsumeStep {
             None
         };
         Ok({
-            let __pending_field_object = source.clone();
+            let __pending_field_object = source.try_clone()?;
             let __pending_field_key = key;
             let __pending_field_resume = ConsumeResume(Box::new(ConsumeResumeState {
                 pending_effect: ConsumeStepPending::default(),
@@ -167,16 +167,24 @@ impl ConsumeStep {
     }
 }
 impl ConsumeResume {
-    fn close(self, completion: Completion) -> ConsumeStep {
-        ConsumeStep::Close {
-            iterator: self.0.source.clone(),
+    fn close(self, completion: Completion) -> Result<ConsumeStep, RuntimeError> {
+        let iterator = match self.0.source.try_clone() {
+            Ok(iterator) => iterator,
+            Err(error) => {
+                let (Completion::Return(value) | Completion::Throw(value)) = completion;
+                let _ = self.0.source.runtime().release_jsvalue(value);
+                return Err(error);
+            }
+        };
+        Ok(ConsumeStep::Close {
+            iterator,
             completion,
-        }
+        })
     }
     fn next_step(mut self, runtime: &Runtime) -> Result<ConsumeStep, RuntimeError> {
         self.0.phase = Phase::Next;
         {
-            let __pending_field_iterator = self.0.source.clone();
+            let __pending_field_iterator = self.0.source.try_clone()?;
             let __pending_field_method = runtime.dup_jsvalue(&self.0.next)?;
             let __pending_field_resume = self;
             Ok(ConsumeStep::request_next(
@@ -198,7 +206,7 @@ impl ConsumeResume {
                     if matches!(self.0.phase, Phase::Callback(_))
                         || matches!(self.0.kind, ConsumeKind::Reduce)
                     {
-                        self.close(Completion::Throw(value))
+                        self.close(Completion::Throw(value))?
                     } else {
                         ConsumeStep::Complete(Completion::Throw(value))
                     },
@@ -259,7 +267,7 @@ impl ConsumeResume {
                     }
                 };
                 Ok(if let Some(value) = early {
-                    self.close(Completion::Return(value))
+                    self.close(Completion::Return(value))?
                 } else {
                     self.next_step(runtime)?
                 })
@@ -311,7 +319,7 @@ impl ConsumeResume {
                                 NativeErrorKind::Type,
                                 "empty iterator",
                             )?;
-                            return Ok(self.close(Completion::Throw(error)));
+                            return Ok(self.close(Completion::Throw(error))?);
                         }
                     },
                 };
@@ -363,9 +371,15 @@ impl ConsumeResume {
             self.0.index = 1;
             return self.next_step(runtime);
         }
-        let callable = self.0.callback.clone().ok_or(RuntimeError::Invariant(
-            "Iterator consumer callback missing",
-        ))?;
+        let callable = self
+            .0
+            .callback
+            .as_ref()
+            .map(|value| value.try_clone())
+            .transpose()?
+            .ok_or(RuntimeError::Invariant(
+                "Iterator consumer callback missing",
+            ))?;
         let Phase::Callback(ref item) = self.0.phase else {
             unreachable!()
         };
@@ -414,7 +428,7 @@ pub(crate) fn finish(
                         realm,
                         &object,
                         &key,
-                        JsValue::Object(object.clone().into_handle()),
+                        JsValue::Object(object.try_clone()?.into_handle()),
                     )?,
                 )?
             }

@@ -383,7 +383,7 @@ fn classic_for_lexicals_match_tdz_const_shadow_and_conflict_rules() {
         Value::Int(6)
     );
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     for (source, name) in [
         ("(function(){for(let value=value;false;);})()", "value"),
         (
@@ -517,7 +517,7 @@ fn switch_uses_quickjs_case_fallthrough_and_abrupt_cleanup() {
     );
 
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert!(matches!(
         context.eval("switch(1){case 1:throw 4;}"),
         Err(RuntimeError::Exception)

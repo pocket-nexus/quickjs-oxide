@@ -18,7 +18,7 @@ fn json_module_default_export_is_cached_by_normalized_name_and_keeps_json_semant
         ),
     ]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename(
             r#"
@@ -76,7 +76,7 @@ fn json5_module_default_export_is_cached_and_uses_quickjs_extended_grammar() {
         ),
     ]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename(
             r#"
@@ -119,7 +119,7 @@ fn dynamic_import_can_load_a_host_selected_json5_module() {
         ModuleLoadResult::Json5Text("{answer: 0x2a,}".to_owned()),
     )]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let promise = eval_dynamic_import(
         &mut context,
         "import('./value.data', { with: { type: 'json5' } })",
@@ -162,7 +162,7 @@ fn invalid_json5_module_reports_quickjs_location_and_retries() {
         ModuleLoadResult::Json5Text("{é: 1}".to_owned()),
     )]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let source = r#"
         import value from "./value.data" with { type: "json5" };
         globalThis.__json5Retry = value.answer;
@@ -218,7 +218,7 @@ fn json_module_live_cell_is_undefined_after_link_and_initialized_during_evaluati
         ModuleLoadResult::JsonText(r#"{"answer":42}"#.to_owned()),
     )]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename(
             r#"
@@ -266,7 +266,7 @@ fn json_module_named_import_fails_during_retryable_link() {
         ModuleLoadResult::JsonText(r#"{"name":"not an export"}"#.to_owned()),
     )]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module_with_filename(
             r#"
@@ -295,7 +295,7 @@ fn invalid_json_module_reports_fixture_location_and_rolls_back_for_retry() {
         ModuleLoadResult::JsonText("{\n  notJson: 0\n}\n".to_owned()),
     )]);
     let _loader_registration = runtime.set_module_loader(loader);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let source = r#"
         import value from "./value.json" with { type: "json" };
         globalThis.__jsonRetry = value.answer;

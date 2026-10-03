@@ -180,7 +180,7 @@ impl SliceStep {
             resume.0.arguments.push(runtime.dup_jsvalue(value)?);
         }
         Self::make_read(
-            resume.0.object.clone(),
+            resume.0.object.try_clone()?,
             runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
             resume,
         )
@@ -249,7 +249,9 @@ impl SliceResume {
     fn result(&self) -> Result<ObjectRef, RuntimeError> {
         self.0
             .result
-            .clone()
+            .as_ref()
+            .map(|value| value.try_clone())
+            .transpose()?
             .ok_or(RuntimeError::Invariant("Array slice result missing"))
     }
     fn define_array_value(
@@ -450,7 +452,7 @@ impl SliceResume {
         } else {
             self.0.phase = Phase::Species;
             Ok(SliceStep::make_species(
-                self.0.object.clone(),
+                self.0.object.try_clone()?,
                 self.0.count,
                 self,
             ))
@@ -577,7 +579,7 @@ impl SliceResume {
                     .ok_or(RuntimeError::Invariant("Array slice result missing"))?;
                 if !local::direct_indexed_target(runtime, object, &key)? {
                     return Ok(SliceStep::make_define(
-                        object.clone(),
+                        object.try_clone()?,
                         key,
                         descriptor,
                         self,
@@ -614,7 +616,7 @@ impl SliceResume {
             Phase::Has if value => {
                 self.0.phase = Phase::Read;
                 Ok(SliceStep::make_read(
-                    self.0.object.clone(),
+                    self.0.object.try_clone()?,
                     runtime.property_key_for_index(self.source_index())?,
                     self,
                 ))
@@ -666,7 +668,7 @@ impl SliceResume {
         if self.0.items != self.0.count {
             self.0.phase = Phase::Copy;
             return Ok(SliceStep::make_copy(
-                self.0.object.clone(),
+                self.0.object.try_clone()?,
                 self.0.start + self.0.items,
                 self.0.start + self.0.count,
                 self.0.length - self.0.start - self.0.count,
@@ -682,7 +684,7 @@ impl SliceResume {
             self.0.cursor -= 1;
             self.0.phase = Phase::Delete;
             return Ok(SliceStep::make_delete(
-                self.0.object.clone(),
+                self.0.object.try_clone()?,
                 runtime.property_key_for_index(self.0.cursor)?,
                 self,
             ));
@@ -694,7 +696,7 @@ impl SliceResume {
         if self.0.cursor < self.0.items {
             self.0.phase = Phase::Insert;
             return Ok(SliceStep::make_set(
-                self.0.object.clone(),
+                self.0.object.try_clone()?,
                 runtime.property_key_for_index(self.0.start + self.0.cursor)?,
                 runtime.dup_jsvalue(self.argument(self.0.cursor as usize + 2))?,
                 self,
@@ -702,7 +704,7 @@ impl SliceResume {
         }
         self.0.phase = Phase::FinalLength;
         Ok(SliceStep::make_set(
-            self.0.object.clone(),
+            self.0.object.try_clone()?,
             runtime.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Length)?,
             runtime.into_jsvalue(Value::number(self.0.new_length as f64))?,
             self,
@@ -796,7 +798,7 @@ pub(crate) fn finish(
                         &object,
                         &key,
                         value,
-                        JsValue::Object(object.clone().into_handle()),
+                        JsValue::Object(object.try_clone()?.into_handle()),
                     )?;
                     resume.set(runtime, key, result)?
                 }
@@ -829,7 +831,7 @@ pub(crate) fn finish(
 #[test]
 fn slice_resume_keeps_one_resident_owner_across_number_transitions() {
     let runtime = Runtime::new();
-    let context = runtime.new_context();
+    let context = runtime.new_context().expect("create context");
     let object = runtime.new_object(None).unwrap();
     let resume = SliceResume(Box::new(SliceResumeState {
         runtime: runtime.clone(),
@@ -838,9 +840,9 @@ fn slice_resume_keeps_one_resident_owner_across_number_transitions() {
         realm: context.realm,
         kind: SliceKind::Slice,
         phase: Phase::LengthNumber,
-        object: object.clone(),
+        object: object.try_clone().expect("duplicate root"),
         arguments: vec![
-            JsValue::Object(object.clone().into_handle()),
+            JsValue::Object(object.try_clone().expect("duplicate root").into_handle()),
             JsValue::Object(object.into_handle()),
         ],
         actual: 2,
@@ -1142,7 +1144,7 @@ mod dense_slice_tests {
     #[test]
     fn dense_slice_preserves_species_holes_descriptors_and_owned_cells() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context.eval(r#"(() => {
             let x = {}, sym = Symbol();
             let dense = [x, sym, 3].slice(0, 2);

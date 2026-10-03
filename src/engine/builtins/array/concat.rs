@@ -106,7 +106,7 @@ impl ConcatStep {
             length: 0,
         }));
         let mut elements = Vec::with_capacity(arguments.actual_arg_count + 1);
-        elements.push(JsValue::Object(source.clone().into_handle()));
+        elements.push(JsValue::Object(source.try_clone()?.into_handle()));
         for value in &arguments.readable[..arguments.actual_arg_count] {
             match runtime.dup_jsvalue(value) {
                 Ok(value) => elements.push(value),
@@ -145,7 +145,9 @@ impl ConcatResume {
     fn result(&self) -> Result<ObjectRef, RuntimeError> {
         self.0
             .result
-            .clone()
+            .as_ref()
+            .map(|value| value.try_clone())
+            .transpose()?
             .ok_or(RuntimeError::Invariant("Array concat result missing"))
     }
     fn too_long(&self, runtime: &Runtime) -> Result<ConcatStep, RuntimeError> {
@@ -232,7 +234,7 @@ impl ConcatResume {
             self.0.phase = Phase::Spread;
             Ok(ConcatStep::request_read(
                 object,
-                PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::IsConcatSpreadable)),
+                PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::IsConcatSpreadable)?),
                 self,
             ))
         } else {
@@ -436,7 +438,7 @@ pub(crate) fn finish(
                         &object,
                         &key,
                         value,
-                        JsValue::Object(object.clone().into_handle()),
+                        JsValue::Object(object.try_clone()?.into_handle()),
                     )?;
                     resume.set(runtime, key, result)?
                 }

@@ -241,7 +241,7 @@ fn parameter_binding_pattern_rust_smoke_runs_without_an_oracle() {
     for case in CASES.iter().chain(ERROR_CASES) {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             observe_rust(&runtime, &mut context, case.source, case.description),
             case.expected,
@@ -260,7 +260,7 @@ fn parameter_binding_patterns_match_pinned_quickjs() {
     for case in CASES.iter().chain(ERROR_CASES) {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             observe_rust(&runtime, &mut context, case.source, case.description),
             observe_oracle(&oracle, case.source, case.description),

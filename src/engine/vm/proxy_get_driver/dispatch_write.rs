@@ -114,7 +114,7 @@ pub(super) fn keys(
                     query.parents.push(resume);
                     *step = crate::engine::object::KeysStep::start(runtime, realm, object)
                         .map_err(runtime_error_to_vm_error)?
-                        .into();
+                        .try_into()?;
                 } else {
                     let result = runtime
                         .own_property_keys(&object)
@@ -214,7 +214,7 @@ pub(super) fn set(
                 let selected = selected.take().expect("selected Step field");
                 let resume = resume.take().expect("selected Step field");
                 query.parents.push(resume);
-                *step = (*selected).into();
+                *step = (*selected).try_into()?;
                 continue;
             }
             Step::SetContinue(resume) => {
@@ -223,7 +223,7 @@ pub(super) fn set(
                 *step = resume
                     .advance(runtime)
                     .map_err(runtime_error_to_vm_error)?
-                    .into();
+                    .try_into()?;
                 continue;
             }
             Step::SetLength { value, resume } => {
@@ -236,7 +236,7 @@ pub(super) fn set(
                 query.parents.push(Resume::SetLength(resume));
                 *step = crate::engine::object::ArrayLengthStep::start(runtime, Some(realm), value)
                     .map_err(runtime_error_to_vm_error)?
-                    .into();
+                    .try_into()?;
                 continue;
             }
             Step::SetSpecial {
@@ -256,7 +256,7 @@ pub(super) fn set(
                 let receiver_cleanup = runtime.release_jsvalue(receiver);
                 if let Err(error) = value_cleanup.and(receiver_cleanup) {
                     if let Ok(Some(request)) = result {
-                        let mut abandoned: Step = request.into();
+                        let mut abandoned: Step = request.try_into()?;
                         abandoned.release_owned(runtime);
                     }
                     return Err(runtime_error_to_vm_error(error));
@@ -267,17 +267,17 @@ pub(super) fn set(
                         *step = resume
                             .special(runtime, None)
                             .map_err(runtime_error_to_vm_error)?
-                            .into()
+                            .try_into()?
                     }
                     Some(request) => {
                         if query.parents.try_reserve(1).is_err() {
-                            let mut abandoned: Step = request.into();
+                            let mut abandoned: Step = request.try_into()?;
                             abandoned.release_owned(runtime);
                             return Err(Error::internal("property continuation allocation failed"));
                         }
                         let resume = resume.take().expect("selected Step field");
                         query.parents.push(Resume::SetTyped(resume));
-                        *step = request.into();
+                        *step = request.try_into()?;
                     }
                 }
                 continue;
@@ -380,7 +380,7 @@ pub(super) fn set(
                 // selected setters and exotic waits keep their exact state.
                 .advance_without_callback(runtime)
                 .map_err(runtime_error_to_vm_error)?
-                .into();
+                .try_into()?;
                 continue;
             }
             Step::SetProxy {
@@ -429,7 +429,7 @@ pub(super) fn set(
                     runtime, realm, object, key, value, receiver,
                 )
                 .map_err(runtime_error_to_vm_error)?
-                .into();
+                .try_into()?;
                 continue;
             }
             _ => {
@@ -534,7 +534,7 @@ pub(super) fn define(
                         runtime, realm, object, key, descriptor,
                     )
                     .map_err(runtime_error_to_vm_error)?
-                    .into();
+                    .try_into()?;
                     continue;
                 }
                 *step = Step::DefineOrdinary {
@@ -581,7 +581,7 @@ pub(super) fn define(
                     .map_err(runtime_error_to_vm_error)?
                 {
                     if query.parents.try_reserve(1).is_err() {
-                        let mut abandoned: Step = length.into();
+                        let mut abandoned: Step = length.try_into()?;
                         abandoned.release_owned(runtime);
                         return Err(Error::internal("property continuation allocation failed"));
                     }
@@ -593,7 +593,7 @@ pub(super) fn define(
                             resume: Box::new(resume.take().expect("selected Step field")),
                         }),
                     });
-                    *step = length.into();
+                    *step = length.try_into()?;
                     continue;
                 }
                 if let Some(request) = runtime
@@ -601,7 +601,7 @@ pub(super) fn define(
                     .map_err(runtime_error_to_vm_error)?
                 {
                     if query.parents.try_reserve(1).is_err() {
-                        let mut abandoned: Step = request.into();
+                        let mut abandoned: Step = request.try_into()?;
                         abandoned.release_owned(runtime);
                         return Err(Error::internal("property continuation allocation failed"));
                     }
@@ -612,7 +612,7 @@ pub(super) fn define(
                             resume: Box::new(resume.take().expect("selected Step field")),
                         }),
                     });
-                    *step = request.into();
+                    *step = request.try_into()?;
                     continue;
                 }
                 let result = match runtime
@@ -646,7 +646,7 @@ mod local_set_tests {
     #[test]
     fn local_set_dispatch_budget_failure_precedes_array_write() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(array) = context.eval("[]").unwrap() else {
             panic!("expected array");
         };
@@ -662,10 +662,14 @@ mod local_set_tests {
             finish: None,
         };
         let mut pending = Step::Set {
-            object: Some(array.clone()),
-            key: Some(key.clone()),
+            object: Some(array.try_clone().expect("duplicate root")),
+            key: Some(key.try_clone().expect("duplicate root")),
             value: Some(JsValue::Int(7)),
-            receiver: Some(runtime.unroot_value(&Value::Object(array.clone())).unwrap()),
+            receiver: Some(
+                runtime
+                    .unroot_value(&Value::Object(array.try_clone().expect("duplicate root")))
+                    .unwrap(),
+            ),
             resume: Some(Resume::RootSet),
         };
         let mut execution = RunningExecution::new(
@@ -703,7 +707,7 @@ mod local_set_tests {
     #[test]
     fn local_set_dispatch_keeps_setters_proxy_and_array_length_order() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(

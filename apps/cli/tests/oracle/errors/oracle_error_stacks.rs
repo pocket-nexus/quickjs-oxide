@@ -399,7 +399,7 @@ fn rust_stack_with_symbol(source: &str) -> String {
 fn rust_stack_with_optional_symbol(source: &str, bind_symbol: bool) -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     if bind_symbol {
         let global = context.global_object().expect("Rust global object");
         let key = runtime

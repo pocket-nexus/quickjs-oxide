@@ -35,6 +35,12 @@ use std::sync::atomic::AtomicU64;
 pub(crate) static NEXT_RUNTIME_DOMAIN_ID: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) struct RuntimeInner {
+    /// Quarantine is stored outside the state borrow, including while a
+    /// partially committed mutation is unwinding.
+    pub(crate) poisoned: Cell<bool>,
+    // Weak-backed execution storage may outlive the final public Runtime.
+    // This is a lifetime registration, not an additional state owner.
+    pub(crate) raw_execution_owners: Cell<usize>,
     pub(crate) execution_turn_depth: Cell<usize>,
     pub(crate) state: StateStorage,
     /// Incremental activation count, readable without borrowing heap state.
@@ -103,6 +109,10 @@ pub(crate) struct RuntimeOperation<'a>(pub(super) &'a Runtime);
 impl Drop for RuntimeOperation<'_> {
     #[inline]
     fn drop(&mut self) {
+        if self.0.skip_cleanup() {
+            return;
+        }
+        let _unwind = self.0.unwind_guard();
         let result = self.0.drain_deferred_references();
         debug_assert!(result.is_ok(), "deferred root release failed: {result:?}");
     }
@@ -742,6 +752,16 @@ impl RuntimeState {
 
 impl Drop for RuntimeInner {
     fn drop(&mut self) {
+        if self.poisoned.get() || std::thread::panicking() {
+            self.state.abandon();
+            return;
+        }
+        if self.raw_execution_owners.get() != 0 {
+            // No public root survives the last Runtime Rc. Remaining execution
+            // records cannot upgrade their Weak owner; ordinary Rust teardown
+            // destroys the heap instead of treating their raw edges as leaks.
+            return;
+        }
         let state = self.state.get_mut();
         let retained = state
             .release_retained_shapes()

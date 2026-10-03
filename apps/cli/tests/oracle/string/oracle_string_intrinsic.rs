@@ -586,8 +586,8 @@ fn string_custom_new_target_matches_pinned_quickjs() {
 fn string_cross_realm_results_errors_and_user_throws_are_exact() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_global = defining.global_object().unwrap();
     let string = property_callable(&runtime, &mut defining, &defining_global, "String");
     let from_code_point =
@@ -623,7 +623,7 @@ fn string_cross_realm_results_errors_and_user_throws_are_exact() {
         runtime
             .get_prototype_of(&take_exception_object(&mut caller))
             .unwrap(),
-        Some(defining_type_error.clone()),
+        Some(defining_type_error.try_clone().expect("duplicate root")),
     );
     assert_eq!(
         caller.call(&from_code_point, Value::Undefined, &[Value::Int(-1)]),
@@ -653,7 +653,7 @@ fn string_cross_realm_results_errors_and_user_throws_are_exact() {
             .set_property(
                 &caller.global_object().unwrap(),
                 &sentinel_key,
-                Value::Object(sentinel.clone()),
+                Value::Object(sentinel.try_clone().expect("duplicate root")),
             )
             .unwrap()
     );
@@ -686,8 +686,8 @@ fn string_constructor_and_statics_are_per_realm_and_collectable() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let retained = {
-        let mut first = runtime.new_context();
-        let mut second = runtime.new_context();
+        let mut first = runtime.new_context().expect("create context");
+        let mut second = runtime.new_context().expect("create context");
         let first_global = first.global_object().unwrap();
         let second_global = second.global_object().unwrap();
         let first_string = property_callable(&runtime, &mut first, &first_global, "String");
@@ -710,10 +710,13 @@ fn string_constructor_and_statics_are_per_realm_and_collectable() {
     };
 
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
     drop(retained);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().live, 0);
+    assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
 }
 
 #[test]
@@ -721,7 +724,7 @@ fn string_wrapper_retains_then_releases_its_realm_graph() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let wrapper = {
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let global = context.global_object().unwrap();
         let string = property_callable(&runtime, &mut context, &global, "String");
         let Value::Object(wrapper) = context
@@ -736,10 +739,13 @@ fn string_wrapper_retains_then_releases_its_realm_graph() {
         wrapper
     };
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
     drop(wrapper);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().live, 0);
+    assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
 }
 
 fn oracle_lines(oracle: &OsStr, source: &str, description: &str) -> Vec<String> {
@@ -749,8 +755,8 @@ fn oracle_lines(oracle: &OsStr, source: &str, description: &str) -> Vec<String> 
 fn rust_custom_new_target_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_global = defining.global_object().unwrap();
     let caller_global = caller.global_object().unwrap();
     let string = property_callable(&runtime, &mut defining, &defining_global, "String");
@@ -771,7 +777,7 @@ fn rust_custom_new_target_observations() -> Vec<String> {
         &runtime,
         &caller_global,
         "stringCustomPrototype",
-        Value::Object(custom.clone()),
+        Value::Object(custom.try_clone().expect("duplicate root")),
     );
     define_data(
         &runtime,
@@ -794,8 +800,12 @@ fn rust_custom_new_target_observations() -> Vec<String> {
     define_data_key(
         &runtime,
         &argument,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(conversion.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(conversion.as_object().try_clone().expect("duplicate root")),
     );
     let Value::Object(value) = caller
         .construct_with_new_target(&string, &target, &[Value::Object(argument)])
@@ -804,7 +814,11 @@ fn rust_custom_new_target_observations() -> Vec<String> {
         panic!("custom new.target String did not return an object");
     };
     let Value::String(payload) = caller
-        .call(&value_of, Value::Object(value.clone()), &[])
+        .call(
+            &value_of,
+            Value::Object(value.try_clone().expect("duplicate root")),
+            &[],
+        )
         .unwrap()
     else {
         panic!("custom new.target String wrapper was not branded");
@@ -851,7 +865,11 @@ fn rust_custom_new_target_observations() -> Vec<String> {
         panic!("fallback new.target String did not return an object");
     };
     let Value::String(fallback_payload) = caller
-        .call(&value_of, Value::Object(fallback.clone()), &[])
+        .call(
+            &value_of,
+            Value::Object(fallback.try_clone().expect("duplicate root")),
+            &[],
+        )
         .unwrap()
     else {
         panic!("fallback String wrapper was not branded");

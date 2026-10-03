@@ -23,7 +23,11 @@ fn ordinary_instanceof_uses_current_method_and_prototype_without_callbacks() {
         return !(object instanceof C) && calls===2;
     })()"#;
     assert_eq!(
-        Runtime::new().new_context().eval(source).unwrap(),
+        Runtime::new()
+            .new_context()
+            .expect("create context")
+            .eval(source)
+            .unwrap(),
         Value::Bool(true)
     );
 }
@@ -41,7 +45,11 @@ fn ordinary_instanceof_misses_preserve_selection_order_and_error_identity() {
     ];
     for source in cases {
         assert_eq!(
-            Runtime::new().new_context().eval(source).unwrap(),
+            Runtime::new()
+                .new_context()
+                .expect("create context")
+                .eval(source)
+                .unwrap(),
             Value::Bool(true),
             "{source}"
         );
@@ -52,7 +60,7 @@ fn ordinary_instanceof_misses_preserve_selection_order_and_error_identity() {
 fn ordinary_instanceof_declines_cleanup_saturation_and_stale_inputs() {
     use crate::engine::heap::RawId;
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let Value::Object(target) = context.eval("globalThis.C=function C(){};C").unwrap() else {
         panic!("constructor");
     };
@@ -60,7 +68,7 @@ fn ordinary_instanceof_declines_cleanup_saturation_and_stale_inputs() {
         panic!("candidate");
     };
     drop(context.eval("C[Symbol.hasInstance]").unwrap());
-    let _candidate_owner = candidate.clone();
+    let _candidate_owner = candidate.try_clone().expect("duplicate root");
     let value = JsValue::Object(candidate.object_id());
     let ids = {
         let state = runtime.0.state.borrow();
@@ -180,7 +188,7 @@ fn ordinary_instanceof_shared_start_handles_aliased_owners_and_final_owners() {
     ];
     for (setup, expected) in cases {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(context.eval(setup).unwrap(), Value::Bool(expected));
         let Value::Object(target) = context.eval("C").unwrap() else {
             panic!("target");
@@ -205,8 +213,8 @@ fn ordinary_instanceof_shared_start_handles_aliased_owners_and_final_owners() {
         let step = InstanceStep::start(
             &runtime,
             context.realm,
-            JsValue::Object(candidate.clone().into_handle()),
-            target.clone(),
+            JsValue::Object(candidate.try_clone().expect("duplicate root").into_handle()),
+            target.try_clone().expect("duplicate root"),
             true,
         )
         .unwrap();
@@ -256,7 +264,7 @@ fn ordinary_instanceof_shared_start_handles_aliased_owners_and_final_owners() {
     }
 
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let Value::Object(target) = context
         .eval("globalThis.C=function C(){};C[Symbol.hasInstance];C")
         .unwrap()
@@ -281,7 +289,7 @@ fn ordinary_instanceof_shared_start_handles_aliased_owners_and_final_owners() {
         &runtime,
         context.realm,
         JsValue::Object(candidate.into_handle()),
-        target.clone(),
+        target.try_clone().expect("duplicate root"),
         true,
     )
     .unwrap();
@@ -316,7 +324,7 @@ fn ordinary_instanceof_shared_start_handles_aliased_owners_and_final_owners() {
 #[test]
 fn ordinary_instanceof_preserves_intrinsic_budget_and_cross_realm_selection() {
     let runtime = Runtime::new();
-    let mut foreign = runtime.new_context();
+    let mut foreign = runtime.new_context().expect("create context");
     let Value::Object(target) = foreign
         .eval("globalThis.C=function C(){};C[Symbol.hasInstance];C")
         .unwrap()
@@ -327,7 +335,7 @@ fn ordinary_instanceof_preserves_intrinsic_budget_and_cross_realm_selection() {
         panic!("foreign prototype");
     };
     let candidate = runtime.new_object(Some(&prototype)).unwrap();
-    let _extra_owner = candidate.clone();
+    let _extra_owner = candidate.try_clone().expect("duplicate root");
     let value = JsValue::Object(candidate.object_id());
     assert_eq!(
         try_ordinary_instanceof(&runtime, &value, target.object_id(), true),
@@ -337,13 +345,13 @@ fn ordinary_instanceof_preserves_intrinsic_budget_and_cross_realm_selection() {
         try_ordinary_instanceof(&runtime, &value, target.object_id(), false),
         None
     );
-    let mut local = runtime.new_context();
+    let mut local = runtime.new_context().expect("create context");
     assert!(matches!(
         InstanceStep::start(
             &runtime,
             local.realm,
-            JsValue::Object(candidate.clone().into_handle()),
-            target.clone(),
+            JsValue::Object(candidate.try_clone().expect("duplicate root").into_handle()),
+            target.try_clone().expect("duplicate root"),
             true
         )
         .unwrap(),
@@ -366,7 +374,9 @@ fn ordinary_instanceof_preserves_intrinsic_budget_and_cross_realm_selection() {
             .eval("globalThis.C=function C(){};globalThis.pair=new C();pair instanceof C")
             .unwrap(),
     );
-    runtime.set_recursion_limit(1);
+    runtime
+        .set_recursion_limit(1)
+        .expect("set runtime configuration");
     // The current script occupies the only execution frame. The intrinsic
     // still throws through its original driver and can be caught in JS.
     assert_eq!(
@@ -382,7 +392,7 @@ fn ordinary_instanceof_preserves_intrinsic_budget_and_cross_realm_selection() {
 fn ordinary_instanceof_real_opcode_finishes_without_native_activation() {
     use crate::engine::api::profiling::CostProfile;
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     drop(
         context
             .eval("globalThis.C=function C(){};globalThis.pair=new C();pair instanceof C")
@@ -492,7 +502,11 @@ fn instanceof_chain_preserves_callbacks_and_exceptions() {
     ];
     for source in cases {
         assert_eq!(
-            Runtime::new().new_context().eval(source).unwrap(),
+            Runtime::new()
+                .new_context()
+                .expect("create context")
+                .eval(source)
+                .unwrap(),
             Value::Bool(true),
             "{source}"
         );
@@ -530,7 +544,7 @@ fn instanceof_chain_internal_cycle_returns_to_protocol() {
 #[test]
 fn instanceof_chain_pending_cleanup_uses_existing_protocol() {
     let runtime = Runtime::new();
-    let context = runtime.new_context();
+    let context = runtime.new_context().expect("create context");
     let expected = runtime.new_object(None).unwrap();
     let candidate = runtime.new_object(Some(&expected)).unwrap();
     let candidate_id = candidate.object_id();
@@ -538,7 +552,7 @@ fn instanceof_chain_pending_cleanup_uses_existing_protocol() {
         pending_effect: InstanceStepPending::default(),
         realm: context.realm,
         candidate: JsValue::Object(candidate.into_handle()),
-        target: expected.clone(),
+        target: expected.try_clone().expect("duplicate root"),
         phase: Phase::Walk(expected),
     }));
     let discarded = runtime.new_object(None).unwrap();
@@ -562,7 +576,7 @@ fn instanceof_chain_preserves_saturated_entry_and_prototype_retains() {
     for position in 0..3 {
         for count in [u32::MAX - 1, u32::MAX] {
             let runtime = Runtime::new();
-            let context = runtime.new_context();
+            let context = runtime.new_context().expect("create context");
             let expected = runtime.new_object(None).unwrap();
             let middle = runtime.new_object(Some(&expected)).unwrap();
             let candidate = runtime.new_object(Some(&middle)).unwrap();
@@ -581,9 +595,11 @@ fn instanceof_chain_preserves_saturated_entry_and_prototype_retains() {
             let resume = InstanceResume(Box::new(InstanceResumeState {
                 pending_effect: InstanceStepPending::default(),
                 realm: context.realm,
-                candidate: JsValue::Object(candidate.clone().into_handle()),
+                candidate: JsValue::Object(
+                    candidate.try_clone().expect("duplicate root").into_handle(),
+                ),
                 target: runtime.new_object(None).unwrap(),
-                phase: Phase::Walk(expected.clone()),
+                phase: Phase::Walk(expected.try_clone().expect("duplicate root")),
             }));
             runtime
                 .0
@@ -661,7 +677,7 @@ fn instanceof_chain_saturated_replies_transfer_without_a_new_retain() {
     use crate::engine::heap::RawId;
     for proxy in [false, true] {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(object) = context
             .eval(if proxy { "new Proxy({}, {})" } else { "({})" })
             .unwrap()
@@ -684,7 +700,7 @@ fn instanceof_chain_saturated_replies_transfer_without_a_new_retain() {
             .heap
             .object_strong_count(id)
             .unwrap();
-        let reply = object.clone();
+        let reply = object.try_clone().expect("duplicate root");
         runtime
             .0
             .state

@@ -86,8 +86,8 @@ pub(super) fn ready(
         let result = runtime.new_ordinary_object_in_realm(realm)?;
         for (name, object) in [
             ("promise", promise),
-            ("resolve", resolve.as_object().clone()),
-            ("reject", reject.as_object().clone()),
+            ("resolve", resolve.as_object().try_clone()?),
+            ("reject", reject.as_object().try_clone()?),
         ] {
             runtime.define_fresh_promise_property(
                 &result,

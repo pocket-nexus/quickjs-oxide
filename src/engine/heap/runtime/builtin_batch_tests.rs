@@ -30,7 +30,7 @@ fn layout_summary(layout: &(ShapeId, Slots)) -> (ShapeId, String) {
 #[test]
 fn builtin_batch_preserves_order_flags_metadata_and_lazy_identity() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let object = runtime.new_object(None).unwrap();
     let mut second = method("batch_second");
     second.flags = PropertyFlags::data(false, true, false);
@@ -98,13 +98,13 @@ fn builtin_batch_preserves_order_flags_metadata_and_lazy_identity() {
 #[test]
 fn builtin_batch_rejects_entire_invalid_table_without_leaking_keys() {
     let runtime = Runtime::new();
-    let context = runtime.new_context();
+    let context = runtime.new_context().expect("create context");
     let object = runtime.new_object(None).unwrap();
     runtime
         .define_native_builtin_auto_init_batch(&object, context.realm, [method("batch_existing")])
         .unwrap();
     let original = layout(&runtime, &object);
-    let atoms = runtime.test_atom_count();
+    let atoms = runtime.test_atom_count().expect("atom count");
     let mut accessor = method("batch_accessor");
     accessor.flags = PropertyFlags::accessor(false, true);
     for methods in [
@@ -122,7 +122,7 @@ fn builtin_batch_rejects_entire_invalid_table_without_leaking_keys() {
             layout_summary(&layout(&runtime, &object)),
             layout_summary(&original)
         );
-        assert_eq!(runtime.test_atom_count(), atoms);
+        assert_eq!(runtime.test_atom_count().expect("atom count"), atoms);
     }
     runtime
         .define_native_builtin_auto_init_batch(&object, context.realm, [])
@@ -146,7 +146,7 @@ fn builtin_batch_rejects_entire_invalid_table_without_leaking_keys() {
 #[test]
 fn builtin_batch_validates_receiver_domain_and_realm_lifetime() {
     let runtime = Runtime::new();
-    let context = runtime.new_context();
+    let context = runtime.new_context().expect("create context");
     let other = Runtime::new();
     let foreign = other.new_object(None).unwrap();
     assert!(
@@ -158,13 +158,13 @@ fn builtin_batch_validates_receiver_domain_and_realm_lifetime() {
             )
             .is_err()
     );
-    let expired = runtime.new_context();
+    let expired = runtime.new_context().expect("create context");
     let realm = expired.realm;
     drop(expired);
     runtime.run_gc().unwrap();
     let object = runtime.new_object(None).unwrap();
     let original = layout(&runtime, &object);
-    let atoms = runtime.test_atom_count();
+    let atoms = runtime.test_atom_count().expect("atom count");
     assert!(
         runtime
             .define_native_builtin_auto_init_batch(&object, realm, [method("batch_stale")])
@@ -174,16 +174,16 @@ fn builtin_batch_validates_receiver_domain_and_realm_lifetime() {
         layout_summary(&layout(&runtime, &object)),
         layout_summary(&original)
     );
-    assert_eq!(runtime.test_atom_count(), atoms);
+    assert_eq!(runtime.test_atom_count().expect("atom count"), atoms);
 }
 
 #[test]
 fn builtin_batch_rolls_back_shape_and_realm_edges_on_retain_overflow() {
     let runtime = Runtime::new();
-    let context = runtime.new_context();
+    let context = runtime.new_context().expect("create context");
     let object = runtime.new_object(None).unwrap();
     let original = layout(&runtime, &object);
-    let atoms = runtime.test_atom_count();
+    let atoms = runtime.test_atom_count().expect("atom count");
     let (strong, live, shapes) = {
         let mut state = runtime.0.state.borrow_mut();
         let counts = state.heap.counts();
@@ -217,13 +217,13 @@ fn builtin_batch_rolls_back_shape_and_realm_edges_on_retain_overflow() {
         layout_summary(&layout(&runtime, &object)),
         layout_summary(&original)
     );
-    assert_eq!(runtime.test_atom_count(), atoms);
+    assert_eq!(runtime.test_atom_count().expect("atom count"), atoms);
 }
 
 #[test]
 fn builtin_batch_date_keeps_aliases_descriptors_and_realm_functions() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         context
             .eval(
@@ -245,8 +245,8 @@ fn builtin_batch_date_keeps_aliases_descriptors_and_realm_functions() {
 #[test]
 fn builtin_batch_keeps_context_functions_separate_on_a_shared_shape() {
     let runtime = Runtime::new();
-    let mut first = runtime.new_context();
-    let mut second = runtime.new_context();
+    let mut first = runtime.new_context().expect("create context");
+    let mut second = runtime.new_context().expect("create context");
     let a = runtime.new_object(None).unwrap();
     let b = runtime.new_object(None).unwrap();
     runtime
@@ -292,7 +292,7 @@ fn builtin_batch_keeps_context_functions_separate_on_a_shared_shape() {
 #[test]
 fn builtin_batch_rejects_exotic_receivers_without_observable_traps() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     for source in [
         "new Date(0)",
         "new Uint8Array(2)",
@@ -302,7 +302,7 @@ fn builtin_batch_rejects_exotic_receivers_without_observable_traps() {
             unreachable!()
         };
         let original = layout(&runtime, &object);
-        let atoms = runtime.test_atom_count();
+        let atoms = runtime.test_atom_count().expect("atom count");
         assert!(
             runtime
                 .define_native_builtin_auto_init_batch(
@@ -316,14 +316,14 @@ fn builtin_batch_rejects_exotic_receivers_without_observable_traps() {
             layout_summary(&layout(&runtime, &object)),
             layout_summary(&original)
         );
-        assert_eq!(runtime.test_atom_count(), atoms);
+        assert_eq!(runtime.test_atom_count().expect("atom count"), atoms);
     }
 }
 
 #[test]
 fn builtin_batch_array_and_typed_array_keep_order_aliases_and_calls() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         context
             .eval(

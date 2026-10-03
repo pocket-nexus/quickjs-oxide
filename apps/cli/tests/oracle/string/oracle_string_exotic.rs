@@ -137,7 +137,7 @@ fn string_wrapper_exotic_matches_pinned_quickjs() {
 fn rust_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let payload = JsString::try_from_utf16([0x41, 0xd83d, 0xde00, 0xd800]).unwrap();
     let wrapper = box_string(&runtime, &mut context, payload.clone());
     let prototype = runtime
@@ -156,7 +156,11 @@ fn rust_observations() -> Vec<String> {
         flags(prototype_length.1, prototype_length.2, prototype_length.3),
         render_value(
             &context
-                .call(&object_to_string, Value::Object(prototype.clone()), &[],)
+                .call(
+                    &object_to_string,
+                    Value::Object(prototype.try_clone().expect("duplicate root")),
+                    &[],
+                )
                 .unwrap(),
         ),
         runtime.is_extensible(&prototype).unwrap(),
@@ -422,8 +426,8 @@ fn rust_observations() -> Vec<String> {
 fn sloppy_string_boxing_uses_the_bytecode_functions_defining_realm() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut first = runtime.new_context();
-    let mut second = runtime.new_context();
+    let mut first = runtime.new_context().expect("create context");
+    let mut second = runtime.new_context().expect("create context");
     let first_boxer = eval_callable(&runtime, &mut first, "(function () { return this; })");
     let second_boxer = eval_callable(&runtime, &mut second, "(function () { return this; })");
     let payload = JsString::try_from_utf16([0x41, 0xd800]).unwrap();
@@ -471,7 +475,7 @@ fn rooted_string_wrapper_preserves_payload_and_final_release_collects_the_graph(
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let wrapper = {
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         box_string(
             &runtime,
             &mut context,
@@ -501,7 +505,7 @@ fn rooted_string_wrapper_preserves_payload_and_final_release_collects_the_graph(
     // test isolates wrapper/payload survival and final cleanup.
     drop(wrapper);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().live, 0);
+    assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
 }
 
 fn box_string(runtime: &Runtime, context: &mut Context, value: JsString) -> ObjectRef {

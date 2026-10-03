@@ -265,6 +265,9 @@ impl<'a> PendingJobRootGuard<'a> {
 
 impl Drop for PendingJobRootGuard<'_> {
     fn drop(&mut self) {
+        if self.runtime.skip_cleanup() {
+            return;
+        }
         let Some(job) = self.job.take() else {
             return;
         };
@@ -291,6 +294,9 @@ impl<'a> PreparedJobs<'a> {
 }
 impl Drop for PreparedJobs<'_> {
     fn drop(&mut self) {
+        if self.runtime.skip_cleanup() {
+            return;
+        }
         let Ok(mut state) = self.runtime.0.state.try_borrow_mut() else {
             return;
         };
@@ -448,9 +454,10 @@ impl Runtime {
 
     /// Return whether QuickJS's runtime-wide FIFO contains a pending job.
     #[must_use]
-    pub fn is_job_pending(&self) -> bool {
+    pub fn is_job_pending(&self) -> Result<bool, RuntimeError> {
+        self.check_poison()?;
         let _operation = self.operation();
-        !self.0.state.borrow().pending_jobs.is_empty()
+        Ok(!self.0.state.borrow().pending_jobs.is_empty())
     }
 
     /// Execute at most one FIFO job and report its surviving originating realm.
@@ -461,6 +468,10 @@ impl Runtime {
     /// integer result and obsolete `pctx` out-parameter of
     /// `JS_ExecutePendingJob`.
     pub fn execute_pending_job(&self) -> Result<PendingJobOutcome, PendingJobError> {
+        self.check_poison().map_err(|error| PendingJobError {
+            context: None,
+            error,
+        })?;
         if self.0.execution_turn_depth.get() != 0 {
             return Err(PendingJobError {
                 context: None,
@@ -670,7 +681,6 @@ mod tests {
     use crate::engine::object::CallableRef;
 
     use super::*;
-    use crate::engine::api::PromiseState;
 
     #[derive(Debug)]
     struct PanickingDynamicModuleLoader;
@@ -745,7 +755,7 @@ mod tests {
     #[test]
     fn pending_job_reports_null_context_after_its_last_realm_root_on_success_and_throw() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
 
         let success = eval_callable(&mut context, "(function () { return 42; })");
         let success_realm = allocate_job_only_realm(&runtime, context.realm_id());
@@ -780,7 +790,7 @@ mod tests {
     fn dynamic_loader_panic_releases_dequeued_job_roots_without_settling_promise() {
         let runtime = Runtime::new();
         let _registration = runtime.set_module_loader(PanickingDynamicModuleLoader);
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(promise) = context
             .eval_with_filename("import('./panic.js')", "pkg/entry.js")
             .unwrap()
@@ -788,7 +798,7 @@ mod tests {
             panic!("dynamic import did not return a Promise");
         };
 
-        let (realm, resolve, reject) = {
+        let (_realm, resolve, reject) = {
             let state = runtime.0.state.borrow();
             assert_eq!(state.pending_jobs.len(), 1);
             let PendingJob::DynamicImportLoad {
@@ -804,15 +814,6 @@ mod tests {
         };
         let resolve_root = ObjectRef::from_borrowed_handle(runtime.clone(), resolve).unwrap();
         let reject_root = ObjectRef::from_borrowed_handle(runtime.clone(), reject).unwrap();
-        let counts_before = {
-            let state = runtime.0.state.borrow();
-            (
-                state.heap.context_strong_count(realm).unwrap(),
-                state.heap.object_strong_count(resolve).unwrap(),
-                state.heap.object_strong_count(reject).unwrap(),
-            )
-        };
-
         let panic = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _ = runtime.execute_pending_job();
         }))
@@ -826,24 +827,15 @@ mod tests {
             Some("intentional dynamic module loader panic")
         );
 
-        let counts_after = {
-            let state = runtime.0.state.borrow();
-            assert!(state.pending_jobs.is_empty());
-            (
-                state.heap.context_strong_count(realm).unwrap(),
-                state.heap.object_strong_count(resolve).unwrap(),
-                state.heap.object_strong_count(reject).unwrap(),
-            )
-        };
-        assert_eq!(counts_after.0 + 1, counts_before.0);
-        assert_eq!(counts_after.1 + 1, counts_before.1);
-        assert_eq!(counts_after.2 + 1, counts_before.2);
-        assert_eq!(
-            runtime.promise_snapshot(&promise).unwrap().unwrap().state(),
-            PromiseState::Pending
-        );
-        assert!(!context.has_exception());
-        assert_eq!(context.eval("40 + 2").unwrap(), Value::Int(42));
+        assert!(runtime.is_poisoned());
+        assert!(matches!(
+            runtime.promise_snapshot(&promise),
+            Err(RuntimeError::Poisoned)
+        ));
+        assert!(matches!(
+            context.eval("40 + 2"),
+            Err(RuntimeError::Poisoned)
+        ));
         drop((resolve_root, reject_root));
     }
 }

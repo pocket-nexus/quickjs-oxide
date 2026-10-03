@@ -11,7 +11,7 @@ use crate::engine::{
 };
 
 fn executable(runtime: &Runtime, atom: crate::engine::atom::Atom) -> PublishedFunctionSnapshot {
-    let context = runtime.new_context();
+    let context = runtime.new_context().expect("create context");
     let mut executable = PublishedFunctionSnapshot::empty_for_test(context.realm);
     executable.closure_variables = vec![ClosureVariable {
         source: ClosureSource::Global,
@@ -27,7 +27,7 @@ fn executable(runtime: &Runtime, atom: crate::engine::atom::Atom) -> PublishedFu
 #[test]
 fn global_cell_reads_current_value_and_keeps_output_alive_after_overwrite() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let key = runtime.intern_property_key("cell").unwrap();
     let executable = executable(&runtime, key.atom());
     let roots = ClosureSlots::from(vec![runtime.new_uninitialized_var_ref().unwrap()]);
@@ -74,7 +74,7 @@ fn global_cell_reads_current_value_and_keeps_output_alive_after_overwrite() {
 #[test]
 fn global_cell_misses_leave_uninitialized_and_pending_cleanup_untouched() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let key = runtime.intern_property_key("cell").unwrap();
     let executable = executable(&runtime, key.atom());
     let roots = ClosureSlots::from(vec![runtime.new_uninitialized_var_ref().unwrap()]);
@@ -116,7 +116,7 @@ fn global_cell_misses_leave_uninitialized_and_pending_cleanup_untouched() {
 #[test]
 fn global_cell_checked_retain_preserves_overflow_and_immortal_transition() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let key = runtime.intern_property_key("cell").unwrap();
     let executable = executable(&runtime, key.atom());
     let object = context.new_object().unwrap();
@@ -211,7 +211,7 @@ fn global_cell_rejects_foreign_closure_roots() {
 #[test]
 fn global_cell_pending_zero_cleanup_misses_without_drain() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let key = runtime.intern_property_key("cell").unwrap();
     let executable = executable(&runtime, key.atom());
     let roots = ClosureSlots::from(vec![

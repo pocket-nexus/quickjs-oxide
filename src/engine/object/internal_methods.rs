@@ -67,7 +67,6 @@ pub(crate) use own_keys::{KeysResume, KeysStep};
 pub(crate) use own_property::ProxyOwnResume;
 pub(crate) use own_property::ProxyOwnStep;
 
-#[derive(Clone)]
 struct RootedProxy {
     proxy: ObjectRef,
     data: ProxyData,
@@ -194,7 +193,11 @@ impl Runtime {
     /// excluded revoked Proxy wrappers.
     #[cfg(test)]
     pub(crate) fn callable_realm(&self, callable: &CallableRef) -> Result<ContextId, RuntimeError> {
-        match self.function_realm_object_impl(None, callable.as_object().clone(), false)? {
+        match self.function_realm_object_impl(
+            None,
+            callable.as_object().try_clone().expect("duplicate root"),
+            false,
+        )? {
             NativeConversion::Value(realm) => Ok(realm),
             NativeConversion::Throw(value) => {
                 self.release_jsvalue(value)?;
@@ -214,7 +217,11 @@ impl Runtime {
         caller_realm: ContextId,
         callable: &CallableRef,
     ) -> Result<NativeConversion<ContextId>, RuntimeError> {
-        self.function_realm_object_impl(Some(caller_realm), callable.as_object().clone(), false)
+        self.function_realm_object_impl(
+            Some(caller_realm),
+            callable.as_object().try_clone()?,
+            false,
+        )
     }
 
     /// Raw-value form of QuickJS `JS_GetFunctionRealm`. Non-functions and
@@ -378,7 +385,7 @@ impl Runtime {
         realm: ContextId,
         object: &ObjectRef,
     ) -> Result<NativeConversion<bool>, RuntimeError> {
-        let mut current = object.clone();
+        let mut current = object.try_clone()?;
         let mut depth = 0_u32;
         loop {
             let Some(data) = self.proxy_snapshot_if_any(&current)? else {
@@ -415,7 +422,7 @@ impl Runtime {
         let target = ObjectRef::from_borrowed_handle(self.clone(), data.target)?;
         let handler = ObjectRef::from_borrowed_handle(self.clone(), data.handler)?;
         Ok(RootedProxy {
-            proxy: object.clone(),
+            proxy: object.try_clone()?,
             data,
             target,
             handler,
@@ -611,7 +618,7 @@ impl Runtime {
         match prototype::finish(
             self,
             realm,
-            ProxyPrototypeStep::start(self, realm, object.clone(), ProxyPrototypeKind::Get)?,
+            ProxyPrototypeStep::start(self, realm, object.try_clone()?, ProxyPrototypeKind::Get)?,
         )? {
             Completion::Return(value) => match value {
                 JsValue::Object(id) => Ok(NativeConversion::Value(Some(
@@ -646,8 +653,8 @@ impl Runtime {
             ProxyPrototypeStep::start(
                 self,
                 realm,
-                object.clone(),
-                ProxyPrototypeKind::Set(prototype.cloned()),
+                object.try_clone()?,
+                ProxyPrototypeKind::Set(prototype.map(ObjectRef::try_clone).transpose()?),
             )?,
         )? {
             Completion::Return(value) => match value {
@@ -674,7 +681,12 @@ impl Runtime {
         boolean::finish(
             self,
             realm,
-            ProxyBooleanStep::start(self, realm, object.clone(), ProxyBooleanKind::Extensible)?,
+            ProxyBooleanStep::start(
+                self,
+                realm,
+                object.try_clone()?,
+                ProxyBooleanKind::Extensible,
+            )?,
         )
     }
 
@@ -698,7 +710,7 @@ impl Runtime {
             ProxyBooleanStep::start(
                 self,
                 realm,
-                object.clone(),
+                object.try_clone()?,
                 ProxyBooleanKind::PreventExtensions,
             )?,
         )
@@ -742,7 +754,7 @@ impl Runtime {
                 Some(None) => {}
                 None => {
                     if self.proxy_snapshot_if_any(current)?.is_some() {
-                        return Ok(PreparedHas::Proxy(current.clone()));
+                        return Ok(PreparedHas::Proxy(current.try_clone()?));
                     }
                     if self.typed_array_is_object(current)?
                         && let Some(numeric) = self.typed_array_canonical_numeric_index(key)?
@@ -778,8 +790,8 @@ impl Runtime {
             ProxyBooleanStep::start(
                 self,
                 realm,
-                object.clone(),
-                ProxyBooleanKind::Has(key.clone()),
+                object.try_clone()?,
+                ProxyBooleanKind::Has(key.try_clone()?),
             )?,
         )
     }
@@ -822,7 +834,8 @@ impl Runtime {
         key: &PropertyKey,
         receiver: JsValue,
     ) -> Result<Completion, RuntimeError> {
-        let mut step = ProxyGetStep::start(self, realm, object.clone(), key.clone(), receiver)?;
+        let mut step =
+            ProxyGetStep::start(self, realm, object.try_clone()?, key.try_clone()?, receiver)?;
         loop {
             step = match step {
                 ProxyGetStep::Complete(completion) => return Ok(completion),
@@ -896,8 +909,8 @@ impl Runtime {
         let mut step = super::ordinary::SetStep::start(
             self,
             Some(realm),
-            object.clone(),
-            key.clone(),
+            object.try_clone()?,
+            key.try_clone()?,
             value,
             receiver,
         )?;
@@ -962,7 +975,8 @@ impl Runtime {
                     return TypedWriteStep::set_primitive(self, realm, object, index, value)
                         .map(Some);
                 }
-                TypedWriteStep::set(self, object.clone(), index, self.dup_jsvalue(value)?).map(Some)
+                TypedWriteStep::set(self, object.try_clone()?, index, self.dup_jsvalue(value)?)
+                    .map(Some)
             }
         }
     }
@@ -1027,8 +1041,14 @@ impl Runtime {
         value: JsValue,
         receiver: JsValue,
     ) -> Result<NativeConversion<InternalSetResult>, RuntimeError> {
-        let mut step =
-            ProxySetStep::start(self, realm, object.clone(), key.clone(), value, receiver)?;
+        let mut step = ProxySetStep::start(
+            self,
+            realm,
+            object.try_clone()?,
+            key.try_clone()?,
+            value,
+            receiver,
+        )?;
         loop {
             step = match step {
                 ProxySetStep::Complete(result) => return Ok(result),
@@ -1085,7 +1105,7 @@ impl Runtime {
         NativeConversion<Option<crate::engine::object::OwnedCompletePropertyDescriptor>>,
         RuntimeError,
     > {
-        let mut step = ProxyOwnStep::start(self, realm, object.clone(), key.clone())?;
+        let mut step = ProxyOwnStep::start(self, realm, object.try_clone()?, key.try_clone()?)?;
         loop {
             step = match step {
                 ProxyOwnStep::Complete(result) => return Ok(result),
@@ -1151,7 +1171,7 @@ impl Runtime {
             return Ok(NativeConversion::Value(if accepted {
                 InternalDefineResult::Defined
             } else {
-                InternalDefineResult::RejectedOrdinary(object.clone())
+                InternalDefineResult::RejectedOrdinary(object.try_clone()?)
             }));
         }
         Ok(
@@ -1159,9 +1179,9 @@ impl Runtime {
                 PropertyDefineOutcome::Defined(true) => {
                     NativeConversion::Value(InternalDefineResult::Defined)
                 }
-                PropertyDefineOutcome::Defined(false) => {
-                    NativeConversion::Value(InternalDefineResult::RejectedOrdinary(object.clone()))
-                }
+                PropertyDefineOutcome::Defined(false) => NativeConversion::Value(
+                    InternalDefineResult::RejectedOrdinary(object.try_clone()?),
+                ),
                 PropertyDefineOutcome::Throw(value) => NativeConversion::Throw(value),
             },
         )
@@ -1174,8 +1194,13 @@ impl Runtime {
         key: &PropertyKey,
         descriptor: crate::engine::object::OwnedPropertyDescriptor,
     ) -> Result<NativeConversion<InternalDefineResult>, RuntimeError> {
-        let mut step =
-            ProxyDefineStep::start(self, realm, object.clone(), key.clone(), descriptor)?;
+        let mut step = ProxyDefineStep::start(
+            self,
+            realm,
+            object.try_clone()?,
+            key.try_clone()?,
+            descriptor,
+        )?;
         loop {
             step = match step {
                 ProxyDefineStep::Complete(result) => return Ok(result),
@@ -1241,8 +1266,8 @@ impl Runtime {
             ProxyBooleanStep::start(
                 self,
                 realm,
-                object.clone(),
-                ProxyBooleanKind::Delete(key.clone()),
+                object.try_clone()?,
+                ProxyBooleanKind::Delete(key.try_clone()?),
             )?,
         )
     }
@@ -1258,7 +1283,7 @@ impl Runtime {
         own_keys::finish(
             self,
             realm,
-            own_keys::KeysStep::start(self, realm, object.clone())?,
+            own_keys::KeysStep::start(self, realm, object.try_clone()?)?,
         )
     }
 
@@ -1269,7 +1294,7 @@ impl Runtime {
         receiver: crate::engine::value::JsValue,
         arguments: Vec<crate::engine::value::JsValue>,
     ) -> Result<Completion, RuntimeError> {
-        let mut step = ProxyCallStep::start(self, realm, proxy.clone(), receiver, arguments)?;
+        let mut step = ProxyCallStep::start(self, realm, proxy.try_clone()?, receiver, arguments)?;
         loop {
             step = match step {
                 ProxyCallStep::Complete(completion) => return Ok(completion),
@@ -1316,7 +1341,7 @@ impl Runtime {
             construct::ProxyConstructStep::start(
                 self,
                 realm,
-                proxy.clone(),
+                proxy.try_clone()?,
                 new_target,
                 arguments,
             )?,

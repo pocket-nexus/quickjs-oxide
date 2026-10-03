@@ -54,7 +54,9 @@ fn install_test262_gc(context: &mut Context) {
             .define_own_property(
                 &object_262,
                 &gc_key,
-                &data_property(Value::Object(gc.as_object().clone())),
+                &data_property(Value::Object(
+                    gc.as_object().try_clone().expect("duplicate root")
+                )),
             )
             .expect("define $262.gc")
     );
@@ -75,7 +77,7 @@ fn install_test262_gc(context: &mut Context) {
 
 fn drain_jobs(runtime: &Runtime, context: &mut Context) {
     let mut jobs = 0usize;
-    while runtime.is_job_pending() {
+    while runtime.is_job_pending().expect("runtime state") {
         jobs += 1;
         assert!(jobs <= 64, "host GC fixture did not settle within 64 jobs");
         if let Err(error) = runtime.execute_pending_job() {
@@ -95,12 +97,12 @@ fn drain_jobs(runtime: &Runtime, context: &mut Context) {
 fn test262_gc_reentry_preserves_execution_turn_roots_and_job_order() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     install_test262_gc(&mut context);
 
     drop(eval(&mut context, FIXTURE));
     assert!(
-        runtime.is_job_pending(),
+        runtime.is_job_pending().expect("runtime state"),
         "$262.gc must leave Promise and finalization jobs queued"
     );
     // The completed eval cleared kept roots. Collection here cannot run jobs;
@@ -170,7 +172,7 @@ fn test262_gc_reentry_preserves_execution_turn_roots_and_job_order() {
 fn test262_gc_nested_embedding_entries_share_the_explicit_execution_turn() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     install_test262_gc(&mut context);
     runtime.with_execution_turn(|| {
         drop(eval(&mut context, "var scopeRef = new WeakRef({}); var scopeJobs = 0; Promise.resolve().then(() => scopeJobs++);"));
@@ -182,7 +184,7 @@ fn test262_gc_nested_embedding_entries_share_the_explicit_execution_turn() {
             Ok(())
         })?;
         assert!(runtime.execute_pending_job().is_err());
-        assert!(runtime.is_job_pending());
+        assert!(runtime.is_job_pending().expect("runtime state"));
         assert_eq!(eval(&mut context, "scopeJobs"), Value::Int(0));
         Ok(())
     }).unwrap();

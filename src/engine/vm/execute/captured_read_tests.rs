@@ -60,7 +60,7 @@ fn captured_frame(
 fn captured_scalar_reads_complete_without_an_activation_or_cell_owner_copy() {
     for checked in [false, true] {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (mut execution, id, _, cell) = captured_frame(&runtime, &mut context, checked);
         let count = runtime
             .0
@@ -106,7 +106,7 @@ fn captured_scalar_reads_complete_without_an_activation_or_cell_owner_copy() {
 #[test]
 fn captured_heap_reads_keep_the_original_driver_and_result_owner() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let (mut execution, id, pc, cell) = captured_frame(&runtime, &mut context, true);
     let object = runtime.new_object(None).unwrap();
     let object_id = object.object_id();
@@ -166,7 +166,7 @@ fn captured_heap_reads_keep_the_original_driver_and_result_owner() {
 #[test]
 fn captured_scalar_reads_decline_cleanup_and_leave_the_fault_checkpoint_unchanged() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let (mut execution, id, pc, cell) = captured_frame(&runtime, &mut context, false);
     let count = runtime
         .0

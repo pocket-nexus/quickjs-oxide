@@ -246,7 +246,7 @@ mod tests {
     #[test]
     fn dense_recovery_preserves_dictionary_key_order_and_named_descriptors() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(array) = context.eval(r#"(() => {
             const a=[], s=Symbol('key');
             a.before=1; a[3]=3; a.middle=2; a[s]=8; a.after=4;
@@ -265,7 +265,7 @@ mod tests {
     #[test]
     fn dense_recovery_define_property_keeps_readonly_length_and_default_indices() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(array) = context
             .eval(
                 r#"(() => {
@@ -291,7 +291,7 @@ mod tests {
     #[test]
     fn dense_recovery_declines_holes_huge_lengths_and_nondefault_indices() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         for source in [
             "const a=[];a[3]=3;a[0]=0;return a",
             "const a=[];a[4294967294]=3;a[0]=0;return a",
@@ -312,7 +312,7 @@ mod tests {
     #[test]
     fn dense_recovery_obeys_prototypes_extensibility_and_invalidates_cached_layouts() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(
@@ -346,9 +346,9 @@ mod tests {
     #[test]
     fn dense_recovery_moves_reference_and_atom_owners_and_collects_self_cycles() {
         let runtime = Runtime::new();
-        let baseline_atoms = runtime.test_atom_count();
+        let baseline_atoms = runtime.test_atom_count().expect("atom count");
         {
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let Value::Object(array) = context
                 .eval(
                     r#"(() => {
@@ -377,14 +377,17 @@ mod tests {
             );
         }
         runtime.run_gc().unwrap();
-        assert_eq!(runtime.heap_counts().live, 0);
-        assert_eq!(runtime.test_atom_count(), baseline_atoms);
+        assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
+        assert_eq!(
+            runtime.test_atom_count().expect("atom count"),
+            baseline_atoms
+        );
     }
 
     #[test]
     fn sparse_truncation_preserves_dictionary_insertion_order_after_deletion() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(
@@ -406,7 +409,7 @@ mod tests {
     #[test]
     fn sparse_truncation_preserves_highest_blocker_named_order_and_accessor_silence() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context.eval(r#"(() => {
         const a = [];
         a.first = 1;

@@ -39,7 +39,7 @@ fn object(value: Value) -> ObjectRef {
 
 fn drain(runtime: &Runtime) -> usize {
     let mut count = 0;
-    while runtime.is_job_pending() {
+    while runtime.is_job_pending().expect("runtime state") {
         assert!(runtime.execute_pending_job().unwrap().executed());
         count += 1;
     }
@@ -159,7 +159,7 @@ outer().then(async function(values) {
 fn ordinary_async_shape_starts_synchronously_and_returns_a_promise() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         text(eval(
             &mut context,
@@ -200,14 +200,14 @@ promise.then(function (value) {
         text(eval(&mut context, "events.join(',')")),
         "body,after,then"
     );
-    assert!(!runtime.is_job_pending());
+    assert!(!runtime.is_job_pending().expect("runtime state"));
 }
 
 #[test]
 fn fallthrough_throw_this_and_arguments_settle_the_outer_promise() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     drop(eval(
         &mut context,
         r#"
@@ -239,7 +239,7 @@ receiver.call({ base: 40 }, 1).then(function (value) {
 fn each_await_yields_exactly_one_fifo_resume_job() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         text(eval(
             &mut context,
@@ -282,14 +282,14 @@ order.join('|');
         text(eval(&mut context, "order.join('|')")),
         "f0|sync|f1:7|f2:8|done:15"
     );
-    assert!(!runtime.is_job_pending());
+    assert!(!runtime.is_job_pending().expect("runtime state"));
 }
 
 #[test]
 fn await_rejection_uses_normal_vm_unwind_for_catch_and_finally() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         text(eval(
             &mut context,
@@ -342,7 +342,7 @@ events.join('|');
 fn await_assimilates_thenables_once_and_retains_the_graph_across_gc() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         text(eval(
             &mut context,
@@ -397,14 +397,14 @@ events.join('|');
         assert_eq!(text(eval(&mut context, "events.join('|')")), expected);
     }
     assert_eq!(integer(eval(&mut context, "answer")), 42);
-    assert!(!runtime.is_job_pending());
+    assert!(!runtime.is_job_pending().expect("runtime state"));
 }
 
 #[test]
 fn await_handles_every_thenable_abrupt_and_first_settlement_boundary() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     drop(eval(
         &mut context,
         r#"
@@ -464,7 +464,7 @@ observe(repeated).then(function (value) { repeatedResult = value; });
 fn async_return_assimilates_promises_and_thenables_into_an_independent_outer_promise() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         eval(
             &mut context,
@@ -507,7 +507,7 @@ outer !== inner;
 fn await_uses_intrinsics_instead_of_mutable_promise_properties() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     drop(eval(
         &mut context,
         r#"
@@ -547,7 +547,7 @@ originalThen.call(
 fn hidden_async_function_constructor_compiles_await_bodies() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         text(eval(
             &mut context,
@@ -581,7 +581,7 @@ dynamic(42).then(function (value) { answer = value; });
 fn direct_eval_keeps_async_function_variable_environments_alive() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     drop(eval(
         &mut context,
         r#"
@@ -620,8 +620,8 @@ parameterEval().then(function (value) { parameterResult = value; });
 fn cross_realm_call_uses_caller_promise_and_jobs_but_callee_body_realm() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut callee = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut callee = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let caller_realm = caller.realm_id();
 
     let Value::Object(function) = eval(
@@ -678,15 +678,15 @@ crossPromise.then(undefined, function (error) {
         "the resumed body still executes in its defining realm"
     );
     assert_eq!(text(eval(&mut caller, "crossReason.message")), "callee");
-    assert!(!runtime.is_job_pending());
+    assert!(!runtime.is_job_pending().expect("runtime state"));
 }
 
 #[test]
 fn stack_preflight_returns_a_caller_promise_rejected_with_a_caller_error() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut callee = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut callee = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
 
     let Value::Object(function) = eval(
         &mut callee,
@@ -755,7 +755,7 @@ stackPromises.every(function (promise) {
         "the host-stack preflight escaped as a synchronous throw"
     );
     let mut jobs = 0;
-    while runtime.is_job_pending() {
+    while runtime.is_job_pending().expect("runtime state") {
         assert_eq!(
             runtime.execute_pending_job().unwrap().context(),
             Some(caller.realm_id())
@@ -781,5 +781,5 @@ stackPromises.every(function (promise) {
         )),
         "InternalError:stack overflow"
     );
-    assert!(!runtime.is_job_pending());
+    assert!(!runtime.is_job_pending().expect("runtime state"));
 }

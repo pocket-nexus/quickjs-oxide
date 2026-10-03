@@ -13,7 +13,7 @@ use std::rc::Rc;
 
 /// A rooted, immutable eval descriptor selected from its publisher's array.
 /// Cloning this view shares the array; it never copies scopes or bindings.
-#[derive(Clone)]
+
 pub(crate) struct PublishedEvalEnvironment {
     owner: FunctionBytecodeRef,
     environments: Rc<[EvalEnvironment<Atom>]>,
@@ -21,6 +21,14 @@ pub(crate) struct PublishedEvalEnvironment {
 }
 
 impl PublishedEvalEnvironment {
+    pub(crate) fn try_clone(&self) -> Result<Self, RuntimeError> {
+        Ok(Self {
+            owner: self.owner.try_clone()?,
+            environments: self.environments.clone(),
+            index: self.index,
+        })
+    }
+
     pub(crate) fn same_environment(&self, other: &Self) -> bool {
         self.index == other.index && Rc::ptr_eq(&self.environments, &other.environments)
     }
@@ -101,14 +109,22 @@ impl PublishedFunctionSnapshot {
             .and_then(|index| self.constants.get(index))
     }
 
-    pub(crate) fn eval_environment(&self, index: u16) -> Option<PublishedEvalEnvironment> {
+    pub(crate) fn eval_environment(
+        &self,
+        index: u16,
+    ) -> Result<Option<PublishedEvalEnvironment>, RuntimeError> {
         let index = usize::from(index);
-        self.eval_environments.get(index)?;
-        Some(PublishedEvalEnvironment {
-            owner: self.root.get()?.clone(),
+        let Some(_) = self.eval_environments.get(index) else {
+            return Ok(None);
+        };
+        let Some(owner) = self.root.get() else {
+            return Ok(None);
+        };
+        Ok(Some(PublishedEvalEnvironment {
+            owner: owner.try_clone()?,
             environments: self.eval_environments.clone(),
             index,
-        })
+        }))
     }
 
     pub(crate) fn root(&self) -> Option<&FunctionBytecodeRef> {
@@ -241,7 +257,7 @@ impl Runtime {
         if !function.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("function bytecode"));
         }
-        self.snapshot_function_bytecode_owned(function.clone())
+        self.snapshot_function_bytecode_owned(function.try_clone()?)
     }
 
     pub(crate) fn snapshot_function_bytecode_owned(
@@ -356,7 +372,7 @@ mod tests {
     #[test]
     fn snapshot_retains_its_owner_and_rejects_another_runtime() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let function = publish(&runtime, context.realm);
         let other = Runtime::new();
         assert!(matches!(
@@ -382,7 +398,7 @@ mod tests {
     #[test]
     fn published_local_initializer_fact_is_shared_and_rejects_lexical_bindings() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let metadata = FunctionMetadata {
             local_count: 2,
             max_stack: 1,
@@ -434,7 +450,7 @@ mod tests {
     fn eval_view_shares_storage_but_authenticates_the_selected_environment() {
         use crate::engine::code::function::metadata::EvalVariableEnvironment;
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let owner = publish(&runtime, context.realm);
         let id = owner.bytecode_id();
         let environment = EvalEnvironment {
@@ -449,12 +465,12 @@ mod tests {
             environments: Rc::from([environment.clone(), environment.clone()]),
             index: 0,
         };
-        let shared = view.clone();
+        let shared = view.try_clone().expect("duplicate environment");
         assert!(view.same_environment(&shared));
-        let mut another_index = view.clone();
+        let mut another_index = view.try_clone().expect("duplicate environment");
         another_index.index = 1;
         assert!(!view.same_environment(&another_index));
-        let mut another_owner = view.clone();
+        let mut another_owner = view.try_clone().expect("duplicate environment");
         another_owner.environments = Rc::from([environment]);
         assert!(!view.same_environment(&another_owner));
         drop(view);
@@ -470,7 +486,7 @@ mod tests {
     #[should_panic(expected = "published snapshots remain immutable in tests")]
     fn synthetic_fixture_mutation_cannot_change_published_code() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let function = publish(&runtime, context.realm);
         let mut snapshot = runtime.snapshot_function_bytecode(&function).unwrap();
         snapshot.exec = crate::engine::code::exec::ExecCode::empty();

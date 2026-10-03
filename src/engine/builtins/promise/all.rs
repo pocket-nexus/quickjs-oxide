@@ -55,8 +55,8 @@ impl Runtime {
                     },
                 )?;
                 [
-                    JsValue::Object(resolve_element.as_object().clone().into_handle()),
-                    JsValue::Object(capability.reject.as_object().clone().into_handle()),
+                    JsValue::Object(resolve_element.as_object().try_clone()?.into_handle()),
+                    JsValue::Object(capability.reject.as_object().try_clone()?.into_handle()),
                 ]
             }
             PromiseNativeKind::AllSettled => {
@@ -79,8 +79,8 @@ impl Runtime {
                 let fulfill_element = make_element(PromiseReactionKind::Fulfill)?;
                 let reject_element = make_element(PromiseReactionKind::Reject)?;
                 [
-                    JsValue::Object(fulfill_element.as_object().clone().into_handle()),
-                    JsValue::Object(reject_element.as_object().clone().into_handle()),
+                    JsValue::Object(fulfill_element.as_object().try_clone()?.into_handle()),
+                    JsValue::Object(reject_element.as_object().try_clone()?.into_handle()),
                 ]
             }
             PromiseNativeKind::Any => {
@@ -103,8 +103,8 @@ impl Runtime {
                     return Ok(NativeConversion::Throw(value));
                 }
                 [
-                    JsValue::Object(capability.resolve.as_object().clone().into_handle()),
-                    JsValue::Object(reject_element.as_object().clone().into_handle()),
+                    JsValue::Object(capability.resolve.as_object().try_clone()?.into_handle()),
+                    JsValue::Object(reject_element.as_object().try_clone()?.into_handle()),
                 ]
             }
             _ => unreachable!("aggregate selector was validated above"),
@@ -411,9 +411,9 @@ impl Runtime {
         }
 
         let argument = match terminal {
-            AggregateTerminal::ResolveValues => values.clone(),
+            AggregateTerminal::ResolveValues => values.try_clone()?,
             AggregateTerminal::RejectAggregate => {
-                self.new_internal_aggregate_error(realm, values.clone())?
+                self.new_internal_aggregate_error(realm, values.try_clone()?)?
             }
         };
         let settle = ObjectRef::from_borrowed_handle(self.clone(), settle)?;

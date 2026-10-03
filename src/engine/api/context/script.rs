@@ -33,12 +33,18 @@ impl Context {
     /// The returned handle is a runtime root. Its constant pool and captured
     /// realm remain alive even if this particular `Context` handle is dropped.
     pub fn compile(&mut self, source: &str) -> Result<FunctionBytecodeRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation();
         self.compile_with_options(source, &CompileOptions::default())
     }
 
     /// Compile one explicitly sized source buffer. Full debug mode retains
     /// byte-exact authored ranges for nested functions.
     pub fn compile_bytes(&mut self, source: &[u8]) -> Result<FunctionBytecodeRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation();
         self.compile_bytes_with_options(source, &CompileOptions::default())
     }
 
@@ -49,6 +55,9 @@ impl Context {
         source: &str,
         filename: &str,
     ) -> Result<FunctionBytecodeRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation();
         self.compile_with_options(source, &CompileOptions::new(filename))
     }
 
@@ -59,6 +68,9 @@ impl Context {
         source: &[u8],
         filename: &str,
     ) -> Result<FunctionBytecodeRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation();
         self.compile_bytes_with_options(source, &CompileOptions::new(filename))
     }
 
@@ -73,6 +85,9 @@ impl Context {
         source: &str,
         options: &CompileOptions,
     ) -> Result<FunctionBytecodeRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation();
         let compilation = self
             .runtime
             .compile_in_realm(self.realm, source, &options.filename)?;
@@ -90,6 +105,9 @@ impl Context {
         source: &[u8],
         options: &CompileOptions,
     ) -> Result<FunctionBytecodeRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation();
         let compilation =
             self.runtime
                 .compile_bytes_in_realm(self.realm, source, &options.filename)?;
@@ -114,11 +132,17 @@ impl Context {
     /// # Errors
     /// Returns syntax, publication, runtime-domain, or execution errors.
     pub fn eval(&mut self, source: &str) -> Result<Value, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation();
         self.eval_with_options(source, &EvalOptions::default())
     }
 
     /// Compile and evaluate one explicitly sized source buffer.
     pub fn eval_bytes(&mut self, source: &[u8]) -> Result<Value, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation();
         self.eval_bytes_with_options(source, &EvalOptions::default())
     }
 
@@ -128,6 +152,9 @@ impl Context {
         source: &str,
         filename: &str,
     ) -> Result<Value, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation();
         self.eval_with_options(source, &EvalOptions::new(filename))
     }
 
@@ -138,6 +165,9 @@ impl Context {
         source: &[u8],
         filename: &str,
     ) -> Result<Value, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation();
         self.eval_bytes_with_options(source, &EvalOptions::new(filename))
     }
 
@@ -147,6 +177,9 @@ impl Context {
         source: &str,
         options: &EvalOptions,
     ) -> Result<Value, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation();
         self.eval_compiling_with_options(options, |context, compile_options| {
             context.compile_with_options(source, compile_options)
         })
@@ -159,6 +192,9 @@ impl Context {
         source: &[u8],
         options: &EvalOptions,
     ) -> Result<Value, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation();
         self.eval_compiling_with_options(options, |context, compile_options| {
             context.compile_bytes_with_options(source, compile_options)
         })

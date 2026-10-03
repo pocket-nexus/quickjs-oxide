@@ -297,8 +297,8 @@ fn string_index_search_auto_init_can_be_deleted_before_first_get() {
 fn string_index_search_cross_realm_errors_and_user_throws_are_exact() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_string = defining.string_prototype().unwrap();
     let index_of = property_callable(&runtime, &mut defining, &defining_string, "indexOf");
     let last_index_of = property_callable(&runtime, &mut defining, &defining_string, "lastIndexOf");
@@ -356,7 +356,7 @@ fn string_index_search_cross_realm_errors_and_user_throws_are_exact() {
         &runtime,
         &caller_global,
         "stringSearchSentinel",
-        Value::Object(sentinel.clone()),
+        Value::Object(sentinel.try_clone().expect("duplicate root")),
     );
     let throwing_position = caller.new_object().unwrap();
     let position_conversion = eval_callable(
@@ -388,8 +388,8 @@ fn string_index_search_methods_are_per_realm_and_retain_then_release_their_realm
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let (index_of, last_index_of) = {
-        let mut first = runtime.new_context();
-        let mut second = runtime.new_context();
+        let mut first = runtime.new_context().expect("create context");
+        let mut second = runtime.new_context().expect("create context");
         let first_string = first.string_prototype().unwrap();
         let second_string = second.string_prototype().unwrap();
         let first_index = property_callable(&runtime, &mut first, &first_string, "indexOf");
@@ -421,23 +421,26 @@ fn string_index_search_methods_are_per_realm_and_retain_then_release_their_realm
     };
 
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
     drop(index_of);
     runtime.run_gc().unwrap();
     assert_eq!(
-        runtime.heap_counts().context_nodes,
+        runtime.heap_counts().expect("runtime state").context_nodes,
         1,
         "lastIndexOf should still retain the shared defining realm",
     );
     drop(last_index_of);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().live, 0);
+    assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
 }
 
 fn rust_graph_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let prototype = context.string_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();
     let selected = [
@@ -560,7 +563,7 @@ fn oracle_script_lines(oracle: &OsStr, source: &str, description: &str) -> Vec<S
 fn rust_fresh_delete_observation() -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let prototype = context.string_prototype().unwrap();
     let key = runtime.intern_property_key("indexOf").unwrap();
     let removed = runtime.delete_property(&prototype, &key).unwrap();
@@ -577,8 +580,12 @@ fn define_to_primitive(runtime: &Runtime, object: &ObjectRef, callable: Callable
     define_data_key(
         runtime,
         object,
-        &PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive)),
-        Value::Object(callable.as_object().clone()),
+        &PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        ),
+        Value::Object(callable.as_object().try_clone().expect("duplicate root")),
     );
 }
 
@@ -594,7 +601,7 @@ fn define_method(
         runtime,
         object,
         name,
-        Value::Object(callable.as_object().clone()),
+        Value::Object(callable.as_object().try_clone().expect("duplicate root")),
     );
 }
 

@@ -58,7 +58,7 @@ impl Runtime {
         function_prototype: &ObjectRef,
     ) -> Result<(), RuntimeError> {
         let async_function_prototype = self.new_object(Some(function_prototype))?;
-        let tag = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag));
+        let tag = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
         if !self.define_own_property(
             &async_function_prototype,
             &tag,
@@ -101,14 +101,14 @@ impl Runtime {
         self.define_function_data_property(
             constructor.as_object(),
             "prototype",
-            Value::Object(async_function_prototype.clone()),
+            Value::Object(async_function_prototype.try_clone()?),
             false,
             false,
         )?;
         self.define_function_data_property(
             &async_function_prototype,
             "constructor",
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone()?),
             false,
             true,
         )?;

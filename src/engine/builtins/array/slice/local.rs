@@ -109,7 +109,7 @@ mod tests {
     #[test]
     fn slice_local_progress_preserves_holes_getters_and_reentry() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(
@@ -133,7 +133,7 @@ mod tests {
     #[test]
     fn slice_local_progress_preserves_species_proxy_order_and_throws() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(context.eval(r#"(()=>{
             let source=[1,,3], trace=[], target;
             function Species(){target={};return new Proxy(target,{defineProperty(o,k,d){trace.push('d'+k);if(k==='0')source[2]=9;return Reflect.defineProperty(o,k,d);}});}
@@ -153,7 +153,7 @@ mod tests {
     #[test]
     fn slice_prepared_has_keeps_selected_proxy_and_refreshes_following_read() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(context.eval(r#"(()=>{
             let calls='', source;
             let proto=new Proxy({}, {has(o,k){calls+='h';Object.setPrototypeOf(source,null);return true;},get(){calls+='g';return 9;}});
@@ -166,7 +166,7 @@ mod tests {
     #[test]
     fn slice_local_progress_keeps_splice_mutations_and_to_spliced_values() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(
@@ -186,7 +186,7 @@ mod tests {
     #[cfg(feature = "profiling")]
     fn slice_local_progress_reports_shared_read_has_define_hits() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let profile = crate::engine::api::profiling::CostProfile::start();
         assert_eq!(
             context.eval("[1,2,3].slice().length").unwrap(),

@@ -76,7 +76,7 @@ impl Runtime {
         ) {
             return super::suspend::creation::GeneratorCreation {
                 realm: caller_realm,
-                callable: callable.clone(),
+                callable: callable.try_clone()?,
                 asynchronous: metadata.function_kind == FunctionKind::AsyncGenerator,
             }
             .initial(
@@ -137,7 +137,7 @@ pub(in crate::engine::vm) fn prepare_call(
         return_to: None,
         entry_guard: Some(prepared.active_frame),
         function: crate::engine::vm::closure::FrameFunction::new(
-            callable.as_object().clone(),
+            callable.as_object().try_clone()?,
             closure_slots,
         )
         .into(),

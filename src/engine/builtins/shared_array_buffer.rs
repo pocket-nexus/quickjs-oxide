@@ -83,7 +83,8 @@ impl Runtime {
             )?;
         }
 
-        let to_string_tag = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag));
+        let to_string_tag =
+            PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
         if !self.define_own_property(
             &prototype,
             &to_string_tag,
@@ -120,7 +121,7 @@ impl Runtime {
             "get [Symbol.species]",
             0,
         )?;
-        let species = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Species));
+        let species = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Species)?);
         if !self.define_own_property(
             constructor.as_object(),
             &species,
@@ -140,7 +141,7 @@ impl Runtime {
         self.define_function_data_property(
             global_object,
             "SharedArrayBuffer",
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone()?),
             true,
             true,
         )?;
@@ -641,6 +642,9 @@ impl Context {
         &self,
         object: &ObjectRef,
     ) -> Result<SharedBufferHandle, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation();
         self.runtime
             .shared_array_buffer_handle_if_branded(object)?
             .ok_or_else(|| {
@@ -660,6 +664,9 @@ impl Context {
         &mut self,
         handle: SharedBufferHandle,
     ) -> Result<ObjectRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation();
         let prototype = self
             .runtime
             .shared_array_buffer_default_prototype(self.realm)?;
@@ -689,7 +696,7 @@ mod tests {
     #[test]
     fn constructor_descriptors_and_key_order_match_pinned_quickjs() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(
@@ -722,7 +729,7 @@ mod tests {
     #[test]
     fn constructor_and_grow_preserve_quickjs_observable_order_and_errors() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(
@@ -768,7 +775,7 @@ mod tests {
     #[test]
     fn slice_species_branding_and_detach_isolation_match_quickjs() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let source = eval_object(
             &mut context,
             "globalThis.__shared=new SharedArrayBuffer(4,{maxByteLength:8});__shared",
@@ -810,7 +817,7 @@ mod tests {
         );
 
         context
-            .detach_array_buffer(&Value::Object(source.clone()))
+            .detach_array_buffer(&Value::Object(source.try_clone().expect("duplicate root")))
             .unwrap();
         assert_eq!(
             context.eval("[__shared.byteLength,__shared.growable].join('|')"),
@@ -821,7 +828,7 @@ mod tests {
     #[test]
     fn safe_handles_share_bytes_across_runtimes_but_not_wrapper_lengths_and_survive_gc() {
         let first_runtime = Runtime::new();
-        let mut first_context = first_runtime.new_context();
+        let mut first_context = first_runtime.new_context().expect("create context");
         let source = eval_object(
             &mut first_context,
             "new SharedArrayBuffer(2,{maxByteLength:8})",
@@ -832,7 +839,7 @@ mod tests {
         first_runtime.run_gc().unwrap();
 
         let first_realm_prototype = eval_object(&mut first_context, "SharedArrayBuffer.prototype");
-        let mut sibling_context = first_runtime.new_context();
+        let mut sibling_context = first_runtime.new_context().expect("create context");
         let sibling_imported = sibling_context
             .import_shared_array_buffer(exported.clone())
             .unwrap();
@@ -845,7 +852,7 @@ mod tests {
         );
 
         let second_runtime = Runtime::new();
-        let mut second_context = second_runtime.new_context();
+        let mut second_context = second_runtime.new_context().expect("create context");
         let imported = second_context
             .import_shared_array_buffer(exported.clone())
             .unwrap();
@@ -869,7 +876,9 @@ mod tests {
                     &global,
                     &key,
                     &OrdinaryPropertyDescriptor {
-                        value: DescriptorField::Present(Value::Object(imported.clone())),
+                        value: DescriptorField::Present(Value::Object(
+                            imported.try_clone().expect("duplicate root")
+                        )),
                         writable: DescriptorField::Present(true),
                         enumerable: DescriptorField::Present(true),
                         configurable: DescriptorField::Present(true),

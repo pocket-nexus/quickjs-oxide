@@ -477,7 +477,7 @@ mod tests {
     fn resident_field_leaves_preserve_zero_queue_and_ordinary_slot() {
         use crate::engine::code::bytecode::Instruction;
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let base = runtime
             .into_jsvalue(context.eval("globalThis.fieldProbe={x:7}").unwrap())
             .unwrap();
@@ -530,7 +530,7 @@ mod tests {
     #[test]
     fn resident_array_leaves_preserve_existing_zero_queue_and_storage() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let dense = context.eval("globalThis.denseProbe = [7]").unwrap();
         let typed = context
             .eval("globalThis.typedProbe = new Int32Array([7])")
@@ -597,7 +597,7 @@ mod tests {
             Value::String(JsString::from_static("slot")),
             Value::BigInt(JsBigInt::from(i128::MAX)),
         ] {
-            let mut shared = original.clone();
+            let mut shared = original.try_clone().expect("duplicate root");
             assert!(runtime.try_release_slot_value(&mut shared).unwrap());
             let mut last = original;
             assert_eq!(

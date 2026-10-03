@@ -1019,7 +1019,7 @@ mod tests {
         runtime: &Runtime,
         function_kind: FunctionKind,
     ) -> (CallableRef, ObjectRef) {
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let code = if matches!(
             function_kind,
             FunctionKind::Generator | FunctionKind::AsyncGenerator
@@ -1176,8 +1176,8 @@ mod tests {
     #[test]
     fn private_shape_and_var_ref_edges_keep_atoms_alive_without_public_values() {
         let runtime = Runtime::new();
-        let baseline_atoms = runtime.test_atom_count();
-        let baseline_var_refs = runtime.heap_counts().var_ref_nodes;
+        let baseline_atoms = runtime.test_atom_count().expect("atom count");
+        let baseline_var_refs = runtime.heap_counts().expect("runtime state").var_ref_nodes;
         let name = private_name(&runtime, "#lifetime");
         assert_eq!(private_atom_ref_count(&runtime, &name), 1);
         let object = runtime.new_object(None).unwrap();
@@ -1189,8 +1189,14 @@ mod tests {
         assert_eq!(private_atom_ref_count(&runtime, &name), 3);
         drop(name);
 
-        assert_eq!(runtime.test_atom_count(), baseline_atoms + 1);
-        assert_eq!(runtime.heap_counts().var_ref_nodes, baseline_var_refs + 1);
+        assert_eq!(
+            runtime.test_atom_count().expect("atom count"),
+            baseline_atoms + 1
+        );
+        assert_eq!(
+            runtime.heap_counts().expect("runtime state").var_ref_nodes,
+            baseline_var_refs + 1
+        );
         let rooted_again = runtime.private_name_from_raw_var_ref(&captured).unwrap();
         assert_eq!(private_atom_ref_count(&runtime, &rooted_again), 3);
         assert!(
@@ -1207,10 +1213,19 @@ mod tests {
 
         drop(rooted_again);
         drop(captured);
-        assert_eq!(runtime.heap_counts().var_ref_nodes, baseline_var_refs);
-        assert_eq!(runtime.test_atom_count(), baseline_atoms + 1);
+        assert_eq!(
+            runtime.heap_counts().expect("runtime state").var_ref_nodes,
+            baseline_var_refs
+        );
+        assert_eq!(
+            runtime.test_atom_count().expect("atom count"),
+            baseline_atoms + 1
+        );
         drop(object);
-        assert_eq!(runtime.test_atom_count(), baseline_atoms);
+        assert_eq!(
+            runtime.test_atom_count().expect("atom count"),
+            baseline_atoms
+        );
     }
 
     #[test]
@@ -1456,8 +1471,8 @@ mod tests {
     #[test]
     fn gc_reclaims_private_shape_atoms_and_private_value_cycles() {
         let runtime = Runtime::new();
-        let baseline_atoms = runtime.test_atom_count();
-        let baseline_objects = runtime.heap_counts().object_nodes;
+        let baseline_atoms = runtime.test_atom_count().expect("atom count");
+        let baseline_objects = runtime.heap_counts().expect("runtime state").object_nodes;
         let name = private_name(&runtime, "#self");
         let object = runtime.new_object(None).unwrap();
         runtime
@@ -1465,26 +1480,38 @@ mod tests {
                 &object,
                 &name,
                 runtime
-                    .unroot_value(&Value::Object(object.clone()))
+                    .unroot_value(&Value::Object(object.try_clone().expect("duplicate root")))
                     .unwrap(),
             )
             .unwrap();
 
         drop(name);
         drop(object);
-        assert_eq!(runtime.heap_counts().object_nodes, baseline_objects + 1);
-        assert_eq!(runtime.test_atom_count(), baseline_atoms + 1);
+        assert_eq!(
+            runtime.heap_counts().expect("runtime state").object_nodes,
+            baseline_objects + 1
+        );
+        assert_eq!(
+            runtime.test_atom_count().expect("atom count"),
+            baseline_atoms + 1
+        );
 
         let stats = runtime.run_gc().unwrap();
         assert_eq!(stats.cleanup.finalized_objects, 1);
-        assert_eq!(runtime.heap_counts().object_nodes, baseline_objects);
-        assert_eq!(runtime.test_atom_count(), baseline_atoms);
+        assert_eq!(
+            runtime.heap_counts().expect("runtime state").object_nodes,
+            baseline_objects
+        );
+        assert_eq!(
+            runtime.test_atom_count().expect("atom count"),
+            baseline_atoms
+        );
     }
 
     #[test]
     fn compiled_private_fields_cover_instance_static_and_reference_operations() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context
             .eval(
                 r#"
@@ -1522,7 +1549,7 @@ mod tests {
     #[test]
     fn compiled_private_names_relay_through_nested_functions_eval_and_fresh_classes() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context
             .eval(
                 r#"
@@ -1563,7 +1590,7 @@ mod tests {
     #[test]
     fn compiled_forward_private_name_reads_match_quickjs_initialization_order() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context
             .eval(
                 r#"
@@ -1602,7 +1629,7 @@ mod tests {
     #[test]
     fn abrupt_class_scope_reentry_reuses_captured_private_method_cell() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context
             .eval(
                 r#"
@@ -1648,7 +1675,7 @@ mod tests {
     #[test]
     fn private_method_get_checks_brand_home_before_primitive_receiver() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context
             .eval(
                 r#"
@@ -1675,7 +1702,7 @@ mod tests {
     #[test]
     fn uninitialized_private_in_preserves_quickjs_internal_tag_atom() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context
             .eval(
                 r#"
@@ -1700,7 +1727,7 @@ mod tests {
     #[test]
     fn private_accessor_cells_survive_direct_eval_and_closure_capture() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let result = context
             .eval(
                 r##"

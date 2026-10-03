@@ -121,7 +121,10 @@ impl Runtime {
             )?;
         }
 
-        let to_string_tag = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag));
+        let to_string_tag = PropertyKey::from(
+            self.well_known_symbol(WellKnownSymbol::ToStringTag)
+                .expect("well-known symbol"),
+        );
         if !self.define_own_property(
             &prototype,
             &to_string_tag,
@@ -164,7 +167,10 @@ impl Runtime {
             "get [Symbol.species]",
             0,
         )?;
-        let species = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Species));
+        let species = PropertyKey::from(
+            self.well_known_symbol(WellKnownSymbol::Species)
+                .expect("well-known symbol"),
+        );
         if !self.define_own_property(
             constructor.as_object(),
             &species,
@@ -184,7 +190,7 @@ impl Runtime {
         self.define_function_data_property(
             global_object,
             "ArrayBuffer",
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone()?),
             true,
             true,
         )?;
@@ -870,6 +876,9 @@ impl Context {
     /// and where to publish it.
     #[cfg(feature = "test262-host")]
     pub fn new_detach_array_buffer_function(&mut self) -> Result<CallableRef, RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation();
         let function_prototype = self.function_prototype()?;
         self.runtime.new_native_builtin(
             &function_prototype,
@@ -885,6 +894,9 @@ impl Context {
     ///
     /// Values which are not ordinary ArrayBuffers are silent no-ops.
     pub fn detach_array_buffer(&mut self, value: &Value) -> Result<(), RuntimeError> {
+        self.runtime.check_poison()?;
+        let entry_runtime = self.runtime.clone();
+        let _operation = entry_runtime.operation();
         self.runtime.detach_array_buffer_value(value)
     }
 }

@@ -459,6 +459,9 @@ impl Runtime {
     /// that invariant violations surface at the deferred-drain boundary.
     #[inline]
     pub(crate) fn release_jsvalue(&self, value: JsValue) -> Result<(), RuntimeError> {
+        if self.skip_cleanup() {
+            return Ok(());
+        }
         match value {
             JsValue::Undefined
             | JsValue::Null
@@ -641,7 +644,7 @@ mod tests {
     #[test]
     fn string_payloads_allocate_one_node_per_conversion() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let value = context.eval("'hello arena'").unwrap();
         let Value::String(string) = &value else {
             panic!("eval must produce a string");
@@ -669,13 +672,15 @@ mod tests {
     #[test]
     fn bigint_payloads_allocate_one_node_per_conversion() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let value = context.eval("123456789012345678901234567890n").unwrap();
         let Value::BigInt(bigint) = &value else {
             panic!("eval must produce a bigint");
         };
 
-        let internal = runtime.into_jsvalue(value.clone()).unwrap();
+        let internal = runtime
+            .into_jsvalue(value.try_clone().expect("duplicate root"))
+            .unwrap();
         let JsValue::BigInt(id) = internal else {
             panic!("conversion must produce a bigint handle");
         };

@@ -13,7 +13,7 @@ pub use primitive::*;
 pub(crate) mod js_value;
 pub(crate) use js_value::JsValue;
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 #[must_use]
 pub enum Value {
     Undefined,
@@ -28,6 +28,25 @@ pub enum Value {
 }
 
 impl Value {
+    /// Duplicate a primitive payload or retain an owning heap root.
+    ///
+    /// # Errors
+    /// Object and Symbol roots reject a poisoned runtime or reference-count
+    /// overflow. Independent primitive payloads do not access runtime state.
+    pub fn try_clone(&self) -> Result<Self, crate::engine::api::RuntimeError> {
+        Ok(match self {
+            Self::Undefined => Self::Undefined,
+            Self::Null => Self::Null,
+            Self::Bool(value) => Self::Bool(*value),
+            Self::Int(value) => Self::Int(*value),
+            Self::Float(value) => Self::Float(*value),
+            Self::BigInt(value) => Self::BigInt(value.clone()),
+            Self::String(value) => Self::String(value.clone()),
+            Self::Symbol(value) => Self::Symbol(value.try_clone()?),
+            Self::Object(value) => Self::Object(value.try_clone()?),
+        })
+    }
+
     #[allow(clippy::cast_possible_truncation, clippy::float_cmp)]
     pub fn number(value: f64) -> Self {
         number::operations::Number::compact(value).into()
@@ -53,15 +72,18 @@ impl Value {
 
     /// Apply ECMAScript `ToBoolean`, including QuickJS's Annex B
     /// `is_HTMLDDA` object exception.
+    ///
+    /// # Errors
+    /// Object metadata access rejects poisoned state or a checked heap error.
+    /// Primitive representations are evaluated without accessing runtime state.
     #[must_use]
-    pub fn to_boolean(&self) -> bool {
+    pub fn to_boolean(&self) -> Result<bool, crate::engine::api::RuntimeError> {
         let Self::Object(object) = self else {
-            return self.to_boolean_primitive();
+            return Ok(self.to_boolean_primitive());
         };
-        !object
-            .runtime()
-            .value_is_html_dda(self)
-            .expect("a rooted ObjectRef must resolve in its owning runtime")
+        object.runtime().check_poison()?;
+        let _unwind = object.runtime().unwind_guard();
+        Ok(!object.runtime().value_is_html_dda(self)?)
     }
 
     /// Apply the representation-only primitive portion of `ToBoolean`.

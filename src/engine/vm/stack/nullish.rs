@@ -70,7 +70,7 @@ mod tests {
     use crate::engine::{code::runtime::PublishedFunctionSnapshot, heap::RawId, value::Value};
 
     fn frame(runtime: &Runtime, values: Vec<JsValue>) -> (SlotStore, FrameWindow) {
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let mut executable = PublishedFunctionSnapshot::empty_for_test(context.realm);
         executable.metadata.max_stack = 2;
         let mut store = SlotStore::new(20);
@@ -201,7 +201,7 @@ mod tests {
     #[test]
     fn nullish_value_branch_proxy_and_conversion_paths_agree() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(context.eval(r#"(() => {
             let calls = 0;
             let obj = {valueOf() { calls++; return 1; }};

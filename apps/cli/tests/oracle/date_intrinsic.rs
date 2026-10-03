@@ -482,8 +482,8 @@ fn date_to_primitive_and_to_json_match_pinned_quickjs() {
 fn date_cross_realm_prototypes_fallback_and_errors_use_exact_realms() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
 
     let defining_constructor = date_constructor(&runtime, &mut defining);
     let defining_date_prototype =
@@ -510,7 +510,7 @@ fn date_cross_realm_prototypes_fallback_and_errors_use_exact_realms() {
     );
     assert_eq!(
         runtime.get_prototype_of(&foreign_date).unwrap(),
-        Some(defining_date_prototype.clone()),
+        Some(defining_date_prototype.try_clone().expect("duplicate root")),
         "Date construction did not use the foreign constructor prototype",
     );
 
@@ -582,7 +582,7 @@ fn detached_date_and_native_method_keep_their_defining_realm_collectable() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
     let (date, value_of) = {
-        let mut defining = runtime.new_context();
+        let mut defining = runtime.new_context().expect("create context");
         let date = eval_object(&mut defining, "new Date(42)", "detached Date");
         let value_of = date_prototype_callable(&runtime, &mut defining, "valueOf");
         (date, value_of)
@@ -590,16 +590,20 @@ fn detached_date_and_native_method_keep_their_defining_realm_collectable() {
 
     runtime.run_gc().unwrap();
     assert_eq!(
-        runtime.heap_counts().context_nodes,
+        runtime.heap_counts().expect("runtime state").context_nodes,
         1,
         "detached Date roots must retain their defining realm graph",
     );
 
     {
-        let mut caller = runtime.new_context();
+        let mut caller = runtime.new_context().expect("create context");
         assert_eq!(
             caller
-                .call(&value_of, Value::Object(date.clone()), &[])
+                .call(
+                    &value_of,
+                    Value::Object(date.try_clone().expect("duplicate root")),
+                    &[]
+                )
                 .unwrap()
                 .as_number(),
             Some(42.0),
@@ -610,7 +614,7 @@ fn detached_date_and_native_method_keep_their_defining_realm_collectable() {
     drop(value_of);
     runtime.run_gc().unwrap();
     assert_eq!(
-        runtime.heap_counts().context_nodes,
+        runtime.heap_counts().expect("runtime state").context_nodes,
         1,
         "the detached Date must retain its prototype realm after valueOf drops",
     );
@@ -618,7 +622,7 @@ fn detached_date_and_native_method_keep_their_defining_realm_collectable() {
     drop(date);
     runtime.run_gc().unwrap();
     assert_eq!(
-        runtime.heap_counts().live,
+        runtime.heap_counts().expect("runtime state").live,
         0,
         "Date realms, prototypes, native functions, and instances must be collectable",
     );
@@ -633,7 +637,7 @@ fn compare_cases(group: &str, cases: &[(&str, &str)]) {
     for &(description, source) in cases {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let actual = observe_read_context_eval_completion_with_prelude(
             &runtime,
             &mut context,

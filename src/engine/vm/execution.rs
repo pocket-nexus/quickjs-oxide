@@ -37,7 +37,7 @@ impl ExecutionLimits {
     /// slot budget keeps its default; the native host-stack budget is separate.
     pub(super) fn for_runtime(runtime: &Runtime) -> Self {
         Self {
-            frames: runtime.recursion_limit(),
+            frames: runtime.0.recursion_limit.get(),
             ..Self::default()
         }
     }
@@ -89,10 +89,14 @@ pub(crate) struct HostBoundaryGuard {
     boundary: HostBoundary,
     #[cfg(feature = "profiling")]
     _origin: crate::engine::api::profiling::CoreExecutionScope,
+    runtime: std::rc::Weak<crate::engine::heap::runtime::RuntimeInner>,
 }
 
 impl HostBoundaryGuard {
     pub(crate) fn enter(runtime: &Runtime) -> Result<Self, Error> {
+        runtime
+            .check_poison()
+            .map_err(super::exception::runtime_error_to_vm_error)?;
         let domain = runtime.domain_id();
         let boundary = HostBoundary {
             domain,
@@ -116,12 +120,18 @@ impl HostBoundaryGuard {
         })?;
         Ok(Self {
             boundary,
+            runtime: std::rc::Rc::downgrade(&runtime.0),
             #[cfg(feature = "profiling")]
             _origin: crate::engine::api::profiling::CoreExecutionScope::outside(),
         })
     }
 
     pub(crate) fn finish(self, runtime: &Runtime) -> Result<(), Error> {
+        // A host may have caught an inner panic. Never resume its suspended
+        // parent against state quarantined by the child.
+        runtime
+            .check_poison()
+            .map_err(super::exception::runtime_error_to_vm_error)?;
         let boundary = self.boundary;
         if runtime.domain_id() != boundary.domain {
             return Err(Error::internal("host boundary belongs to another runtime"));
@@ -162,6 +172,9 @@ impl HostBoundaryGuard {
 
 impl Drop for HostBoundaryGuard {
     fn drop(&mut self) {
+        if let Some(runtime) = self.runtime.upgrade().map(Runtime) {
+            runtime.skip_cleanup();
+        }
         HOST_BOUNDARIES.with(|boundaries| {
             let mut boundaries = boundaries.borrow_mut();
             if let Some(index) = boundaries.iter().rposition(|boundary| {
@@ -261,6 +274,14 @@ impl Drop for RunningExecution {
             self.slots = SlotStore::new(0);
             return;
         };
+        if runtime.skip_cleanup() {
+            // Internal JsValue storage has no Drop. Public roots inside cold
+            // state also skip semantic release while the runtime is poisoned.
+            self.pending = None;
+            self.selected_named_read = None;
+            self.slots = SlotStore::new(0);
+            return;
+        }
         if let Some(pending) = self.pending.take() {
             // Teardown cannot report errors; invariant violations surface at
             // the deferred-drain boundary like every trusted release.
@@ -461,7 +482,7 @@ mod tests {
                 outcome,
                 calls: calls.clone(),
             });
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let trigger = context.eval("Promise.reject.bind(Promise)").unwrap();
             let Value::Object(function) = context
                 .eval(
@@ -483,32 +504,34 @@ mod tests {
             // The existing rejection-tracker ABI is the synchronous host
             // trigger. Module compilation then enters the guarded loader;
             // dynamic import itself would defer loading to a later job.
-            let host_context = RefCell::new(context.clone());
+            let host_context = RefCell::new(context.try_clone().expect("duplicate root"));
             struct ClearTracker(Runtime);
             impl Drop for ClearTracker {
                 fn drop(&mut self) {
-                    self.0.clear_host_promise_rejection_tracker();
+                    let _ = self.0.clear_host_promise_rejection_tracker();
                 }
             }
             let tracker_guard = ClearTracker(runtime.clone());
-            runtime.set_host_promise_rejection_tracker(move |event| {
-                if event.is_handled() {
-                    return;
-                }
-                let mut context = host_context.borrow_mut();
-                let result = context
-                    .compile_module_with_filename("import './owned-host.js';", "host-entry.js");
-                match outcome {
-                    Outcome::Return => {
-                        result.unwrap();
+            runtime
+                .set_host_promise_rejection_tracker(move |event| {
+                    if event.is_handled() {
+                        return;
                     }
-                    Outcome::Reject => {
-                        assert!(result.is_err());
-                        assert_eq!(context.take_exception().unwrap(), Some(Value::Int(99)));
+                    let mut context = host_context.borrow_mut();
+                    let result = context
+                        .compile_module_with_filename("import './owned-host.js';", "host-entry.js");
+                    match outcome {
+                        Outcome::Return => {
+                            result.unwrap();
+                        }
+                        Outcome::Reject => {
+                            assert!(result.is_err());
+                            assert_eq!(context.take_exception().unwrap(), Some(Value::Int(99)));
+                        }
+                        Outcome::Panic => unreachable!("loader should have panicked"),
                     }
-                    Outcome::Panic => unreachable!("loader should have panicked"),
-                }
-            });
+                })
+                .expect("configure test runtime");
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 context.call(&callable, Value::Undefined, &[trigger])
             }));
@@ -526,6 +549,15 @@ mod tests {
             assert_eq!(calls.get(), 1);
             assert!(ACTIVE_EXECUTIONS.with(|active| active.borrow().is_empty()));
             assert!(HOST_BOUNDARIES.with(|boundaries| boundaries.borrow().is_empty()));
+            if matches!(outcome, Outcome::Panic) {
+                assert!(runtime.is_poisoned());
+                assert!(matches!(
+                    context.eval("42"),
+                    Err(crate::engine::api::RuntimeError::Poisoned)
+                ));
+                continue;
+            }
+            assert!(!runtime.is_poisoned());
             assert!(runtime.0.state.borrow().active_frames.is_empty());
             assert_eq!(runtime.0.module_host_callback_depth.get(), 0);
             assert_eq!(context.eval("reenter()").unwrap(), Value::Int(41));

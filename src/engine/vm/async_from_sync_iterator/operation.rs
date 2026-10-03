@@ -244,7 +244,7 @@ impl FromSyncStep {
             ),
             GeneratorResumeKind::Return | GeneratorResumeKind::Throw => Ok({
                 let __pending_field_receiver =
-                    runtime.into_jsvalue(Value::Object(state.iterator.clone()))?;
+                    runtime.into_jsvalue(Value::Object(state.iterator.try_clone()?))?;
                 let __pending_field_key =
                     runtime.intern_property_key(if kind == GeneratorResumeKind::Return {
                         "return"
@@ -400,7 +400,7 @@ impl FromSyncResume {
                 Ok({
                     let __pending_field_callable = callable;
                     let __pending_field_receiver =
-                        runtime.into_jsvalue(Value::Object(state.iterator.clone()))?;
+                        runtime.into_jsvalue(Value::Object(state.iterator.try_clone()?))?;
                     let __pending_field_arguments = std::mem::take(&mut state.arguments);
                     let __pending_field_resume = self.continue_with(Phase::Result(state));
                     FromSyncStep::request_call(
@@ -425,7 +425,8 @@ impl FromSyncResume {
                 Ok({
                     let __pending_field_key = runtime
                         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Done)?;
-                    let __pending_field_receiver = JsValue::Object(result.clone().into_handle());
+                    let __pending_field_receiver =
+                        JsValue::Object(result.try_clone()?.into_handle());
                     let __pending_field_resume = self.continue_with(Phase::Done { state, result });
                     FromSyncStep::request_read(
                         __pending_field_receiver,

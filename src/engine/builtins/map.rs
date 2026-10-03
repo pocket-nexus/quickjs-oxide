@@ -116,7 +116,7 @@ impl Runtime {
                 ));
             }
         };
-        let iterator_key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Iterator));
+        let iterator_key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Iterator)?);
         if !self.define_raw_property(
             &map_prototype,
             &iterator_key,
@@ -168,7 +168,7 @@ impl Runtime {
             "get [Symbol.species]",
             0,
         )?;
-        let species = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Species));
+        let species = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Species)?);
         if !self.define_own_property(
             constructor.as_object(),
             &species,
@@ -188,7 +188,7 @@ impl Runtime {
         self.define_function_data_property(
             global_object,
             "Map",
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone()?),
             true,
             true,
         )?;
@@ -208,7 +208,7 @@ impl Runtime {
         object: &ObjectRef,
         value: &'static str,
     ) -> Result<(), RuntimeError> {
-        let key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag));
+        let key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
         if !self.define_own_property(
             object,
             &key,
@@ -912,26 +912,12 @@ mod tests {
     #[test]
     fn active_collection_record_guard_is_lifo_and_panic_safe() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let map = runtime.new_map_in_realm(context.realm).unwrap();
         let record = ActiveCollectionRecord::Map {
             object: map.object_id(),
             index: 0,
         };
-
-        let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let _active_record = runtime.push_active_collection_record(record);
-            panic!("active collection record unwind probe");
-        }));
-        assert!(unwind.is_err());
-        assert!(
-            runtime
-                .0
-                .state
-                .borrow()
-                .active_collection_records
-                .is_empty()
-        );
 
         let outer = runtime.push_active_collection_record(record);
         let inner = runtime.push_active_collection_record(record);
@@ -950,12 +936,19 @@ mod tests {
                 .active_collection_records
                 .is_empty()
         );
+        let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _active_record = runtime.push_active_collection_record(record);
+            panic!("active collection record unwind probe");
+        }));
+        assert!(unwind.is_err());
+        assert!(runtime.is_poisoned());
+        assert!(matches!(runtime.run_gc(), Err(RuntimeError::Poisoned)));
     }
 
     #[test]
     fn table_backed_symbol_atoms_return_after_map_mutations() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(function) = context
             .eval(
                 r#"(function(){
@@ -979,14 +972,14 @@ mod tests {
                 .call(&function, Value::Undefined, &[])
                 .expect("warm Map Symbol ownership probe"),
         );
-        let baseline = runtime.test_atom_count();
+        let baseline = runtime.test_atom_count().expect("atom count");
         for _ in 0..3 {
             drop(
                 context
                     .call(&function, Value::Undefined, &[])
                     .expect("repeat Map Symbol ownership probe"),
             );
-            assert_eq!(runtime.test_atom_count(), baseline);
+            assert_eq!(runtime.test_atom_count().expect("atom count"), baseline);
         }
     }
 }

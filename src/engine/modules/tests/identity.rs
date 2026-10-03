@@ -21,7 +21,7 @@ fn module_loader_error_keeps_eq_with_representation_exact_exceptions() {
 #[test]
 fn module_bytecode_and_compiled_load_results_compare_by_module_identity() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let first = context
         .compile_module_with_filename("export const value = 1;", "same.js")
         .unwrap();
@@ -29,10 +29,10 @@ fn module_bytecode_and_compiled_load_results_compare_by_module_identity() {
         .compile_module_with_filename("export const value = 2;", "same.js")
         .unwrap();
 
-    assert_eq!(first, first.clone());
+    assert_eq!(first, first.try_clone().expect("duplicate root"));
     assert_ne!(first, second);
     assert_eq!(
-        ModuleLoadResult::Compiled(first.clone()),
+        ModuleLoadResult::Compiled(first.try_clone().expect("duplicate root")),
         ModuleLoadResult::Compiled(first)
     );
 }

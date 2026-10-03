@@ -148,7 +148,7 @@ mod tests {
     #[test]
     fn object_literal_methods_install_home_object_only_when_metadata_requests_it() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let literal = context.new_object().unwrap();
 
         for (name, kind) in [
@@ -164,7 +164,7 @@ mod tests {
                         context.realm,
                         &literal,
                         &key,
-                        Value::Object(callable.as_object().clone()),
+                        Value::Object(callable.as_object().try_clone().expect("duplicate root")),
                         kind,
                         true,
                     )
@@ -173,7 +173,7 @@ mod tests {
             ));
             assert_eq!(
                 stored_home_object(&runtime, &callable),
-                Some(literal.clone())
+                Some(literal.try_clone().expect("duplicate root"))
             );
         }
 
@@ -185,7 +185,7 @@ mod tests {
                     context.realm,
                     &literal,
                     &key,
-                    Value::Object(ordinary.as_object().clone()),
+                    Value::Object(ordinary.as_object().try_clone().expect("duplicate root")),
                     DefineMethodKind::Method,
                     true,
                 )

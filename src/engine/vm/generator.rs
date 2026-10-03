@@ -80,14 +80,14 @@ impl Runtime {
         self.define_function_data_property(
             constructor.as_object(),
             "prototype",
-            Value::Object(generator_function_prototype.clone()),
+            Value::Object(generator_function_prototype.try_clone()?),
             false,
             false,
         )?;
         self.define_function_data_property(
             &generator_function_prototype,
             "constructor",
-            Value::Object(constructor.as_object().clone()),
+            Value::Object(constructor.as_object().try_clone()?),
             false,
             true,
         )?;
@@ -98,14 +98,14 @@ impl Runtime {
         self.define_function_data_property(
             &generator_function_prototype,
             "prototype",
-            Value::Object(generator_prototype.clone()),
+            Value::Object(generator_prototype.try_clone()?),
             false,
             true,
         )?;
         self.define_function_data_property(
             &generator_prototype,
             "constructor",
-            Value::Object(generator_function_prototype.clone()),
+            Value::Object(generator_function_prototype.try_clone()?),
             false,
             true,
         )?;
@@ -125,7 +125,7 @@ impl Runtime {
         object: &ObjectRef,
         value: &'static str,
     ) -> Result<(), RuntimeError> {
-        let key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag));
+        let key = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag)?);
         if !self.define_own_property(
             object,
             &key,
@@ -533,7 +533,7 @@ mod tests {
     #[test]
     fn generator_activation_is_dormant_between_start_yield_and_completion() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(generator) = context
             .eval(
                 "globalThis.__generator = (function* () { \
@@ -599,7 +599,7 @@ mod tests {
     #[test]
     fn generator_abrupt_resume_and_reentry_match_quickjs_states() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(
@@ -628,7 +628,7 @@ mod tests {
     #[test]
     fn generator_nan_argument_does_not_fake_an_activation_change() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(
@@ -643,7 +643,7 @@ mod tests {
     #[test]
     fn sloppy_generator_mapped_arguments_keep_extra_actuals_across_yields() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(
@@ -667,7 +667,7 @@ mod tests {
     #[test]
     fn sloppy_generator_mapped_arguments_split_formal_and_extra_cells() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(
@@ -692,7 +692,7 @@ mod tests {
     #[test]
     fn thrown_resume_backtrace_stays_on_the_suspended_yield() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval_with_filename(
@@ -725,7 +725,7 @@ mod tests {
     #[test]
     fn yield_star_preserves_delegate_result_identity() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(
@@ -748,7 +748,7 @@ mod tests {
     #[test]
     fn generator_snapshot_roots_captures_private_bindings_and_prototype_choice() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(
@@ -783,7 +783,7 @@ mod tests {
 
     fn assert_dormant_generator_survives_gc(expression: &str) {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let source = format!("globalThis.__gcGenerator = {expression}; __gcGenerator");
         let Value::Object(generator) = context.eval(&source).unwrap() else {
             panic!("GC probe did not return a generator");
@@ -811,7 +811,7 @@ mod tests {
         drop(context.eval("__gcGenerator = undefined").unwrap());
         drop(generator);
         assert!(runtime.run_gc().unwrap().cleanup.finalized_objects >= 1);
-        assert_eq!(runtime.heap_counts().zombies, 0);
+        assert_eq!(runtime.heap_counts().expect("runtime state").zombies, 0);
     }
 
     #[test]
@@ -860,8 +860,8 @@ mod tests {
 
     fn assert_dormant_generator_realm_lifetime(function_source: &str) {
         let runtime = Runtime::new();
-        let mut defining = runtime.new_context();
-        let mut caller = runtime.new_context();
+        let mut defining = runtime.new_context().expect("create context");
+        let mut caller = runtime.new_context().expect("create context");
         let Value::Object(function_object) = defining.eval(function_source).unwrap() else {
             panic!("cross-realm generator function was not an object");
         };
@@ -881,14 +881,17 @@ mod tests {
         };
         assert_eq!(
             runtime.get_prototype_of(&generator).unwrap(),
-            Some(function_prototype.clone())
+            Some(function_prototype.try_clone().expect("duplicate root"))
         );
-        assert_eq!(runtime.heap_counts().context_nodes, 2);
+        assert_eq!(
+            runtime.heap_counts().expect("runtime state").context_nodes,
+            2
+        );
 
         drop(caller);
         runtime.run_gc().unwrap();
         assert_eq!(
-            runtime.heap_counts().context_nodes,
+            runtime.heap_counts().expect("runtime state").context_nodes,
             1,
             "a dormant generator must not retain the realm which called it"
         );
@@ -899,12 +902,12 @@ mod tests {
         drop(defining);
         runtime.run_gc().unwrap();
         assert_eq!(
-            runtime.heap_counts().context_nodes,
+            runtime.heap_counts().expect("runtime state").context_nodes,
             1,
             "a dormant generator must retain its defining realm"
         );
 
-        let mut observer = runtime.new_context();
+        let mut observer = runtime.new_context().expect("create context");
         let next_key = runtime.intern_property_key("next").unwrap();
         let Value::Object(next_object) = observer.get_property(&generator, &next_key).unwrap()
         else {
@@ -914,7 +917,11 @@ mod tests {
         let value_key = runtime.intern_property_key("value").unwrap();
         for expected in [1, 2] {
             let Value::Object(result) = observer
-                .call(&next_callable, Value::Object(generator.clone()), &[])
+                .call(
+                    &next_callable,
+                    Value::Object(generator.try_clone().expect("duplicate root")),
+                    &[],
+                )
                 .unwrap()
             else {
                 panic!("cross-realm generator next result was not an object");
@@ -924,14 +931,17 @@ mod tests {
                 Value::Int(expected)
             );
         }
-        assert_eq!(runtime.heap_counts().context_nodes, 2);
+        assert_eq!(
+            runtime.heap_counts().expect("runtime state").context_nodes,
+            2
+        );
 
         drop(next_callable);
         drop(next_object);
         drop(generator);
         drop(observer);
         runtime.run_gc().unwrap();
-        assert_eq!(runtime.heap_counts().live, 0);
+        assert_eq!(runtime.heap_counts().expect("runtime state").live, 0);
     }
 
     #[test]
@@ -950,7 +960,7 @@ mod tests {
     #[test]
     fn prototype_getter_runs_after_parameters_and_its_throw_aborts_creation() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(function) = context
             .eval(
                 "globalThis.__order = 0; globalThis.__marker = {}; \
@@ -1003,7 +1013,7 @@ mod tests {
     #[test]
     fn generator_intrinsic_reciprocal_descriptors_match_quickjs() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval(

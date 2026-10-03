@@ -87,7 +87,7 @@ impl Runtime {
             self.move_buffer_range(&access, &access, source_start, target_start, byte_count)?;
         }
         Ok(Completion::Return(JsValue::Object(
-            target.clone().into_handle(),
+            target.try_clone()?.into_handle(),
         )))
     }
 
@@ -139,7 +139,7 @@ impl Runtime {
             })?;
         }
         Ok(Completion::Return(JsValue::Object(
-            target.clone().into_handle(),
+            target.try_clone()?.into_handle(),
         )))
     }
 
@@ -187,7 +187,7 @@ impl Runtime {
             })?;
         }
         Ok(Completion::Return(JsValue::Object(
-            target.clone().into_handle(),
+            target.try_clone()?.into_handle(),
         )))
     }
 }
@@ -411,7 +411,7 @@ impl TypedMutationResume {
                     Ok(TypedMutationStep::Complete(
                         runtime.finish_typed_copy_within(
                             self.0.realm,
-                            self.0.target.clone(),
+                            self.0.target.try_clone()?,
                             self.0.length,
                             to,
                             index,
@@ -423,7 +423,7 @@ impl TypedMutationResume {
             Phase::CopyEnd { to, from } => Ok(TypedMutationStep::Complete(
                 runtime.finish_typed_copy_within(
                     self.0.realm,
-                    self.0.target.clone(),
+                    self.0.target.try_clone()?,
                     self.0.length,
                     to,
                     from,
@@ -447,7 +447,7 @@ impl TypedMutationResume {
                 } else {
                     Ok(TypedMutationStep::Complete(runtime.finish_typed_fill(
                         self.0.realm,
-                        self.0.target.clone(),
+                        self.0.target.try_clone()?,
                         element,
                         bytes,
                         index,
@@ -461,7 +461,7 @@ impl TypedMutationResume {
                 start,
             } => Ok(TypedMutationStep::Complete(runtime.finish_typed_fill(
                 self.0.realm,
-                self.0.target.clone(),
+                self.0.target.try_clone()?,
                 element,
                 bytes,
                 start,

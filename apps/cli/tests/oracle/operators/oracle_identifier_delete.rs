@@ -150,7 +150,7 @@ fn identifier_delete_errors_and_function_stack_match_pinned_quickjs() {
 fn rust_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let mut output = Vec::new();
 
@@ -435,7 +435,7 @@ fn value_text(value: Value) -> String {
 fn rust_uncaught_error(source: &str) -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         context.eval_with_filename(source, "<cmdline>"),
         Err(RuntimeError::Exception),

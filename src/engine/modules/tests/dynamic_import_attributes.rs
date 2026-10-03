@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn dynamic_import_attributes_snapshot_descriptors_before_any_value_get() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let (loader, controls) =
         AttributeModuleLoader::new([("attributes.js", "export const ok = true;")]);
     let _registration = runtime.set_module_loader(loader);
@@ -81,7 +81,7 @@ import("attributes.js", { with: attributeProxy })
 #[test]
 fn dynamic_import_empty_attributes_still_reach_checker_and_loader() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let (loader, controls) =
         AttributeModuleLoader::new([("empty-attributes.js", "export const ok = true;")]);
     let _registration = runtime.set_module_loader(loader);
@@ -110,7 +110,7 @@ fn dynamic_import_empty_attributes_still_reach_checker_and_loader() {
 #[test]
 fn dynamic_import_rejects_non_string_attribute_values_before_enqueue() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let (loader, controls) =
         AttributeModuleLoader::new([("bad-attributes.js", "export const ok = true;")]);
     let _registration = runtime.set_module_loader(loader);
@@ -126,5 +126,5 @@ fn dynamic_import_rejects_non_string_attribute_values_before_enqueue() {
     );
     assert!(controls.checks.borrow().is_empty());
     assert!(controls.loads.borrow().is_empty());
-    assert!(!runtime.is_job_pending());
+    assert!(!runtime.is_job_pending().expect("runtime state"));
 }

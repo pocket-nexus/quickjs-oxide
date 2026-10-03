@@ -14,7 +14,7 @@ fn assert_script(context: &mut Context, source: &str) {
 #[test]
 fn twelve_class_graph_and_descriptors_match_the_hidden_typed_array_family() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -196,7 +196,7 @@ fn twelve_class_graph_and_descriptors_match_the_hidden_typed_array_family() {
 #[test]
 fn every_element_kind_converts_and_roundtrips_through_integer_indexed_access() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -292,7 +292,7 @@ fn every_element_kind_converts_and_roundtrips_through_integer_indexed_access() {
 #[test]
 fn constructors_cover_length_buffer_object_and_new_target_branches() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -425,7 +425,7 @@ fn constructors_cover_length_buffer_object_and_new_target_branches() {
 #[test]
 fn constructor_reentrancy_preserves_quickjs_branch_and_coercion_order() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -616,7 +616,7 @@ fn constructor_reentrancy_preserves_quickjs_branch_and_coercion_order() {
 #[test]
 fn static_from_and_of_construct_validate_map_and_convert_results() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -807,7 +807,7 @@ fn static_from_and_of_construct_validate_map_and_convert_results() {
 #[test]
 fn integer_indexed_exotic_methods_handle_canonical_keys_and_receivers() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -1016,7 +1016,7 @@ fn integer_indexed_exotic_methods_handle_canonical_keys_and_receivers() {
 #[test]
 fn variable_length_typed_array_extensibility_matches_quickjs_for_all_classes() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -1131,7 +1131,7 @@ fn variable_length_typed_array_extensibility_matches_quickjs_for_all_classes() {
 #[test]
 fn detach_and_resizable_buffer_dynamics_revalidate_accessors_and_iterators() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -1255,7 +1255,7 @@ fn detach_and_resizable_buffer_dynamics_revalidate_accessors_and_iterators() {
 #[test]
 fn prototype_set_handles_array_like_order_overlap_and_reentrant_bounds() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -1392,7 +1392,7 @@ fn prototype_set_handles_array_like_order_overlap_and_reentrant_bounds() {
 #[test]
 fn context_free_host_definition_converts_primitive_typed_array_values() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let key = runtime
         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Literal1)
         .unwrap();
@@ -1472,7 +1472,7 @@ fn typed_array_integer_key_fast_path_keeps_domains_and_noncanonical_strings() {
 #[test]
 fn scoped_typed_words_match_token_access_and_keep_shared_fallback() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     for constructor in [
         "Uint8Array",
         "Uint16Array",
@@ -1533,7 +1533,7 @@ fn scoped_typed_words_match_token_access_and_keep_shared_fallback() {
 #[test]
 fn scoped_typed_words_reacquire_after_conversion_resize_detach_and_throw() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_script(
         &mut context,
         r#"(()=>{
@@ -1561,8 +1561,8 @@ fn scoped_typed_words_reacquire_after_conversion_resize_detach_and_throw() {
 fn scoped_typed_words_keep_only_view_root_and_conversion_error_realm() {
     let runtime = Runtime::new();
     let weak = std::rc::Rc::downgrade(&runtime.0);
-    let mut first = runtime.new_context();
-    let mut second = runtime.new_context();
+    let mut first = runtime.new_context().expect("create context");
+    let mut second = runtime.new_context().expect("create context");
     let Value::Object(view) = first.eval("new Uint8Array(1)").unwrap() else {
         panic!("expected view")
     };

@@ -474,7 +474,7 @@ fn object_super_eval_semantics_match_pinned_quickjs() {
 fn rust_observation(case: &Case) -> String {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     match context.eval(case.source) {
         Ok(value) => format!(
             "return|{}|{}",

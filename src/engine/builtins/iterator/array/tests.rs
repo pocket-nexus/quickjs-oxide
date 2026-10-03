@@ -4,7 +4,7 @@ use crate::engine::api::{Runtime, Value};
 #[test]
 fn ordinary_array_next_finishes_locally_for_values_keys_and_entries() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let profile = CostProfile::start();
     assert_eq!(
         context
@@ -35,7 +35,7 @@ fn ordinary_array_next_finishes_locally_for_values_keys_and_entries() {
 #[test]
 fn length_conversion_and_prepared_getters_are_not_replayed() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(context.eval(r#"(()=>{
         let log=[];let value=1;
         let source={get length(){log.push('length');return {valueOf(){log.push('number');value=9;return 1;}};},get 0(){log.push('index');return value;}};
@@ -50,7 +50,7 @@ fn length_conversion_and_prepared_getters_are_not_replayed() {
 #[test]
 fn proxy_source_and_hole_prototype_getters_run_once() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(context.eval(r#"(()=>{
         let log=[];
         let source=new Proxy([3,4],{get(target,key,receiver){log.push(String(key));return Reflect.get(target,key,receiver);}});
@@ -66,7 +66,7 @@ fn proxy_source_and_hole_prototype_getters_run_once() {
 #[test]
 fn index_getter_throw_advances_index_but_length_throw_does_not() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         context
             .eval(
@@ -91,7 +91,7 @@ fn index_getter_throw_advances_index_but_length_throw_does_not() {
 #[test]
 fn typed_array_next_revalidates_bounds_and_detachment_before_reading() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         context
             .eval(
@@ -115,7 +115,7 @@ fn typed_array_next_revalidates_bounds_and_detachment_before_reading() {
 #[test]
 fn dense_immediate_next_preserves_frozen_holes_proxy_and_loop_mutations() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let profile = CostProfile::start();
     assert_eq!(context.eval(r#"(() => {
         let sum = 0;

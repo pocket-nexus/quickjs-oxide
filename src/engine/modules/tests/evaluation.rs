@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn dependency_free_module_links_then_evaluates_with_module_semantics() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module(
             r#"
@@ -38,7 +38,7 @@ fn dependency_free_module_links_then_evaluates_with_module_semantics() {
 #[test]
 fn module_identity_evaluates_once_and_caches_abrupt_completion() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     drop(context.eval("globalThis.__moduleRuns = 0").unwrap());
     let once = context
         .compile_module("globalThis.__moduleRuns += 1")
@@ -60,14 +60,14 @@ fn module_identity_evaluates_once_and_caches_abrupt_completion() {
 fn module_evaluation_caches_error_object_identity_across_contexts() {
     let runtime = Runtime::new();
     let module = {
-        let mut compilation_context = runtime.new_context();
+        let mut compilation_context = runtime.new_context().expect("create context");
         compilation_context
             .compile_module("throw new Error('cached module error')")
             .unwrap()
     };
 
     let first_error_id = {
-        let mut first_context = runtime.new_context();
+        let mut first_context = runtime.new_context().expect("create context");
         let snapshot = module_evaluation_snapshot(&mut first_context, &module);
         assert_eq!(snapshot.state, PromiseState::Rejected);
         let RawValue::Object(error) = snapshot.result else {
@@ -77,7 +77,7 @@ fn module_evaluation_caches_error_object_identity_across_contexts() {
     };
     runtime.run_gc().unwrap();
 
-    let mut second_context = runtime.new_context();
+    let mut second_context = runtime.new_context().expect("create context");
     let snapshot = module_evaluation_snapshot(&mut second_context, &module);
     assert_eq!(snapshot.state, PromiseState::Rejected);
     let RawValue::Object(second_error) = snapshot.result else {
@@ -89,16 +89,16 @@ fn module_evaluation_caches_error_object_identity_across_contexts() {
 #[test]
 fn module_evaluation_cache_owns_symbol_atoms_until_the_cache_dies() {
     let runtime = Runtime::new();
-    let baseline_atoms = runtime.test_atom_count();
+    let baseline_atoms = runtime.test_atom_count().expect("atom count");
     let module = {
-        let mut compilation_context = runtime.new_context();
+        let mut compilation_context = runtime.new_context().expect("create context");
         compilation_context
             .compile_module("throw Symbol('cached module symbol')")
             .unwrap()
     };
 
     let first_symbol = {
-        let mut first_context = runtime.new_context();
+        let mut first_context = runtime.new_context().expect("create context");
         let snapshot = module_evaluation_snapshot(&mut first_context, &module);
         assert_eq!(snapshot.state, PromiseState::Rejected);
         let RawValue::Symbol(symbol) = snapshot.result else {
@@ -109,7 +109,7 @@ fn module_evaluation_cache_owns_symbol_atoms_until_the_cache_dies() {
     runtime.run_gc().unwrap();
 
     let second_symbol = {
-        let mut second_context = runtime.new_context();
+        let mut second_context = runtime.new_context().expect("create context");
         let snapshot = module_evaluation_snapshot(&mut second_context, &module);
         assert_eq!(snapshot.state, PromiseState::Rejected);
         let RawValue::Symbol(symbol) = snapshot.result else {
@@ -121,14 +121,20 @@ fn module_evaluation_cache_owns_symbol_atoms_until_the_cache_dies() {
 
     drop(module);
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 0);
-    assert_eq!(runtime.test_atom_count(), baseline_atoms);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        0
+    );
+    assert_eq!(
+        runtime.test_atom_count().expect("atom count"),
+        baseline_atoms
+    );
 }
 
 #[test]
 fn direct_eval_uses_module_live_cells_without_leaking_eval_var() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module(
             r#"
@@ -156,7 +162,7 @@ fn direct_eval_uses_module_live_cells_without_leaking_eval_var() {
 #[test]
 fn nested_var_preserves_quickjs_module_function_redeclaration_order() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let module = context
         .compile_module(
             r#"

@@ -210,7 +210,7 @@ impl Harness {
     fn new() -> Self {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let function_prototype = context.function_prototype().unwrap();
         let apply_key = runtime.intern_property_key("apply").unwrap();
         let Value::Object(apply_object) = context
@@ -240,7 +240,7 @@ impl Harness {
             &self.runtime,
             &mut self.context,
             &self.apply,
-            Value::Object(target.as_object().clone()),
+            Value::Object(target.as_object().try_clone().expect("duplicate root")),
             arguments,
         )
     }
@@ -335,7 +335,10 @@ fn rust_early_error_observations() -> Vec<String> {
         &mut harness.context,
         &harness.apply,
         Value::Object(noncallable),
-        &[Value::Undefined, Value::Object(poison.clone())],
+        &[
+            Value::Undefined,
+            Value::Object(poison.try_clone().expect("duplicate root")),
+        ],
     );
     let target = harness.function("(function(){})");
     let primitive_array = harness.apply(&target, &[Value::Undefined, Value::Int(1)]);
@@ -354,7 +357,8 @@ fn rust_to_primitive_observations() -> Vec<String> {
     let to_primitive = PropertyKey::from(
         harness
             .runtime
-            .well_known_symbol(WellKnownSymbol::ToPrimitive),
+            .well_known_symbol(WellKnownSymbol::ToPrimitive)
+            .expect("well-known symbol"),
     );
 
     define_global(
@@ -370,7 +374,7 @@ fn rust_to_primitive_observations() -> Vec<String> {
         &mut harness.context,
         &hint_length,
         &to_primitive,
-        Value::Object(hint.as_object().clone()),
+        Value::Object(hint.as_object().try_clone().expect("duplicate root")),
     );
     let hint_array = populated_two(
         &harness.runtime,
@@ -398,7 +402,12 @@ fn rust_to_primitive_observations() -> Vec<String> {
         &mut harness.context,
         &object_length,
         &to_primitive,
-        Value::Object(object_return.as_object().clone()),
+        Value::Object(
+            object_return
+                .as_object()
+                .try_clone()
+                .expect("duplicate root"),
+        ),
     );
     let object_array = populated_two(
         &harness.runtime,
@@ -430,7 +439,7 @@ fn rust_to_primitive_observations() -> Vec<String> {
         &mut harness.context,
         &throwing_length,
         &to_primitive,
-        Value::Object(throwing.as_object().clone()),
+        Value::Object(throwing.as_object().try_clone().expect("duplicate root")),
     );
     let throwing_array = populated_two(
         &harness.runtime,
@@ -462,7 +471,7 @@ fn rust_ordinary_conversion_observations() -> Vec<String> {
         &harness.runtime,
         &mut harness.context,
         "lengthObject",
-        Value::Object(length_object.clone()),
+        Value::Object(length_object.try_clone().expect("duplicate root")),
     );
     let value_of = harness.function("(function(){ order = order * 10 + 1; return lengthObject; })");
     let to_string = harness.function("(function(){ order = order * 10 + 2; return \"2\"; })");
@@ -473,14 +482,14 @@ fn rust_ordinary_conversion_observations() -> Vec<String> {
         &mut harness.context,
         &length_object,
         &value_of_key,
-        Value::Object(value_of.as_object().clone()),
+        Value::Object(value_of.as_object().try_clone().expect("duplicate root")),
     );
     define_data(
         &harness.runtime,
         &mut harness.context,
         &length_object,
         &to_string_key,
-        Value::Object(to_string.as_object().clone()),
+        Value::Object(to_string.as_object().try_clone().expect("duplicate root")),
     );
     let array = populated_two(
         &harness.runtime,

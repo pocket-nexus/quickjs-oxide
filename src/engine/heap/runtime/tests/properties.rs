@@ -3,12 +3,12 @@ use super::*;
 #[test]
 fn object_prototype_prefix_methods_are_lazy_and_report_core_tags() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let object_prototype = context.object_prototype().unwrap();
     let to_string_key = runtime.intern_property_key("toString").unwrap();
     let to_locale_string_key = runtime.intern_property_key("toLocaleString").unwrap();
     let value_of_key = runtime.intern_property_key("valueOf").unwrap();
-    let baseline_objects = runtime.heap_counts().object_nodes;
+    let baseline_objects = runtime.heap_counts().expect("runtime state").object_nodes;
     assert_eq!(
         own_key_names(&runtime, &object_prototype),
         [
@@ -26,7 +26,10 @@ fn object_prototype_prefix_methods_are_lazy_and_report_core_tags() {
             "constructor",
         ]
     );
-    assert_eq!(runtime.heap_counts().object_nodes, baseline_objects);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").object_nodes,
+        baseline_objects
+    );
 
     let Value::Object(to_string_object) = context
         .get_property(&object_prototype, &to_string_key)
@@ -46,7 +49,10 @@ fn object_prototype_prefix_methods_are_lazy_and_report_core_tags() {
     else {
         panic!("Object.prototype.valueOf was not an object");
     };
-    assert_eq!(runtime.heap_counts().object_nodes, baseline_objects + 3);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").object_nodes,
+        baseline_objects + 3
+    );
     let to_string = runtime.as_callable(&to_string_object).unwrap().unwrap();
     let to_locale_string = runtime
         .as_callable(&to_locale_string_object)
@@ -60,7 +66,10 @@ fn object_prototype_prefix_methods_are_lazy_and_report_core_tags() {
     for (value, expected) in [
         (Value::Null, "[object Null]"),
         (Value::Undefined, "[object Undefined]"),
-        (Value::Object(object.clone()), "[object Object]"),
+        (
+            Value::Object(object.try_clone().expect("duplicate root")),
+            "[object Object]",
+        ),
         (function, "[object Function]"),
         (error, "[object Error]"),
     ] {
@@ -71,9 +80,13 @@ fn object_prototype_prefix_methods_are_lazy_and_report_core_tags() {
     }
     assert_eq!(
         context
-            .call(&value_of, Value::Object(object.clone()), &[])
+            .call(
+                &value_of,
+                Value::Object(object.try_clone().expect("duplicate root")),
+                &[]
+            )
             .unwrap(),
-        Value::Object(object.clone())
+        Value::Object(object.try_clone().expect("duplicate root"))
     );
     assert_eq!(
         context
@@ -86,7 +99,7 @@ fn object_prototype_prefix_methods_are_lazy_and_report_core_tags() {
 #[test]
 fn object_define_properties_filters_lazy_entries_without_materializing_them() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let object_prototype = context.object_prototype().unwrap();
     let lazy_keys = [
         "toString",
@@ -123,12 +136,12 @@ fn object_define_properties_filters_lazy_entries_without_materializing_them() {
                 &define_properties,
                 Value::Undefined,
                 &[
-                    Value::Object(target.clone()),
-                    Value::Object(object_prototype.clone()),
+                    Value::Object(target.try_clone().expect("duplicate root")),
+                    Value::Object(object_prototype.try_clone().expect("duplicate root")),
                 ],
             )
             .unwrap(),
-        Value::Object(target.clone())
+        Value::Object(target.try_clone().expect("duplicate root"))
     );
     assert!(runtime.own_property_keys(&target).unwrap().is_empty());
     for key in &lazy_keys {
@@ -200,8 +213,8 @@ fn own_keys_preserve_quickjs_category_order_and_utf16_identity() {
     let symbol_b = runtime
         .new_symbol(Some(JsString::from_static("b")))
         .unwrap();
-    let symbol_key_a = PropertyKey::from(&symbol_a);
-    let symbol_key_b = PropertyKey::from(&symbol_b);
+    let symbol_key_a = PropertyKey::try_from(&symbol_a).expect("symbol key");
+    let symbol_key_b = PropertyKey::try_from(&symbol_b).expect("symbol key");
 
     for (key, value) in [
         (runtime.intern_property_key("beta").unwrap(), 1),
@@ -235,8 +248,8 @@ fn own_keys_preserve_quickjs_category_order_and_utf16_identity() {
         runtime.intern_property_key("4294967295").unwrap(),
         runtime.intern_property_key("01").unwrap(),
         runtime.intern_property_key("-0").unwrap(),
-        symbol_key_a.clone(),
-        symbol_key_b.clone(),
+        symbol_key_a.try_clone().expect("duplicate root"),
+        symbol_key_b.try_clone().expect("duplicate root"),
     ];
     assert_eq!(runtime.own_property_keys(&object).unwrap(), expected);
 
@@ -269,7 +282,11 @@ fn delete_readd_and_frozen_same_value_rules_match_oracle() {
     assert!(set_property(&runtime, &object, &a, Value::Int(2)).unwrap());
     assert_eq!(
         runtime.own_property_keys(&object).unwrap(),
-        vec![b.clone(), c.clone(), a.clone()]
+        vec![
+            b.try_clone().expect("duplicate root"),
+            c.try_clone().expect("duplicate root"),
+            a.try_clone().expect("duplicate root")
+        ]
     );
 
     let nan = runtime.intern_property_key("nan").unwrap();
@@ -373,7 +390,7 @@ fn inherited_set_and_prototype_constraints_match_ordinary_semantics() {
             &parent,
             &writable,
             Value::Int(3),
-            Value::Object(receiver.clone()),
+            Value::Object(receiver.try_clone().expect("duplicate root")),
         )
         .unwrap()
     );
@@ -386,7 +403,7 @@ fn inherited_set_and_prototype_constraints_match_ordinary_semantics() {
         Value::Int(3)
     );
 
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let Value::Object(receiver_setter) = context.eval("(function(value) {})").unwrap() else {
         panic!("receiver setter probe did not produce a function");
     };
@@ -429,7 +446,7 @@ fn inherited_set_and_prototype_constraints_match_ordinary_semantics() {
     assert!(!runtime.set_prototype_of(&second, Some(&first)).unwrap());
     assert_eq!(
         runtime.get_prototype_of(&first).unwrap(),
-        Some(second.clone())
+        Some(second.try_clone().expect("duplicate root"))
     );
     assert_eq!(runtime.get_prototype_of(&second).unwrap(), None);
 }

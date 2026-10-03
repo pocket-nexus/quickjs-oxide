@@ -333,7 +333,10 @@ impl Runtime {
             "get [Symbol.species]",
             0,
         )?;
-        let species = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Species));
+        let species = PropertyKey::from(
+            self.well_known_symbol(WellKnownSymbol::Species)
+                .expect("well-known symbol"),
+        );
         if !self.define_own_property(
             base_constructor.as_object(),
             &species,
@@ -417,7 +420,7 @@ impl Runtime {
             self.define_function_data_property(
                 global_object,
                 element.name(),
-                Value::Object(constructor.as_object().clone()),
+                Value::Object(constructor.as_object().try_clone()?),
                 true,
                 true,
             )?;
@@ -462,7 +465,10 @@ impl Runtime {
                 ));
             }
         };
-        let iterator = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::Iterator));
+        let iterator = PropertyKey::from(
+            self.well_known_symbol(WellKnownSymbol::Iterator)
+                .expect("well-known symbol"),
+        );
         let mut alias = crate::engine::object::OwnedPropertyDescriptor::new(self);
         alias.value = DescriptorField::Present(values);
         alias.writable = DescriptorField::Present(true);
@@ -474,7 +480,10 @@ impl Runtime {
             ));
         }
 
-        let to_string_tag = PropertyKey::from(self.well_known_symbol(WellKnownSymbol::ToStringTag));
+        let to_string_tag = PropertyKey::from(
+            self.well_known_symbol(WellKnownSymbol::ToStringTag)
+                .expect("well-known symbol"),
+        );
         let tag_getter = self.new_native_builtin(
             function_prototype,
             realm,
@@ -881,8 +890,13 @@ impl Runtime {
                 let value = self
                     .typed_array_read_index_jsvalue(source, index)?
                     .unwrap_or(JsValue::Undefined);
-                match write::TypedWriteStep::set(self, target.clone(), Some(offset + index), value)?
-                    .finish_sync(self, realm)?
+                match write::TypedWriteStep::set(
+                    self,
+                    target.try_clone()?,
+                    Some(offset + index),
+                    value,
+                )?
+                .finish_sync(self, realm)?
                 {
                     NativeConversion::Value(_) => {}
                     NativeConversion::Throw(value) => {
@@ -1029,7 +1043,7 @@ impl Runtime {
         collect::finish_collect(
             self,
             realm,
-            collect::TypedCollectStep::start(self, realm, source, method.clone(), element)?,
+            collect::TypedCollectStep::start(self, realm, source, method.try_clone()?, element)?,
         )
     }
 
@@ -1501,7 +1515,7 @@ impl Runtime {
         index: u64,
         descriptor: &OrdinaryPropertyDescriptor,
     ) -> Result<NativeConversion<bool>, RuntimeError> {
-        write::TypedWriteStep::define(self, object.clone(), index, descriptor)?
+        write::TypedWriteStep::define(self, object.try_clone()?, index, descriptor)?
             .finish_sync(self, realm)
     }
 

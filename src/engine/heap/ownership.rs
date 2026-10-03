@@ -130,13 +130,18 @@ pub(crate) fn compact_backtrace() -> String {
 impl Runtime {
     #[inline]
     pub(crate) fn operation(&self) -> RuntimeOperation<'_> {
-        let result = self.drain_deferred_references();
-        debug_assert!(result.is_ok(), "deferred root release failed: {result:?}");
+        if !self.skip_cleanup() {
+            let result = self.drain_deferred_references();
+            debug_assert!(result.is_ok(), "deferred root release failed: {result:?}");
+        }
         RuntimeOperation(self)
     }
 
     #[inline]
     pub(crate) fn drain_deferred_references(&self) -> Result<(), RuntimeError> {
+        if self.skip_cleanup() {
+            return Ok(());
+        }
         if !self.0.deferred_references.has_pending() {
             return Ok(());
         }
@@ -165,6 +170,9 @@ impl Runtime {
     #[inline]
     #[track_caller]
     fn release_or_defer(&self, operation: DeferredRefOp) {
+        if self.skip_cleanup() {
+            return;
+        }
         let result = if let Ok(mut state) = self.0.state.try_borrow_mut() {
             state.apply_deferred_operation(operation)
         } else {
@@ -189,6 +197,7 @@ impl Runtime {
         // only after an error; probing the process environment on every edge
         // release adds a global environment-lock lookup to ordinary value flow.
         if let Err(error) = &result {
+            self.0.poisoned.set(true);
             if std::env::var_os("QJS_TEARDOWN_PROBE").is_some() {
                 eprintln!("[release] invalid root release {operation:?}: {error:?}");
                 if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
@@ -203,6 +212,7 @@ impl Runtime {
         }
         let drain = self.drain_deferred_references();
         if let Err(error) = &drain {
+            self.0.poisoned.set(true);
             if std::env::var_os("QJS_TEARDOWN_PROBE").is_some() {
                 eprintln!("[release] deferred root release failed: {error:?}");
             } else {
@@ -306,6 +316,9 @@ impl Runtime {
 
     #[track_caller]
     pub(crate) fn release_object_handle(&self, id: ObjectId) {
+        if self.skip_cleanup() {
+            return;
+        }
         #[cfg(debug_assertions)]
         if std::env::var_os("QJS_TRACE_ROOTS").is_some() {
             eprintln!("[release] {id:?} at {}", std::panic::Location::caller());
@@ -378,6 +391,9 @@ impl Runtime {
     }
 
     pub(crate) fn release_atom_index(&self, index: AtomIdx) {
+        if self.skip_cleanup() {
+            return;
+        }
         // The producer owns this index until this release is applied, so the
         // slot cannot be reused while its operation is queued. Branding under
         // a mandatory borrow here would make suspension-owner Drop panic.
@@ -396,6 +412,9 @@ impl Runtime {
     }
 
     pub(crate) fn release_atom_handle(&self, atom: Atom) {
+        if self.skip_cleanup() {
+            return;
+        }
         // Shared-borrow release: the counter decrement runs immediately; when
         // the last reference drops, slot removal is deferred to the next
         // operation boundary through the existing deferred queue.  An invalid
@@ -511,6 +530,9 @@ impl Runtime {
 
     #[inline]
     fn release_leaf_or_defer(&self, operation: DeferredRefOp, id: RawId) {
+        if self.skip_cleanup() {
+            return;
+        }
         let result = if let Ok(mut state) = self.0.state.try_borrow_mut() {
             match state.heap.try_release_leaf_reference(id) {
                 Ok(Some(_)) => Ok(()),

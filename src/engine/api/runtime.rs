@@ -4,6 +4,7 @@ use crate::engine::atom::AtomTable;
 use crate::engine::code::debug::DebugInfoMode;
 use crate::engine::heap::Heap;
 
+use super::runtime_error::RuntimeError;
 use crate::engine::heap::runtime::{
     NEXT_RUNTIME_DOMAIN_ID, RuntimeInner, RuntimeState, StateStorage,
 };
@@ -18,7 +19,57 @@ use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::sync::atomic::Ordering;
 
+/// A borrowed unwind marker; it owns neither runtime state nor JS references.
+/// Entry points which only retain/read state use it without draining cleanup.
+pub(crate) struct RuntimeUnwindGuard<'a>(&'a Cell<bool>);
+
+impl<'a> RuntimeUnwindGuard<'a> {
+    pub(crate) fn from_flag(poisoned: &'a Cell<bool>) -> Self {
+        Self(poisoned)
+    }
+}
+
+impl Drop for RuntimeUnwindGuard<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.0.set(true);
+        }
+    }
+}
+
 impl Runtime {
+    /// Whether a panic has quarantined this runtime. Identity queries and
+    /// dropping handles remain available; state operations return `Poisoned`.
+    #[must_use]
+    pub fn is_poisoned(&self) -> bool {
+        self.0.poisoned.get()
+    }
+
+    #[inline]
+    pub(crate) fn check_poison(&self) -> Result<(), RuntimeError> {
+        if self.skip_cleanup() {
+            Err(RuntimeError::Poisoned)
+        } else {
+            Ok(())
+        }
+    }
+
+    pub(crate) fn unwind_guard(&self) -> RuntimeUnwindGuard<'_> {
+        RuntimeUnwindGuard::from_flag(&self.0.poisoned)
+    }
+
+    /// Cleanup during unwind must not traverse partially mutated state. Mark
+    /// quarantine before any nested root destructor has a chance to run.
+    #[inline]
+    pub(crate) fn skip_cleanup(&self) -> bool {
+        if std::thread::panicking() {
+            self.0.poisoned.set(true);
+            true
+        } else {
+            self.is_poisoned()
+        }
+    }
+
     #[must_use]
     #[cfg(test)]
     pub fn new() -> Self {
@@ -60,6 +111,8 @@ impl Runtime {
         let active_frame_depth = Rc::new(Cell::new(0));
         let gc_pressure = Rc::new(crate::engine::heap::gc_pressure::GcPressure::new());
         Self(Rc::new(RuntimeInner {
+            poisoned: Cell::new(false),
+            raw_execution_owners: Cell::new(0),
             execution_turn_depth: Cell::new(0),
             gc_pressure: gc_pressure.clone(),
             state: StateStorage::new(RuntimeState {
@@ -133,14 +186,19 @@ impl Runtime {
 
     /// Set the runtime-wide debug information policy for future compilations.
     /// Existing bytecode is immutable and keeps the mode used when published.
-    pub fn set_debug_info_mode(&self, mode: DebugInfoMode) {
+    pub fn set_debug_info_mode(&self, mode: DebugInfoMode) -> Result<(), RuntimeError> {
+        self.check_poison()?;
+        let _operation = self.operation();
         self.0.state.borrow_mut().debug_info_mode = mode;
+        Ok(())
     }
 
     /// Return the policy which the next compilation will sample.
     #[must_use]
-    pub fn debug_info_mode(&self) -> DebugInfoMode {
-        self.0.state.borrow().debug_info_mode
+    pub fn debug_info_mode(&self) -> Result<DebugInfoMode, RuntimeError> {
+        self.check_poison()?;
+        let _operation = self.operation();
+        Ok(self.0.state.borrow().debug_info_mode)
     }
 
     /// Set whether this runtime's host permits synchronous blocking operations.
@@ -148,14 +206,17 @@ impl Runtime {
     /// The setting is runtime-wide, so cloned handles and every context owned
     /// by this runtime observe the same value. As in QuickJS, new runtimes
     /// default to `false` and embedders must opt in explicitly.
-    pub fn set_can_block(&self, can_block: bool) {
+    pub fn set_can_block(&self, can_block: bool) -> Result<(), RuntimeError> {
+        self.check_poison()?;
         self.0.can_block.set(can_block);
+        Ok(())
     }
 
     /// Return whether this runtime's host permits synchronous blocking.
     #[must_use]
-    pub fn can_block(&self) -> bool {
-        self.0.can_block.get()
+    pub fn can_block(&self) -> Result<bool, RuntimeError> {
+        self.check_poison()?;
+        Ok(self.0.can_block.get())
     }
 
     #[must_use]
@@ -177,14 +238,17 @@ impl Runtime {
     /// The value is sampled when a top-level execution starts, so already
     /// running executions keep the limit they began with. A limit of `0` is
     /// raised to `1`.
-    pub fn set_recursion_limit(&self, limit: usize) {
+    pub fn set_recursion_limit(&self, limit: usize) -> Result<(), RuntimeError> {
+        self.check_poison()?;
         self.0.recursion_limit.set(limit.max(1));
+        Ok(())
     }
 
     /// Return the configured JavaScript call-frame recursion limit.
     #[must_use]
-    pub fn recursion_limit(&self) -> usize {
-        self.0.recursion_limit.get()
+    pub fn recursion_limit(&self) -> Result<usize, RuntimeError> {
+        self.check_poison()?;
+        Ok(self.0.recursion_limit.get())
     }
 }
 
@@ -221,15 +285,23 @@ mod recursion_limit_tests {
     #[test]
     fn runtime_recursion_limit_is_configurable_and_default_is_unchanged() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
-        assert_eq!(runtime.recursion_limit(), u16::MAX as usize);
+        let mut context = runtime.new_context().expect("create context");
+        assert_eq!(
+            runtime.recursion_limit().expect("runtime configuration"),
+            u16::MAX as usize
+        );
         assert_eq!(
             context.eval(DEEP).unwrap(),
             Value::String(JsString::from_static("ok"))
         );
 
-        runtime.set_recursion_limit(200);
-        assert_eq!(runtime.recursion_limit(), 200);
+        runtime
+            .set_recursion_limit(200)
+            .expect("set runtime configuration");
+        assert_eq!(
+            runtime.recursion_limit().expect("runtime configuration"),
+            200
+        );
         let Value::String(message) = context.eval(DEEP).unwrap() else {
             panic!("expected a message string")
         };
@@ -237,12 +309,182 @@ mod recursion_limit_tests {
 
         // A zero limit is clamped to one; a very low but usable limit still
         // produces a catchable overflow from inside JavaScript.
-        runtime.set_recursion_limit(0);
-        assert_eq!(runtime.recursion_limit(), 1);
-        runtime.set_recursion_limit(10);
+        runtime
+            .set_recursion_limit(0)
+            .expect("set runtime configuration");
+        assert_eq!(runtime.recursion_limit().expect("runtime configuration"), 1);
+        runtime
+            .set_recursion_limit(10)
+            .expect("set runtime configuration");
         let Value::String(message) = context.eval(DEEP).unwrap() else {
             panic!("expected a message string")
         };
         assert!(message.to_string().contains("stack overflow"), "{message}");
+    }
+}
+
+#[cfg(all(test, not(target_family = "wasm"), panic = "unwind"))]
+mod poison_tests {
+    use super::*;
+    use crate::engine::api::error::ErrorKind;
+    use crate::engine::object::{PropertyKey, WellKnownSymbol};
+    use crate::engine::value::Value;
+    use std::panic::{AssertUnwindSafe, catch_unwind};
+
+    // An abort caused by a secondary destructor panic must fail only the
+    // subprocess, not terminate the test suite before it can report the bug.
+    fn subprocess(case: &str) {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "engine::api::runtime::poison_tests::poison_child",
+                "--nocapture",
+            ])
+            .env("QJS_POISON_CHILD", case)
+            .status()
+            .unwrap();
+        assert!(status.success(), "poison subprocess failed: {status}");
+    }
+
+    #[test]
+    fn partial_mutation_quarantines_roots_and_runtime_teardown() {
+        subprocess("partial-mutation");
+    }
+
+    #[test]
+    fn host_caught_child_panic_prevents_parent_resume() {
+        subprocess("host-caught-panic");
+    }
+
+    #[test]
+    fn module_host_catching_child_panic_cannot_resume_resolution() {
+        subprocess("module-host-caught-panic");
+    }
+
+    #[derive(Debug)]
+    struct PanicClock;
+    impl HostServices for PanicClock {
+        fn now_millis(&self) -> i64 {
+            panic!("injected clock panic")
+        }
+        fn timezone_offset_minutes(&self, _: i64) -> i32 {
+            0
+        }
+        fn random_seed(&self) -> u64 {
+            1
+        }
+    }
+
+    #[derive(Debug)]
+    struct CatchingLoader;
+    impl crate::engine::modules::ModuleLoader for CatchingLoader {
+        fn load(
+            &self,
+            context: &mut crate::engine::api::Context,
+            _: &crate::engine::value::JsString,
+            _: &crate::engine::code::module::ModuleImportAttributes,
+        ) -> Result<
+            crate::engine::modules::ModuleLoadResult,
+            crate::engine::modules::ModuleLoaderError,
+        > {
+            let nested = catch_unwind(AssertUnwindSafe(|| context.eval("Date.now()")));
+            assert!(nested.is_err());
+            Ok(crate::engine::modules::ModuleLoadResult::SourceText(
+                "export const value = 1;".to_owned(),
+            ))
+        }
+    }
+
+    #[test]
+    fn normal_errors_preserve_cleanup_and_runtime_reuse() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        assert_eq!(
+            context.eval("throw new Error('normal throw')").unwrap_err(),
+            RuntimeError::Exception
+        );
+        assert!(context.take_exception().unwrap().is_some());
+        assert_eq!(context.eval("40 + 2").unwrap(), Value::Int(42));
+        assert!(!runtime.is_poisoned());
+        let before = runtime.heap_counts().unwrap().object_nodes;
+        let owner = runtime.new_object(None).unwrap();
+        assert_eq!(runtime.heap_counts().unwrap().object_nodes, before + 1);
+        drop(owner);
+        assert_eq!(runtime.heap_counts().unwrap().object_nodes, before);
+        drop(context);
+        runtime.run_gc().unwrap();
+    }
+
+    #[test]
+    fn poison_child() {
+        let Ok(case) = std::env::var("QJS_POISON_CHILD") else {
+            return;
+        };
+        let runtime = if case == "module-host-caught-panic" {
+            Runtime::new_with_host_services(PanicClock)
+        } else {
+            Runtime::new()
+        };
+        let mut context = runtime.new_context().unwrap();
+        let object = runtime.new_object(None).unwrap();
+        let key = runtime.intern_property_key("owned-key").unwrap();
+        let symbol = runtime.new_symbol(None).unwrap();
+        let bytecode = context.compile("1").unwrap();
+        match case.as_str() {
+            "partial-mutation" => {
+                let failed = catch_unwind(AssertUnwindSafe(|| {
+                    let _operation = runtime.operation();
+                    let mut state = runtime.0.state.borrow_mut();
+                    // Simulate interrupted ownership accounting: the public
+                    // root is deliberately stale after this mutation. No
+                    // destructor may try to release or validate it on unwind.
+                    state.heap.release_object(object.object_id()).unwrap();
+                    panic!("injected panic after destructive mutation");
+                }));
+                assert!(failed.is_err());
+            }
+            "host-caught-panic" => {
+                let boundary = crate::engine::vm::HostBoundaryGuard::enter(&runtime).unwrap();
+                let caught = catch_unwind(AssertUnwindSafe(|| {
+                    let _execution = runtime.enter_execution_turn().unwrap();
+                    let _operation = runtime.operation();
+                    panic!("host catches nested engine panic");
+                }));
+                assert!(caught.is_err());
+                let error = boundary.finish(&runtime).unwrap_err();
+                assert_eq!(error.kind(), ErrorKind::Internal);
+            }
+            "module-host-caught-panic" => {
+                let _loader = runtime.set_module_loader(CatchingLoader).unwrap();
+                let error = context
+                    .compile_module_with_filename("import './child.js';", "parent.js")
+                    .unwrap_err();
+                assert_eq!(error, RuntimeError::Poisoned);
+            }
+            _ => panic!("unknown poison subprocess"),
+        }
+        assert!(runtime.is_poisoned());
+        assert!(matches!(runtime.new_context(), Err(RuntimeError::Poisoned)));
+        assert_eq!(runtime.heap_counts(), Err(RuntimeError::Poisoned));
+        assert_eq!(runtime.is_job_pending(), Err(RuntimeError::Poisoned));
+        assert!(matches!(runtime.run_gc(), Err(RuntimeError::Poisoned)));
+        assert!(matches!(object.try_clone(), Err(RuntimeError::Poisoned)));
+        assert!(matches!(key.try_clone(), Err(RuntimeError::Poisoned)));
+        assert!(matches!(symbol.try_clone(), Err(RuntimeError::Poisoned)));
+        assert!(matches!(bytecode.try_clone(), Err(RuntimeError::Poisoned)));
+        assert!(matches!(context.try_clone(), Err(RuntimeError::Poisoned)));
+        assert!(matches!(context.eval("1"), Err(RuntimeError::Poisoned)));
+        assert!(matches!(
+            runtime.well_known_symbol(WellKnownSymbol::Iterator),
+            Err(RuntimeError::Poisoned)
+        ));
+        assert!(matches!(
+            PropertyKey::try_from(&symbol),
+            Err(RuntimeError::Poisoned)
+        ));
+        let rooted = Value::Object(object);
+        assert!(matches!(rooted.to_boolean(), Err(RuntimeError::Poisoned)));
+        drop((rooted, key, symbol, bytecode, context));
+        drop(runtime);
     }
 }

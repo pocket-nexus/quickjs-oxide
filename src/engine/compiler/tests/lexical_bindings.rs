@@ -197,7 +197,7 @@ fn nested_block_and_switch_lexicals_lower_scope_lifetimes() {
     );
 
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert!(matches!(
         context.eval("(function(){{let value=40;throw function(){return ++value};}})()"),
         Err(RuntimeError::Exception)
@@ -271,7 +271,7 @@ fn nested_lexical_cleanup_shadowing_and_quickjs_var_quirks_execute() {
 #[test]
 fn lexical_tdz_and_readonly_errors_follow_checked_local_and_capture_order() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     for source in [
         "(function(){return x;let x=1})()",
         "(function(){return typeof x;let x=1})()",
@@ -410,8 +410,10 @@ fn lexical_parser_matches_redefinition_priority_contextual_let_and_boundaries() 
 #[test]
 fn strip_debug_removes_lexical_tdz_names_but_not_readonly_atoms() {
     let runtime = Runtime::new();
-    runtime.set_debug_info_mode(DebugInfoMode::StripDebug);
-    let mut context = runtime.new_context();
+    runtime
+        .set_debug_info_mode(DebugInfoMode::StripDebug)
+        .expect("set runtime configuration");
+    let mut context = runtime.new_context().expect("create context");
     for source in [
         "(function(){return localName;let localName=1})()",
         "(function(){return function probe(){return capturedName};let capturedName=1})()()",

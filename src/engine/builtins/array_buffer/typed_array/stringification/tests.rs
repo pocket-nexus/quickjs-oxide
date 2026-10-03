@@ -25,7 +25,7 @@ fn eval_object(context: &mut Context, source: &str, description: &str) -> Object
 #[test]
 fn join_and_to_locale_string_publish_quickjs_surface() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -126,7 +126,7 @@ fn join_and_to_locale_string_publish_quickjs_surface() {
 #[test]
 fn stringification_validates_brand_and_initial_buffer_state_before_coercion() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -207,7 +207,7 @@ fn stringification_validates_brand_and_initial_buffer_state_before_coercion() {
 #[test]
 fn join_observes_quickjs_separator_resize_snapshot_contract() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -278,7 +278,7 @@ fn join_observes_quickjs_separator_resize_snapshot_contract() {
 #[test]
 fn to_locale_string_observes_live_elements_with_a_fixed_old_length() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
 
     assert_script(
         &mut context,
@@ -400,8 +400,8 @@ fn to_locale_string_observes_live_elements_with_a_fixed_old_length() {
 #[test]
 fn to_locale_string_uses_the_method_defining_realm() {
     let runtime = Runtime::new();
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_type_error = eval_object(
         &mut defining,
         "TypeError.prototype",
@@ -527,7 +527,7 @@ fn to_locale_string_uses_the_method_defining_realm() {
 #[test]
 fn typed_array_separator_overflow_stops_before_the_next_locale_call() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let source = eval_object(
         &mut context,
         r#"(function(){

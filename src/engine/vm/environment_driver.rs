@@ -102,7 +102,7 @@ pub(super) fn step(
                         .global_object_for_realm(realm)
                         .map_err(runtime_error_to_vm_error)?;
                     query = Some((
-                        EnvironmentStep::delete_global(realm, object, key),
+                        EnvironmentStep::delete_global(realm, object, key)?,
                         ReturnValue::Push,
                     ));
                 } else {
@@ -131,7 +131,7 @@ pub(super) fn step(
                     }
                     GlobalReference::Object { object, key } => {
                         query = Some((
-                            EnvironmentStep::reference(realm, object, key),
+                            EnvironmentStep::reference(realm, object, key)?,
                             ReturnValue::Push,
                         ));
                     }
@@ -214,9 +214,9 @@ pub(super) fn step(
                         value,
                         strict,
                         matches!(source, WriteTarget::Reference),
-                    )
+                    )?
                 } else {
-                    EnvironmentStep::set(realm, object, key, value, strict)
+                    EnvironmentStep::set(realm, object, key, value, strict)?
                 };
                 query = Some((step, ReturnValue::Discard));
             }
@@ -563,10 +563,10 @@ fn read_binding(
     }
     Ok(BindingRead::Query(EnvironmentStep::get(
         executable.realm,
-        object.clone(),
+        object.try_clone()?,
         key,
         strict,
-    )))
+    )?))
 }
 
 pub(super) fn linked_key(
@@ -608,7 +608,7 @@ pub(super) fn prepare_environment_read(
             )
         )
     };
-    let receiver = Value::Object(object.clone());
+    let receiver = Value::Object(object.try_clone()?);
     if !global
         || runtime
             .is_auto_init_own_property(object, key)
@@ -858,7 +858,7 @@ mod factory_publication_cleanup_tests {
     #[test]
     fn successful_publication_keeps_one_slot_owner_for_each_factory() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         for object in factories(&runtime, context.realm) {
             let id = object.object_id();
             let (mut slots, mut frame) = window(&runtime, context.realm, 1);
@@ -882,7 +882,7 @@ mod factory_publication_cleanup_tests {
     #[test]
     fn rejected_publication_releases_the_uncommitted_edge_for_each_factory() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         for object in factories(&runtime, context.realm) {
             let id = object.object_id();
             let (mut slots, mut frame) = window(&runtime, context.realm, 0);
@@ -902,7 +902,7 @@ mod factory_publication_cleanup_tests {
     #[test]
     fn rejected_publication_defers_both_releases_during_a_shared_borrow() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let object = runtime.new_object(None).unwrap();
         let id = object.object_id();
         let (mut slots, mut frame) = window(&runtime, context.realm, 0);
@@ -928,7 +928,7 @@ mod factory_publication_cleanup_tests {
     #[test]
     fn rejected_publication_keeps_original_wrapper_zero_cleanup() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let object = runtime.new_object(None).unwrap();
         let id = object.object_id();
         let garbage = runtime.new_object(None).unwrap().into_handle();
@@ -959,7 +959,7 @@ mod factory_publication_cleanup_tests {
     #[test]
     fn checked_retain_failure_drops_only_the_original_factory_owner() {
         let runtime = Runtime::new();
-        let context = runtime.new_context();
+        let context = runtime.new_context().expect("create context");
         let object = runtime.new_object(None).unwrap();
         let id = object.object_id();
         let (mut slots, mut frame) = window(&runtime, context.realm, 1);
@@ -994,7 +994,7 @@ mod tests {
             "(function(){var calls=0,o={x:0};Object.defineProperty(o,Symbol.unscopables,{get:new Proxy(function(){calls++;throw 42},{apply(t,r,a){return Reflect.apply(t,r,a)}})});return function(){try{with(o){return x}}catch(e){return calls===1?e:0}}})()",
         ] {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let function = context.eval(source).unwrap();
             let callable = runtime.callable_from_value(function).unwrap();
             let profile = CostProfile::start();

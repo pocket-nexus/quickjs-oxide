@@ -172,7 +172,7 @@ mod tests {
     #[test]
     fn bound_and_apply_producers_separate_edges_roots_and_moves() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let profile = CostProfile::start();
         assert_eq!(context.eval("function f(x,y){return x.value+y;}var marker={value:4};var bound=f.bind(null,marker);bound(3)+f.apply(null,{length:2,0:marker,1:5})+f(...[marker,6])").unwrap(), Value::Int(26));
         let costs = profile.snapshot();
@@ -195,7 +195,7 @@ mod tests {
     fn generator_diagnostics_measure_encode_and_decode_without_retaining_owners() {
         let runtime = Runtime::new();
         let weak = std::rc::Rc::downgrade(&runtime.0);
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let profile = CostProfile::start();
         assert_eq!(context.eval("function* g(){try{yield {value:7};}finally{}}var i=g();var n=i.next().value.value;i.next();i=null;n").unwrap(), Value::Int(7));
         let costs = profile.snapshot();

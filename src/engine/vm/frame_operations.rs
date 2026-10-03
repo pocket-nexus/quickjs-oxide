@@ -395,7 +395,7 @@ pub(super) fn binding(
                 .closures()
                 .get(usize::from(index))
                 .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?
-                .clone(),
+                .try_clone()?,
             frame.executable.closure_variables[usize::from(index)],
         ),
         BindingSource::Local | BindingSource::Argument => {
@@ -416,7 +416,8 @@ pub(super) fn binding(
                 return Err(Error::internal("captured access lost its cell"));
             };
             (
-                crate::engine::heap::roots::VarRefView::from_frame(runtime, *var_ref).clone(),
+                crate::engine::heap::roots::VarRefView::from_frame(runtime, *var_ref)
+                    .try_clone()?,
                 ClosureVariable {
                     source,
                     name: definition

@@ -192,7 +192,7 @@ fn program_function_then_lexical_remains_a_source_ordered_syntax_error() {
 #[test]
 fn program_vars_instantiate_persist_and_preserve_existing_properties() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         context
             .eval("var value;var value=2;if(false){var dormant=3}for(var loop=0;loop<2;loop++){};value+'|'+typeof dormant+'|'+loop")
@@ -327,7 +327,9 @@ fn program_vars_instantiate_persist_and_preserve_existing_properties() {
                 &accessor,
                 &OrdinaryPropertyDescriptor {
                     get: DescriptorField::Present(AccessorValue::Undefined),
-                    set: DescriptorField::Present(AccessorValue::Callable(setter.clone())),
+                    set: DescriptorField::Present(AccessorValue::Callable(
+                        setter.try_clone().expect("duplicate root")
+                    )),
                     enumerable: DescriptorField::Present(false),
                     configurable: DescriptorField::Present(true),
                     ..OrdinaryPropertyDescriptor::new()
@@ -358,7 +360,7 @@ fn program_vars_instantiate_persist_and_preserve_existing_properties() {
         })
     );
 
-    let mut inherited = runtime.new_context();
+    let mut inherited = runtime.new_context().expect("create context");
     let inherited_key = runtime.intern_property_key("inheritedVar").unwrap();
     let prototype = inherited.object_prototype().unwrap();
     assert!(
@@ -393,7 +395,7 @@ fn program_vars_instantiate_persist_and_preserve_existing_properties() {
         })
     );
 
-    let mut auto_init = runtime.new_context();
+    let mut auto_init = runtime.new_context().expect("create context");
     assert_eq!(
         auto_init.eval("var Number;typeof Number").unwrap(),
         Value::String(JsString::from_static("function"))
@@ -420,7 +422,7 @@ fn program_vars_instantiate_persist_and_preserve_existing_properties() {
 #[test]
 fn program_var_preflight_conflicts_and_parser_scope_match_quickjs() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         context.eval("let existingLexical=1").unwrap(),
         Value::Undefined
@@ -459,7 +461,7 @@ fn program_var_preflight_conflicts_and_parser_scope_match_quickjs() {
         Value::String(JsString::from_static("undefined|undefined"))
     );
 
-    let mut sealed = runtime.new_context();
+    let mut sealed = runtime.new_context().expect("create context");
     assert_eq!(
         sealed.eval("let sealedLexical=1").unwrap(),
         Value::Undefined
@@ -484,7 +486,7 @@ fn program_var_preflight_conflicts_and_parser_scope_match_quickjs() {
         ))
     );
 
-    let mut atomic = runtime.new_context();
+    let mut atomic = runtime.new_context().expect("create context");
     assert_eq!(
         atomic
             .eval("globalThis.atomicExisting=5;globalThis.atomicMarker=0")
@@ -541,8 +543,8 @@ fn program_var_preflight_conflicts_and_parser_scope_match_quickjs() {
 #[test]
 fn program_var_cross_realm_instantiation_and_fallback_match_quickjs() {
     let runtime = Runtime::new();
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
 
     let fresh = defining.compile("var crossVar=41;crossVar+1").unwrap();
     assert_eq!(caller.execute(&fresh).unwrap(), Value::Int(42));
@@ -696,7 +698,7 @@ fn program_var_cross_realm_instantiation_and_fallback_match_quickjs() {
         Some(defining_type_prototype)
     );
 
-    let mut syntax_caller = runtime.new_context();
+    let mut syntax_caller = runtime.new_context().expect("create context");
     drop(syntax_caller.eval("let crossConflict=1").unwrap());
     let Value::Object(syntax_prototype) = syntax_caller.eval("SyntaxError.prototype").unwrap()
     else {
@@ -715,7 +717,7 @@ fn program_var_cross_realm_instantiation_and_fallback_match_quickjs() {
         Some(syntax_prototype)
     );
 
-    let mut type_caller = runtime.new_context();
+    let mut type_caller = runtime.new_context().expect("create context");
     let Value::Object(type_prototype) = type_caller.eval("TypeError.prototype").unwrap() else {
         panic!("caller TypeError.prototype was not an object");
     };
@@ -739,22 +741,25 @@ fn program_var_cross_realm_instantiation_and_fallback_match_quickjs() {
 fn program_var_function_cell_cycle_is_collectable_after_context_drop() {
     let runtime = Runtime::new();
     {
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval("var cycle=function(){return cycle};cycle()===cycle")
                 .unwrap(),
             Value::Bool(true)
         );
-        let counts = runtime.heap_counts();
+        let counts = runtime.heap_counts().expect("runtime state");
         assert_eq!(counts.context_nodes, 1);
         assert!(counts.var_ref_nodes > 0);
         assert!(counts.function_bytecode_nodes > 0);
     }
 
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
     runtime.run_gc().unwrap();
-    let counts = runtime.heap_counts();
+    let counts = runtime.heap_counts().expect("runtime state");
     assert_eq!(counts.context_nodes, 0);
     assert_eq!(counts.object_nodes, 0);
     assert_eq!(counts.shape_nodes, 0);
@@ -767,22 +772,25 @@ fn program_var_function_cell_cycle_is_collectable_after_context_drop() {
 fn program_function_declaration_cycle_is_collectable_after_context_drop() {
     let runtime = Runtime::new();
     {
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context
                 .eval("function declarationCycle(){return declarationCycle};declarationCycle()===declarationCycle")
                 .unwrap(),
             Value::Bool(true)
         );
-        let counts = runtime.heap_counts();
+        let counts = runtime.heap_counts().expect("runtime state");
         assert_eq!(counts.context_nodes, 1);
         assert!(counts.var_ref_nodes > 0);
         assert!(counts.function_bytecode_nodes > 0);
     }
 
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
     runtime.run_gc().unwrap();
-    let counts = runtime.heap_counts();
+    let counts = runtime.heap_counts().expect("runtime state");
     assert_eq!(counts.context_nodes, 0);
     assert_eq!(counts.object_nodes, 0);
     assert_eq!(counts.shape_nodes, 0);
@@ -794,7 +802,7 @@ fn program_function_declaration_cycle_is_collectable_after_context_drop() {
 #[test]
 fn program_global_lexicals_persist_shadow_and_reject_redeclaration() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     assert_eq!(
         context
             .eval("let mutable=1,named=function(){};const fixed=3;mutable+'|'+named.name+'|'+fixed")
@@ -878,7 +886,7 @@ fn program_global_lexicals_persist_shadow_and_reject_redeclaration() {
     );
     assert_eq!(context.eval("shadowedGlobal").unwrap(), Value::Int(2));
 
-    let mut sealed = runtime.new_context();
+    let mut sealed = runtime.new_context().expect("create context");
     let sealed_global = sealed.global_object().unwrap();
     runtime.prevent_extensions(&sealed_global).unwrap();
     assert_eq!(
@@ -892,7 +900,7 @@ fn program_global_lexicals_persist_shadow_and_reject_redeclaration() {
 #[test]
 fn program_global_lexical_preflight_and_failed_initializers_match_quickjs() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let name = runtime.intern_property_key("name").unwrap();
     let message = runtime.intern_property_key("message").unwrap();
 
@@ -977,8 +985,8 @@ fn program_global_lexical_preflight_and_failed_initializers_match_quickjs() {
     ));
     drop(context.take_exception().unwrap().unwrap());
 
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let caller_syntax_prototype = caller.eval("SyntaxError.prototype").unwrap();
     let conflict = defining.compile("let NaN=1").unwrap();
     assert!(matches!(

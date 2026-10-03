@@ -1424,7 +1424,9 @@ fn property_slot_transaction_keeps_new_symbol_owned_after_post_publish_failure()
             &object,
             &key,
             &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(Value::Object(old.clone())),
+                value: DescriptorField::Present(Value::Object(
+                    old.try_clone().expect("duplicate root"),
+                )),
                 writable: DescriptorField::Present(true),
                 ..OrdinaryPropertyDescriptor::new()
             },

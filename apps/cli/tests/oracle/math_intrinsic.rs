@@ -536,7 +536,7 @@ fn math_values_match_pinned_quickjs() {
 fn math_methods_are_not_constructable() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let math = math_object(&runtime, &mut context);
     for &(name, _) in METHODS {
         let callable = property_callable(&runtime, &mut context, &math, name);
@@ -561,8 +561,8 @@ fn math_methods_are_not_constructable() {
 fn math_native_errors_use_the_method_defining_realm() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_type_error = eval_object(
         &mut defining,
         "TypeError.prototype",
@@ -587,7 +587,7 @@ fn math_native_errors_use_the_method_defining_realm() {
     let native_conversion = take_exception_object(&mut caller, "cross-realm Math.abs TypeError");
     assert_eq!(
         runtime.get_prototype_of(&native_conversion).unwrap(),
-        Some(defining_type_error.clone()),
+        Some(defining_type_error.try_clone().expect("duplicate root")),
         "Math.abs allocated its ToNumber TypeError in the calling realm",
     );
 
@@ -628,7 +628,7 @@ fn math_native_errors_use_the_method_defining_realm() {
 fn math_rust_smoke_runs_without_an_oracle() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let value = context
         .eval("Math.sumPrecise([20,22])")
         .expect("execute Math smoke");
@@ -647,7 +647,7 @@ fn compare_value_cases(group: &str, cases: &[(&str, &str)]) {
         let expected = observe_array_completion(&oracle, source, description);
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             observe_rust_eval(&runtime, &mut context, source, description),
             expected,
@@ -727,7 +727,7 @@ fn array_value_text(
 fn rust_graph_observations() -> Vec<String> {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let global = context.global_object().unwrap();
     let object_prototype = context.object_prototype().unwrap();
     let function_prototype = context.function_prototype().unwrap();
@@ -739,7 +739,11 @@ fn rust_graph_observations() -> Vec<String> {
     let object_to_string = property_callable(&runtime, &mut context, &object_prototype, "toString");
     let tag_text = primitive_value_text(
         context
-            .call(&object_to_string, Value::Object(math.clone()), &[])
+            .call(
+                &object_to_string,
+                Value::Object(math.try_clone().expect("duplicate root")),
+                &[],
+            )
             .unwrap(),
     );
     let mut output = vec![format!(
@@ -780,7 +784,11 @@ fn rust_graph_observations() -> Vec<String> {
             .collect::<Vec<_>>()
             .join("|"),
     ));
-    let tag_key = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToStringTag));
+    let tag_key = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::ToStringTag)
+            .expect("well-known symbol"),
+    );
     let (tag, writable, enumerable, configurable) = data_descriptor(&runtime, &math, &tag_key);
     output.push(format!(
         "tag={}:{}",
@@ -886,7 +894,11 @@ fn data_bits(writable: bool, enumerable: bool, configurable: bool) -> String {
 }
 
 fn own_key_names(runtime: &Runtime, object: &ObjectRef) -> Vec<String> {
-    let to_string_tag = PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToStringTag));
+    let to_string_tag = PropertyKey::from(
+        runtime
+            .well_known_symbol(WellKnownSymbol::ToStringTag)
+            .expect("well-known symbol"),
+    );
     runtime
         .own_property_keys(object)
         .unwrap()

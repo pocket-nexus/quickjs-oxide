@@ -696,6 +696,9 @@ impl Runtime {
         token: ActiveFrameToken,
         previous: bool,
     ) {
+        if self.skip_cleanup() {
+            return;
+        }
         if let Ok(mut state) = self.0.state.try_borrow_mut() {
             if let Some(frame) = state
                 .active_frames
@@ -731,6 +734,9 @@ impl Runtime {
     }
 
     pub(crate) fn pop_active_collection_record_fallback(&self, depth: usize) {
+        if self.skip_cleanup() {
+            return;
+        }
         if let Ok(mut state) = self.0.state.try_borrow_mut() {
             state.active_collection_records.truncate(depth);
         } else {
@@ -760,6 +766,9 @@ impl Runtime {
     }
 
     pub(crate) fn pop_active_frame_fallback(&self, token: ActiveFrameToken, depth: usize) {
+        if self.skip_cleanup() {
+            return;
+        }
         if let Ok(mut state) = self.0.state.try_borrow_mut() {
             state.active_frames.retire(token, depth);
         } else {

@@ -103,7 +103,7 @@ mod tests {
     #[test]
     fn shared_environment_does_not_retain_each_cell_and_outlives_external_callee() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let Value::Object(function) = context
             .eval("(()=>{let a=1,b=2;return ()=>a+b})()")
             .unwrap()
@@ -172,7 +172,11 @@ mod tests {
                 .unwrap(),
             JsValue::Int(9)
         );
-        let escaped = closure_slots.get(0).unwrap().clone();
+        let escaped = closure_slots
+            .get(0)
+            .unwrap()
+            .try_clone()
+            .expect("duplicate root");
         drop(closure_slots);
         assert_eq!(runtime.read_var_ref(&escaped).unwrap(), JsValue::Int(9));
         assert!(runtime.0.state.borrow().heap.var_ref(ids[1]).is_err());

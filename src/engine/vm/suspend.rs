@@ -341,9 +341,9 @@ impl RootedVmActivation {
                 .ok_or(RuntimeError::Invariant(
                     "resumable frame has no published root",
                 ))?
-                .clone();
+                .try_clone()?;
             let guard = runtime.push_bytecode_active_frame(
-                (*entry.cold.function).clone(),
+                (*entry.cold.function).try_clone()?,
                 root,
                 entry.executable.realm,
                 entry.executable.frame_layout().is_strict(),
@@ -648,7 +648,7 @@ mod tests {
     #[test]
     fn suspended_generator_preserves_primitive_call_input_across_yields() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(
             context.eval(r#"(()=>{
                 function* values() { yield 1; yield 2; }
@@ -666,7 +666,7 @@ mod tests {
     #[test]
     fn failed_thaw_releases_partial_roots_without_detaching_heap_state() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (generator, data) = dormant(&mut context);
         let GeneratorFrameBinding::Direct(RawValue::Object(argument)) = data.arguments[0] else {
             panic!("expected an object argument");
@@ -723,7 +723,7 @@ mod tests {
     fn abandoned_thaw_does_not_register_or_keep_the_runtime_alive() {
         let runtime = Runtime::new();
         let weak = std::rc::Rc::downgrade(&runtime.0);
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (generator, data) = dormant(&mut context);
         let rooted = thaw(
             runtime.clone(),
@@ -747,7 +747,7 @@ mod tests {
     fn resume_rejects_foreign_runtime_before_registering_a_frame() {
         let runtime = Runtime::new();
         let other = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (_generator, data) = dormant(&mut context);
         let rooted = thaw(
             runtime.clone(),

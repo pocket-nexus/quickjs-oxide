@@ -650,7 +650,7 @@ mod tests {
     }
 
     fn site_for(runtime: &Runtime, source: &str) -> (PublishedFunctionSnapshot, usize, u32) {
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let callable = runtime
             .callable_from_value(context.eval(source).unwrap())
             .unwrap();
@@ -681,7 +681,7 @@ mod tests {
     #[test]
     fn direct_state_read_keeps_result_after_final_receiver_release() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (code, pc, key) = site(&runtime);
         let base = runtime
             .into_jsvalue(context.eval("({x:{marker:42}})").unwrap())
@@ -713,7 +713,7 @@ mod tests {
     #[test]
     fn direct_state_selection_preserves_prototypes_and_getter_progress() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (code, pc, key) = site(&runtime);
         let inherited = runtime
             .into_jsvalue(context.eval("Object.create({x:42})").unwrap())
@@ -787,7 +787,7 @@ mod tests {
     fn direct_state_failed_promotion_keeps_receiver_and_slot_owner() {
         use crate::engine::heap::RawId;
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (code, pc, key) = site(&runtime);
         let base = runtime
             .into_jsvalue(context.eval("({x:'promotion ownership'})").unwrap())
@@ -837,7 +837,7 @@ mod tests {
     fn direct_state_native_fact_holds_no_runtime_owner_and_rejects_foreign_domain() {
         let runtime = Runtime::new();
         let foreign = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (code, pc, key) = site(&runtime);
         let base = runtime
             .into_jsvalue(context.eval("({x:Math.min})").unwrap())
@@ -886,7 +886,7 @@ mod tests {
     #[test]
     fn direct_state_scalar_and_dense_writes_preserve_rejections() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (code, pc, key) = site(&runtime);
         let base = runtime
             .into_jsvalue(context.eval("({x:1})").unwrap())
@@ -991,7 +991,7 @@ mod tests {
     #[test]
     fn linked_scalar_field_write_commits_without_set_protocol() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (code, _, key) = site(&runtime);
         let base = runtime
             .into_jsvalue(
@@ -1029,7 +1029,7 @@ mod tests {
     #[test]
     fn linked_scalar_field_write_declines_observable_or_non_scalar_storage() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (code, _, key) = site(&runtime);
         for source in [
             "Object.freeze({x:1})",
@@ -1093,7 +1093,7 @@ mod tests {
     #[test]
     fn scalar_field_vm_preserves_assignment_results_and_fallbacks() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         assert_eq!(context.eval(r#"
             (() => {
                 let calls = 0;
@@ -1126,7 +1126,7 @@ mod tests {
     #[test]
     fn scalar_field_vm_records_local_completion() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let _ = context.eval("globalThis.scalarProfile = {x:0};").unwrap();
         let profile = crate::engine::api::profiling::CostProfile::start();
         assert_eq!(
@@ -1148,7 +1148,7 @@ mod tests {
     #[test]
     fn initialized_function_slot_completes_locally_after_lazy_decline() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (code, pc, key) = site_for(&runtime, "(function(o){return o.prototype})");
         let base = runtime
             .into_jsvalue(
@@ -1173,7 +1173,7 @@ mod tests {
     #[test]
     fn string_prototype_selection_preserves_data_and_getter_semantics() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let callable = runtime
             .callable_from_value(context.eval("(function(o){return o.charAt})").unwrap())
             .unwrap();
@@ -1220,7 +1220,7 @@ mod tests {
     #[test]
     fn shared_selection_uses_cold_inherited_data_and_current_warm_value() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (code, pc, key) = site(&runtime);
         let base = runtime
             .into_jsvalue(
@@ -1259,7 +1259,7 @@ mod tests {
     #[test]
     fn cold_and_warm_accessor_selection_tracks_current_shape() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (code, pc, key) = site(&runtime);
         let base = runtime
             .into_jsvalue(
@@ -1289,7 +1289,7 @@ mod tests {
     #[test]
     fn uncached_own_read_retains_every_owner_after_last_base_release() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (code, pc, key) = site(&runtime);
         // Three distinct shapes put this site into its megamorphic cooldown.
         // Every following value must therefore use the uncached own-slot path.
@@ -1338,7 +1338,7 @@ mod tests {
     #[test]
     fn uncached_own_read_declines_accessors_proxies_and_last_owner_consumption() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (code, pc, key) = site(&runtime);
         for expression in [
             "({get x(){throw 1}})",
@@ -1373,7 +1373,7 @@ mod tests {
     #[test]
     fn uncached_native_hint_describes_the_retained_current_value() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (code, pc, key) = site(&runtime);
         let poison = runtime
             .into_jsvalue(context.eval("({get x(){throw 1}})").unwrap())
@@ -1404,7 +1404,7 @@ mod tests {
     #[test]
     fn owned_ic_promotes_every_public_value_and_reads_current_slot() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         for expression in [
             "undefined",
             "null",
@@ -1459,7 +1459,7 @@ mod tests {
     #[test]
     fn owned_ic_guards_borrow_deferred_work_and_final_receiver_before_promotion() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (code, pc, key) = site(&runtime);
         let base = runtime
             .into_jsvalue(context.eval("({x:{marker:1}})").unwrap())
@@ -1528,7 +1528,7 @@ mod tests {
     #[test]
     fn owned_ic_native_hint_is_bound_to_current_retained_function() {
         let runtime = Runtime::new();
-        let mut context = runtime.new_context();
+        let mut context = runtime.new_context().expect("create context");
         let (code, pc, key) = site(&runtime);
         let base = runtime
             .into_jsvalue(

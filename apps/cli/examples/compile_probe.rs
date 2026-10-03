@@ -14,7 +14,7 @@ fn main() {
     #[cfg(feature = "profiling")]
     let costs = quickjs_oxide::engine::api::profiling::CostProfile::start();
     let runtime = Runtime::new_with_host_services(SystemHostServices::default());
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let started = Instant::now();
     let function = context
         .compile_with_filename(&source, &path)

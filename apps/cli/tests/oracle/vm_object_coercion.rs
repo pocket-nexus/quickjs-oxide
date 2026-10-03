@@ -618,9 +618,12 @@ impl Harness {
     fn new() -> Self {
         let runtime =
             Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-        let context = runtime.new_context();
-        let to_primitive =
-            PropertyKey::from(runtime.well_known_symbol(WellKnownSymbol::ToPrimitive));
+        let context = runtime.new_context().expect("create context");
+        let to_primitive = PropertyKey::from(
+            runtime
+                .well_known_symbol(WellKnownSymbol::ToPrimitive)
+                .expect("well-known symbol"),
+        );
         Self {
             runtime,
             context,
@@ -660,7 +663,9 @@ fn rust_numeric_observations() -> Vec<String> {
         Value::String(JsString::try_from_utf8("none").unwrap()),
     );
     let method = harness.function("(function(hint){ numericHint = hint; return 6; })");
-    let object = harness.object_with_exotic(Value::Object(method.as_object().clone()));
+    let object = harness.object_with_exotic(Value::Object(
+        method.as_object().try_clone().expect("duplicate root"),
+    ));
     harness.bind("numericObject", Value::Object(object));
     let left_symbol = harness
         .runtime
@@ -683,8 +688,12 @@ fn rust_numeric_observations() -> Vec<String> {
     harness.bind("rightValueCalls", Value::Int(0));
     let right_value_method =
         harness.function("(function(){ rightValueCalls = rightValueCalls + 1; return 1; })");
-    let right_value =
-        harness.object_with_exotic(Value::Object(right_value_method.as_object().clone()));
+    let right_value = harness.object_with_exotic(Value::Object(
+        right_value_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
     harness.bind("rightValue", Value::Object(right_value));
     let symbol_left_right_value = ["-", "*", "/", "%"]
         .map(|operator| harness.observe(&format!("leftNumericSymbol {operator} rightValue")))
@@ -695,8 +704,12 @@ fn rust_numeric_observations() -> Vec<String> {
     harness.bind("rightThrowCalls", Value::Int(0));
     let right_throw_method =
         harness.function("(function(){ rightThrowCalls = rightThrowCalls + 1; throw \"right\"; })");
-    let right_throw =
-        harness.object_with_exotic(Value::Object(right_throw_method.as_object().clone()));
+    let right_throw = harness.object_with_exotic(Value::Object(
+        right_throw_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
     harness.bind("rightThrow", Value::Object(right_throw));
     let symbol_left_right_throw = ["-", "*", "/", "%"]
         .map(|operator| harness.observe(&format!("leftNumericSymbol {operator} rightThrow")))
@@ -750,8 +763,12 @@ fn rust_add_observations() -> Vec<String> {
         Value::String(JsString::try_from_utf8("none").unwrap()),
     );
     let string_method = harness.function("(function(hint){ addHint = hint; return \"x\"; })");
-    let string_object =
-        harness.object_with_exotic(Value::Object(string_method.as_object().clone()));
+    let string_object = harness.object_with_exotic(Value::Object(
+        string_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
     harness.bind("stringObject", Value::Object(string_object));
     let add_string = harness.observe("stringObject + 2");
     let Value::String(hint) = global_value(&harness.runtime, &mut harness.context, "addHint")
@@ -760,8 +777,12 @@ fn rust_add_observations() -> Vec<String> {
     };
 
     let bigint_method = harness.function("(function(){ return 7n; })");
-    let bigint_object =
-        harness.object_with_exotic(Value::Object(bigint_method.as_object().clone()));
+    let bigint_object = harness.object_with_exotic(Value::Object(
+        bigint_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
     harness.bind("bigintObject", Value::Object(bigint_object));
     let mixed = harness.observe("bigintObject + 1");
     let function_plus = harness.observe("+(function(){})");
@@ -785,8 +806,12 @@ fn rust_bitwise_coercion_observations() -> Vec<String> {
         "(function(hint){ bitwiseHints = bitwiseHints + hint + \",\"; \
          bitwiseHintCalls = bitwiseHintCalls + 1; return 6; })",
     );
-    let bitwise_number =
-        harness.object_with_exotic(Value::Object(bitwise_number_method.as_object().clone()));
+    let bitwise_number = harness.object_with_exotic(Value::Object(
+        bitwise_number_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
     harness.bind("bitwiseNumber", Value::Object(bitwise_number));
     let unary_not = harness.observe("~bitwiseNumber");
     let bitwise_and = harness.observe("bitwiseNumber & 3");
@@ -805,10 +830,18 @@ fn rust_bitwise_coercion_observations() -> Vec<String> {
         harness.function("(function(){ bitwiseOrder = bitwiseOrder * 10 + 1; return 5; })");
     let bitwise_right_method =
         harness.function("(function(){ bitwiseOrder = bitwiseOrder * 10 + 2; return 3; })");
-    let bitwise_left =
-        harness.object_with_exotic(Value::Object(bitwise_left_method.as_object().clone()));
-    let bitwise_right =
-        harness.object_with_exotic(Value::Object(bitwise_right_method.as_object().clone()));
+    let bitwise_left = harness.object_with_exotic(Value::Object(
+        bitwise_left_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
+    let bitwise_right = harness.object_with_exotic(Value::Object(
+        bitwise_right_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
     harness.bind("bitwiseLeft", Value::Object(bitwise_left));
     harness.bind("bitwiseRight", Value::Object(bitwise_right));
     let mut ordered = Vec::new();
@@ -833,14 +866,30 @@ fn rust_bitwise_coercion_observations() -> Vec<String> {
         harness.function("(function(){ mixedOrder = mixedOrder * 10 + 1; return 1; })");
     let mixed_bigint_right_method =
         harness.function("(function(){ mixedOrder = mixedOrder * 10 + 2; return 1n; })");
-    let mixed_bigint_left =
-        harness.object_with_exotic(Value::Object(mixed_bigint_left_method.as_object().clone()));
-    let mixed_number_right =
-        harness.object_with_exotic(Value::Object(mixed_number_right_method.as_object().clone()));
-    let mixed_number_left =
-        harness.object_with_exotic(Value::Object(mixed_number_left_method.as_object().clone()));
-    let mixed_bigint_right =
-        harness.object_with_exotic(Value::Object(mixed_bigint_right_method.as_object().clone()));
+    let mixed_bigint_left = harness.object_with_exotic(Value::Object(
+        mixed_bigint_left_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
+    let mixed_number_right = harness.object_with_exotic(Value::Object(
+        mixed_number_right_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
+    let mixed_number_left = harness.object_with_exotic(Value::Object(
+        mixed_number_left_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
+    let mixed_bigint_right = harness.object_with_exotic(Value::Object(
+        mixed_bigint_right_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
     harness.bind("mixedBigIntLeft", Value::Object(mixed_bigint_left));
     harness.bind("mixedNumberRight", Value::Object(mixed_number_right));
     harness.bind("mixedNumberLeft", Value::Object(mixed_number_left));
@@ -871,8 +920,12 @@ fn rust_bitwise_coercion_observations() -> Vec<String> {
     harness.bind("symbolRightCalls", Value::Int(0));
     let symbol_right_method =
         harness.function("(function(){ symbolRightCalls = symbolRightCalls + 1; return 1; })");
-    let symbol_right =
-        harness.object_with_exotic(Value::Object(symbol_right_method.as_object().clone()));
+    let symbol_right = harness.object_with_exotic(Value::Object(
+        symbol_right_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
     harness.bind("symbolRight", Value::Object(symbol_right));
     let symbol_left = ["&", "^", "|"]
         .map(|operator| harness.observe(&format!("leftBitwiseSymbol {operator} symbolRight")))
@@ -881,17 +934,28 @@ fn rust_bitwise_coercion_observations() -> Vec<String> {
         integer_global(&harness.runtime, &mut harness.context, "symbolRightCalls");
 
     let bitwise_sentinel = harness.context.new_object().unwrap();
-    harness.bind("bitwiseSentinel", Value::Object(bitwise_sentinel.clone()));
+    harness.bind(
+        "bitwiseSentinel",
+        Value::Object(bitwise_sentinel.try_clone().expect("duplicate root")),
+    );
     harness.bind("leftThrowCalls", Value::Int(0));
     harness.bind("leftThrowRightCalls", Value::Int(0));
     let left_throw_method = harness
         .function("(function(){ leftThrowCalls = leftThrowCalls + 1; throw bitwiseSentinel; })");
     let after_left_throw_method = harness
         .function("(function(){ leftThrowRightCalls = leftThrowRightCalls + 1; return 1; })");
-    let left_throw =
-        harness.object_with_exotic(Value::Object(left_throw_method.as_object().clone()));
-    let after_left_throw =
-        harness.object_with_exotic(Value::Object(after_left_throw_method.as_object().clone()));
+    let left_throw = harness.object_with_exotic(Value::Object(
+        left_throw_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
+    let after_left_throw = harness.object_with_exotic(Value::Object(
+        after_left_throw_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
     harness.bind("leftThrow", Value::Object(left_throw));
     harness.bind("afterLeftThrow", Value::Object(after_left_throw));
     let mut left_throw_same = vec![eval_thrown_identity(
@@ -926,10 +990,18 @@ fn rust_bitwise_coercion_observations() -> Vec<String> {
         .function("(function(){ rightThrowLeftCalls = rightThrowLeftCalls + 1; return 1; })");
     let right_throw_method = harness
         .function("(function(){ rightThrowCalls = rightThrowCalls + 1; throw bitwiseSentinel; })");
-    let before_right_throw =
-        harness.object_with_exotic(Value::Object(before_right_throw_method.as_object().clone()));
-    let right_throw =
-        harness.object_with_exotic(Value::Object(right_throw_method.as_object().clone()));
+    let before_right_throw = harness.object_with_exotic(Value::Object(
+        before_right_throw_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
+    let right_throw = harness.object_with_exotic(Value::Object(
+        right_throw_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
     harness.bind("beforeRightThrow", Value::Object(before_right_throw));
     harness.bind("rightThrowBitwise", Value::Object(right_throw));
     let right_throw_same = ["&", "^", "|"]
@@ -980,8 +1052,12 @@ fn rust_shift_coercion_observations() -> Vec<String> {
         "(function(hint){ shiftHints = shiftHints + hint + \",\"; \
          shiftHintCalls = shiftHintCalls + 1; return -1; })",
     );
-    let shift_number =
-        harness.object_with_exotic(Value::Object(shift_number_method.as_object().clone()));
+    let shift_number = harness.object_with_exotic(Value::Object(
+        shift_number_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
     harness.bind("shiftNumber", Value::Object(shift_number));
     let shift_shl = harness.observe("shiftNumber << 1");
     let shift_sar = harness.observe("shiftNumber >> 1");
@@ -1000,10 +1076,18 @@ fn rust_shift_coercion_observations() -> Vec<String> {
         harness.function("(function(){ shiftOrder = shiftOrder + \"l\"; return 16; })");
     let ordered_right_method =
         harness.function("(function(){ shiftOrder = shiftOrder + \"r\"; return 1; })");
-    let ordered_left =
-        harness.object_with_exotic(Value::Object(ordered_left_method.as_object().clone()));
-    let ordered_right =
-        harness.object_with_exotic(Value::Object(ordered_right_method.as_object().clone()));
+    let ordered_left = harness.object_with_exotic(Value::Object(
+        ordered_left_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
+    let ordered_right = harness.object_with_exotic(Value::Object(
+        ordered_right_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
     harness.bind("shiftOrderedLeft", Value::Object(ordered_left));
     harness.bind("shiftOrderedRight", Value::Object(ordered_right));
     let eval_left = harness
@@ -1012,11 +1096,11 @@ fn rust_shift_coercion_observations() -> Vec<String> {
         .function("(function(){ shiftOrder = shiftOrder + \"R\"; return shiftOrderedRight; })");
     harness.bind(
         "shiftEvalLeft",
-        Value::Object(eval_left.as_object().clone()),
+        Value::Object(eval_left.as_object().try_clone().expect("duplicate root")),
     );
     harness.bind(
         "shiftEvalRight",
-        Value::Object(eval_right.as_object().clone()),
+        Value::Object(eval_right.as_object().try_clone().expect("duplicate root")),
     );
     let mut ordered = Vec::new();
     for operator in ["<<", ">>", ">>>"] {
@@ -1032,7 +1116,10 @@ fn rust_shift_coercion_observations() -> Vec<String> {
     }
 
     let sentinel = harness.context.new_object().unwrap();
-    harness.bind("shiftSentinel", Value::Object(sentinel.clone()));
+    harness.bind(
+        "shiftSentinel",
+        Value::Object(sentinel.try_clone().expect("duplicate root")),
+    );
     harness.bind("shiftLeftThrowCalls", Value::Int(0));
     harness.bind("shiftAfterLeftThrowCalls", Value::Int(0));
     let left_throw_method = harness.function(
@@ -1041,10 +1128,18 @@ fn rust_shift_coercion_observations() -> Vec<String> {
     let after_left_throw_method = harness.function(
         "(function(){ shiftAfterLeftThrowCalls = shiftAfterLeftThrowCalls + 1; return 1; })",
     );
-    let left_throw =
-        harness.object_with_exotic(Value::Object(left_throw_method.as_object().clone()));
-    let after_left_throw =
-        harness.object_with_exotic(Value::Object(after_left_throw_method.as_object().clone()));
+    let left_throw = harness.object_with_exotic(Value::Object(
+        left_throw_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
+    let after_left_throw = harness.object_with_exotic(Value::Object(
+        after_left_throw_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
     harness.bind("shiftLeftThrow", Value::Object(left_throw));
     harness.bind("shiftAfterLeftThrow", Value::Object(after_left_throw));
     let left_throw_same = ["<<", ">>", ">>>"]
@@ -1077,10 +1172,18 @@ fn rust_shift_coercion_observations() -> Vec<String> {
     let right_throw_method = harness.function(
         "(function(){ shiftRightThrowCalls = shiftRightThrowCalls + 1; throw shiftSentinel; })",
     );
-    let before_right_throw =
-        harness.object_with_exotic(Value::Object(before_right_throw_method.as_object().clone()));
-    let right_throw =
-        harness.object_with_exotic(Value::Object(right_throw_method.as_object().clone()));
+    let before_right_throw = harness.object_with_exotic(Value::Object(
+        before_right_throw_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
+    let right_throw = harness.object_with_exotic(Value::Object(
+        right_throw_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
     harness.bind("shiftBeforeRightThrow", Value::Object(before_right_throw));
     harness.bind("shiftRightThrow", Value::Object(right_throw));
     let right_throw_same = ["<<", ">>", ">>>"]
@@ -1114,14 +1217,30 @@ fn rust_shift_coercion_observations() -> Vec<String> {
         harness.function("(function(){ shiftMixedOrder = shiftMixedOrder * 10 + 1; return 8; })");
     let bigint_right_method =
         harness.function("(function(){ shiftMixedOrder = shiftMixedOrder * 10 + 2; return 1n; })");
-    let bigint_left =
-        harness.object_with_exotic(Value::Object(bigint_left_method.as_object().clone()));
-    let number_right =
-        harness.object_with_exotic(Value::Object(number_right_method.as_object().clone()));
-    let number_left =
-        harness.object_with_exotic(Value::Object(number_left_method.as_object().clone()));
-    let bigint_right =
-        harness.object_with_exotic(Value::Object(bigint_right_method.as_object().clone()));
+    let bigint_left = harness.object_with_exotic(Value::Object(
+        bigint_left_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
+    let number_right = harness.object_with_exotic(Value::Object(
+        number_right_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
+    let number_left = harness.object_with_exotic(Value::Object(
+        number_left_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
+    let bigint_right = harness.object_with_exotic(Value::Object(
+        bigint_right_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
     harness.bind("shiftBigIntLeft", Value::Object(bigint_left));
     harness.bind("shiftNumberRight", Value::Object(number_right));
     harness.bind("shiftNumberLeft", Value::Object(number_left));
@@ -1168,8 +1287,12 @@ fn rust_shift_coercion_observations() -> Vec<String> {
     harness.bind("shiftSymbolRightCalls", Value::Int(0));
     let symbol_right_method = harness
         .function("(function(){ shiftSymbolRightCalls = shiftSymbolRightCalls + 1; return 1n; })");
-    let symbol_right =
-        harness.object_with_exotic(Value::Object(symbol_right_method.as_object().clone()));
+    let symbol_right = harness.object_with_exotic(Value::Object(
+        symbol_right_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
     harness.bind("shiftSymbolRight", Value::Object(symbol_right));
     let symbol_left = ["<<", ">>", ">>>"]
         .map(|operator| harness.observe(&format!("shiftSymbol {operator} shiftSymbolRight")))
@@ -1183,8 +1306,12 @@ fn rust_shift_coercion_observations() -> Vec<String> {
     let before_symbol_method = harness.function(
         "(function(){ shiftBeforeSymbolCalls = shiftBeforeSymbolCalls + 1; return 1n; })",
     );
-    let before_symbol =
-        harness.object_with_exotic(Value::Object(before_symbol_method.as_object().clone()));
+    let before_symbol = harness.object_with_exotic(Value::Object(
+        before_symbol_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
     harness.bind("shiftBeforeSymbol", Value::Object(before_symbol));
     let symbol_right = ["<<", ">>", ">>>"]
         .map(|operator| harness.observe(&format!("shiftBeforeSymbol {operator} shiftSymbol")))
@@ -1227,8 +1354,12 @@ fn rust_exponentiation_coercion_observations() -> Vec<String> {
         "(function(hint){ powerHints = powerHints + hint + \",\"; \
          powerHintCalls = powerHintCalls + 1; return 2; })",
     );
-    let power_number =
-        harness.object_with_exotic(Value::Object(power_number_method.as_object().clone()));
+    let power_number = harness.object_with_exotic(Value::Object(
+        power_number_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
     harness.bind("powerNumber", Value::Object(power_number));
     let power_number = harness.observe("powerNumber ** 3");
     let power_hints = string_global(&harness.runtime, &mut harness.context, "powerHints");
@@ -1242,10 +1373,18 @@ fn rust_exponentiation_coercion_observations() -> Vec<String> {
         harness.function("(function(){ powerOrder = powerOrder + \"l\"; return 2; })");
     let ordered_right_method =
         harness.function("(function(){ powerOrder = powerOrder + \"r\"; return 3; })");
-    let ordered_left =
-        harness.object_with_exotic(Value::Object(ordered_left_method.as_object().clone()));
-    let ordered_right =
-        harness.object_with_exotic(Value::Object(ordered_right_method.as_object().clone()));
+    let ordered_left = harness.object_with_exotic(Value::Object(
+        ordered_left_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
+    let ordered_right = harness.object_with_exotic(Value::Object(
+        ordered_right_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
     harness.bind("powerOrderedLeft", Value::Object(ordered_left));
     harness.bind("powerOrderedRight", Value::Object(ordered_right));
     let eval_left = harness
@@ -1254,11 +1393,11 @@ fn rust_exponentiation_coercion_observations() -> Vec<String> {
         .function("(function(){ powerOrder = powerOrder + \"R\"; return powerOrderedRight; })");
     harness.bind(
         "powerEvalLeft",
-        Value::Object(eval_left.as_object().clone()),
+        Value::Object(eval_left.as_object().try_clone().expect("duplicate root")),
     );
     harness.bind(
         "powerEvalRight",
-        Value::Object(eval_right.as_object().clone()),
+        Value::Object(eval_right.as_object().try_clone().expect("duplicate root")),
     );
     let ordered = harness.observe("powerEvalLeft() ** powerEvalRight()");
     let ordered_log = string_global(&harness.runtime, &mut harness.context, "powerOrder");
@@ -1275,9 +1414,24 @@ fn rust_exponentiation_coercion_observations() -> Vec<String> {
         harness.function("(function(){ powerOrder = powerOrder + \"b\"; return 3; })");
     let power_c_method =
         harness.function("(function(){ powerOrder = powerOrder + \"c\"; return 2; })");
-    let power_a = harness.object_with_exotic(Value::Object(power_a_method.as_object().clone()));
-    let power_b = harness.object_with_exotic(Value::Object(power_b_method.as_object().clone()));
-    let power_c = harness.object_with_exotic(Value::Object(power_c_method.as_object().clone()));
+    let power_a = harness.object_with_exotic(Value::Object(
+        power_a_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
+    let power_b = harness.object_with_exotic(Value::Object(
+        power_b_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
+    let power_c = harness.object_with_exotic(Value::Object(
+        power_c_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
     harness.bind("powerA", Value::Object(power_a));
     harness.bind("powerB", Value::Object(power_b));
     harness.bind("powerC", Value::Object(power_c));
@@ -1287,14 +1441,26 @@ fn rust_exponentiation_coercion_observations() -> Vec<String> {
         harness.function("(function(){ powerOrder = powerOrder + \"B\"; return powerB; })");
     let eval_c =
         harness.function("(function(){ powerOrder = powerOrder + \"C\"; return powerC; })");
-    harness.bind("powerEvalA", Value::Object(eval_a.as_object().clone()));
-    harness.bind("powerEvalB", Value::Object(eval_b.as_object().clone()));
-    harness.bind("powerEvalC", Value::Object(eval_c.as_object().clone()));
+    harness.bind(
+        "powerEvalA",
+        Value::Object(eval_a.as_object().try_clone().expect("duplicate root")),
+    );
+    harness.bind(
+        "powerEvalB",
+        Value::Object(eval_b.as_object().try_clone().expect("duplicate root")),
+    );
+    harness.bind(
+        "powerEvalC",
+        Value::Object(eval_c.as_object().try_clone().expect("duplicate root")),
+    );
     let right_associative = harness.observe("powerEvalA() ** powerEvalB() ** powerEvalC()");
     let right_associative_log = string_global(&harness.runtime, &mut harness.context, "powerOrder");
 
     let sentinel = harness.context.new_object().unwrap();
-    harness.bind("powerSentinel", Value::Object(sentinel.clone()));
+    harness.bind(
+        "powerSentinel",
+        Value::Object(sentinel.try_clone().expect("duplicate root")),
+    );
     harness.bind("powerLeftThrowCalls", Value::Int(0));
     harness.bind("powerAfterLeftThrowCalls", Value::Int(0));
     let left_throw_method = harness.function(
@@ -1303,10 +1469,18 @@ fn rust_exponentiation_coercion_observations() -> Vec<String> {
     let after_left_throw_method = harness.function(
         "(function(){ powerAfterLeftThrowCalls = powerAfterLeftThrowCalls + 1; return 3; })",
     );
-    let left_throw =
-        harness.object_with_exotic(Value::Object(left_throw_method.as_object().clone()));
-    let after_left_throw =
-        harness.object_with_exotic(Value::Object(after_left_throw_method.as_object().clone()));
+    let left_throw = harness.object_with_exotic(Value::Object(
+        left_throw_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
+    let after_left_throw = harness.object_with_exotic(Value::Object(
+        after_left_throw_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
     harness.bind("powerLeftThrow", Value::Object(left_throw));
     harness.bind("powerAfterLeftThrow", Value::Object(after_left_throw));
     let left_throw_same = eval_thrown_identity(
@@ -1334,10 +1508,18 @@ fn rust_exponentiation_coercion_observations() -> Vec<String> {
     let right_throw_method = harness.function(
         "(function(){ powerRightThrowCalls = powerRightThrowCalls + 1; throw powerSentinel; })",
     );
-    let before_right_throw =
-        harness.object_with_exotic(Value::Object(before_right_throw_method.as_object().clone()));
-    let right_throw =
-        harness.object_with_exotic(Value::Object(right_throw_method.as_object().clone()));
+    let before_right_throw = harness.object_with_exotic(Value::Object(
+        before_right_throw_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
+    let right_throw = harness.object_with_exotic(Value::Object(
+        right_throw_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
     harness.bind("powerBeforeRightThrow", Value::Object(before_right_throw));
     harness.bind("powerRightThrow", Value::Object(right_throw));
     let right_throw_same = eval_thrown_identity(
@@ -1366,14 +1548,30 @@ fn rust_exponentiation_coercion_observations() -> Vec<String> {
         harness.function("(function(){ powerMixedOrder = powerMixedOrder * 10 + 1; return 2; })");
     let bigint_right_method =
         harness.function("(function(){ powerMixedOrder = powerMixedOrder * 10 + 2; return 3n; })");
-    let bigint_left =
-        harness.object_with_exotic(Value::Object(bigint_left_method.as_object().clone()));
-    let number_right =
-        harness.object_with_exotic(Value::Object(number_right_method.as_object().clone()));
-    let number_left =
-        harness.object_with_exotic(Value::Object(number_left_method.as_object().clone()));
-    let bigint_right =
-        harness.object_with_exotic(Value::Object(bigint_right_method.as_object().clone()));
+    let bigint_left = harness.object_with_exotic(Value::Object(
+        bigint_left_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
+    let number_right = harness.object_with_exotic(Value::Object(
+        number_right_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
+    let number_left = harness.object_with_exotic(Value::Object(
+        number_left_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
+    let bigint_right = harness.object_with_exotic(Value::Object(
+        bigint_right_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
     harness.bind("powerBigIntLeft", Value::Object(bigint_left));
     harness.bind("powerNumberRight", Value::Object(number_right));
     harness.bind("powerNumberLeft", Value::Object(number_left));
@@ -1403,8 +1601,12 @@ fn rust_exponentiation_coercion_observations() -> Vec<String> {
     let mixed_throw_right_method = harness.function(
         "(function(){ powerMixedOrder = powerMixedOrder * 10 + 2; throw powerSentinel; })",
     );
-    let mixed_throw_right =
-        harness.object_with_exotic(Value::Object(mixed_throw_right_method.as_object().clone()));
+    let mixed_throw_right = harness.object_with_exotic(Value::Object(
+        mixed_throw_right_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
     harness.bind("powerMixedThrowRight", Value::Object(mixed_throw_right));
     let mixed_throw_same = eval_thrown_identity(
         &harness.runtime,
@@ -1428,8 +1630,12 @@ fn rust_exponentiation_coercion_observations() -> Vec<String> {
     let mixed_symbol_right_method = harness.function(
         "(function(){ powerMixedOrder = powerMixedOrder * 10 + 2; return powerMixedSymbol; })",
     );
-    let mixed_symbol_right =
-        harness.object_with_exotic(Value::Object(mixed_symbol_right_method.as_object().clone()));
+    let mixed_symbol_right = harness.object_with_exotic(Value::Object(
+        mixed_symbol_right_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
     harness.bind("powerMixedSymbolRight", Value::Object(mixed_symbol_right));
     let mixed_symbol_result = harness.observe("powerBigIntLeft ** powerMixedSymbolRight");
     let mixed_symbol_order =
@@ -1444,8 +1650,12 @@ fn rust_exponentiation_coercion_observations() -> Vec<String> {
     let after_symbol_method = harness.function(
         "(function(){ powerAfterSymbolCalls = powerAfterSymbolCalls + 1; throw powerSentinel; })",
     );
-    let after_symbol =
-        harness.object_with_exotic(Value::Object(after_symbol_method.as_object().clone()));
+    let after_symbol = harness.object_with_exotic(Value::Object(
+        after_symbol_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
     harness.bind("powerAfterSymbol", Value::Object(after_symbol));
     let symbol_before_throw = harness.observe("powerSymbol ** powerAfterSymbol");
     let after_symbol_calls = integer_global(
@@ -1458,8 +1668,12 @@ fn rust_exponentiation_coercion_observations() -> Vec<String> {
     let before_symbol_method = harness.function(
         "(function(){ powerBeforeSymbolCalls = powerBeforeSymbolCalls + 1; throw powerSentinel; })",
     );
-    let before_symbol =
-        harness.object_with_exotic(Value::Object(before_symbol_method.as_object().clone()));
+    let before_symbol = harness.object_with_exotic(Value::Object(
+        before_symbol_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
     harness.bind("powerBeforeSymbol", Value::Object(before_symbol));
     let throw_before_symbol = eval_thrown_identity(
         &harness.runtime,
@@ -1479,7 +1693,10 @@ fn rust_exponentiation_coercion_observations() -> Vec<String> {
          powerConvertedBeforeSymbolCalls + 1; return 2; })",
     );
     let converted_before_symbol = harness.object_with_exotic(Value::Object(
-        converted_before_symbol_method.as_object().clone(),
+        converted_before_symbol_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
     ));
     harness.bind(
         "powerConvertedBeforeSymbol",
@@ -1568,7 +1785,9 @@ fn rust_equality_observations() -> Vec<String> {
         .into_iter()
         .map(|(name, primitive, method_source)| {
             let method = harness.function(method_source);
-            let object = harness.object_with_exotic(Value::Object(method.as_object().clone()));
+            let object = harness.object_with_exotic(Value::Object(
+                method.as_object().try_clone().expect("duplicate root"),
+            ));
             let object_name = format!("equalityObject{name}");
             harness.bind(&object_name, Value::Object(object));
             let eq_left = bool_bit(&harness.observe(&format!("{object_name} == {primitive}")));
@@ -1585,8 +1804,15 @@ fn rust_order_and_error_observations() -> Vec<String> {
     harness.bind("order", Value::Int(0));
     let left_method = harness.function("(function(){ order = order * 10 + 1; return 1; })");
     let right_method = harness.function("(function(){ order = order * 10 + 2; return 2; })");
-    let left = harness.object_with_exotic(Value::Object(left_method.as_object().clone()));
-    let right = harness.object_with_exotic(Value::Object(right_method.as_object().clone()));
+    let left = harness.object_with_exotic(Value::Object(
+        left_method.as_object().try_clone().expect("duplicate root"),
+    ));
+    let right = harness.object_with_exotic(Value::Object(
+        right_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
     harness.bind("left", Value::Object(left));
     harness.bind("right", Value::Object(right));
     let add = harness.observe("left + right");
@@ -1607,7 +1833,10 @@ fn rust_order_and_error_observations() -> Vec<String> {
         Value::Int(0),
     );
     let ordinary = harness.context.new_object().unwrap();
-    harness.bind("ordinary", Value::Object(ordinary.clone()));
+    harness.bind(
+        "ordinary",
+        Value::Object(ordinary.try_clone().expect("duplicate root")),
+    );
     let value_of = harness.function("(function(){ order = order * 10 + 1; return ordinary; })");
     let to_string = harness.function("(function(){ order = order * 10 + 2; return \"5\"; })");
     let value_of_key = harness.runtime.intern_property_key("valueOf").unwrap();
@@ -1617,14 +1846,14 @@ fn rust_order_and_error_observations() -> Vec<String> {
         &mut harness.context,
         &ordinary,
         &value_of_key,
-        Value::Object(value_of.as_object().clone()),
+        Value::Object(value_of.as_object().try_clone().expect("duplicate root")),
     );
     define_data(
         &harness.runtime,
         &mut harness.context,
         &ordinary,
         &to_string_key,
-        Value::Object(to_string.as_object().clone()),
+        Value::Object(to_string.as_object().try_clone().expect("duplicate root")),
     );
     let ordinary_number = harness.observe("+ordinary");
     let ordinary_number_order = integer_global(&harness.runtime, &mut harness.context, "order");
@@ -1638,7 +1867,10 @@ fn rust_order_and_error_observations() -> Vec<String> {
     let ordinary_add_order = integer_global(&harness.runtime, &mut harness.context, "order");
 
     let sentinel = harness.context.new_object().unwrap();
-    harness.bind("sentinel", Value::Object(sentinel.clone()));
+    harness.bind(
+        "sentinel",
+        Value::Object(sentinel.try_clone().expect("duplicate root")),
+    );
     let getter = harness.function("(function(){ throw sentinel; })");
     let getter_throw = harness.context.new_object().unwrap();
     assert!(
@@ -1660,7 +1892,9 @@ fn rust_order_and_error_observations() -> Vec<String> {
     );
 
     let method = harness.function("(function(){ throw sentinel; })");
-    let method_throw = harness.object_with_exotic(Value::Object(method.as_object().clone()));
+    let method_throw = harness.object_with_exotic(Value::Object(
+        method.as_object().try_clone().expect("duplicate root"),
+    ));
     harness.bind("methodThrow", Value::Object(method_throw));
     let method_same = eval_thrown_identity(
         &harness.runtime,
@@ -1672,8 +1906,12 @@ fn rust_order_and_error_observations() -> Vec<String> {
     let returned_object = harness.context.new_object().unwrap();
     harness.bind("returnedObject", Value::Object(returned_object));
     let object_method = harness.function("(function(){ return returnedObject; })");
-    let object_return =
-        harness.object_with_exotic(Value::Object(object_method.as_object().clone()));
+    let object_return = harness.object_with_exotic(Value::Object(
+        object_method
+            .as_object()
+            .try_clone()
+            .expect("duplicate root"),
+    ));
     harness.bind("objectReturn", Value::Object(object_return));
     let object_return = harness.observe("+objectReturn");
 
@@ -1682,7 +1920,9 @@ fn rust_order_and_error_observations() -> Vec<String> {
     let noncallable = harness.observe("+noncallable");
 
     let convert = harness.function("(function convert(){ throw new Error(\"coerce\"); })");
-    let stack_object = harness.object_with_exotic(Value::Object(convert.as_object().clone()));
+    let stack_object = harness.object_with_exotic(Value::Object(
+        convert.as_object().try_clone().expect("duplicate root"),
+    ));
     harness.bind("stackObject", Value::Object(stack_object));
     let stack = error_stack_frame_names(
         &harness.runtime,

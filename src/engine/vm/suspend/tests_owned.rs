@@ -6,11 +6,11 @@ use crate::engine::{
 
 fn assert_owned(source: &str, assertion: &str) {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let profile = CostProfile::start();
     drop(context.eval(source).unwrap());
     let mut jobs = 0;
-    while runtime.is_job_pending() {
+    while runtime.is_job_pending().expect("runtime state") {
         runtime.run_gc().unwrap();
         runtime.execute_pending_job().unwrap();
         jobs += 1;
@@ -87,7 +87,7 @@ fn abandoned_async_generator_resume_completes_detached_activation_and_releases_r
     };
     let runtime = Runtime::new();
     let weak = std::rc::Rc::downgrade(&runtime.0);
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let Value::Object(generator) = context
         .eval("(async function*(x){yield x})({alive:42})")
         .unwrap()
@@ -95,7 +95,7 @@ fn abandoned_async_generator_resume_completes_detached_activation_and_releases_r
         panic!("expected generator");
     };
     let invocation = NativeInvocation::Call {
-        this_value: JsValue::Object(generator.clone().into_handle()),
+        this_value: JsValue::Object(generator.try_clone().expect("duplicate root").into_handle()),
     };
     let step = AsyncGeneratorStep::start(
         &runtime,
@@ -144,7 +144,7 @@ fn abandoned_async_generator_resume_completes_detached_activation_and_releases_r
 fn original_argument_roots_survive_parameter_replacement_and_repeated_suspension() {
     use crate::engine::heap::{GeneratorFrameBinding, RawValue};
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let Value::Object(generator) = context.eval("var saved=(function*(x){'use strict';x=7;yield 1;x=8;yield 2;return 3})({original:42});saved.next();saved").unwrap() else {panic!("expected generator")};
     let snapshot = || {
         runtime
@@ -185,7 +185,7 @@ fn original_argument_roots_survive_parameter_replacement_and_repeated_suspension
 #[test]
 fn suspension_survives_a_remaining_module_opcode_handoff() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let Value::Object(function) = context
         .eval_with_filename(
             r#"
@@ -203,7 +203,7 @@ fn suspension_survives_a_remaining_module_opcode_handoff() {
     };
     let callable = runtime.as_callable(&function).unwrap().unwrap();
     drop(context.call(&callable, Value::Undefined, &[]).unwrap());
-    while runtime.is_job_pending() {
+    while runtime.is_job_pending().expect("runtime state") {
         runtime.run_gc().unwrap();
         runtime.execute_pending_job().unwrap();
     }

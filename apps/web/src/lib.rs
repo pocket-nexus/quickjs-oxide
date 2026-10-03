@@ -95,8 +95,13 @@ pub fn engine_metadata() -> JsValue {
 
 fn evaluate_with_engine(source: &str) -> EvalResult {
     let runtime = Runtime::new_with_host_services(WebHostServices);
-    runtime.set_can_block(WEB_CAN_BLOCK);
-    let mut context = runtime.new_context();
+    if let Err(error) = runtime.set_can_block(WEB_CAN_BLOCK) {
+        return EvalResult::engine_error(&error);
+    }
+    let mut context = match runtime.new_context() {
+        Ok(context) => context,
+        Err(error) => return EvalResult::engine_error(&error),
+    };
     let value = match context.eval_with_filename(source, PLAYGROUND_FILENAME) {
         Ok(value) => value,
         Err(RuntimeError::Exception) => return EvalResult::exception(&runtime, &mut context),
@@ -131,8 +136,8 @@ fn value_text(runtime: &Runtime, value: &Value) -> (&'static str, String) {
         Value::String(value) => ("string", value.to_utf8_lossy()),
         Value::Object(_) => ("object", "[object Object]".to_owned()),
         Value::Symbol(symbol) => {
-            let description = runtime
-                .property_key_to_js_string(&PropertyKey::from(symbol))
+            let description = PropertyKey::try_from(symbol)
+                .and_then(|key| runtime.property_key_to_js_string(&key))
                 .map_or_else(|_| String::new(), |value| value.to_utf8_lossy());
             ("symbol", format!("Symbol({description})"))
         }

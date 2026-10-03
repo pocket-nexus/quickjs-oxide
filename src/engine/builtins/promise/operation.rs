@@ -369,7 +369,8 @@ impl PromiseStep {
                 runtime.settle_promise(realm, &promise, PromiseState::Rejected, reason)?;
             } else {
                 return Ok({
-                    let __pending_field_receiver = JsValue::Object(object.clone().into_handle());
+                    let __pending_field_receiver =
+                        JsValue::Object(object.try_clone()?.into_handle());
                     let __pending_field_key = runtime
                         .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Then)?;
                     let __pending_field_resume = Box::new(PromiseResume {
@@ -446,8 +447,8 @@ impl PromiseResume {
         let promise = runtime.new_promise_object(&prototype)?;
         let (resolve, reject) = runtime.create_promise_resolving_functions(self.realm, &promise)?;
         let arguments = vec![
-            JsValue::Object(resolve.as_object().clone().into_handle()),
-            JsValue::Object(reject.as_object().clone().into_handle()),
+            JsValue::Object(resolve.as_object().try_clone()?.into_handle()),
+            JsValue::Object(reject.as_object().try_clone()?.into_handle()),
         ];
         Ok({
             let __pending_field_callable = executor;

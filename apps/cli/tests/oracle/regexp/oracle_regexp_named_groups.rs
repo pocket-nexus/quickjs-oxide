@@ -352,8 +352,8 @@ fn regexp_named_group_construction_and_compile_match_pinned_quickjs() {
 fn regexp_named_group_results_use_the_exec_defining_realm() {
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
-    let mut defining = runtime.new_context();
-    let mut caller = runtime.new_context();
+    let mut defining = runtime.new_context().expect("create context");
+    let mut caller = runtime.new_context().expect("create context");
     let defining_array_prototype =
         eval_object(&mut defining, "Array.prototype", "defining Array prototype");
     let caller_array_prototype =

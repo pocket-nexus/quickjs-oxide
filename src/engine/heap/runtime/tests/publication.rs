@@ -3,7 +3,7 @@ use super::*;
 #[test]
 fn bytecode_is_rooted_and_calls_separate_caller_from_callee_realm() {
     let runtime = Runtime::new();
-    let mut compiler_context = runtime.new_context();
+    let mut compiler_context = runtime.new_context().expect("create context");
     let compiler_realm = compiler_context.realm;
     let intrinsic_realm_roots = runtime
         .0
@@ -33,7 +33,7 @@ fn bytecode_is_rooted_and_calls_separate_caller_from_callee_realm() {
             .context_strong_count(compiler_realm),
         Ok(intrinsic_realm_roots + 1)
     );
-    let duplicate = function.clone();
+    let duplicate = function.try_clone().expect("duplicate root");
     assert_eq!(
         runtime
             .0
@@ -45,10 +45,13 @@ fn bytecode_is_rooted_and_calls_separate_caller_from_callee_realm() {
     );
     drop(duplicate);
 
-    let mut caller_context = runtime.new_context();
+    let mut caller_context = runtime.new_context().expect("create context");
     let caller_global = caller_context.global_object().unwrap();
     drop(compiler_context);
-    assert_eq!(runtime.heap_counts().context_nodes, 2);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        2
+    );
 
     let snapshot = runtime.snapshot_function_bytecode(&function).unwrap();
     assert_eq!(snapshot.realm, compiler_realm);
@@ -59,16 +62,28 @@ fn bytecode_is_rooted_and_calls_separate_caller_from_callee_realm() {
     );
 
     drop(function);
-    assert_eq!(runtime.heap_counts().function_bytecode_nodes, 0);
-    assert_eq!(runtime.heap_counts().context_nodes, 2);
+    assert_eq!(
+        runtime
+            .heap_counts()
+            .expect("runtime state")
+            .function_bytecode_nodes,
+        0
+    );
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        2
+    );
     runtime.run_gc().unwrap();
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
 }
 
 #[test]
 fn publication_accepts_duplicate_program_var_declaration_descriptors() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let descriptor = ClosureVariable {
         source: ClosureSource::GlobalDeclaration,
         name: ClosureVariableName::Constant(0),
@@ -110,7 +125,7 @@ fn publication_accepts_duplicate_program_var_declaration_descriptors() {
 #[test]
 fn publication_accepts_annex_masked_mixed_global_declaration_descriptors() {
     let runtime = Runtime::new();
-    let mut context = runtime.new_context();
+    let mut context = runtime.new_context().expect("create context");
     let ordinary = ClosureVariable {
         source: ClosureSource::GlobalDeclaration,
         name: ClosureVariableName::Constant(0),
@@ -156,7 +171,7 @@ fn deeply_nested_child_publication_and_release_are_iterative() {
     const DEPTH: usize = 50_000;
 
     let runtime = Runtime::new();
-    let context = runtime.new_context();
+    let context = runtime.new_context().expect("create context");
     let metadata = FunctionMetadata {
         max_stack: 1,
         ..FunctionMetadata::default()
@@ -177,8 +192,23 @@ fn deeply_nested_child_publication_and_release_are_iterative() {
     let function = runtime
         .publish_unlinked_function(context.realm, function)
         .unwrap();
-    assert_eq!(runtime.heap_counts().function_bytecode_nodes, DEPTH + 1);
+    assert_eq!(
+        runtime
+            .heap_counts()
+            .expect("runtime state")
+            .function_bytecode_nodes,
+        DEPTH + 1
+    );
     drop(function);
-    assert_eq!(runtime.heap_counts().function_bytecode_nodes, 0);
-    assert_eq!(runtime.heap_counts().context_nodes, 1);
+    assert_eq!(
+        runtime
+            .heap_counts()
+            .expect("runtime state")
+            .function_bytecode_nodes,
+        0
+    );
+    assert_eq!(
+        runtime.heap_counts().expect("runtime state").context_nodes,
+        1
+    );
 }

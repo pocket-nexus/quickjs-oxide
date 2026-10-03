@@ -74,7 +74,7 @@ mod tests {
     fn recursive_delegation_and_finally_use_one_owned_driver() {
         std::thread::Builder::new().stack_size(2 * 1024 * 1024).spawn(|| {
             let runtime = Runtime::new();
-            let mut context = runtime.new_context();
+            let mut context = runtime.new_context().expect("create context");
             let Value::Object(function) = context.eval("(function(){function* g(n){try{if(n) return yield* g(n-1); yield 42;}finally{if(!n)yield [1,2].map(x=>x+1)[1];}} var i=g(1000); var a=i.next();var b=i.return(9);var c=i.next();return a.value===42&&!a.done&&b.value===3&&!b.done&&c.value===9&&c.done;})").unwrap() else {panic!("expected function")};
             let callable = runtime.as_callable(&function).unwrap().unwrap();
             let profile = CostProfile::start();
