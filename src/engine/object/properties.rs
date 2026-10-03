@@ -1092,58 +1092,20 @@ impl Runtime {
         key: &PropertyKey,
         descriptor: &crate::engine::object::property::PropertyDescriptor<RawValue>,
     ) -> Result<bool, RuntimeError> {
-        use crate::engine::object::property::CompletePropertyDescriptor;
-        let complete = {
-            let state = self.0.state.borrow();
-            let data = state.heap.object(object.object_id())?;
-            let shape = state.heap.shape(data.shape)?;
-            let current = shape
-                .find(AtomIdx::from_raw(key.atom().raw()))
-                .map(|index| {
-                    let flags = shape.entries()[index as usize].flags;
-                    match &data.slots[index as usize] {
-                        PropertySlot::Data(value) => Ok(CompletePropertyDescriptor::Data {
-                            value: value.clone(),
-                            writable: flags.writable,
-                            enumerable: flags.enumerable,
-                            configurable: flags.configurable,
-                        }),
-                        PropertySlot::VarRef(id) => Ok(CompletePropertyDescriptor::Data {
-                            value: state.heap.var_ref(*id)?.value.clone(),
-                            writable: flags.writable,
-                            enumerable: flags.enumerable,
-                            configurable: flags.configurable,
-                        }),
-                        PropertySlot::Accessor { get, set } => {
-                            Ok(CompletePropertyDescriptor::Accessor {
-                                get: get.option().map(RawValue::Object),
-                                set: set.option().map(RawValue::Object),
-                                enumerable: flags.enumerable,
-                                configurable: flags.configurable,
-                            })
-                        }
-                        _ => Err(RuntimeError::Invariant(
-                            "raw descriptor reached noncanonical slot",
-                        )),
-                    }
-                })
-                .transpose()?;
-            validate_and_apply_property_descriptor(
-                data.extensible,
-                descriptor,
-                current.as_ref(),
-                &RawValue::Undefined,
-                |a, b| crate::engine::value::collection_key::same_value(&state.heap, a, b),
-            )
+        let mut state = self.0.state.borrow_mut();
+        let Some(complete) =
+            state.validate_raw_property(object.object_id(), key.atom(), descriptor)?
+        else {
+            return Ok(false);
         };
-        let complete = match complete {
-            Ok(value) => value,
-            Err(PropertyDefinitionError::InvalidDescriptor) => {
-                return Err(PropertyDefinitionError::InvalidDescriptor.into());
-            }
-            Err(_) => return Ok(false),
-        };
-        self.store_complete_raw_property(object, key, complete)?;
+        if let ObjectPayload::GlobalObject { uninitialized_vars } =
+            state.heap.object(object.object_id())?.payload
+        {
+            drop(state);
+            self.store_complete_global_raw_property(object, uninitialized_vars, key, complete)?;
+        } else {
+            state.store_complete_raw_property(object.object_id(), key.atom(), complete)?;
+        }
         Ok(true)
     }
 
@@ -2422,5 +2384,86 @@ impl Runtime {
             .heap
             .set_object_extensible(object.object_id(), false)?;
         Ok(())
+    }
+}
+
+impl RuntimeState {
+    /// Validate and commit a callback-free descriptor under the same state access.
+    /// The caller admits a non-global object with ordinary slot semantics,
+    /// handles AutoInit/exotic preconditions, and keeps descriptor edges owned.
+    pub(crate) fn define_raw_property(
+        &mut self,
+        object: ObjectId,
+        atom: Atom,
+        descriptor: &crate::engine::object::property::PropertyDescriptor<RawValue>,
+    ) -> Result<bool, RuntimeError> {
+        let Some(complete) = self.validate_raw_property(object, atom, descriptor)? else {
+            return Ok(false);
+        };
+        self.store_complete_raw_property(object, atom, complete)?;
+        Ok(true)
+    }
+
+    fn validate_raw_property(
+        &self,
+        object: ObjectId,
+        atom: Atom,
+        descriptor: &crate::engine::object::property::PropertyDescriptor<RawValue>,
+    ) -> Result<
+        Option<crate::engine::object::property::CompletePropertyDescriptor<RawValue>>,
+        RuntimeError,
+    > {
+        use crate::engine::object::property::CompletePropertyDescriptor;
+        let complete = {
+            let state = self;
+            let data = state.heap.object(object)?;
+            let shape = state.heap.shape(data.shape)?;
+            let current = shape
+                .find(AtomIdx::from_raw(atom.raw()))
+                .map(|index| {
+                    let flags = shape.entries()[index as usize].flags;
+                    match &data.slots[index as usize] {
+                        PropertySlot::Data(value) => Ok(CompletePropertyDescriptor::Data {
+                            value: value.clone(),
+                            writable: flags.writable,
+                            enumerable: flags.enumerable,
+                            configurable: flags.configurable,
+                        }),
+                        PropertySlot::VarRef(id) => Ok(CompletePropertyDescriptor::Data {
+                            value: state.heap.var_ref(*id)?.value.clone(),
+                            writable: flags.writable,
+                            enumerable: flags.enumerable,
+                            configurable: flags.configurable,
+                        }),
+                        PropertySlot::Accessor { get, set } => {
+                            Ok(CompletePropertyDescriptor::Accessor {
+                                get: get.option().map(RawValue::Object),
+                                set: set.option().map(RawValue::Object),
+                                enumerable: flags.enumerable,
+                                configurable: flags.configurable,
+                            })
+                        }
+                        _ => Err(RuntimeError::Invariant(
+                            "raw descriptor reached noncanonical slot",
+                        )),
+                    }
+                })
+                .transpose()?;
+            validate_and_apply_property_descriptor(
+                data.extensible,
+                descriptor,
+                current.as_ref(),
+                &RawValue::Undefined,
+                |a, b| crate::engine::value::collection_key::same_value(&state.heap, a, b),
+            )
+        };
+        let complete = match complete {
+            Ok(value) => value,
+            Err(PropertyDefinitionError::InvalidDescriptor) => {
+                return Err(PropertyDefinitionError::InvalidDescriptor.into());
+            }
+            Err(_) => return Ok(None),
+        };
+        Ok(Some(complete))
     }
 }

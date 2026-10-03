@@ -314,34 +314,11 @@ impl Runtime {
             return self.store_complete_global_raw_property(object, hidden, key, complete);
         }
 
-        let (flags, replacement) = match complete {
-            CompletePropertyDescriptor::Data {
-                value,
-                writable,
-                enumerable,
-                configurable,
-            } => (
-                PropertyFlags::data(writable, enumerable, configurable),
-                PropertySlot::Data(value),
-            ),
-            CompletePropertyDescriptor::Accessor {
-                get,
-                set,
-                enumerable,
-                configurable,
-            } => {
-                let id = |value| match value {
-                    None => Ok(None),
-                    Some(RawValue::Object(id)) => Ok(Some(id)),
-                    _ => Err(RuntimeError::Invariant("raw accessor is not an object")),
-                };
-                (
-                    PropertyFlags::accessor(enumerable, configurable),
-                    PropertySlot::accessor(id(get)?, id(set)?),
-                )
-            }
-        };
-        self.store_property_slot(object, key, flags, replacement)
+        self.0.state.borrow_mut().store_complete_raw_property(
+            object.object_id(),
+            key.atom(),
+            complete,
+        )
     }
 
     pub(crate) fn store_complete_global_raw_property(
@@ -490,13 +467,68 @@ impl Runtime {
         flags: PropertyFlags,
         replacement: PropertySlot,
     ) -> Result<(), RuntimeError> {
-        let mut state = self.0.state.borrow_mut();
-        let object_id = object.object_id();
+        self.0.state.borrow_mut().store_property_slot(
+            object.object_id(),
+            key.atom(),
+            flags,
+            replacement,
+        )
+    }
+}
+
+impl RuntimeState {
+    /// Raw descriptor edges stay borrowed until the slot transaction retains them.
+    /// Global data bindings use their VarRef adapter before entering this method.
+    pub(super) fn store_complete_raw_property(
+        &mut self,
+        object: ObjectId,
+        atom: Atom,
+        complete: CompletePropertyDescriptor<RawValue>,
+    ) -> Result<(), RuntimeError> {
+        let (flags, replacement) = match complete {
+            CompletePropertyDescriptor::Data {
+                value,
+                writable,
+                enumerable,
+                configurable,
+            } => (
+                PropertyFlags::data(writable, enumerable, configurable),
+                PropertySlot::Data(value),
+            ),
+            CompletePropertyDescriptor::Accessor {
+                get,
+                set,
+                enumerable,
+                configurable,
+            } => {
+                let id = |value| match value {
+                    None => Ok(None),
+                    Some(RawValue::Object(id)) => Ok(Some(id)),
+                    _ => Err(RuntimeError::Invariant("raw accessor is not an object")),
+                };
+                (
+                    PropertyFlags::accessor(enumerable, configurable),
+                    PropertySlot::accessor(id(get)?, id(set)?),
+                )
+            }
+        };
+        self.store_property_slot(object, atom, flags, replacement)
+    }
+
+    pub(crate) fn store_property_slot(
+        &mut self,
+        object: ObjectId,
+        atom: Atom,
+        flags: PropertyFlags,
+        replacement: PropertySlot,
+    ) -> Result<(), RuntimeError> {
+        let state = self;
+        let object_id = object;
         let existing = {
             let object_data = state.heap.object(object_id)?;
             let shape = state.heap.shape(object_data.shape)?;
             shape
-                .find(AtomIdx::from_raw(key.atom().raw()))
+                .find(AtomIdx::from_raw(atom.raw()))
                 .map(|index| {
                     let index = index as usize;
                     let entry = shape.entries().get(index).ok_or(RuntimeError::Invariant(
@@ -506,11 +538,9 @@ impl Runtime {
                 })
                 .transpose()?
         };
-        state.store_selected_property_slot(object_id, key.atom(), flags, replacement, existing)
+        state.store_selected_property_slot(object_id, atom, flags, replacement, existing)
     }
-}
 
-impl RuntimeState {
     /// Consume an own-slot selection made under this same exclusive state borrow.
     /// Callers must not release the borrow or perform another mutation between
     /// selecting `existing` and committing it. No slot index is cached in a VM state.
@@ -865,5 +895,159 @@ impl RuntimeState {
             }
             _ => strict_equal_immediate(left, right),
         })
+    }
+}
+
+#[cfg(test)]
+mod state_descriptor_tests {
+    use super::*;
+    use crate::engine::heap::RawId;
+    use crate::engine::object::property::{PropertyDefinitionError, PropertyDescriptor};
+
+    #[test]
+    fn state_descriptor_tracks_aliased_accessors_and_self_edges() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let Value::Object(function) = context.eval("(function(v){return v})").unwrap() else {
+            panic!("callable")
+        };
+        let object = runtime.new_object(None).unwrap();
+        let key = runtime.intern_property_key("owned-accessor").unwrap();
+        let mut state = runtime.0.state.borrow_mut();
+        let before = state
+            .heap
+            .object_strong_count(function.object_id())
+            .unwrap();
+        let getter = RawValue::Object(function.object_id());
+        assert!(
+            state
+                .define_raw_property(
+                    object.object_id(),
+                    key.atom(),
+                    &PropertyDescriptor {
+                        get: Some(Some(getter.clone())),
+                        set: Some(Some(getter)),
+                        configurable: Some(true),
+                        ..PropertyDescriptor::new()
+                    }
+                )
+                .unwrap()
+        );
+        assert_eq!(
+            state
+                .heap
+                .object_strong_count(function.object_id())
+                .unwrap(),
+            before + 2
+        );
+        let before_object = state.heap.object_strong_count(object.object_id()).unwrap();
+        assert!(
+            state
+                .define_raw_property(
+                    object.object_id(),
+                    key.atom(),
+                    &PropertyDescriptor {
+                        value: Some(RawValue::Object(object.object_id())),
+                        writable: Some(true),
+                        ..PropertyDescriptor::new()
+                    }
+                )
+                .unwrap()
+        );
+        assert_eq!(
+            state
+                .heap
+                .object_strong_count(function.object_id())
+                .unwrap(),
+            before
+        );
+        assert_eq!(
+            state.heap.object_strong_count(object.object_id()).unwrap(),
+            before_object + 1
+        );
+        assert!(
+            state
+                .define_raw_property(
+                    object.object_id(),
+                    key.atom(),
+                    &PropertyDescriptor {
+                        value: Some(RawValue::Bool(true)),
+                        ..PropertyDescriptor::new()
+                    }
+                )
+                .unwrap()
+        );
+        assert_eq!(
+            state.heap.object_strong_count(object.object_id()).unwrap(),
+            before_object
+        );
+        assert_eq!(
+            state.define_raw_property(
+                object.object_id(),
+                key.atom(),
+                &PropertyDescriptor {
+                    value: Some(RawValue::Bool(false)),
+                    get: Some(None),
+                    ..PropertyDescriptor::new()
+                }
+            ),
+            Err(RuntimeError::Property(
+                PropertyDefinitionError::InvalidDescriptor
+            ))
+        );
+        assert!(!runtime.0.deferred_references.has_pending());
+    }
+
+    #[test]
+    fn state_descriptor_rolls_back_first_accessor_when_second_retain_overflows() {
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let Value::Object(getter) = context.eval("(function(){return 1})").unwrap() else {
+            panic!("getter")
+        };
+        let Value::Object(setter) = context.eval("(function(v){})").unwrap() else {
+            panic!("setter")
+        };
+        let object = runtime.new_object(None).unwrap();
+        let key = runtime.intern_property_key("rollback-accessor").unwrap();
+        let mut state = runtime.0.state.borrow_mut();
+        let getter_before = state.heap.object_strong_count(getter.object_id()).unwrap();
+        let setter_before = state.heap.object_strong_count(setter.object_id()).unwrap();
+        state
+            .heap
+            .set_strong_count_for_test(RawId::Object(setter.object_id()), u32::MAX);
+        let result = state.define_raw_property(
+            object.object_id(),
+            key.atom(),
+            &PropertyDescriptor {
+                get: Some(Some(RawValue::Object(getter.object_id()))),
+                set: Some(Some(RawValue::Object(setter.object_id()))),
+                ..PropertyDescriptor::new()
+            },
+        );
+        state
+            .heap
+            .set_strong_count_for_test(RawId::Object(setter.object_id()), setter_before);
+        assert!(matches!(
+            result,
+            Err(RuntimeError::Heap(
+                crate::engine::heap::HeapError::Overflow { .. }
+            ))
+        ));
+        assert_eq!(
+            state.heap.object_strong_count(getter.object_id()).unwrap(),
+            getter_before
+        );
+        let data = state.heap.object(object.object_id()).unwrap();
+        assert!(
+            state
+                .heap
+                .shape(data.shape)
+                .unwrap()
+                .find(AtomIdx::from_raw(key.atom().raw()))
+                .is_none()
+        );
+        assert!(!runtime.0.poisoned.get());
+        assert!(!runtime.0.deferred_references.has_pending());
     }
 }

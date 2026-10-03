@@ -2,10 +2,13 @@ use crate::engine::api::error::{Error, NativeErrorKind, NativeErrorMessage};
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 
-use crate::engine::heap::{ContextId, ObjectData, ObjectKind};
-use crate::engine::object::{DescriptorField, ObjectRef, OrdinaryPropertyDescriptor};
+use crate::engine::heap::runtime::{RuntimeState, owned_values::OwnedValueGuard};
+use crate::engine::heap::{ContextId, ObjectData, ObjectId, ObjectKind, RawValue};
+use crate::engine::object::ObjectRef;
+use crate::engine::object::property::PropertyDescriptor;
 use crate::engine::value::{JsValue, Value};
 use crate::engine::vm::frames::ActiveFrameKind;
+use std::cell::Cell;
 
 impl Runtime {
     /// Internal-value form of native Error construction: the returned value
@@ -144,32 +147,18 @@ impl Runtime {
         kind: NativeErrorKind,
         message: NativeErrorMessage,
     ) -> Result<JsValue, RuntimeError> {
-        let prototype = {
-            let state = self.0.state.borrow();
-            state.heap.context(realm)?.native_error_prototypes[kind.index()].ok_or(
-                RuntimeError::Invariant("realm has no native Error prototype"),
-            )?
-        };
-        let prototype = ObjectRef::from_borrowed_handle(self.clone(), prototype)?;
-        let object = self.new_error_object(&prototype)?;
-        let key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message)?;
-        let defined = self.define_own_property(
-            &object,
-            &key,
-            &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(Value::String(message.to_js_string()?)),
-                writable: DescriptorField::Present(true),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )?;
-        if !defined {
-            return Err(RuntimeError::Invariant(
-                "native Error message definition was rejected",
-            ));
-        }
-        Ok(JsValue::Object(object.into_handle()))
+        let _operation = self.operation()?;
+        let object = self
+            .0
+            .state
+            .borrow_mut()
+            .new_native_error_without_backtrace_from_message(
+                &self.0.poisoned,
+                realm,
+                kind,
+                message,
+            )?;
+        Ok(JsValue::Object(object))
     }
 
     pub(crate) fn new_native_error_without_backtrace_from_message(
@@ -178,32 +167,15 @@ impl Runtime {
         kind: NativeErrorKind,
         message: NativeErrorMessage,
     ) -> Result<Value, RuntimeError> {
-        let prototype = {
-            let state = self.0.state.borrow();
-            state.heap.context(realm)?.native_error_prototypes[kind.index()].ok_or(
-                RuntimeError::Invariant("realm has no native Error prototype"),
-            )?
+        let JsValue::Object(object) =
+            self.new_native_error_without_backtrace_from_message_jsvalue(realm, kind, message)?
+        else {
+            unreachable!("native Error factory allocated an object")
         };
-        let prototype = ObjectRef::from_borrowed_handle(self.clone(), prototype)?;
-        let object = self.new_error_object(&prototype)?;
-        let key = self.pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message)?;
-        let defined = self.define_own_property(
-            &object,
-            &key,
-            &OrdinaryPropertyDescriptor {
-                value: DescriptorField::Present(Value::String(message.to_js_string()?)),
-                writable: DescriptorField::Present(true),
-                enumerable: DescriptorField::Present(false),
-                configurable: DescriptorField::Present(true),
-                ..OrdinaryPropertyDescriptor::new()
-            },
-        )?;
-        if !defined {
-            return Err(RuntimeError::Invariant(
-                "native Error message definition was rejected",
-            ));
-        }
-        Ok(Value::Object(object))
+        Ok(Value::Object(ObjectRef::from_owned_handle(
+            self.clone(),
+            object,
+        )))
     }
 
     pub(crate) fn new_error_object(
@@ -215,20 +187,12 @@ impl Runtime {
             return Err(RuntimeError::WrongRuntime("Error prototype"));
         }
         let mut state = self.0.state.borrow_mut();
-        let shape = state.get_or_create_shape(Some(prototype.object_id()), &[])?;
-        let object = match state
-            .heap
-            .allocate_object(ObjectData::error(shape, Vec::new()))
-        {
-            Ok(object) => object,
-            Err(error) => {
-                let cleanup = state.heap.release_shape(shape)?;
-                state.apply_cleanup(cleanup)?;
-                return Err(error.into());
-            }
-        };
-        let cleanup = state.heap.release_shape(shape)?;
-        state.apply_cleanup(cleanup)?;
+        let object = state.allocate_object_with_layout(
+            Some(prototype.object_id()),
+            &[],
+            Vec::new(),
+            ObjectData::error,
+        )?;
         drop(state);
         Ok(ObjectRef::from_owned_handle(self.clone(), object))
     }
@@ -241,5 +205,180 @@ impl Runtime {
             return Err(RuntimeError::WrongRuntime("object"));
         }
         Ok(self.0.state.borrow().heap.object(object.object_id())?.kind == ObjectKind::Error)
+    }
+}
+
+impl RuntimeState {
+    /// Construct a fresh native Error message without callbacks or public roots.
+    /// The returned ObjectId owns one edge; backtrace completion remains outside
+    /// this state access so the executing fault frame can first be materialized.
+    pub(crate) fn new_native_error_without_backtrace_from_message(
+        &mut self,
+        poisoned: &Cell<bool>,
+        realm: ContextId,
+        kind: NativeErrorKind,
+        message: NativeErrorMessage,
+    ) -> Result<ObjectId, RuntimeError> {
+        let prototype = self.heap.context(realm)?.native_error_prototypes[kind.index()].ok_or(
+            RuntimeError::Invariant("realm has no native Error prototype"),
+        )?;
+        self.heap.retain_object(prototype)?;
+        let mut prototype_owner = OwnedValueGuard::new(self, poisoned, JsValue::Object(prototype));
+        let (state, prototype_owner) = prototype_owner.parts();
+        let object = state.allocate_object_with_layout(
+            Some(prototype),
+            &[],
+            Vec::new(),
+            ObjectData::error,
+        )?;
+        let mut object_owner = OwnedValueGuard::new(state, poisoned, JsValue::Object(object));
+        let (state, object_owner) = object_owner.parts();
+        let key = state
+            .pinned_atoms
+            .get(crate::engine::atom::pinned::PinnedAtom::Message);
+        let string = state.heap.allocate_string(message.to_js_string()?)?;
+        {
+            let mut message_owner = OwnedValueGuard::new(state, poisoned, JsValue::String(string));
+            let (state, message_owner) = message_owner.parts();
+            let defined = state.define_raw_property(
+                object,
+                key,
+                &PropertyDescriptor {
+                    value: Some(RawValue::String(string)),
+                    writable: Some(true),
+                    enumerable: Some(false),
+                    configurable: Some(true),
+                    ..PropertyDescriptor::new()
+                },
+            )?;
+            if !defined {
+                return Err(RuntimeError::Invariant(
+                    "native Error message definition was rejected",
+                ));
+            }
+            // The accepted descriptor retained its own string edge. Surrender
+            // the producer before the prototype temporary, preserving order.
+            state.release_owned_jsvalue(poisoned, message_owner.take().expect("message owner"))?;
+        }
+        state.release_owned_jsvalue(poisoned, prototype_owner.take().expect("prototype owner"))?;
+        let JsValue::Object(object) = object_owner.take().expect("native Error owner") else {
+            unreachable!("native Error factory allocated an object")
+        };
+        Ok(object)
+    }
+}
+
+#[cfg(test)]
+mod state_factory_tests {
+    use super::*;
+    use crate::engine::atom::{AtomIdx, pinned::PinnedAtom};
+    use crate::engine::heap::{HeapError, PropertySlot, RawId};
+
+    #[test]
+    fn native_error_state_factory_owns_message_and_preserves_realm_class_and_utf16() {
+        let runtime = Runtime::new();
+        let context = runtime.new_context().unwrap();
+        let mut message = NativeErrorMessage::new();
+        message.push_bytes([0xed, 0xa0, 0x80, 0, b'x']);
+        let mut state = runtime.0.state.borrow_mut();
+        let prototype = state
+            .heap
+            .context(context.realm)
+            .unwrap()
+            .native_error_prototypes[NativeErrorKind::Type.index()]
+        .unwrap();
+        let object = state
+            .new_native_error_without_backtrace_from_message(
+                &runtime.0.poisoned,
+                context.realm,
+                NativeErrorKind::Type,
+                message,
+            )
+            .unwrap();
+        assert_eq!(state.heap.object_strong_count(object).unwrap(), 1);
+        let data = state.heap.object(object).unwrap();
+        assert_eq!(data.kind, ObjectKind::Error);
+        let shape = state.heap.shape(data.shape).unwrap();
+        assert_eq!(shape.prototype(), Some(prototype));
+        let message_key = state.pinned_atoms.get(PinnedAtom::Message);
+        let slot = shape.find(AtomIdx::from_raw(message_key.raw())).unwrap() as usize;
+        assert!(shape.entries()[slot].flags.writable);
+        assert!(!shape.entries()[slot].flags.enumerable);
+        assert!(shape.entries()[slot].flags.configurable);
+        assert!(
+            shape
+                .find(AtomIdx::from_raw(
+                    state.pinned_atoms.get(PinnedAtom::Stack).raw()
+                ))
+                .is_none()
+        );
+        let PropertySlot::Data(RawValue::String(string)) = data.slots[slot] else {
+            panic!("message slot")
+        };
+        assert_eq!(
+            state
+                .heap
+                .string(string)
+                .unwrap()
+                .utf16_units()
+                .collect::<Vec<_>>(),
+            [0xd800]
+        );
+        state
+            .release_owned_jsvalue(&runtime.0.poisoned, JsValue::Object(object))
+            .unwrap();
+        assert!(state.heap.object(object).is_err());
+        assert!(state.heap.string(string).is_err());
+        assert!(!runtime.0.deferred_references.has_pending());
+        assert!(!runtime.0.poisoned.get());
+    }
+
+    #[test]
+    fn state_factories_preserve_checked_prototype_retain_with_cached_empty_shapes() {
+        let runtime = Runtime::new();
+        let context = runtime.new_context().unwrap();
+        let ordinary = runtime.new_ordinary_object_in_realm(context.realm).unwrap();
+        let error = runtime
+            .new_native_error_without_backtrace_from_message_jsvalue(
+                context.realm,
+                NativeErrorKind::Type,
+                NativeErrorMessage::from_utf8("warm"),
+            )
+            .unwrap();
+        runtime.release_jsvalue(error).unwrap();
+        drop(ordinary);
+        let mut state = runtime.0.state.borrow_mut();
+        let ordinary_prototype = state.heap.context(context.realm).unwrap().object_prototype;
+        let error_prototype = state
+            .heap
+            .context(context.realm)
+            .unwrap()
+            .native_error_prototypes[NativeErrorKind::Type.index()]
+        .unwrap();
+        for (prototype, error_factory) in [(ordinary_prototype, false), (error_prototype, true)] {
+            let before = state.heap.object_strong_count(prototype).unwrap();
+            state
+                .heap
+                .set_strong_count_for_test(RawId::Object(prototype), u32::MAX);
+            let result = if error_factory {
+                state.new_native_error_without_backtrace_from_message(
+                    &runtime.0.poisoned,
+                    context.realm,
+                    NativeErrorKind::Type,
+                    NativeErrorMessage::from_utf8("blocked"),
+                )
+            } else {
+                state.new_ordinary_object_in_realm(&runtime.0.poisoned, context.realm)
+            };
+            state
+                .heap
+                .set_strong_count_for_test(RawId::Object(prototype), before);
+            assert!(matches!(
+                result,
+                Err(RuntimeError::Heap(HeapError::Overflow { .. }))
+            ));
+        }
+        assert!(!runtime.0.poisoned.get());
+        assert!(!runtime.0.deferred_references.has_pending());
     }
 }

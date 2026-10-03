@@ -3,6 +3,7 @@ use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 
 use crate::engine::atom::{Atom, AtomKind, AtomSpelling};
+use crate::engine::heap::{StringId, runtime::RuntimeState};
 use crate::engine::object::{PropertyKey, SymbolRef, WellKnownSymbol};
 use crate::engine::value::JsString;
 #[cfg(test)]
@@ -27,7 +28,6 @@ impl Runtime {
             .0
             .state
             .borrow_mut()
-            .atoms
             .intern_property_key_js_string(text)?;
         Ok(PropertyKey::from_owned_atom(self.clone(), atom))
     }
@@ -39,15 +39,11 @@ impl Runtime {
         id: crate::engine::heap::StringId,
     ) -> Result<PropertyKey, RuntimeError> {
         let _operation = self.operation()?;
-        let atom = {
-            let mut state = self.0.state.borrow_mut();
-            let state = &mut *state;
-            let text = state
-                .heap
-                .string(id)
-                .map_err(|error| RuntimeError::Engine(Error::internal(error.to_string())))?;
-            state.atoms.intern_property_key_js_string(text)?
-        };
+        let atom = self
+            .0
+            .state
+            .borrow_mut()
+            .intern_property_key_string_id(id)?;
         Ok(PropertyKey::from_owned_atom(self.clone(), atom))
     }
 
@@ -55,7 +51,13 @@ impl Runtime {
     /// used by language-level keys.
     pub fn intern_property_key(&self, text: &str) -> Result<PropertyKey, RuntimeError> {
         let _operation = self.operation()?;
-        self.intern_property_key_js_string(&JsString::try_from_utf8(text)?)
+        let text = JsString::try_from_utf8(text)?;
+        let atom = self
+            .0
+            .state
+            .borrow_mut()
+            .intern_property_key_js_string(&text)?;
+        Ok(PropertyKey::from_owned_atom(self.clone(), atom))
     }
 
     /// Construct an already-normalized nonnegative integer index. This is not
@@ -196,13 +198,44 @@ impl Runtime {
         if !key.belongs_to(self) {
             return Err(RuntimeError::WrongRuntime("property key"));
         }
-        let mut message = NativeErrorMessage::new();
-        message.push_utf8(prefix);
         self.0
             .state
             .borrow()
-            .atoms
-            .push_atom_get_str(key.atom(), &mut message)?;
+            .native_atom_error(kind, prefix, key.atom(), suffix)
+    }
+}
+
+impl RuntimeState {
+    /// Return one owned atom. Public roots are constructed after the state borrow ends.
+    pub(crate) fn intern_property_key_js_string(
+        &mut self,
+        text: &JsString,
+    ) -> Result<Atom, RuntimeError> {
+        Ok(self.atoms.intern_property_key_js_string(text)?)
+    }
+
+    /// The input string owner remains live throughout this callback-free interning.
+    pub(crate) fn intern_property_key_string_id(
+        &mut self,
+        id: StringId,
+    ) -> Result<Atom, RuntimeError> {
+        let text = self
+            .heap
+            .string(id)
+            .map_err(|error| RuntimeError::Engine(Error::internal(error.to_string())))?;
+        Ok(self.atoms.intern_property_key_js_string(text)?)
+    }
+
+    pub(crate) fn native_atom_error(
+        &self,
+        kind: ErrorKind,
+        prefix: &str,
+        atom: Atom,
+        suffix: &str,
+    ) -> Result<Error, RuntimeError> {
+        let mut message = NativeErrorMessage::new();
+        message.push_utf8(prefix);
+        self.atoms.push_atom_get_str(atom, &mut message)?;
         message.push_utf8(suffix);
         Ok(Error::from_native_message(kind, message))
     }
@@ -243,5 +276,36 @@ mod integer_key_tests {
                     .is_none()
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod state_atom_tests {
+    use super::*;
+    use crate::engine::value::JsValue;
+
+    #[test]
+    fn state_interning_keeps_exact_utf16_and_accounts_for_both_owners() {
+        let runtime = Runtime::new();
+        let text = JsString::try_from_utf16([0xd800, u16::from(b'k')]).unwrap();
+        let JsValue::String(string) = runtime.into_jsvalue(Value::String(text.clone())).unwrap()
+        else {
+            panic!("string producer")
+        };
+        let mut state = runtime.0.state.borrow_mut();
+        let first = state.intern_property_key_string_id(string).unwrap();
+        let second = state.intern_property_key_js_string(&text).unwrap();
+        assert_eq!(first, second);
+        assert_eq!(state.atoms.resolve(first).unwrap().ref_count, Some(2));
+        assert_eq!(state.atoms.to_js_string(first).unwrap(), text);
+        state.atoms.release(first).unwrap();
+        assert_eq!(state.atoms.resolve(second).unwrap().ref_count, Some(1));
+        state.atoms.release(second).unwrap();
+        assert!(state.atoms.resolve(second).is_err());
+        state
+            .release_owned_jsvalue(&runtime.0.poisoned, JsValue::String(string))
+            .unwrap();
+        assert!(!runtime.0.deferred_references.has_pending());
+        assert!(!runtime.0.poisoned.get());
     }
 }
