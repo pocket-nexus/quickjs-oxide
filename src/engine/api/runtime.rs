@@ -38,8 +38,9 @@ impl Drop for RuntimeUnwindGuard<'_> {
 }
 
 impl Runtime {
-    /// Whether a panic has quarantined this runtime. Identity queries and
-    /// dropping handles remain available; state operations return `Poisoned`.
+    /// Whether a panic or failed owned cleanup has quarantined this runtime.
+    /// Identity queries and dropping handles remain available; state operations
+    /// return `Poisoned`.
     #[must_use]
     pub fn is_poisoned(&self) -> bool {
         self.0.poisoned.get()
