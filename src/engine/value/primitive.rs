@@ -927,6 +927,7 @@ impl JsString {
     }
 
     /// A single decrement cannot destroy the string or any rope descendants.
+    #[cfg(test)]
     pub(crate) fn release_keeps_storage_alive(&self) -> bool {
         Rc::strong_count(&self.0) > 1
     }
