@@ -611,6 +611,13 @@ impl Drop for ConvertedValue<'_> {
     }
 }
 impl RuntimeState {
+    pub(crate) fn release_function_bytecode_handle(
+        &mut self,
+        id: FunctionBytecodeId,
+    ) -> Result<(), RuntimeError> {
+        let cleanup = self.heap.release_function_bytecode(id)?;
+        self.apply_cleanup(cleanup)
+    }
     /// Duplicate an internal value using the state access already held by the
     /// executor. This retains the checked overflow and identity rules of the
     /// boundary operation; it is not the authenticated-owner fast path.

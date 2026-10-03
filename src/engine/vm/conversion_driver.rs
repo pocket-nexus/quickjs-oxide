@@ -839,7 +839,7 @@ fn invoke(
                 ));
             }
             parent.cold.conversion = Some(task.waiting(resume));
-            super::driver::push_frame(execution, entry)?;
+            super::driver::push_frame(runtime, execution, entry)?;
             return Ok(Progress::Entered);
         }
     }

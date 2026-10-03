@@ -92,6 +92,7 @@ pub(in crate::engine::vm) struct FrameStorage {
 /// Error and abandonment paths call this before dropping the storage so no
 /// internal `JsValue`/`FrameBinding` edge survives without its owner. Releases
 /// are defer-safe and nothrow, and never run JavaScript.
+#[cfg(test)]
 pub(in crate::engine::vm) fn release_frame_storage(runtime: &Runtime, storage: FrameStorage) {
     for value in storage.original_arguments {
         let _ = runtime.release_jsvalue(value);
@@ -105,6 +106,22 @@ pub(in crate::engine::vm) fn release_frame_storage(runtime: &Runtime, storage: F
     for value in storage.operands {
         let _ = runtime.release_jsvalue(value);
     }
+}
+
+pub(in crate::engine::vm) fn release_frame_storage_in_state(
+    state: &mut crate::engine::heap::runtime::RuntimeState,
+    storage: FrameStorage,
+) -> Result<(), crate::engine::api::runtime_error::RuntimeError> {
+    for value in storage.original_arguments {
+        state.release_jsvalue(value)?;
+    }
+    for binding in storage.parameters.into_iter().chain(storage.locals) {
+        super::bindings::release_frame_binding_in_state(state, binding)?;
+    }
+    for value in storage.operands {
+        state.release_jsvalue(value)?;
+    }
+    Ok(())
 }
 
 /// Best-effort rollback release for a frame push which failed after taking
@@ -188,15 +205,15 @@ pub(in crate::engine::vm) fn release_unconverted_frame_storage(
 /// Owns a `FrameStorage` across fallible migration and releases every still
 /// owned edge if the migration is abandoned. `take` hands the storage back for
 /// the success path, after which this guard performs no release.
-pub(in crate::engine::vm) struct FrameStorageGuard {
-    runtime: Runtime,
+pub(in crate::engine::vm) struct FrameStorageGuard<'a> {
+    runtime: &'a Runtime,
     storage: Option<FrameStorage>,
 }
 
-impl FrameStorageGuard {
-    pub(in crate::engine::vm) fn new(runtime: &Runtime, storage: FrameStorage) -> Self {
+impl<'a> FrameStorageGuard<'a> {
+    pub(in crate::engine::vm) fn new(runtime: &'a Runtime, storage: FrameStorage) -> Self {
         Self {
-            runtime: runtime.clone(),
+            runtime,
             storage: Some(storage),
         }
     }
@@ -214,13 +231,66 @@ impl FrameStorageGuard {
     }
 }
 
-impl Drop for FrameStorageGuard {
+impl Drop for FrameStorageGuard<'_> {
     fn drop(&mut self) {
         if self.runtime.skip_cleanup() {
             return;
         }
+        let _unwind = self.runtime.unwind_guard();
         if let Some(storage) = self.storage.take() {
-            release_frame_storage(&self.runtime, storage);
+            if release_frame_storage_in_state(&mut self.runtime.0.state.borrow_mut(), storage)
+                .is_err()
+            {
+                self.runtime.0.poisoned.set(true);
+            }
+        }
+    }
+}
+
+/// Temporary frame storage inside a state-held execution segment. Reborrowing
+/// parts() permits computation without relinquishing the cleanup capability.
+#[must_use]
+#[cfg_attr(not(test), allow(dead_code))]
+pub(in crate::engine::vm) struct StateFrameStorageGuard<'a> {
+    state: &'a mut crate::engine::heap::runtime::RuntimeState,
+    poisoned: &'a std::cell::Cell<bool>,
+    storage: Option<FrameStorage>,
+}
+#[cfg_attr(not(test), allow(dead_code))]
+impl<'a> StateFrameStorageGuard<'a> {
+    pub(in crate::engine::vm) fn new(
+        state: &'a mut crate::engine::heap::runtime::RuntimeState,
+        poisoned: &'a std::cell::Cell<bool>,
+        storage: FrameStorage,
+    ) -> Self {
+        Self {
+            state,
+            poisoned,
+            storage: Some(storage),
+        }
+    }
+    pub(in crate::engine::vm) fn parts(
+        &mut self,
+    ) -> (
+        &mut crate::engine::heap::runtime::RuntimeState,
+        &mut Option<FrameStorage>,
+    ) {
+        (self.state, &mut self.storage)
+    }
+}
+impl Drop for StateFrameStorageGuard<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.poisoned.set(true);
+        }
+        if self.poisoned.get() {
+            return;
+        }
+        let _unwind = crate::engine::api::runtime::RuntimeUnwindGuard::from_flag(self.poisoned);
+        if let Some(storage) = self.storage.take() {
+            if release_frame_storage_in_state(self.state, storage).is_err() {
+                self.poisoned.set(true);
+            }
         }
     }
 }
@@ -508,7 +578,7 @@ impl SlotStore {
         runtime: &Runtime,
         layout: &FrameLayout<'_>,
         storage: FrameStorage,
-        function: &crate::engine::object::ObjectRef,
+        function: crate::engine::heap::ObjectId,
         function_name: Option<u16>,
     ) -> Result<FrameWindow, Error> {
         self.push_frame_storage(
@@ -531,7 +601,7 @@ impl SlotStore {
         parent: &mut FrameWindow,
         count: usize,
         method: bool,
-        function: &crate::engine::object::ObjectRef,
+        function: crate::engine::heap::ObjectId,
         function_name: Option<u16>,
     ) -> Result<FrameWindow, Error> {
         self.check_current(parent)?;
@@ -562,7 +632,7 @@ impl SlotStore {
         runtime: &Runtime,
         layout: &FrameLayout<'_>,
         mut storage: FrameStorage,
-        initialize: Option<(&crate::engine::object::ObjectRef, Option<u16>)>,
+        initialize: Option<(crate::engine::heap::ObjectId, Option<u16>)>,
         source: Option<(&mut FrameWindow, usize, bool)>,
     ) -> Result<FrameWindow, Error> {
         let fresh = initialize.is_some();
@@ -689,7 +759,7 @@ impl SlotStore {
                 self.slots[index] = Some(FrameBinding::Direct(JsValue::Undefined));
             }
             for (index, definition) in layout.locals().iter().enumerate() {
-                let binding = match super::call::prepare::initial_local_binding(
+                let binding = match super::call::prepare::initial_local_binding_id(
                     runtime,
                     definition.is_lexical,
                     function_name == Some(index as u16),
@@ -1533,6 +1603,7 @@ impl SlotStore {
 
     /// One-way temporary migration handoff. No serialization or extra retain:
     /// the caller receives the very owners which occupied this window.
+    #[cfg(test)]
     pub(in crate::engine::vm) fn take_frame(
         &mut self,
         runtime: &Runtime,
@@ -1541,6 +1612,17 @@ impl SlotStore {
         self.check_current(&window)?;
         let taken = self.take_frame_owners(runtime, &window)?;
         self.complete_take_frame(window, taken)
+    }
+
+    /// Reservation failure keeps the window reachable from its running frame.
+    pub(in crate::engine::vm) fn take_frame_resident(
+        &mut self,
+        runtime: &Runtime,
+        window: &mut super::frame::Resident<FrameWindow>,
+    ) -> Result<FrameStorage, Error> {
+        self.check_current(window)?;
+        let taken = self.take_frame_owners(runtime, window)?;
+        self.complete_take_frame(window.take(), taken)
     }
 
     fn take_frame_owners(
@@ -2781,7 +2863,7 @@ mod tests {
                         &mut parent,
                         2,
                         true,
-                        &function,
+                        function.object_id(),
                         None
                     )
                     .is_err()
@@ -2802,7 +2884,7 @@ mod tests {
                 &mut parent,
                 2,
                 true,
-                &function,
+                function.object_id(),
                 None,
             )
             .unwrap();
@@ -2862,7 +2944,7 @@ mod tests {
                         &runtime,
                         &owner.frame_layout(),
                         storage,
-                        &function,
+                        function.object_id(),
                         None
                     )
                     .is_err()
@@ -2872,7 +2954,13 @@ mod tests {
             assert!(slots.windows.is_empty());
         }
         let window = slots
-            .push_initialized_frame(&runtime, &owner.frame_layout(), source(), &function, None)
+            .push_initialized_frame(
+                &runtime,
+                &owner.frame_layout(),
+                source(),
+                function.object_id(),
+                None,
+            )
             .unwrap();
         assert_eq!(slots.binding_counts(&window).unwrap(), (0, 3));
         assert!(matches!(
@@ -2991,7 +3079,7 @@ mod tests {
                         &runtime,
                         &owner.frame_layout(),
                         storage,
-                        &function,
+                        function.object_id(),
                         None
                     )
                     .is_err()
@@ -3008,7 +3096,7 @@ mod tests {
                 &runtime,
                 &owner.frame_layout(),
                 empty_storage(),
-                &function,
+                function.object_id(),
                 None,
             )
             .unwrap();
@@ -3522,5 +3610,39 @@ mod tests {
             .unwrap();
         assert_eq!(slots.depth(&reused), 0);
         assert!(slots.slots.iter().all(Option::is_none));
+    }
+}
+
+#[cfg(test)]
+mod state_storage_ownership_tests {
+    use super::{FrameStorage, StateFrameStorageGuard};
+    use crate::engine::{api::Runtime, value::JsValue, vm::bindings::FrameBinding};
+
+    #[test]
+    fn state_storage_guard_releases_aliases_without_reborrowing_runtime() {
+        let runtime = Runtime::new();
+        let id = runtime.new_object(None).unwrap().into_handle();
+        runtime.retain_object_handle(id).unwrap();
+        runtime.retain_object_handle(id).unwrap();
+        let before = std::rc::Rc::strong_count(&runtime.0);
+        let mut state = runtime.0.state.borrow_mut();
+        {
+            let mut guard = StateFrameStorageGuard::new(
+                &mut state,
+                &runtime.0.poisoned,
+                FrameStorage {
+                    original_arguments: vec![JsValue::Object(id)],
+                    parameters: vec![FrameBinding::Direct(JsValue::Object(id))],
+                    locals: Vec::new(),
+                    operands: vec![JsValue::Object(id)],
+                },
+            );
+            let (state, storage) = guard.parts();
+            assert_eq!(state.heap.object_strong_count(id), Ok(3));
+            assert_eq!(storage.as_ref().unwrap().operands.len(), 1);
+            assert_eq!(std::rc::Rc::strong_count(&runtime.0), before);
+        }
+        assert!(state.heap.object(id).is_err());
+        assert!(!runtime.0.poisoned.get());
     }
 }

@@ -2,7 +2,7 @@
 //! A continuation names the semantic operation that must leave the short
 //! no-JavaScript frame borrow. The driver owns observable calls and suspension.
 
-use crate::engine::api::error::Error;
+use crate::engine::api::{error::Error, runtime::Runtime};
 use crate::engine::code::bytecode::{
     ApplyKind, ArgumentsKind, DefineMethodKind, DynamicEnvironmentSource, EvalVariableSource,
     IteratorCallKind, PrivateNameSource, WithObjectSource,
@@ -390,6 +390,7 @@ impl VmAction {
 }
 
 pub(super) fn execute_frame(
+    runtime: &Runtime,
     execution: &mut RunningExecution,
     id: FrameId,
 ) -> Result<VmAction, Error> {
@@ -398,7 +399,6 @@ pub(super) fn execute_frame(
     let frame = execution.frames.current_mut(id)?;
     let body = &mut *frame.cold;
     let executable = &*body.executable;
-    let runtime = body.owners.function.runtime();
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_execution_static(runtime, executable);
     let mut cursor = FrameCursor::new(
@@ -538,7 +538,7 @@ pub(super) fn execute_frame(
                     JsValue::Undefined | JsValue::Null
                 ) {
                     let global = body.owners.input.callee_global(runtime, executable.realm)?;
-                    cursor.copy_owned(runtime, &JsValue::Object(global.object_id()))?
+                    cursor.copy_owned(runtime, &JsValue::Object(global))?
                 } else {
                     return Ok(VmAction::NormalizeThis);
                 };
@@ -1742,7 +1742,7 @@ pub(super) fn execute_frame(
                         .owners
                         .function
                         .closures()
-                        .get(usize::from(index))
+                        .get(runtime, usize::from(index))
                         .ok_or_else(|| {
                             Error::internal("closure variable index is out of bounds")
                         })?;

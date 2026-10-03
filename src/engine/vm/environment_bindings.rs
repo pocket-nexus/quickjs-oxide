@@ -85,9 +85,11 @@ pub(super) fn eval_variable_object<'a>(
                     "eval variable opcode referenced a non-variable-object closure",
                 ));
             }
-            let root = closure_slots.get(usize::from(index)).ok_or_else(|| {
-                Error::internal("eval variable-object closure slot is out of bounds")
-            })?;
+            let root = closure_slots
+                .get(runtime, usize::from(index))
+                .ok_or_else(|| {
+                    Error::internal("eval variable-object closure slot is out of bounds")
+                })?;
             runtime
                 .validate_var_ref_metadata(&root, descriptor)
                 .map_err(runtime_error_to_vm_error)?;
@@ -180,7 +182,7 @@ pub(super) fn with_object<'a>(
                 ));
             }
             let root = closure_slots
-                .get(usize::from(index))
+                .get(runtime, usize::from(index))
                 .ok_or_else(|| Error::internal("with-object closure slot is out of bounds"))?;
             runtime
                 .validate_var_ref_metadata(&root, descriptor)
@@ -258,7 +260,7 @@ pub(super) fn global_reference(
         ));
     };
     let root = closure_slots
-        .get(usize::from(index))
+        .get(runtime, usize::from(index))
         .ok_or_else(|| Error::internal("global reference closure slot is out of bounds"))?;
     if !root.belongs_to(runtime) {
         return Err(Error::internal(
@@ -326,7 +328,7 @@ pub(super) enum GlobalWrite {
 }
 
 fn global_write_binding<'a>(
-    runtime: &Runtime,
+    runtime: &'a Runtime,
     executable: &PublishedFunctionSnapshot,
     slots: &'a super::closure::ClosureSlots,
     index: u16,
@@ -353,7 +355,7 @@ fn global_write_binding<'a>(
         ));
     };
     let root = slots
-        .get(usize::from(index))
+        .get(runtime, usize::from(index))
         .ok_or_else(|| Error::internal("global closure slot is out of bounds"))?;
     if !root.belongs_to(runtime) {
         return Err(Error::internal("global closure belongs to another runtime"));

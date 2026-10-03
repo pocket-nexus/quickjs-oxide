@@ -17,29 +17,41 @@ use crate::engine::vm::exception::runtime_error_to_vm_error;
 use crate::engine::vm::execute::{VmAction, execute_frame};
 use crate::engine::vm::execution::{ExecutionLimits, RunningExecution};
 use crate::engine::vm::frame::{Frame, FrameEntry, FrameId, ReturnTarget};
+use crate::engine::vm::stack::FrameStorage;
 
 pub(super) fn push_frame(
+    runtime: &Runtime,
     execution: &mut RunningExecution,
     entry: FrameEntry,
 ) -> Result<FrameId, Error> {
+    let mut entry = super::frame::FrameEntryGuard::new(runtime, entry);
     execution
         .call_storage
         .reserve_depth(execution.frames.depth() + 1)?;
     let prepared = execution.frames.prepare_push()?;
-    let runtime = entry.cold.function.runtime();
+    let storage = std::mem::replace(
+        &mut entry.storage,
+        FrameStorage {
+            original_arguments: Vec::new(),
+            parameters: Vec::new(),
+            locals: Vec::new(),
+            operands: Vec::new(),
+        },
+    );
     let window = if entry.initialize_bindings {
         execution.slots.push_initialized_frame(
             runtime,
             &entry.executable.frame_layout(),
-            entry.storage,
-            &entry.cold.function,
+            storage,
+            entry.cold.function.object_id(),
             entry.executable.metadata.function_name_local,
         )?
     } else {
         execution
             .slots
-            .push_frame(runtime, &entry.executable.frame_layout(), entry.storage)?
+            .push_frame(runtime, &entry.executable.frame_layout(), storage)?
     };
+    let entry = entry.take();
     let mut cold = entry.cold;
     cold.executable = entry.executable.into();
     cold.window = window.into();
@@ -55,12 +67,14 @@ pub(super) fn push_frame(
 }
 
 fn push_direct_call_frame(
+    runtime: &Runtime,
     execution: &mut RunningExecution,
     parent: FrameId,
     entry: FrameEntry,
     count: usize,
     method: bool,
 ) -> Result<FrameId, Error> {
+    let mut entry = super::frame::FrameEntryGuard::new(runtime, entry);
     if !entry.initialize_bindings || !entry.storage.original_arguments.is_empty() {
         return Err(Error::internal(
             "direct call received materialized arguments",
@@ -72,17 +86,17 @@ fn push_direct_call_frame(
     let mut prepared = execution.frames.prepare_push()?;
     let frame = prepared.current_mut(parent)?;
     let resume = frame.next_pc()?;
-    let runtime = frame.cold.function.runtime().clone();
     let window = execution.slots.push_call_frame(
-        &runtime,
+        runtime,
         &entry.executable.frame_layout(),
         &mut frame.window,
         count,
         method,
-        &entry.cold.function,
+        entry.cold.function.object_id(),
         entry.executable.metadata.function_name_local,
     )?;
     frame.resume_pc = resume;
+    let entry = entry.take();
     let mut cold = entry.cold;
     cold.executable = entry.executable.into();
     cold.window = window.into();
@@ -452,7 +466,7 @@ pub(super) fn enter_call(
             },
         };
         let entry = request.prepare(runtime, &mut execution.call_storage)?;
-        push_direct_call_frame(execution, id, entry, count, method)?;
+        push_direct_call_frame(runtime, execution, id, entry, count, method)?;
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_instruction(observed_depth);
         return Ok(CallStep::Entered);
@@ -507,7 +521,7 @@ pub(super) fn enter_call(
     };
     frame.resume_pc = frame.next_pc()?;
     let entry = request.prepare(runtime, &mut execution.call_storage)?;
-    push_frame(execution, entry)?;
+    push_frame(runtime, execution, entry)?;
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_instruction(observed_depth);
     Ok(CallStep::Entered)
@@ -518,8 +532,9 @@ pub(super) fn execute(
     entry: FrameEntry,
     limits: ExecutionLimits,
 ) -> Result<RunningExit, Error> {
+    let mut entry = super::frame::FrameEntryGuard::new(&runtime, entry);
     let mut execution = RunningExecution::new(&runtime, limits)?;
-    push_frame(&mut execution, entry)?;
+    push_frame(&runtime, &mut execution, entry.take())?;
     run_frames(&runtime, execution)
 }
 
@@ -636,8 +651,9 @@ impl RunningExit {
 /// Install an authenticated dormant frame and inject abrupt resumption into
 /// the same unwinder used by ordinary child-frame throws.
 pub(super) fn resume(runtime: Runtime, entry: FrameEntry, pc: usize) -> Result<RunningExit, Error> {
+    let mut entry = super::frame::FrameEntryGuard::new(&runtime, entry);
     let mut execution = RunningExecution::new(&runtime, ExecutionLimits::for_runtime(&runtime))?;
-    let id = push_frame(&mut execution, entry)?;
+    let id = push_frame(&runtime, &mut execution, entry.take())?;
     let frame = execution.frames.current_mut(id)?;
     frame.set_resume_pc(pc)?;
     run_frames_with_state(&runtime, execution, None, None, 0)
@@ -835,7 +851,8 @@ fn run_frames_with_state(
             }
         }
         if let VmAction::Suspend(kind) = exit {
-            let suspension = super::suspend::OwnedSuspension::detach(&mut execution, id, kind)?;
+            let suspension =
+                super::suspend::OwnedSuspension::detach(runtime, &mut execution, id, kind)?;
             if let Some(target) = suspension.return_to {
                 let outcome = Box::new(suspension)
                     .freeze(runtime.clone())
@@ -923,7 +940,10 @@ fn run_frames_with_state(
         }
         if let Some(super::frame::OperationTarget::Eval(arguments)) = target.operation {
             let parent = execution.frames.current_mut(target.frame()?)?;
-            parent.cold.release_eval_arguments();
+            parent
+                .cold
+                .release_eval_arguments(&mut runtime.0.state.borrow_mut())
+                .map_err(runtime_error_to_vm_error)?;
             for _ in 0..=arguments {
                 let discarded = execution.slots.pop(&mut parent.window)?;
                 runtime
@@ -1074,7 +1094,7 @@ mod tests {
             Vec::new(),
         );
         let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-        let id = push_frame(&mut execution, entry).unwrap();
+        let id = push_frame(&runtime, &mut execution, entry).unwrap();
         let mut identity = u64::MAX;
         let result = super::ready::run(&runtime, &mut execution, id, &mut identity).unwrap();
         assert!(matches!(
@@ -1140,7 +1160,7 @@ mod tests {
         else {
             panic!("expected bytecode");
         };
-        let prepared = runtime
+        let mut prepared = runtime
             .prepare_bytecode_frame(
                 &callable,
                 Value::Undefined,
@@ -1160,11 +1180,12 @@ mod tests {
             cold: crate::engine::vm::frame::ColdFrame::new(FrameCold {
                 rare: std::cell::OnceCell::new(),
                 return_to: None,
-                entry_guard: Some(prepared.active_frame),
+                entry_guard: Some(prepared.active_frame.into_internal()),
                 function: crate::engine::vm::closure::FrameFunction::new(function, closure_slots)
+                    .unwrap()
                     .into(),
                 reusable_captured_locals: vec![false; locals],
-                input: (prepared.input).into(),
+                input: prepared.input.take().into(),
             }),
             storage: FrameStorage {
                 original_arguments: arguments
@@ -1587,11 +1608,11 @@ mod tests {
                 .unwrap();
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let id = push_frame(&mut execution, entry).unwrap();
+            let id = push_frame(&runtime, &mut execution, entry).unwrap();
             let frame = execution.frames.current_mut(id).unwrap();
             frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
             let VmAction::PrivateInitialize { index, kind } =
-                execute_frame(&mut execution, id).unwrap()
+                execute_frame(&runtime, &mut execution, id).unwrap()
             else {
                 panic!("expected private initialization boundary")
             };
@@ -2166,12 +2187,12 @@ mod tests {
             })
             .unwrap();
         let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-        let id = push_frame(&mut execution, entry).unwrap();
+        let id = push_frame(&runtime, &mut execution, entry).unwrap();
         let frame = execution.frames.current_mut(id).unwrap();
         frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
         let op = super::super::environment_driver::Operation::CreateVariable;
         assert_eq!(
-            execute_frame(&mut execution, id).unwrap(),
+            execute_frame(&runtime, &mut execution, id).unwrap(),
             VmAction::Environment(op)
         );
         let before = execution.frames.current_mut(id).unwrap().fault_pc;
@@ -2688,7 +2709,7 @@ mod tests {
                 .unwrap();
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let id = push_frame(&mut execution, entry).unwrap();
+            let id = push_frame(&runtime, &mut execution, entry).unwrap();
             let frame = execution.frames.current_mut(id).unwrap();
             frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
             for value in [
@@ -2703,7 +2724,7 @@ mod tests {
             }
             let profile = CostProfile::start();
             assert!(matches!(
-                execute_frame(&mut execution, id).unwrap(),
+                execute_frame(&runtime, &mut execution, id).unwrap(),
                 VmAction::Apply(ApplyKind::Construct)
             ));
             assert!(matches!(
@@ -2820,7 +2841,7 @@ mod tests {
                 .unwrap();
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let id = push_frame(&mut execution, entry).unwrap();
+            let id = push_frame(&runtime, &mut execution, entry).unwrap();
             let frame = execution.frames.current_mut(id).unwrap();
             frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
             for value in [function, Value::Undefined, array] {
@@ -3330,7 +3351,7 @@ mod tests {
                 .unwrap();
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let id = push_frame(&mut execution, entry).unwrap();
+            let id = push_frame(&runtime, &mut execution, entry).unwrap();
             let frame = execution.frames.current_mut(id).unwrap();
             frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
             execution
@@ -3421,7 +3442,7 @@ mod tests {
             })
             .unwrap();
         let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-        let id = push_frame(&mut execution, entry).unwrap();
+        let id = push_frame(&runtime, &mut execution, entry).unwrap();
         let frame = execution.frames.current_mut(id).unwrap();
         // Start at the published element write; Append itself is not exercised here.
         frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
@@ -3450,7 +3471,7 @@ mod tests {
             .unwrap();
         let profile = CostProfile::start();
         assert!(matches!(
-            execute_frame(&mut execution, id).unwrap(),
+            execute_frame(&runtime, &mut execution, id).unwrap(),
             VmAction::Environment(super::super::environment_driver::Operation::DefineArrayElement)
         ));
         assert!(matches!(
@@ -3634,7 +3655,7 @@ mod tests {
             };
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let id = push_frame(&mut execution, entry).unwrap();
+            let id = push_frame(&runtime, &mut execution, entry).unwrap();
             let frame = execution.frames.current_mut(id).unwrap();
             frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
             execution
@@ -3652,7 +3673,8 @@ mod tests {
                 .unwrap();
             let profile = CostProfile::start();
             if let Some(extra) = retained {
-                let VmAction::ApplyEval(environment) = execute_frame(&mut execution, id).unwrap()
+                let VmAction::ApplyEval(environment) =
+                    execute_frame(&runtime, &mut execution, id).unwrap()
                 else {
                     panic!("expected ApplyEval")
                 };
@@ -3950,12 +3972,12 @@ mod tests {
                 .unwrap();
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let id = push_frame(&mut execution, entry).unwrap();
+            let id = push_frame(&runtime, &mut execution, entry).unwrap();
             let frame = execution.frames.current_mut(id).unwrap();
             frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
             let VmAction::Environment(
                 op @ super::super::environment_driver::Operation::GlobalReference(_),
-            ) = execute_frame(&mut execution, id).unwrap()
+            ) = execute_frame(&runtime, &mut execution, id).unwrap()
             else {
                 panic!("expected global reference")
             };
@@ -4103,7 +4125,7 @@ mod tests {
                 .expect("expected published reference read");
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let id = push_frame(&mut execution, entry).unwrap();
+            let id = push_frame(&runtime, &mut execution, entry).unwrap();
             let frame = execution.frames.current_mut(id).unwrap();
             frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
             let base = if unresolved {
@@ -4121,7 +4143,7 @@ mod tests {
                 )
                 .unwrap();
             let VmAction::Environment(op @ Operation::ReadReference { .. }) =
-                execute_frame(&mut execution, id).unwrap()
+                execute_frame(&runtime, &mut execution, id).unwrap()
             else {
                 panic!("expected reference read")
             };
@@ -4235,7 +4257,7 @@ mod tests {
                 .expect("expected published reference write");
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let id = push_frame(&mut execution, entry).unwrap();
+            let id = push_frame(&runtime, &mut execution, entry).unwrap();
             let frame = execution.frames.current_mut(id).unwrap();
             frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
             execution
@@ -4261,7 +4283,7 @@ mod tests {
                 check_presence: true,
             };
             assert_eq!(
-                execute_frame(&mut execution, id).unwrap(),
+                execute_frame(&runtime, &mut execution, id).unwrap(),
                 VmAction::Environment(op)
             );
             let result = super::super::environment_driver::step(
@@ -4738,7 +4760,7 @@ mod tests {
             .position(|op| matches!(op, Instruction::InstallClassInstanceInitializer))
             .unwrap();
         let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-        let parent = push_frame(&mut execution, entry).unwrap();
+        let parent = push_frame(&runtime, &mut execution, entry).unwrap();
         let frame = execution.frames.current_mut(parent).unwrap();
         frame.resume_pc = frame.executable.exec.exec_pc(install_pc as u32).unwrap() as usize;
         execution
@@ -4761,7 +4783,7 @@ mod tests {
             .unwrap();
         let profile = CostProfile::start();
         assert_eq!(
-            execute_frame(&mut execution, parent).unwrap(),
+            execute_frame(&runtime, &mut execution, parent).unwrap(),
             VmAction::ClassInitializer(InitializerKind::Install)
         );
         assert!(matches!(
@@ -4802,7 +4824,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            execute_frame(&mut execution, parent).unwrap(),
+            execute_frame(&runtime, &mut execution, parent).unwrap(),
             VmAction::ClassInitializer(InitializerKind::Static)
         );
         assert!(matches!(
@@ -4811,13 +4833,14 @@ mod tests {
         ));
         let child = execution.frames.current_id().unwrap();
         assert_ne!(child, parent);
-        let VmAction::InstantiateClosure(index) = execute_frame(&mut execution, child).unwrap()
+        let VmAction::InstantiateClosure(index) =
+            execute_frame(&runtime, &mut execution, child).unwrap()
         else {
             panic!("expected static block closure")
         };
         super::super::closure_driver::instantiate(&runtime, &mut execution, child, index).unwrap();
         assert_eq!(
-            execute_frame(&mut execution, child).unwrap(),
+            execute_frame(&runtime, &mut execution, child).unwrap(),
             VmAction::ClassInitializer(InitializerKind::Block)
         );
         assert!(matches!(
@@ -4827,7 +4850,7 @@ mod tests {
         let block = execution.frames.current_id().unwrap();
         assert_ne!(block, child);
         assert_eq!(
-            execute_frame(&mut execution, block).unwrap(),
+            execute_frame(&runtime, &mut execution, block).unwrap(),
             VmAction::Throw
         );
         let frame = execution.frames.current_mut(block).unwrap();
@@ -4976,7 +4999,7 @@ mod tests {
             );
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let id = push_frame(&mut execution, entry).unwrap();
+            let id = push_frame(&runtime, &mut execution, entry).unwrap();
             let frame = execution.frames.current_mut(id).unwrap();
             execution
                 .slots
@@ -5106,7 +5129,7 @@ mod tests {
                 .unwrap();
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let id = push_frame(&mut execution, entry).unwrap();
+            let id = push_frame(&runtime, &mut execution, entry).unwrap();
             let frame = execution.frames.current_mut(id).unwrap();
             frame.resume_pc = frame.executable.exec.exec_pc(pc as u32).unwrap() as usize;
             execution
@@ -5317,13 +5340,13 @@ mod tests {
             );
             let weak = std::rc::Rc::downgrade(&runtime.0);
             let mut pending = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let parent = push_frame(&mut pending, entry).unwrap();
+            let parent = push_frame(&runtime, &mut pending, entry).unwrap();
             let VmAction::Call {
                 arguments,
                 method,
                 tail,
                 ..
-            } = execute_frame(&mut pending, parent).unwrap()
+            } = execute_frame(&runtime, &mut pending, parent).unwrap()
             else {
                 panic!("expected native probe call");
             };
@@ -6198,7 +6221,7 @@ mod tests {
             let entry = entry(&runtime, &mut context, "(function(){return false})", vec![]);
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let id = push_frame(&mut execution, entry).unwrap();
+            let id = push_frame(&runtime, &mut execution, entry).unwrap();
             let profile = CostProfile::start();
             let result = match super::super::proxy_get_driver::start_boolean(
                 &runtime,
@@ -6791,7 +6814,7 @@ mod tests {
         let extra_id = extra.object_id();
         let entry = entry(&runtime, &mut context, "(function(){return false})", vec![]);
         let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-        let id = push_frame(&mut execution, entry).unwrap();
+        let id = push_frame(&runtime, &mut execution, entry).unwrap();
         assert!(matches!(
             super::super::proxy_get_driver::start_callback_call(
                 &runtime,
@@ -6921,7 +6944,7 @@ mod tests {
             let entry = entry(&runtime, &mut context, "(function(){return false})", vec![]);
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let id = push_frame(&mut execution, entry).unwrap();
+            let id = push_frame(&runtime, &mut execution, entry).unwrap();
             let profile = CostProfile::start();
             let result = match super::super::proxy_get_driver::start_prototype(
                 &runtime,
@@ -7017,7 +7040,7 @@ mod tests {
                 let entry = entry(&runtime, &mut context, "(function(){return false})", vec![]);
                 let mut execution =
                     RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-                let id = push_frame(&mut execution, entry).unwrap();
+                let id = push_frame(&runtime, &mut execution, entry).unwrap();
                 let profile = CostProfile::start();
                 let result = match super::super::proxy_get_driver::start_prototype(
                     &runtime,
@@ -7084,7 +7107,7 @@ mod tests {
         let receiver_id = receiver.object_id();
         let entry = entry(&runtime, &mut context, "(function(){return 42})", vec![]);
         let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-        let id = push_frame(&mut execution, entry).unwrap();
+        let id = push_frame(&runtime, &mut execution, entry).unwrap();
         assert!(matches!(
             super::super::proxy_get_driver::start_owned_read(
                 &runtime,
@@ -7230,7 +7253,7 @@ mod tests {
             );
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let id = push_frame(&mut execution, entry).unwrap();
+            let id = push_frame(&runtime, &mut execution, entry).unwrap();
             let released = runtime.new_object(None).unwrap();
             let released_id = released.object_id();
             let frame = execution.frames.current_mut(id).unwrap();
@@ -8247,10 +8270,10 @@ mod tests {
         let result = if missing_receiver {
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let frame = push_frame(&mut execution, entry).unwrap();
+            let frame = push_frame(&runtime, &mut execution, entry).unwrap();
             let VmAction::Call {
                 arguments, tail, ..
-            } = execute_frame(&mut execution, frame).unwrap()
+            } = execute_frame(&runtime, &mut execution, frame).unwrap()
             else {
                 panic!("call")
             };
@@ -8361,7 +8384,7 @@ mod tests {
                 .unwrap();
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let id = push_frame(&mut execution, entry).unwrap();
+            let id = push_frame(&runtime, &mut execution, entry).unwrap();
             let frame = execution.frames.current_mut(id).unwrap();
             // Supply a raw object key at this accepted instruction, without the
             // compiler's preceding ToPropKey. The following Drop must still

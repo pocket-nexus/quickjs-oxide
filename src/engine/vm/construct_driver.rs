@@ -220,7 +220,10 @@ fn try_ordinary_base(
     let new_target = runtime
         .dup_jsvalue(new_target)
         .map_err(runtime_error_to_vm_error)?;
-    let mut input = super::CallInput::new(runtime, JsValue::Undefined, new_target, None);
+    let mut input = super::protocol::CallInputGuard::new(
+        runtime,
+        super::CallInput::new(runtime, JsValue::Undefined, new_target, None),
+    );
     let mut arguments = FrameStorageGuard::new(
         runtime,
         FrameStorage {
@@ -246,7 +249,8 @@ fn try_ordinary_base(
     let receiver = runtime
         .new_object(Some(&prototype))
         .map_err(runtime_error_to_vm_error)?;
-    let mut entry = call.prepare_constructor(
+    let entry = call.prepare_constructor(
+        runtime,
         &mut execution.call_storage,
         receiver,
         std::mem::replace(&mut input.new_target, JsValue::Undefined),
@@ -259,6 +263,7 @@ fn try_ordinary_base(
             operation: None,
         },
     )?;
+    let mut entry = super::frame::FrameEntryGuard::new(runtime, entry);
     let mut owned_storage = FrameStorageGuard::new(
         runtime,
         std::mem::replace(
@@ -286,9 +291,10 @@ fn try_ordinary_base(
         runtime,
         &entry.executable.frame_layout(),
         owned_storage.take(),
-        &entry.cold.function,
+        entry.cold.function.object_id(),
         entry.executable.metadata.function_name_local,
     )?;
+    let mut entry = entry.take();
     entry.cold.executable = entry.executable.into();
     entry.cold.window = window.into();
     prepared.install(Frame {
@@ -330,8 +336,13 @@ pub(super) fn enter_default_derived(
     }
     // Preserve the old entry's live prototype lookup, argument snapshot, then
     // constructor validation order, including null and non-constructor errors.
+    let function = frame
+        .cold
+        .function
+        .to_root(runtime)
+        .map_err(runtime_error_to_vm_error)?;
     let target = runtime
-        .get_prototype_of(&frame.cold.function)
+        .get_prototype_of(&function)
         .map_err(runtime_error_to_vm_error)?;
     let arguments = execution
         .slots
@@ -439,10 +450,15 @@ pub(super) fn initializer(
             }
             InitializerKind::Block => {
                 let receiver = &frame.cold.input.this_value;
+                let function = frame
+                    .cold
+                    .function
+                    .to_root(runtime)
+                    .map_err(runtime_error_to_vm_error)?;
                 let callable = runtime
                     .begin_class_static_block(
                         realm,
-                        &frame.cold.function,
+                        &function,
                         receiver,
                         execution.slots.peek(&frame.window, 0)?,
                     )
@@ -517,7 +533,7 @@ pub(super) fn initializer(
             .map_err(runtime_error_to_vm_error)?;
         if let Some(request) = request {
             let entry = request.prepare(runtime, &mut execution.call_storage)?;
-            push_frame(execution, entry)?;
+            push_frame(runtime, execution, entry)?;
         }
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_instruction(depth);
@@ -825,6 +841,7 @@ mod ordinary_constructor_tests {
             .unwrap();
         let entry = call
             .prepare_callback(
+                runtime,
                 &mut execution.call_storage,
                 JsValue::Undefined,
                 Vec::new(),
@@ -837,7 +854,7 @@ mod ordinary_constructor_tests {
                 },
             )
             .unwrap();
-        let id = crate::engine::vm::driver::push_frame(&mut execution, entry).unwrap();
+        let id = crate::engine::vm::driver::push_frame(runtime, &mut execution, entry).unwrap();
         let frame = execution.frames.current_mut(id).unwrap();
         for value in [
             JsValue::Object(target.try_clone().expect("duplicate root").into_handle()),
@@ -1181,7 +1198,7 @@ mod ordinary_constructor_tests {
         // new receiver requests collection without collecting inside install.
         runtime.collect_if_requested().unwrap();
         assert!(matches!(
-            crate::engine::vm::execute::execute_frame(&mut execution, child).unwrap(),
+            crate::engine::vm::execute::execute_frame(&runtime, &mut execution, child).unwrap(),
             crate::engine::vm::execute::VmAction::Complete
         ));
         assert!(runtime.0.gc_pressure.remaining.get() > 0);

@@ -933,6 +933,7 @@ fn read_pending(
     frame.resume_pc = frame.next_pc()?;
     if let Some((call, receiver)) = ordinary_callback {
         let entry = call.prepare_callback(
+            runtime,
             &mut execution.call_storage,
             receiver,
             Vec::new(),
@@ -944,10 +945,10 @@ fn read_pending(
                 operation: None,
             },
         )?;
-        push_frame(execution, entry)?;
+        push_frame(runtime, execution, entry)?;
     } else if let Some(request) = request {
         let entry = request.prepare(runtime, &mut execution.call_storage)?;
-        push_frame(execution, entry)?;
+        push_frame(runtime, execution, entry)?;
     } else {
         execution.slots.push(
             &mut frame.cold.window,
@@ -992,7 +993,7 @@ mod read_completion_tests {
         else {
             panic!("fixture must be bytecode");
         };
-        let prepared = runtime
+        let mut prepared = runtime
             .prepare_bytecode_frame(&callable, Value::Undefined, Value::Undefined, &[], bytecode)
             .unwrap();
         let locals = prepared.locals.len();
@@ -1006,11 +1007,12 @@ mod read_completion_tests {
             cold: ColdFrame::new(FrameCold {
                 rare: std::cell::OnceCell::new(),
                 return_to: None,
-                entry_guard: Some(prepared.active_frame),
+                entry_guard: Some(prepared.active_frame.into_internal()),
                 function: crate::engine::vm::closure::FrameFunction::new(function, closure_slots)
+                    .unwrap()
                     .into(),
                 reusable_captured_locals: vec![false; locals],
-                input: prepared.input.into(),
+                input: prepared.input.take().into(),
             }),
             storage: FrameStorage {
                 original_arguments: vec![],
@@ -1020,7 +1022,7 @@ mod read_completion_tests {
             },
         };
         let mut execution = RunningExecution::new(runtime, ExecutionLimits::default()).unwrap();
-        let id = crate::engine::vm::driver::push_frame(&mut execution, entry).unwrap();
+        let id = crate::engine::vm::driver::push_frame(runtime, &mut execution, entry).unwrap();
         let frame = execution.frames.current_mut(id).unwrap();
         let exec = &frame.executable.exec;
         let published = (0..exec.instruction_len())
@@ -1059,7 +1061,7 @@ mod read_completion_tests {
             .push(&mut frame.window, JsValue::Object(object.into_handle()))
             .unwrap();
         assert!(matches!(
-            execute_frame(&mut execution, id).unwrap(),
+            execute_frame(&runtime, &mut execution, id).unwrap(),
             VmAction::Complete
         ));
         assert!(execution.selected_named_read.is_none());
@@ -1088,7 +1090,7 @@ mod read_completion_tests {
             .push(&mut frame.window, JsValue::Object(object.into_handle()))
             .unwrap();
         assert!(matches!(
-            execute_frame(&mut execution, id).unwrap(),
+            execute_frame(&runtime, &mut execution, id).unwrap(),
             VmAction::GetField { .. }
         ));
         assert!(matches!(
@@ -1120,7 +1122,7 @@ mod read_completion_tests {
             .push(&mut frame.window, JsValue::Object(object.into_handle()))
             .unwrap();
         assert!(matches!(
-            execute_frame(&mut execution, id).unwrap(),
+            execute_frame(&runtime, &mut execution, id).unwrap(),
             VmAction::GetField { .. }
         ));
         assert!(execution.selected_named_read.is_none());
@@ -1217,7 +1219,7 @@ mod read_completion_tests {
                     .push(&mut frame.window, JsValue::Bool(true))
                     .unwrap();
             }
-            let action = execute_frame(&mut execution, id).unwrap();
+            let action = execute_frame(&runtime, &mut execution, id).unwrap();
             let (key, keep_receiver, fallthrough) = match action {
                 VmAction::GetField {
                     index,
@@ -1295,7 +1297,7 @@ mod read_completion_tests {
             index,
             keep_receiver,
             fallthrough,
-        } = execute_frame(&mut execution, id).unwrap()
+        } = execute_frame(&runtime, &mut execution, id).unwrap()
         else {
             panic!("fixture must produce a retained field action");
         };

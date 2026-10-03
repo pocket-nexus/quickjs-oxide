@@ -1666,7 +1666,7 @@ fn drive_inner(
                 let had_callback = std::mem::replace(&mut query.had_callback, true);
                 let pending = execution.query_storage.pending(identity, query, resume);
                 put_pending(execution, owner, pending)?;
-                match push_frame(execution, *entry) {
+                match push_frame(runtime, execution, *entry) {
                     Ok(id) => {
                         #[cfg(feature = "profiling")]
                         crate::engine::api::profiling::record_owned_execution_event(
@@ -1927,6 +1927,7 @@ fn invoke(
             return Ok(Next::Continue);
         }
         let entry = call.prepare_callback(
+            runtime,
             &mut execution.call_storage,
             receiver,
             arguments,
@@ -2303,7 +2304,7 @@ mod native_scope_tests {
             }
             .prepare(&runtime, &mut execution.call_storage)
             .unwrap();
-            let frame = super::super::driver::push_frame(&mut execution, entry).unwrap();
+            let frame = super::super::driver::push_frame(&runtime, &mut execution, entry).unwrap();
             if cached {
                 let query = execution.query_storage.acquire(
                     context.realm,
@@ -2438,7 +2439,7 @@ mod native_scope_tests {
             }
             .prepare(&runtime, &mut execution.call_storage)
             .unwrap();
-            let frame = super::super::driver::push_frame(&mut execution, entry).unwrap();
+            let frame = super::super::driver::push_frame(&runtime, &mut execution, entry).unwrap();
             execution
                 .frames
                 .current_mut(frame)

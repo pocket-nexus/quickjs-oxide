@@ -51,8 +51,13 @@ pub(super) fn home_object(
     id: FrameId,
 ) -> Result<CallStep, Error> {
     let frame = execution.frames.current_mut(id)?;
+    let function = frame
+        .cold
+        .function
+        .to_root(runtime)
+        .map_err(runtime_error_to_vm_error)?;
     let home = runtime
-        .bytecode_function_home_object(&frame.cold.function)
+        .bytecode_function_home_object(&function)
         .map_err(runtime_error_to_vm_error)?
         .ok_or_else(|| Error::internal("bytecode requested an uninstalled HomeObject"))?;
     #[cfg(feature = "profiling")]
@@ -393,7 +398,7 @@ pub(super) fn binding(
                 .cold
                 .function
                 .closures()
-                .get(usize::from(index))
+                .get(runtime, usize::from(index))
                 .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?
                 .try_clone()?,
             frame.executable.closure_variables[usize::from(index)],
@@ -622,7 +627,10 @@ pub(super) fn normalize_this(
             return Err(Error::internal("non-null primitive this boxing threw"));
         }
     };
-    frame.cold.release_normalized_this();
+    frame
+        .cold
+        .release_normalized_this(&mut runtime.0.state.borrow_mut())
+        .map_err(runtime_error_to_vm_error)?;
     frame.cold.normalized_this = Some(JsValue::Object(object.into_handle()));
     Ok(CallStep::Entered)
 }

@@ -57,77 +57,70 @@ impl BytecodeCallRequest {
             caller_realm,
             return_to,
         } = self;
-        if let Err(error) = storage.reserve() {
-            let _ = runtime.release_jsvalue(receiver);
-            let _ = runtime.release_jsvalue(new_target);
-            for argument in arguments {
-                let _ = runtime.release_jsvalue(argument);
-            }
-            return Err(error);
+        let mut input = crate::engine::vm::protocol::CallInputGuard::new(
+            runtime,
+            crate::engine::vm::protocol::CallInput::new(runtime, receiver, new_target, None),
+        );
+        let mut arguments = crate::engine::vm::stack::FrameStorageGuard::new(
+            runtime,
+            FrameStorage {
+                original_arguments: arguments,
+                parameters: Vec::new(),
+                locals: Vec::new(),
+                operands: Vec::new(),
+            },
+        );
+        storage.reserve()?;
+        let input = input.take();
+        let mut prepared = runtime
+            .prepare_owned_bytecode_frame(&callable, input.this_value, input.new_target, bytecode)
+            .map_err(runtime_error_to_vm_error)?;
+        if closure_slots.len() != usize::from(prepared.executable.metadata.closure_count) {
+            return Err(Error::internal(
+                "function object closure slot count does not match bytecode metadata",
+            ));
         }
-        let mut arguments = arguments;
-        let result = (|| {
-            let prepared = runtime
-                .prepare_owned_bytecode_frame(&callable, receiver, new_target, bytecode)
+        let local_count = prepared.executable.local_definitions.len();
+        let (flags, flag_bytes) = if prepared.executable.has_captured_locals {
+            storage.capture_flags(local_count)?
+        } else {
+            (Vec::new(), 0)
+        };
+        let active_frame = prepared.active_frame.token();
+        let function =
+            crate::engine::vm::closure::FrameFunction::new(callable.into_object(), closure_slots)
                 .map_err(runtime_error_to_vm_error)?;
-            if closure_slots.len() != usize::from(prepared.executable.metadata.closure_count) {
-                return Err(Error::internal(
-                    "function object closure slot count does not match bytecode metadata",
-                ));
-            }
-            let local_count = prepared.executable.local_definitions.len();
-            let (flags, flag_bytes) = if prepared.executable.has_captured_locals {
-                storage.capture_flags(local_count)?
-            } else {
-                (Vec::new(), 0)
-            };
-            let active_frame = prepared.active_frame.token();
-            let (cold, frame_bytes) = storage.install(FrameCold {
-                rare: std::cell::OnceCell::new(),
-                return_to: Some(return_to),
-                entry_guard: Some(prepared.active_frame),
-                function: crate::engine::vm::closure::FrameFunction::new(
-                    callable.into_object(),
-                    closure_slots,
-                )
-                .into(),
-                reusable_captured_locals: flags,
-                input: (prepared.input).into(),
-            });
-            let entry = FrameEntry {
-                property_generation: 0,
-                iterator_generation: 0,
-                caller_realm,
-                active_frame,
-
-                initialize_bindings: true,
-                executable: prepared.executable,
-                cold,
-                storage: FrameStorage {
-                    original_arguments: std::mem::take(&mut arguments),
-                    parameters: Vec::new(),
-                    locals: Vec::new(),
-                    operands: Vec::new(),
-                },
-            };
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "call_callee_owner_transferred",
-            );
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_call_storage(
-                frame_bytes,
-                flag_bytes,
-                entry.storage.original_arguments.capacity() * size_of::<JsValue>(),
-            );
-            #[cfg(not(feature = "profiling"))]
-            let _ = (frame_bytes, flag_bytes);
-            Ok(entry)
-        })();
-        for argument in arguments {
-            let _ = runtime.release_jsvalue(argument);
-        }
-        result
+        let (cold, frame_bytes) = storage.install(FrameCold {
+            rare: std::cell::OnceCell::new(),
+            return_to: Some(return_to),
+            entry_guard: Some(prepared.active_frame.into_internal()),
+            function: function.into(),
+            reusable_captured_locals: flags,
+            input: prepared.input.take().into(),
+        });
+        let entry = FrameEntry {
+            property_generation: 0,
+            iterator_generation: 0,
+            caller_realm,
+            active_frame,
+            initialize_bindings: true,
+            executable: prepared.executable,
+            cold,
+            storage: arguments.take(),
+        };
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "call_callee_owner_transferred",
+        );
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_call_storage(
+            frame_bytes,
+            flag_bytes,
+            entry.storage.original_arguments.capacity() * size_of::<JsValue>(),
+        );
+        #[cfg(not(feature = "profiling"))]
+        let _ = (frame_bytes, flag_bytes);
+        Ok(entry)
     }
 }
 

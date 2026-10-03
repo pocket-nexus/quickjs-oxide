@@ -218,7 +218,7 @@ mod tests {
         else {
             panic!("bytecode");
         };
-        let prepared = runtime
+        let mut prepared = runtime
             .prepare_bytecode_frame(&callable, Value::Undefined, Value::Undefined, &[], bytecode)
             .unwrap();
         let active_frame = if materialized {
@@ -226,7 +226,7 @@ mod tests {
         } else {
             ActiveFrameToken::unmaterialized()
         };
-        let entry_guard = materialized.then_some(prepared.active_frame);
+        let entry_guard = materialized.then(|| prepared.active_frame.into_internal());
         let locals = prepared.locals.len();
         let entry = FrameEntry {
             initialize_bindings: false,
@@ -240,9 +240,10 @@ mod tests {
                 return_to: None,
                 entry_guard,
                 function: crate::engine::vm::closure::FrameFunction::new(function, closure_slots)
+                    .unwrap()
                     .into(),
                 reusable_captured_locals: vec![false; locals],
-                input: prepared.input.into(),
+                input: prepared.input.take().into(),
             }),
             storage: FrameStorage {
                 original_arguments: vec![],
@@ -252,7 +253,7 @@ mod tests {
             },
         };
         let mut execution = RunningExecution::new(runtime, ExecutionLimits::default()).unwrap();
-        let id = crate::engine::vm::driver::push_frame(&mut execution, entry).unwrap();
+        let id = crate::engine::vm::driver::push_frame(runtime, &mut execution, entry).unwrap();
         (execution, id)
     }
 
@@ -284,7 +285,8 @@ mod tests {
         let runtime = Runtime::new();
         let mut context = runtime.new_context().expect("create context");
         let (mut execution, id) = fixture(&runtime, &mut context);
-        let VmAction::Numeric { kind, fallthrough } = execute_frame(&mut execution, id).unwrap()
+        let VmAction::Numeric { kind, fallthrough } =
+            execute_frame(&runtime, &mut execution, id).unwrap()
         else {
             panic!("non-Number multiplication must exit as a numeric action");
         };
@@ -338,7 +340,8 @@ mod tests {
         push(&mut execution, id, JsValue::Undefined);
         push(&mut execution, id, JsValue::Int(2));
         execution.frames.current_mut(id).unwrap().resume_pc = compare_pc as usize;
-        let VmAction::Numeric { kind, fallthrough } = execute_frame(&mut execution, id).unwrap()
+        let VmAction::Numeric { kind, fallthrough } =
+            execute_frame(&runtime, &mut execution, id).unwrap()
         else {
             panic!("non-Number comparison must exit as a numeric action");
         };
@@ -423,7 +426,7 @@ mod tests {
         push(&mut execution, id, JsValue::Object(object.into_handle()));
         execution.frames.current_mut(id).unwrap().resume_pc = not_pc as usize;
         assert_eq!(
-            execute_frame(&mut execution, id).unwrap(),
+            execute_frame(&runtime, &mut execution, id).unwrap(),
             VmAction::Materialize
         );
         let frame = execution.frames.current_mut(id).unwrap();
@@ -433,7 +436,7 @@ mod tests {
         );
         execution.frames.materialize(&runtime).unwrap();
         assert_eq!(
-            execute_frame(&mut execution, id).unwrap(),
+            execute_frame(&runtime, &mut execution, id).unwrap(),
             VmAction::Complete
         );
         let frame = execution.frames.current_mut(id).unwrap();
@@ -512,7 +515,8 @@ mod tests {
         drop(execution.slots.pop(&mut frame.window).unwrap());
         push(&mut execution, id, JsValue::Bool(true));
         execution.frames.current_mut(id).unwrap().resume_pc = post_inc_pc as usize;
-        let VmAction::Numeric { kind, fallthrough } = execute_frame(&mut execution, id).unwrap()
+        let VmAction::Numeric { kind, fallthrough } =
+            execute_frame(&runtime, &mut execution, id).unwrap()
         else {
             panic!("non-Number PostInc must produce a numeric action");
         };

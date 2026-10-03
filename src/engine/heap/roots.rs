@@ -308,6 +308,7 @@ impl Runtime {
 pub(crate) struct VarRefRoot {
     pub(crate) runtime: Runtime,
     pub(crate) id: VarRefId,
+    owns_edge: bool,
 }
 
 impl VarRefRoot {
@@ -317,7 +318,11 @@ impl VarRefRoot {
             "runtime.var_ref_root.adopt",
             "core.var_ref_root.adopt",
         );
-        Self { runtime, id }
+        Self {
+            runtime,
+            id,
+            owns_edge: true,
+        }
     }
 
     pub(crate) fn from_borrowed_handle(runtime: Runtime, id: VarRefId) -> Result<Self, HeapError> {
@@ -327,10 +332,19 @@ impl VarRefRoot {
             "core.var_ref_root.promote",
         );
         runtime.retain_var_ref_handle(id)?;
-        Ok(Self { runtime, id })
+        Ok(Self {
+            runtime,
+            id,
+            owns_edge: true,
+        })
     }
 
     pub(crate) const fn id(&self) -> VarRefId {
+        self.id
+    }
+
+    pub(crate) fn into_execution_handle(mut self) -> VarRefId {
+        self.owns_edge = false;
         self.id
     }
 
@@ -346,13 +360,16 @@ impl VarRefRoot {
         Ok(Self {
             runtime: self.runtime.clone(),
             id: self.id,
+            owns_edge: true,
         })
     }
 }
 
 impl Drop for VarRefRoot {
     fn drop(&mut self) {
-        self.runtime.release_var_ref_handle(self.id);
+        if self.owns_edge {
+            self.runtime.release_var_ref_handle(self.id);
+        }
     }
 }
 
@@ -393,10 +410,11 @@ impl<'a> VarRefView<'a> {
     // carries either the authentic callee or an independently rooted cell.
     pub(crate) fn from_closure(
         slots: &'a crate::engine::vm::closure::ClosureSlots,
+        runtime: &'a Runtime,
         index: usize,
     ) -> Option<Self> {
         slots
-            .borrowed_cell(index)
+            .borrowed_cell(runtime, index)
             .map(|(runtime, id)| Self { runtime, id })
     }
     /// Borrow a cell owned by a live frame binding.

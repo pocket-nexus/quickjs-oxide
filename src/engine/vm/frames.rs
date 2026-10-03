@@ -573,38 +573,10 @@ impl Runtime {
         token: ActiveFrameToken,
         pc: BytecodePc,
     ) -> Result<(), RuntimeError> {
-        let mut state = self.0.state.borrow_mut();
-        let frame = state
-            .active_frames
-            .last_mut()
-            .ok_or(RuntimeError::Invariant(
-                "bytecode PC update ran without an active frame",
-            ))?;
-        if frame.token != token {
-            return Err(RuntimeError::Invariant(
-                "bytecode PC update did not target the top active frame",
-            ));
-        }
-        let ActiveFrameKind::Bytecode { pc: frame_pc, .. } = &mut frame.kind else {
-            return Err(RuntimeError::Invariant(
-                "bytecode PC update targeted a native active frame",
-            ));
-        };
-        if *frame_pc == Some(pc) {
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "runtime_pc_publication_repeated",
-            );
-            return Ok(());
-        }
-        *frame_pc = Some(pc);
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("runtime_pc_publication");
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event(
-            "runtime_pc_publication_active",
-        );
-        Ok(())
+        self.0
+            .state
+            .borrow_mut()
+            .update_active_bytecode_pc(token, pc)
     }
 
     /// Return the debug name of the active Script or Module, mirroring
@@ -854,6 +826,43 @@ pub(crate) struct ActiveFrameGuard {
     pub(crate) _bytecode_root: Option<FunctionBytecodeRef>,
 }
 
+/// Internal frame restoration owns explicit heap edges, never Runtime. The
+/// executing state, or its weak execution/suspension fallback, consumes it.
+pub(in crate::engine::vm) struct ActiveFrameRestore {
+    token: ActiveFrameToken,
+    depth: usize,
+    function: Option<ObjectId>,
+    bytecode: Option<FunctionBytecodeId>,
+}
+impl ActiveFrameRestore {
+    pub(in crate::engine::vm) fn registry_depth(&self) -> usize {
+        self.depth
+    }
+    pub(in crate::engine::vm) fn finish(
+        mut self,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+    ) -> Result<(), RuntimeError> {
+        let restored = if state.active_frames.len() == self.depth + 1
+            && state.active_frames.last().map(|frame| frame.token) == Some(self.token)
+        {
+            state.active_frames.pop();
+            Ok(())
+        } else {
+            state.active_frames.retire(self.token, self.depth);
+            Err(RuntimeError::Invariant(
+                "active frame stack was not restored in LIFO order",
+            ))
+        };
+        if let Some(function) = self.function.take() {
+            state.release_object_handle(function)?;
+        }
+        if let Some(bytecode) = self.bytecode.take() {
+            state.release_function_bytecode_handle(bytecode)?;
+        }
+        restored
+    }
+}
+
 /// LIFO scope for one Map/Set record exposed to QuickJS-style diagnostics.
 ///
 /// Normal execution calls [`Self::finish`] so stack corruption becomes an
@@ -874,10 +883,21 @@ pub(crate) struct BacktraceBarrierGuard {
 }
 
 impl ActiveFrameGuard {
-    pub(in crate::engine::vm) fn registry_depth(&self) -> usize {
-        self.depth
+    pub(in crate::engine::vm) fn into_internal(mut self) -> ActiveFrameRestore {
+        self.active = false;
+        ActiveFrameRestore {
+            token: self.token,
+            depth: self.depth,
+            function: self
+                ._function_root
+                .take()
+                .map(ObjectRef::into_execution_handle),
+            bytecode: self
+                ._bytecode_root
+                .take()
+                .map(FunctionBytecodeRef::into_execution_handle),
+        }
     }
-
     #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn mark_native_continuation(&mut self) -> Result<(), RuntimeError> {
         let mut state = self.runtime.0.state.borrow_mut();
@@ -1016,3 +1036,43 @@ impl Runtime {
 }
 
 impl Runtime {}
+
+impl crate::engine::heap::runtime::RuntimeState {
+    pub(crate) fn update_active_bytecode_pc(
+        &mut self,
+        token: ActiveFrameToken,
+        pc: BytecodePc,
+    ) -> Result<(), RuntimeError> {
+        let frame = self
+            .active_frames
+            .last_mut()
+            .ok_or(RuntimeError::Invariant(
+                "bytecode PC update ran without an active frame",
+            ))?;
+        if frame.token != token {
+            return Err(RuntimeError::Invariant(
+                "bytecode PC update did not target the top active frame",
+            ));
+        }
+        let ActiveFrameKind::Bytecode { pc: frame_pc, .. } = &mut frame.kind else {
+            return Err(RuntimeError::Invariant(
+                "bytecode PC update targeted a native active frame",
+            ));
+        };
+        if *frame_pc == Some(pc) {
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "runtime_pc_publication_repeated",
+            );
+            return Ok(());
+        }
+        *frame_pc = Some(pc);
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("runtime_pc_publication");
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "runtime_pc_publication_active",
+        );
+        Ok(())
+    }
+}

@@ -107,42 +107,41 @@ pub(in crate::engine::vm) fn prepare_call(
     closure_slots: crate::engine::vm::closure::ClosureSlots,
 ) -> Result<FrameEntry, crate::engine::api::runtime_error::RuntimeError> {
     use crate::engine::api::runtime_error::RuntimeError;
-    let prepared =
-        match runtime.prepare_owned_bytecode_frame(callable, receiver, new_target, bytecode) {
-            Ok(prepared) => prepared,
-            Err(error) => {
-                for value in arguments {
-                    let _ = runtime.release_jsvalue(value);
-                }
-                return Err(error);
-            }
-        };
+    let mut arguments = crate::engine::vm::stack::FrameStorageGuard::new(
+        runtime,
+        FrameStorage {
+            original_arguments: arguments,
+            parameters: Vec::new(),
+            locals: Vec::new(),
+            operands: Vec::new(),
+        },
+    );
+    let mut prepared =
+        runtime.prepare_owned_bytecode_frame(callable, receiver, new_target, bytecode)?;
     if closure_slots.len() != usize::from(prepared.executable.metadata.closure_count) {
-        for value in arguments {
-            let _ = runtime.release_jsvalue(value);
-        }
         return Err(RuntimeError::Engine(Error::internal(
             "function object closure slot count does not match bytecode metadata",
         )));
     }
-    let original_arguments = arguments;
     let local_count = if prepared.executable.has_captured_locals {
         prepared.executable.local_definitions.len()
     } else {
         0
     };
     let active_token = prepared.active_frame.token();
+    let flags = vec![false; local_count];
+    let function = crate::engine::vm::closure::FrameFunction::new(
+        callable.as_object().try_clone()?,
+        closure_slots,
+    )?;
+    let original_arguments = arguments.take().original_arguments;
     let cold = crate::engine::vm::frame::ColdFrame::new(FrameCold {
         rare: std::cell::OnceCell::new(),
         return_to: None,
-        entry_guard: Some(prepared.active_frame),
-        function: crate::engine::vm::closure::FrameFunction::new(
-            callable.as_object().try_clone()?,
-            closure_slots,
-        )
-        .into(),
-        reusable_captured_locals: vec![false; local_count],
-        input: (prepared.input).into(),
+        entry_guard: Some(prepared.active_frame.into_internal()),
+        function: function.into(),
+        reusable_captured_locals: flags,
+        input: prepared.input.take().into(),
     });
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_call_storage(

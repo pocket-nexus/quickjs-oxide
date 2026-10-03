@@ -38,7 +38,7 @@ pub(super) fn run(
             }
             entered = true;
         }
-        let result = super::execute_frame(execution, id);
+        let result = super::execute_frame(runtime, execution, id);
         #[cfg(feature = "profiling")]
         record_exit(&result);
         // Ordinary Call/Return need no observable activation. Cold operations

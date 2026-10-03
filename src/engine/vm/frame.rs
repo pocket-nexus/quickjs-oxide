@@ -3,14 +3,17 @@
 mod storage;
 #[cfg(any(test, feature = "profiling"))]
 pub(in crate::engine::vm) use storage::FrameBody;
+pub(in crate::engine::vm) use storage::Resident;
 pub(in crate::engine::vm) use storage::{CallStorage, ColdFrame};
 
 use crate::engine::api::error::Error;
+use crate::engine::api::{Runtime, runtime_error::RuntimeError};
 use crate::engine::code::runtime::PublishedFunctionSnapshot;
 use crate::engine::heap::ContextId;
+use crate::engine::heap::runtime::RuntimeState;
 use crate::engine::value::JsValue;
 use crate::engine::vm::CallInput;
-use crate::engine::vm::frames::{ActiveFrameGuard, ActiveFrameToken};
+use crate::engine::vm::frames::{ActiveFrameRestore, ActiveFrameToken};
 use crate::engine::vm::stack::FrameStorage;
 
 #[cfg(test)]
@@ -98,13 +101,14 @@ pub(super) struct FrameRare {
 pub(super) struct FrameCold {
     pub rare: std::cell::OnceCell<Box<FrameRare>>,
     pub return_to: Option<ReturnTarget>,
-    pub entry_guard: Option<ActiveFrameGuard>,
+    pub entry_guard: Option<ActiveFrameRestore>,
     pub function: storage::Resident<crate::engine::vm::closure::FrameFunction>,
     pub reusable_captured_locals: Vec<bool>,
     pub input: storage::Resident<CallInput>,
 }
 
 /// Owners crossing the driver boundary before installation or after detachment.
+#[must_use]
 pub(super) struct FrameEntry {
     pub property_generation: u64,
     pub iterator_generation: u64,
@@ -115,6 +119,142 @@ pub(super) struct FrameEntry {
     pub executable: PublishedFunctionSnapshot,
     pub cold: ColdFrame,
     pub storage: FrameStorage,
+}
+
+impl FrameEntry {
+    pub(super) fn release(mut self, runtime: &Runtime) -> Result<(), RuntimeError> {
+        self.cold.release_legacy();
+        {
+            let mut state = runtime.0.state.borrow_mut();
+            super::stack::release_frame_storage_in_state(&mut state, self.storage)?;
+            self.cold.release_owned(&mut state)?;
+        }
+        Ok(())
+    }
+}
+
+/// Uninstalled entry stays guarded before the first reservation. This guard
+/// borrows Runtime outside state-held execution; successful publication takes
+/// the entry into RunningExecution's reachable frame storage.
+pub(super) struct FrameEntryGuard<'a> {
+    runtime: &'a Runtime,
+    entry: Option<FrameEntry>,
+}
+impl<'a> FrameEntryGuard<'a> {
+    pub(super) fn new(runtime: &'a Runtime, entry: FrameEntry) -> Self {
+        Self {
+            runtime,
+            entry: Some(entry),
+        }
+    }
+    pub(super) fn take(&mut self) -> FrameEntry {
+        self.entry.take().expect("frame entry transferred once")
+    }
+}
+impl std::ops::Deref for FrameEntryGuard<'_> {
+    type Target = FrameEntry;
+    fn deref(&self) -> &Self::Target {
+        self.entry.as_ref().expect("guarded frame entry")
+    }
+}
+impl std::ops::DerefMut for FrameEntryGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.entry.as_mut().expect("guarded frame entry")
+    }
+}
+impl Drop for FrameEntryGuard<'_> {
+    fn drop(&mut self) {
+        if self.runtime.skip_cleanup() {
+            return;
+        }
+        let _unwind = self.runtime.unwind_guard();
+        if let Some(entry) = self.entry.take() {
+            if entry.release(self.runtime).is_err() {
+                self.runtime.0.poisoned.set(true);
+            }
+        }
+    }
+}
+
+/// A popped frame remains responsible for its window and cold owners until
+/// both have been explicitly recycled. This borrowed legacy boundary is never
+/// constructed while the execution holds a state borrow.
+pub(super) struct RetiredFrame<'a> {
+    runtime: &'a Runtime,
+    slots: &'a mut super::stack::SlotStore,
+    frame: Option<Frame>,
+}
+impl<'a> RetiredFrame<'a> {
+    pub(super) fn new(
+        runtime: &'a Runtime,
+        slots: &'a mut super::stack::SlotStore,
+        frame: Frame,
+    ) -> Self {
+        Self {
+            runtime,
+            slots,
+            frame: Some(frame),
+        }
+    }
+    #[cfg(test)]
+    fn take(&mut self) -> Frame {
+        self.frame.take().expect("retired frame transferred once")
+    }
+    pub(super) fn clear_window(&mut self) -> Result<(), Error> {
+        let frame = self.frame.as_mut().expect("retired frame owner");
+        if let Some(window) = frame.window.take_optional() {
+            if let Err(error) = self.slots.clear_frame(self.runtime, window) {
+                // Failed window/edge validation means state is not fit for a
+                // second teardown attempt. All ordinary allocation failures
+                // happen before the frame enters this retirement scope.
+                self.runtime.0.poisoned.set(true);
+                return Err(error);
+            }
+        }
+        Ok(())
+    }
+    pub(super) fn recycle(mut self, storage: &mut CallStorage) -> Result<(), RuntimeError> {
+        let frame = self.frame.take().expect("retired frame transferred once");
+        let result = storage.recycle_legacy(self.runtime, frame.cold);
+        if result.is_err() {
+            self.runtime.0.poisoned.set(true);
+        }
+        result
+    }
+}
+impl std::ops::Deref for RetiredFrame<'_> {
+    type Target = Frame;
+    fn deref(&self) -> &Self::Target {
+        self.frame.as_ref().expect("retired frame owner")
+    }
+}
+impl std::ops::DerefMut for RetiredFrame<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.frame.as_mut().expect("retired frame owner")
+    }
+}
+impl Drop for RetiredFrame<'_> {
+    fn drop(&mut self) {
+        if self.runtime.skip_cleanup() {
+            return;
+        }
+        if self.frame.is_none() {
+            return;
+        }
+        let _unwind = self.runtime.unwind_guard();
+        if self.clear_window().is_err() {
+            return;
+        }
+        if let Some(mut frame) = self.frame.take() {
+            frame.cold.release_legacy();
+            let result = frame
+                .cold
+                .release_owned(&mut self.runtime.0.state.borrow_mut());
+            if result.is_err() {
+                self.runtime.0.poisoned.set(true);
+            }
+        }
+    }
 }
 
 /// Only the dispatch header moves on frame-stack push/pop. The executable and
@@ -244,7 +384,7 @@ impl FrameStore {
                     .map_err(runtime_error_to_vm_error)?;
                 frame.active_frame = guard.token();
                 self.unmaterialized_depth -= 1;
-                frame.cold.entry_guard = Some(guard);
+                frame.cold.entry_guard = Some(guard.into_internal());
             }
             self.materialized_watermark = start + offset + 1;
         }
@@ -343,11 +483,6 @@ impl FrameStore {
         Ok(FramePush { store: self, next })
     }
 
-    #[cfg(test)]
-    pub(super) fn push(&mut self, frame: Frame) -> Result<FrameId, Error> {
-        Ok(self.prepare_push()?.install(frame))
-    }
-
     pub(super) fn pop_current(&mut self) -> Option<Frame> {
         let (_, frame) = self.frames.pop()?;
         self.materialized_watermark = self.materialized_watermark.min(self.frames.len());
@@ -406,56 +541,91 @@ impl Drop for FrameStore {
     }
 }
 
-impl Drop for FrameCold {
-    fn drop(&mut self) {
-        self.release_normalized_this();
-        self.release_eval_arguments();
-        self.release_resume_throw();
-        self.release_constructor_return();
-    }
-}
-
 impl FrameCold {
-    pub(super) fn release_resume_throw(&mut self) {
+    pub(super) fn release_resume_throw(
+        &mut self,
+        state: &mut RuntimeState,
+    ) -> Result<(), RuntimeError> {
         if let Some(value) = self
             .rare
             .get_mut()
             .and_then(|rare| rare.resume_throw.take())
         {
-            let _ = self.function.runtime().release_jsvalue(value);
+            state.release_jsvalue(value)?;
         }
+        Ok(())
     }
 
-    pub(super) fn release_constructor_return(&mut self) {
+    pub(super) fn release_constructor_return(
+        &mut self,
+        state: &mut RuntimeState,
+    ) -> Result<(), RuntimeError> {
         if let Some(ConstructorReturn::Base(value)) = self
             .rare
             .get_mut()
             .and_then(|rare| rare.constructor_return.take())
         {
-            let _ = self.function.runtime().release_jsvalue(value);
+            state.release_jsvalue(value)?;
         }
+        Ok(())
     }
 
-    pub(super) fn release_eval_arguments(&mut self) {
+    pub(super) fn release_eval_arguments(
+        &mut self,
+        state: &mut RuntimeState,
+    ) -> Result<(), RuntimeError> {
         if let Some(values) = self
             .rare
             .get_mut()
             .and_then(|rare| rare.eval_arguments.take())
         {
             for value in values {
-                let _ = self.function.runtime().release_jsvalue(value);
+                state.release_jsvalue(value)?;
             }
         }
+        Ok(())
     }
 
-    pub(super) fn release_normalized_this(&mut self) {
+    pub(super) fn release_normalized_this(
+        &mut self,
+        state: &mut RuntimeState,
+    ) -> Result<(), RuntimeError> {
         if let Some(value) = self
             .rare
             .get_mut()
             .and_then(|rare| rare.normalized_this.take())
         {
-            let _ = self.function.runtime().release_jsvalue(value);
+            state.release_jsvalue(value)?;
         }
+        Ok(())
+    }
+
+    /// Temporary public-root continuations still use their existing cleanup
+    /// protocol. Call this outside the state borrow until their B migration.
+    pub(super) fn release_legacy(&mut self) {
+        if let Some(rare) = self.rare.get_mut() {
+            rare.property_keys.clear();
+            rare.property_wait = None;
+            rare.iterator_wait = None;
+            rare.conversion = None;
+        }
+    }
+
+    pub(super) fn release_owned(&mut self, state: &mut RuntimeState) -> Result<(), RuntimeError> {
+        self.release_normalized_this(state)?;
+        self.release_eval_arguments(state)?;
+        self.release_resume_throw(state)?;
+        self.release_constructor_return(state)?;
+        if let Some(guard) = self.entry_guard.take() {
+            guard.finish(state)?;
+        }
+        if let Some(mut function) = self.function.take_optional() {
+            function.release(state)?;
+        }
+        if let Some(mut input) = self.input.take_optional() {
+            input.release(state)?;
+        }
+        Ok(())
     }
 
     pub(super) fn has_pending_query(&self) -> bool {
@@ -513,6 +683,22 @@ mod tests {
     use crate::engine::value::JsValue;
     use crate::engine::vm::stack::{FrameStorage, SlotStore};
 
+    fn push(
+        runtime: &Runtime,
+        slots: &mut SlotStore,
+        frames: &mut FrameStore,
+        frame: Frame,
+    ) -> Result<FrameId, Error> {
+        let mut owner = RetiredFrame::new(runtime, slots, frame);
+        Ok(frames.prepare_push()?.install(owner.take()))
+    }
+
+    fn release(runtime: &Runtime, slots: &mut SlotStore, frame: Frame) {
+        let mut owner = RetiredFrame::new(runtime, slots, frame);
+        owner.clear_window().unwrap();
+        owner.recycle(&mut CallStorage::default()).unwrap();
+    }
+
     fn assert_wait_depth_matches_scan(frames: &FrameStore) {
         let sum = frames.frames.iter().try_fold(0usize, |sum, (_, frame)| {
             sum.checked_add(frame.cold.pending_depth())
@@ -538,8 +724,8 @@ mod tests {
         let context = runtime.new_context().expect("create context");
         let mut frames = FrameStore::new(1, 9);
         assert_wait_depth_matches_scan(&frames);
-        let (first, _first_slots) = frame(&runtime, context.realm);
-        let first_id = frames.push(first).unwrap();
+        let (first, mut first_slots) = frame(&runtime, context.realm);
+        let first_id = push(&runtime, &mut first_slots, &mut frames, first).unwrap();
         frames
             .put_pending(
                 first_id,
@@ -549,7 +735,7 @@ mod tests {
         assert_wait_depth_matches_scan(&frames);
         assert!(frames.can_push_with_continuations(4));
         assert!(!frames.can_push_with_continuations(5));
-        let (mut second, _second_slots) = frame(&runtime, context.realm);
+        let (mut second, mut second_slots) = frame(&runtime, context.realm);
         second.cold.property_wait = Some(PendingProxyGet::with_parent_depth_for_test(
             context.realm,
             4,
@@ -562,9 +748,9 @@ mod tests {
         assert_wait_depth_matches_scan(&frames);
         frames.put_pending(second_id, pending).unwrap();
         assert_wait_depth_matches_scan(&frames);
-        drop(frames.pop(second_id).unwrap());
+        release(&runtime, &mut second_slots, frames.pop(second_id).unwrap());
         assert_wait_depth_matches_scan(&frames);
-        drop(frames.pop_current().unwrap());
+        release(&runtime, &mut first_slots, frames.pop_current().unwrap());
         assert_wait_depth_matches_scan(&frames);
         assert!(frames.pop_current().is_none());
         assert_wait_depth_matches_scan(&frames);
@@ -576,8 +762,8 @@ mod tests {
         let runtime = Runtime::new();
         let context = runtime.new_context().expect("create context");
         let mut frames = FrameStore::new(1, 1);
-        let (first, _slots) = frame(&runtime, context.realm);
-        let id = frames.push(first).unwrap();
+        let (first, mut slots) = frame(&runtime, context.realm);
+        let id = push(&runtime, &mut slots, &mut frames, first).unwrap();
         let invalid = FrameId {
             execution: 2,
             generation: id.generation,
@@ -612,7 +798,7 @@ mod tests {
         assert_wait_depth_matches_scan(&frames);
         assert_eq!(frames.take_pending(id).unwrap().continuation_depth(), 3);
         assert_wait_depth_matches_scan(&frames);
-        drop(frames.pop_current().unwrap());
+        release(&runtime, &mut slots, frames.pop_current().unwrap());
         assert!(frames.take_pending(id).is_err());
         assert_wait_depth_matches_scan(&frames);
     }
@@ -641,7 +827,7 @@ mod tests {
         first_slots
             .clear_frame(&runtime, first.window.take())
             .unwrap();
-        cache.recycle(first.cold);
+        cache.recycle_legacy(&runtime, first.cold).unwrap();
         let (flags, grown) = cache.capture_flags(23).unwrap();
         assert_eq!(grown, 0);
         assert_eq!(flags, vec![false; 23]);
@@ -654,7 +840,7 @@ mod tests {
         let (cold, allocated) = cache.install(contents);
         assert_eq!(allocated, 0);
         assert_eq!(&*cold as *const FrameBody, address);
-        cache.recycle(cold);
+        cache.recycle_legacy(&runtime, cold).unwrap();
         drop((first_slots, second_slots, context, runtime));
         assert!(weak.upgrade().is_none());
         drop(cache);
@@ -688,6 +874,7 @@ mod tests {
             ))
             .into(),
             function: crate::engine::vm::closure::FrameFunction::new(function, Default::default())
+                .unwrap()
                 .into(),
             reusable_captured_locals: Vec::new(),
         });
@@ -713,12 +900,12 @@ mod tests {
         let runtime = Runtime::new();
         let context = runtime.new_context().expect("create context");
         let mut frames = FrameStore::new(1, 1);
-        let (first, _first_slots) = frame(&runtime, context.realm);
-        let first_id = frames.push(first).unwrap();
+        let (first, mut first_slots) = frame(&runtime, context.realm);
+        let first_id = push(&runtime, &mut first_slots, &mut frames, first).unwrap();
         let capacity = frames.frames.capacity();
-        let (rejected, _rejected_slots) = frame(&runtime, context.realm);
+        let (rejected, mut rejected_slots) = frame(&runtime, context.realm);
         let rejected_object = rejected.cold.function.object_id();
-        assert!(frames.push(rejected).is_err());
+        assert!(push(&runtime, &mut rejected_slots, &mut frames, rejected).is_err());
         assert!(
             runtime
                 .0
@@ -730,9 +917,10 @@ mod tests {
         );
         assert!(frames.current_mut(first_id).is_ok());
         assert_eq!(frames.frames.capacity(), capacity);
-        drop(frames.pop(first_id).unwrap());
-        let (replacement, _replacement_slots) = frame(&runtime, context.realm);
-        let replacement_id = frames.push(replacement).unwrap();
+        release(&runtime, &mut first_slots, frames.pop(first_id).unwrap());
+        let (replacement, mut replacement_slots) = frame(&runtime, context.realm);
+        let replacement_id =
+            push(&runtime, &mut replacement_slots, &mut frames, replacement).unwrap();
         assert_ne!(first_id, replacement_id);
         assert!(frames.current_mut(first_id).is_err());
         assert!(
@@ -745,6 +933,11 @@ mod tests {
         );
         assert!(frames.current_mut(replacement_id).is_ok());
         assert_eq!(frames.frames.capacity(), capacity);
+        release(
+            &runtime,
+            &mut replacement_slots,
+            frames.pop(replacement_id).unwrap(),
+        );
     }
 
     #[test]
@@ -753,9 +946,9 @@ mod tests {
         let context = runtime.new_context().expect("create context");
         let mut frames = FrameStore::new(1, 1);
         frames.next_generation = u64::MAX;
-        let (rejected, _slots) = frame(&runtime, context.realm);
+        let (rejected, mut rejected_slots) = frame(&runtime, context.realm);
         let object = rejected.cold.function.object_id();
-        assert!(frames.push(rejected).is_err());
+        assert!(push(&runtime, &mut rejected_slots, &mut frames, rejected).is_err());
         assert!(frames.frames.is_empty());
         assert_eq!(frames.frames.capacity(), 0);
         assert!(runtime.0.state.borrow().heap.object(object).is_err());
@@ -780,6 +973,51 @@ mod tests {
     }
 
     #[test]
+    fn rejected_retirement_preserves_forwarded_completion_until_execution_cleanup() {
+        use crate::engine::vm::{
+            Completion,
+            driver::push_frame,
+            execute::VmAction,
+            execution::{ExecutionLimits, RunningExecution},
+        };
+        let runtime = Runtime::new();
+        let context = runtime.new_context().unwrap();
+        let mut execution = RunningExecution::new(
+            &runtime,
+            ExecutionLimits {
+                frames: 2,
+                slots: 16,
+            },
+        )
+        .unwrap();
+        let active = push_frame(&runtime, &mut execution, entry(&runtime, context.realm)).unwrap();
+        let rejected = FrameId {
+            execution: active.execution,
+            generation: active.generation + 1,
+        };
+        let value = runtime.new_object(None).unwrap().into_handle();
+        assert!(
+            crate::engine::vm::frame_exit::finish(
+                &runtime,
+                &mut execution,
+                rejected,
+                VmAction::Complete,
+                Some(Completion::Throw(JsValue::Object(value)))
+            )
+            .is_err()
+        );
+        assert!(
+            matches!(&execution.pending_completion, Some(Completion::Throw(JsValue::Object(id))) if *id==value)
+        );
+        assert_eq!(
+            runtime.0.state.borrow().heap.object_strong_count(value),
+            Ok(1)
+        );
+        drop(execution);
+        assert!(runtime.0.state.borrow().heap.object(value).is_err());
+    }
+
+    #[test]
     fn rejected_child_push_preserves_parent_window_and_releases_child_owners() {
         use crate::engine::vm::{
             driver::push_frame,
@@ -796,7 +1034,8 @@ mod tests {
                 },
             )
             .unwrap();
-            let parent = push_frame(&mut execution, entry(&runtime, context.realm)).unwrap();
+            let parent =
+                push_frame(&runtime, &mut execution, entry(&runtime, context.realm)).unwrap();
             let generation = execution.frames.next_generation;
             if exhausted_identity {
                 execution.frames.limit = 2;
@@ -804,14 +1043,22 @@ mod tests {
             }
             let mut child = entry(&runtime, context.realm);
             let child_object = child.cold.function.object_id();
-            child.storage.original_arguments.push(JsValue::Int(42));
+            let argument = runtime.new_object(None).unwrap().into_handle();
+            child
+                .storage
+                .original_arguments
+                .push(JsValue::Object(argument));
+            let this_value = runtime.new_object(None).unwrap().into_handle();
+            let new_target = runtime.new_object(None).unwrap().into_handle();
+            child.cold.input.this_value = JsValue::Object(this_value);
+            child.cold.input.new_target = JsValue::Object(new_target);
             child
                 .storage
                 .parameters
                 .push(super::super::bindings::FrameBinding::Direct(JsValue::Int(
                     42,
                 )));
-            let error = push_frame(&mut execution, child).unwrap_err();
+            let error = push_frame(&runtime, &mut execution, child).unwrap_err();
             assert!(error.to_string().contains(if exhausted_identity {
                 "identity exhausted"
             } else {
@@ -823,15 +1070,15 @@ mod tests {
                 execution.slots.binding_counts(&frame.window).unwrap(),
                 (0, 0)
             );
-            assert!(runtime.0.state.borrow().heap.object(child_object).is_err());
+            for id in [child_object, argument, this_value, new_target] {
+                assert!(runtime.0.state.borrow().heap.object(id).is_err());
+            }
             execution.frames.limit = 2;
             execution.frames.next_generation = generation;
-            let replacement = push_frame(&mut execution, entry(&runtime, context.realm)).unwrap();
-            let mut frame = execution.frames.pop(replacement).unwrap();
-            execution
-                .slots
-                .clear_frame(&runtime, frame.window.take())
-                .unwrap();
+            let replacement =
+                push_frame(&runtime, &mut execution, entry(&runtime, context.realm)).unwrap();
+            let frame = execution.frames.pop(replacement).unwrap();
+            release(&runtime, &mut execution.slots, frame);
             let parent = execution.frames.current_mut(parent).unwrap();
             assert_eq!(
                 execution.slots.binding_counts(&parent.window).unwrap(),
@@ -863,62 +1110,74 @@ mod tests {
         runtime
     }
     #[test]
-    fn frame_store_abandon_releases_inner_runtime_owner_first() {
-        let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-        let mut frames = FrameStore::new(1, 2);
-        for name in ["parent", "child"] {
-            let runtime = tracked_runtime(name, &events);
-            let context = runtime.new_context().expect("create context");
-            let (frame, _slots) = frame(&runtime, context.realm);
-            frames.push(frame).unwrap();
-        }
-        assert!(events.borrow().is_empty());
-        drop(frames);
-        assert_eq!(*events.borrow(), ["child", "parent"]);
-    }
-    #[test]
-    fn execution_abandon_clears_child_slots_before_parent_frame_owner() {
+    fn populated_execution_does_not_own_runtime() {
         use crate::engine::vm::{
             driver::push_frame,
             execution::{ExecutionLimits, RunningExecution},
         };
         let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-        let parent_runtime = tracked_runtime("parent", &events);
-        let parent_context = parent_runtime.new_context().expect("create context");
+        let runtime = tracked_runtime("runtime", &events);
+        let context = runtime.new_context().unwrap();
+        let weak = std::rc::Rc::downgrade(&runtime.0);
+        let before = std::rc::Rc::strong_count(&runtime.0);
         let mut execution = RunningExecution::new(
-            &parent_runtime,
+            &runtime,
             ExecutionLimits {
                 frames: 2,
                 slots: 16,
             },
         )
         .unwrap();
-        push_frame(&mut execution, entry(&parent_runtime, parent_context.realm)).unwrap();
-        {
-            let runtime = tracked_runtime("child", &events);
-            let context = runtime.new_context().expect("create context");
-            // Internal frame slots hold raw handles without a runtime owner;
-            // the child frame's cold function root keeps the child runtime
-            // alive until the frame is abandoned. The slot value belongs to
-            // the abandoning execution's runtime so its release is valid.
-            let capture = parent_runtime.new_object(None).unwrap();
-            let mut child = entry(&runtime, context.realm);
-            child
-                .storage
-                .original_arguments
-                .push(JsValue::Object(capture.into_handle()));
-            child
-                .storage
-                .parameters
-                .push(super::super::bindings::FrameBinding::Direct(
-                    JsValue::Undefined,
-                ));
-            push_frame(&mut execution, child).unwrap();
-        }
-        drop(parent_context);
-        drop(parent_runtime);
-        assert!(events.borrow().is_empty());
+        push_frame(&runtime, &mut execution, entry(&runtime, context.realm)).unwrap();
+        push_frame(&runtime, &mut execution, entry(&runtime, context.realm)).unwrap();
+        assert_eq!(std::rc::Rc::strong_count(&runtime.0), before);
+        assert_eq!(runtime.0.raw_execution_owners.get(), 1);
+        drop(context);
+        drop(runtime);
+        assert_eq!(*events.borrow(), ["runtime"]);
+        assert!(weak.upgrade().is_none());
+        // The populated raw frame record cannot traverse the destroyed heap.
         drop(execution);
-        assert_eq!(*events.borrow(), ["child", "parent"]);
+    }
+
+    #[test]
+    fn execution_abandon_releases_child_and_parent_owners() {
+        use crate::engine::vm::{
+            driver::push_frame,
+            execution::{ExecutionLimits, RunningExecution},
+        };
+        let runtime = Runtime::new();
+        let context = runtime.new_context().unwrap();
+        let mut execution = RunningExecution::new(
+            &runtime,
+            ExecutionLimits {
+                frames: 2,
+                slots: 16,
+            },
+        )
+        .unwrap();
+        let parent = entry(&runtime, context.realm);
+        let parent_function = parent.cold.function.object_id();
+        push_frame(&runtime, &mut execution, parent).unwrap();
+        let mut child = entry(&runtime, context.realm);
+        let child_function = child.cold.function.object_id();
+        let marker = runtime.new_object(None).unwrap().into_handle();
+        child
+            .storage
+            .original_arguments
+            .push(JsValue::Object(marker));
+        child
+            .storage
+            .parameters
+            .push(super::super::bindings::FrameBinding::Direct(
+                JsValue::Undefined,
+            ));
+        push_frame(&runtime, &mut execution, child).unwrap();
+        drop(execution);
+        assert_eq!(runtime.0.raw_execution_owners.get(), 0);
+        let state = runtime.0.state.borrow();
+        for id in [parent_function, child_function, marker] {
+            assert!(state.heap.object(id).is_err());
+        }
     }
 }

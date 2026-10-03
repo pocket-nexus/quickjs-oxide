@@ -37,7 +37,10 @@ pub(super) fn step(
     let result = prepare_and_enter(runtime, execution, id, arguments, environment);
     if !matches!(result, Ok(CallStep::Entered)) {
         match execution.frames.current_mut(id) {
-            Ok(frame) => frame.cold.release_eval_arguments(),
+            Ok(frame) => frame
+                .cold
+                .release_eval_arguments(&mut runtime.0.state.borrow_mut())
+                .map_err(runtime_error_to_vm_error)?,
             Err(error) => {
                 if let Ok(CallStep::Complete(
                     Completion::Return(value) | Completion::Throw(value),
@@ -117,7 +120,7 @@ fn prepare_and_enter(
         frame.cold.input.this_value,
         JsValue::Null | JsValue::Undefined
     ) {
-        let id = frame.cold.input.callee_global(runtime, realm)?.object_id();
+        let id = frame.cold.input.callee_global(runtime, realm)?;
         runtime
             .retain_object_handle(id)
             .map_err(heap_error_to_vm_error)?;
@@ -171,6 +174,7 @@ fn prepare_and_enter(
     let prepared = runtime
         .prepare_direct_eval_original(realm, invocation, prepared, |prepared| {
             eval_bindings::materialize(
+                runtime,
                 prepared,
                 frame.cold.function.closures(),
                 |source, descriptor| {
@@ -194,7 +198,10 @@ fn prepare_and_enter(
     let depth = execution.slots.depth(&frame.window);
     let request = match prepared {
         DirectEvalPreparation::Complete(completion) => {
-            frame.cold.release_eval_arguments();
+            frame
+                .cold
+                .release_eval_arguments(&mut runtime.0.state.borrow_mut())
+                .map_err(runtime_error_to_vm_error)?;
             let cleanup = (|| -> Result<(), Error> {
                 for _ in 0..=arguments {
                     let discarded = execution.slots.pop(&mut frame.window)?;
@@ -261,7 +268,7 @@ fn prepare_and_enter(
     };
     if let Some(request) = request {
         let entry = request.prepare(runtime, &mut execution.call_storage)?;
-        push_frame(execution, entry)?;
+        push_frame(runtime, execution, entry)?;
     }
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_instruction(depth);
@@ -402,7 +409,7 @@ pub(super) fn apply(
     #[cfg(feature = "profiling")]
     let depth = execution.slots.depth(&frame.window);
     let entry = request.prepare(runtime, &mut execution.call_storage)?;
-    push_frame(execution, entry)?;
+    push_frame(runtime, execution, entry)?;
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_instruction(depth);
     Ok(CallStep::Entered)
@@ -598,7 +605,7 @@ mod capture_tests {
                 false,
             ),
         ] {
-            let prepared = runtime
+            let mut prepared = runtime
                 .prepare_bytecode_frame(
                     &callable,
                     Value::Int(1),
@@ -617,14 +624,15 @@ mod capture_tests {
                 cold: ColdFrame::new(FrameCold {
                     rare: std::cell::OnceCell::new(),
                     return_to: None,
-                    entry_guard: Some(prepared.active_frame),
+                    entry_guard: Some(prepared.active_frame.into_internal()),
                     function: crate::engine::vm::closure::FrameFunction::new(
                         callable.as_object().try_clone().expect("duplicate root"),
                         vec![closure.try_clone().expect("duplicate root")].into(),
                     )
+                    .unwrap()
                     .into(),
                     reusable_captured_locals: vec![false; 2],
-                    input: prepared.input.into(),
+                    input: prepared.input.take().into(),
                 }),
                 storage: FrameStorage {
                     original_arguments: vec![JsValue::Int(10)],
@@ -644,7 +652,7 @@ mod capture_tests {
             };
             let mut execution =
                 RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
-            let id = push_frame(&mut execution, entry).unwrap();
+            let id = push_frame(&runtime, &mut execution, entry).unwrap();
             execution
                 .frames
                 .current_mut(id)

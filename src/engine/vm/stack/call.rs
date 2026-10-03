@@ -2,7 +2,7 @@
 use super::*;
 pub(in crate::engine::vm) struct InstalledOrdinaryFrame {
     pub window: FrameWindow,
-    pub function: crate::engine::object::ObjectRef,
+    pub function: crate::engine::heap::ObjectId,
     pub input: crate::engine::vm::CallInput,
 }
 impl SlotStore {
@@ -136,7 +136,7 @@ impl SlotStore {
         } else {
             JsValue::Undefined
         };
-        let function = crate::engine::object::ObjectRef::from_owned_handle(runtime.clone(), callee);
+        let function = callee;
         let input = crate::engine::vm::CallInput::new(runtime, receiver, JsValue::Undefined, None);
         parent.depth -= consumed;
         self.active_end = end;
@@ -202,6 +202,16 @@ mod tests {
     use crate::engine::code::function::metadata::{ClosureVariableKind, VariableDefinition};
     use crate::engine::code::runtime::PublishedFunctionSnapshot;
 
+    fn take_installed_window(
+        runtime: &Runtime,
+        mut installed: InstalledOrdinaryFrame,
+    ) -> FrameWindow {
+        let mut state = runtime.0.state.borrow_mut();
+        installed.input.release(&mut state).unwrap();
+        state.release_object_handle(installed.function).unwrap();
+        installed.window
+    }
+
     fn checked_operands(
         slots: &mut SlotStore,
         parent: &mut FrameWindow,
@@ -263,7 +273,7 @@ mod tests {
                 function.object_id(),
                 false,
             )
-            .map(|installed| installed.window)
+            .map(|installed| take_installed_window(&runtime, installed))
             .unwrap();
         assert!(matches!(
             slots.local(&child, 0).unwrap(),
@@ -302,7 +312,7 @@ mod tests {
                 function.object_id(),
                 false,
             )
-            .map(|installed| installed.window)
+            .map(|installed| take_installed_window(&runtime, installed))
             .unwrap();
         assert!(matches!(
             slots.local(&child, 0).unwrap(),
@@ -343,7 +353,7 @@ mod tests {
                 function.object_id(),
                 false,
             )
-            .map(|installed| installed.window)
+            .map(|installed| take_installed_window(&runtime, installed))
             .unwrap();
         assert!(child.original_arguments().is_empty());
         assert_eq!(slots.actual_argument_count(&child).unwrap(), 1);
@@ -379,7 +389,7 @@ mod tests {
                 function.object_id(),
                 false,
             )
-            .map(|installed| installed.window)
+            .map(|installed| take_installed_window(&runtime, installed))
             .unwrap();
         assert!(child.original_arguments().is_empty());
         let replaced = slots
@@ -432,7 +442,7 @@ mod tests {
                     function.object_id(),
                     true
                 )
-                .map(|installed| installed.window)
+                .map(|installed| take_installed_window(&runtime, installed))
                 .is_err()
         );
         assert_eq!(slots.active_end, end);
@@ -478,7 +488,10 @@ mod tests {
         );
         let checked = checked_operands(&mut slots, &mut parent, 0, true);
         let receiver = copy_value(&runtime, slots.peek(&parent, 1).unwrap()).unwrap();
-        let input = crate::engine::vm::CallInput::new(&runtime, receiver, JsValue::Undefined, None);
+        let input = crate::engine::vm::protocol::CallInputGuard::new(
+            &runtime,
+            crate::engine::vm::CallInput::new(&runtime, receiver, JsValue::Undefined, None),
+        );
         assert_eq!(
             runtime
                 .0
@@ -497,7 +510,7 @@ mod tests {
                 function.object_id(),
                 false,
             )
-            .map(|installed| installed.window)
+            .map(|installed| take_installed_window(&runtime, installed))
             .unwrap();
         assert!(matches!(
             &input.this_value,
@@ -555,8 +568,10 @@ mod tests {
         let end = slots.active_end;
         let checked = checked_operands(&mut slots, &mut parent, 2, true);
         let receiver_copy = copy_value(&runtime, slots.peek(&parent, 3).unwrap()).unwrap();
-        let input =
-            crate::engine::vm::CallInput::new(&runtime, receiver_copy, JsValue::Undefined, None);
+        let input = crate::engine::vm::protocol::CallInputGuard::new(
+            &runtime,
+            crate::engine::vm::CallInput::new(&runtime, receiver_copy, JsValue::Undefined, None),
+        );
         assert_eq!(
             runtime
                 .0
@@ -576,7 +591,7 @@ mod tests {
                     function.object_id(),
                     true,
                 )
-                .map(|installed| installed.window)
+                .map(|installed| take_installed_window(&runtime, installed))
                 .is_err()
         );
         assert_eq!(slots.active_end, end);
@@ -668,7 +683,7 @@ mod tests {
                 stale_function.object_id(),
                 false,
             )
-            .map(|installed| installed.window)
+            .map(|installed| take_installed_window(&runtime, installed))
             .err()
             .expect("the named local must reject a stale function handle");
         // Disarm the synthetic wrapper without releasing a nonexistent edge.
@@ -747,7 +762,7 @@ mod tests {
                 function.object_id(),
                 false,
             )
-            .map(|installed| installed.window)
+            .map(|installed| take_installed_window(&runtime, installed))
             .err()
             .unwrap();
         assert_eq!(

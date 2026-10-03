@@ -27,6 +27,7 @@ use crate::engine::heap::{FunctionBytecodeId, HeapError};
 pub struct FunctionBytecodeRef {
     runtime: Runtime,
     id: FunctionBytecodeId,
+    owns_edge: bool,
 }
 
 impl FunctionBytecodeRef {
@@ -41,7 +42,11 @@ impl FunctionBytecodeRef {
             "runtime.bytecode_root.adopt",
             "core.bytecode_root.adopt",
         );
-        Self { runtime, id }
+        Self {
+            runtime,
+            id,
+            owns_edge: true,
+        }
     }
 
     /// Promote a borrowed raw heap edge to a public owning root.
@@ -55,7 +60,11 @@ impl FunctionBytecodeRef {
             "core.bytecode_root.promote",
         );
         runtime.retain_function_bytecode_handle(id)?;
-        Ok(Self { runtime, id })
+        Ok(Self {
+            runtime,
+            id,
+            owns_edge: true,
+        })
     }
 
     /// Duplicate this root with checked admission and reference retention.
@@ -76,6 +85,7 @@ impl FunctionBytecodeRef {
         Ok(Self {
             runtime: self.runtime.clone(),
             id: self.id,
+            owns_edge: true,
         })
     }
 
@@ -108,11 +118,18 @@ impl FunctionBytecodeRef {
     pub(crate) const fn bytecode_id(&self) -> FunctionBytecodeId {
         self.id
     }
+
+    pub(crate) fn into_execution_handle(mut self) -> FunctionBytecodeId {
+        self.owns_edge = false;
+        self.id
+    }
 }
 
 impl Drop for FunctionBytecodeRef {
     fn drop(&mut self) {
-        self.runtime.release_function_bytecode_handle(self.id);
+        if self.owns_edge {
+            self.runtime.release_function_bytecode_handle(self.id);
+        }
     }
 }
 

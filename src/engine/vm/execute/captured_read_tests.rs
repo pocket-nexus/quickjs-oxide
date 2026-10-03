@@ -27,7 +27,7 @@ fn captured_frame(
     else {
         panic!("bytecode");
     };
-    let cell = closure_slots.get(0).unwrap().id();
+    let cell = closure_slots.get(runtime, 0).unwrap().id();
     let mut entry = crate::engine::vm::root_call::prepare_call(
         runtime,
         context.realm,
@@ -39,7 +39,9 @@ fn captured_frame(
         closure_slots,
     )
     .unwrap();
-    drop(entry.cold.entry_guard.take());
+    if let Some(guard) = entry.cold.entry_guard.take() {
+        guard.finish(&mut runtime.0.state.borrow_mut()).unwrap();
+    }
     entry.active_frame = crate::engine::vm::frames::ActiveFrameToken::unmaterialized();
     let opcode = if checked {
         super::Opcode::GetVarRefCheck
@@ -51,7 +53,7 @@ fn captured_frame(
         .unwrap();
     let pc = entry.executable.exec.exec_pc(source_pc as u32).unwrap() as usize;
     let mut execution = super::RunningExecution::new(runtime, ExecutionLimits::default()).unwrap();
-    let id = crate::engine::vm::driver::push_frame(&mut execution, entry).unwrap();
+    let id = crate::engine::vm::driver::push_frame(runtime, &mut execution, entry).unwrap();
     execution.frames.current_mut(id).unwrap().resume_pc = pc;
     (execution, id, pc, cell)
 }
@@ -72,7 +74,7 @@ fn captured_scalar_reads_complete_without_an_activation_or_cell_owner_copy() {
         #[cfg(feature = "profiling")]
         let profile = crate::engine::api::profiling::CostProfile::start();
         assert!(matches!(
-            super::execute_frame(&mut execution, id).unwrap(),
+            super::execute_frame(&runtime, &mut execution, id).unwrap(),
             super::VmAction::Complete
         ));
         assert_eq!(execution.pending.take(), Some(JsValue::Int(7)));
@@ -116,7 +118,7 @@ fn captured_heap_reads_keep_the_original_driver_and_result_owner() {
             JsValue::Object(object.into_handle()),
         )
         .unwrap();
-    let action = super::execute_frame(&mut execution, id).unwrap();
+    let action = super::execute_frame(&runtime, &mut execution, id).unwrap();
     let super::VmAction::Binding {
         source,
         index,
@@ -151,7 +153,7 @@ fn captured_heap_reads_keep_the_original_driver_and_result_owner() {
         Ok(2)
     );
     assert!(matches!(
-        super::execute_frame(&mut execution, id).unwrap(),
+        super::execute_frame(&runtime, &mut execution, id).unwrap(),
         super::VmAction::Complete
     ));
     let result = execution.pending.take().unwrap();
@@ -182,7 +184,7 @@ fn captured_scalar_reads_decline_cleanup_and_leave_the_fault_checkpoint_unchange
     }
     assert!(runtime.0.deferred_references.has_pending());
     assert!(matches!(
-        super::execute_frame(&mut execution, id).unwrap(),
+        super::execute_frame(&runtime, &mut execution, id).unwrap(),
         super::VmAction::Binding {
             write: false,
             checked: false,
@@ -199,7 +201,7 @@ fn captured_scalar_reads_decline_cleanup_and_leave_the_fault_checkpoint_unchange
     assert!(runtime.0.deferred_references.has_pending());
     runtime.drain_deferred_references().unwrap();
     assert!(matches!(
-        super::execute_frame(&mut execution, id).unwrap(),
+        super::execute_frame(&runtime, &mut execution, id).unwrap(),
         super::VmAction::Complete
     ));
     assert_eq!(execution.pending.take(), Some(JsValue::Int(7)));

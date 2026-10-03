@@ -3,6 +3,7 @@
 
 use crate::engine::api::error::Error;
 use crate::engine::api::runtime::Runtime;
+use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::value::JsValue;
 use crate::engine::vm::frame::FrameStore;
 use crate::engine::vm::stack::SlotStore;
@@ -251,6 +252,8 @@ pub(super) struct RunningExecution {
     pub call_storage: super::frame::CallStorage,
     /// Cold completion owns its payload before the active window is cleared.
     pub pending: Option<JsValue>,
+    /// Forwarded return/throw remains reachable throughout fallible retirement.
+    pub pending_completion: Option<super::Completion>,
     /// Retained GetField2 result's classification, consumed by the immediate Call.
     pub selected_native: Option<crate::engine::object::LinkedNativeSelection>,
     /// A selected static read crossing into the existing getter/query driver.
@@ -270,22 +273,33 @@ impl Drop for RunningExecution {
             // The runtime (and its whole heap) died first; no edge release can
             // observe anything. Discard the storage without accounting.
             self.pending = None;
+            self.pending_completion = None;
             self.selected_named_read = None;
             self.slots = SlotStore::new(0);
             return;
         };
+        runtime.unregister_raw_execution_owner();
         if runtime.skip_cleanup() {
-            // Internal JsValue storage has no Drop. Public roots inside cold
-            // state also skip semantic release while the runtime is poisoned.
             self.pending = None;
+            self.pending_completion = None;
             self.selected_named_read = None;
             self.slots = SlotStore::new(0);
             return;
         }
+        let _unwind = runtime.unwind_guard();
         if let Some(pending) = self.pending.take() {
-            // Teardown cannot report errors; invariant violations surface at
-            // the deferred-drain boundary like every trusted release.
-            let _ = runtime.release_jsvalue(pending);
+            if runtime.release_jsvalue(pending).is_err() {
+                runtime.0.poisoned.set(true);
+                return;
+            }
+        }
+        if let Some(super::Completion::Return(value) | super::Completion::Throw(value)) =
+            self.pending_completion.take()
+        {
+            if runtime.release_jsvalue(value).is_err() {
+                runtime.0.poisoned.set(true);
+                return;
+            }
         }
         if let Some(selected) = self.selected_named_read.take() {
             selected.release(&runtime);
@@ -298,31 +312,72 @@ impl Drop for RunningExecution {
                 .clear_frame(&runtime, frame.window.take())
                 .is_err()
             {
-                // A failed legacy handoff may have detached its Frame before
-                // an allocation failure. Release any remaining arena owners
-                // before unwinding parent native activations; never panic here.
-                self.slots = SlotStore::new(0);
+                // Window and edge validation failures invalidate further
+                // cleanup; keep the poisoned runtime quarantined.
+                runtime.0.poisoned.set(true);
+                return;
             }
-            drop(frame.cold);
+            if self
+                .call_storage
+                .recycle_legacy(&runtime, frame.cold)
+                .is_err()
+            {
+                runtime.0.poisoned.set(true);
+                return;
+            }
         }
         drop(self.root_query.take());
+    }
+}
+
+impl Runtime {
+    /// One weak registration per execution record, never per frame or value.
+    /// The header count lets teardown distinguish legitimate detached edges
+    /// from leaks when the runtime dies before its execution record.
+    pub(in crate::engine::vm) fn register_raw_execution_owner(
+        &self,
+    ) -> Result<std::rc::Weak<crate::engine::heap::runtime::RuntimeInner>, RuntimeError> {
+        self.check_poison()?;
+        let count =
+            self.0
+                .raw_execution_owners
+                .get()
+                .checked_add(1)
+                .ok_or(RuntimeError::Invariant(
+                    "raw execution owner count exhausted",
+                ))?;
+        self.0.raw_execution_owners.set(count);
+        Ok(std::rc::Rc::downgrade(&self.0))
+    }
+
+    pub(in crate::engine::vm) fn unregister_raw_execution_owner(&self) {
+        if let Some(count) = self.0.raw_execution_owners.get().checked_sub(1) {
+            self.0.raw_execution_owners.set(count);
+        } else {
+            // Teardown cannot report an invariant failure or unwind again.
+            self.0.poisoned.set(true);
+        }
     }
 }
 
 impl RunningExecution {
     pub(super) fn new(runtime: &Runtime, limits: ExecutionLimits) -> Result<Self, Error> {
         let guard = ExecutionGuard::enter(runtime)?;
+        let weak = runtime
+            .register_raw_execution_owner()
+            .map_err(super::exception::runtime_error_to_vm_error)?;
         Ok(Self {
             frames: FrameStore::new(guard.registration.id, limits.frames),
             slots: SlotStore::new(limits.slots),
             query_storage: super::proxy_get_driver::QueryStorage::default(),
             call_storage: super::frame::CallStorage::default(),
             pending: None,
+            pending_completion: None,
             selected_native: None,
             selected_named_read: None,
             root_query: None,
             root_descriptor: None,
-            runtime: std::rc::Rc::downgrade(&runtime.0),
+            runtime: weak,
             _guard: guard,
         })
     }

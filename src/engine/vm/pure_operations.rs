@@ -364,7 +364,7 @@ fn perform(
                 .cold
                 .function
                 .closures()
-                .get(usize::from(index))
+                .get(runtime, usize::from(index))
                 .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?;
             runtime
                 .write_var_ref(&root, value)
@@ -377,7 +377,7 @@ fn perform(
                 .cold
                 .function
                 .closures()
-                .get(usize::from(index))
+                .get(runtime, usize::from(index))
                 .ok_or_else(|| Error::internal("closure variable index is out of bounds"))?
                 .try_clone()?;
             if derived {

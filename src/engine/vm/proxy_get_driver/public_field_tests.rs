@@ -21,6 +21,7 @@ fn fixture(
         RunningExecution::new(runtime, ExecutionLimits { frames, slots: 32 }).unwrap();
     let entry = call
         .prepare_callback(
+            runtime,
             &mut execution.call_storage,
             JsValue::Undefined,
             Vec::new(),
@@ -33,7 +34,7 @@ fn fixture(
             },
         )
         .unwrap();
-    let id = push_frame(&mut execution, entry).unwrap();
+    let id = push_frame(runtime, &mut execution, entry).unwrap();
     execution.frames.materialize(runtime).unwrap();
     (execution, id)
 }

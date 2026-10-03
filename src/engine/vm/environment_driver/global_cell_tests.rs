@@ -48,13 +48,13 @@ fn global_cell_reads_current_value_and_keeps_output_alive_after_overwrite() {
         let original = runtime.into_jsvalue(public).unwrap();
         let expected = runtime.dup_jsvalue(&original).unwrap();
         runtime
-            .write_var_ref(&roots.get(0).unwrap(), original)
+            .write_var_ref(&roots.get(&runtime, 0).unwrap(), original)
             .unwrap();
         let output = try_read_global_cell(&runtime, &executable, &roots, 0)
             .unwrap()
             .unwrap();
         runtime
-            .write_var_ref(&roots.get(0).unwrap(), JsValue::Int(19))
+            .write_var_ref(&roots.get(&runtime, 0).unwrap(), JsValue::Int(19))
             .unwrap();
         if let (JsValue::Float(a), JsValue::Float(b)) = (&output, &expected) {
             assert_eq!(a.to_bits(), b.to_bits());
@@ -84,7 +84,7 @@ fn global_cell_misses_leave_uninitialized_and_pending_cleanup_untouched() {
             .is_none()
     );
     runtime
-        .write_var_ref(&roots.get(0).unwrap(), JsValue::Int(42))
+        .write_var_ref(&roots.get(&runtime, 0).unwrap(), JsValue::Int(42))
         .unwrap();
     let state = runtime.0.state.borrow_mut();
     assert!(
@@ -105,7 +105,7 @@ fn global_cell_misses_leave_uninitialized_and_pending_cleanup_untouched() {
     );
     assert!(runtime.0.deferred_references.has_pending());
     runtime
-        .write_var_ref(&roots.get(0).unwrap(), JsValue::Int(43))
+        .write_var_ref(&roots.get(&runtime, 0).unwrap(), JsValue::Int(43))
         .unwrap();
     assert_eq!(
         try_read_global_cell(&runtime, &executable, &roots, 0).unwrap(),

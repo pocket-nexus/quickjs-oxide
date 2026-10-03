@@ -114,6 +114,13 @@ impl ObjectRef {
         self.id
     }
 
+    /// Move the admitted edge into execution storage. The caller's Runtime
+    /// access outlives this transfer; cleanup is its explicit responsibility.
+    pub(crate) fn into_execution_handle(mut self) -> ObjectId {
+        drop(self.runtime.take());
+        self.id
+    }
+
     /// Consume this root and transfer its owned reference to the caller.
     ///
     /// The existing edge moves without changing its reference count. Taking

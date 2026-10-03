@@ -3,9 +3,9 @@ use super::FrameCold;
 use crate::engine::api::error::Error;
 use std::ops::{Deref, DerefMut};
 
-/// Keep owners first: abort drops activation/function/input before releasing
-/// the executable publication, matching the prior separate-frame drop order.
-/// Run splits these three fields once, so its slot borrow never aliases owners.
+/// Execution releases activation/function/input explicitly before releasing
+/// the executable publication. Run splits these fields once, so its slot borrow
+/// never aliases the owners; the record itself has no runtime-owning destructor.
 pub(in crate::engine::vm) struct FrameBody {
     pub owners: FrameCold,
     pub executable: Resident<crate::engine::code::runtime::PublishedFunctionSnapshot>,
@@ -66,6 +66,23 @@ pub(in crate::engine::vm) struct CallStorage {
     regions: Vec<Vec<crate::engine::vm::VmUnwindRegion>>,
 }
 impl CallStorage {
+    /// Explicit migration boundary for rare public-root payloads. The state
+    /// borrow ends before the publication root is disposed; direct execution
+    /// uses recycle(state, cold) after those legacy payloads have been moved.
+    pub(in crate::engine::vm) fn recycle_legacy(
+        &mut self,
+        runtime: &crate::engine::api::Runtime,
+        mut cold: ColdFrame,
+    ) -> Result<(), crate::engine::api::runtime_error::RuntimeError> {
+        cold.release_legacy();
+        let publication = cold.executable.take_optional();
+        {
+            let mut state = runtime.0.state.borrow_mut();
+            self.recycle(&mut state, cold)?;
+        }
+        drop(publication);
+        Ok(())
+    }
     /// Reserve recycler metadata while all source owners are still available.
     pub(in crate::engine::vm) fn reserve(&mut self) -> Result<(), Error> {
         self.reserve_depth(1)
@@ -172,11 +189,12 @@ impl CallStorage {
             (ColdFrame::new(frame), size_of::<FrameBody>())
         }
     }
-    pub(in crate::engine::vm) fn recycle(&mut self, mut cold: ColdFrame) {
-        cold.release_normalized_this();
-        cold.release_eval_arguments();
-        cold.release_resume_throw();
-        cold.release_constructor_return();
+    pub(in crate::engine::vm) fn recycle(
+        &mut self,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        mut cold: ColdFrame,
+    ) -> Result<(), crate::engine::api::runtime_error::RuntimeError> {
+        cold.release_owned(state)?;
         let mut flags = std::mem::take(&mut cold.reusable_captured_locals);
         flags.clear();
 
@@ -206,6 +224,7 @@ impl CallStorage {
         if self.empty_frames.len() < self.empty_frames.capacity() {
             self.empty_frames.push(cold.0);
         }
+        Ok(())
     }
 }
 
@@ -248,12 +267,14 @@ mod tests {
         let function = runtime.new_object(None).unwrap();
         let id = function.object_id();
         cold.function =
-            crate::engine::vm::closure::FrameFunction::new(function, Default::default()).into();
+            crate::engine::vm::closure::FrameFunction::new(function, Default::default())
+                .unwrap()
+                .into();
         cold.input = CallInput::new(&runtime, JsValue::Undefined, JsValue::Undefined, None).into();
         cold.executable = executable.into();
         cold.window = window.into();
         slots.clear_frame(&runtime, cold.window.take()).unwrap();
-        storage.recycle(cold);
+        storage.recycle_legacy(&runtime, cold).unwrap();
         assert!(runtime.0.state.borrow().heap.object(id).is_err());
         let cached = &storage.empty_frames[0];
         assert!(cached.executable.0.is_none() && cached.window.0.is_none());
@@ -369,6 +390,9 @@ impl<T> From<T> for Resident<T> {
     }
 }
 impl<T> Resident<T> {
+    pub(in crate::engine::vm) fn take_optional(&mut self) -> Option<T> {
+        self.0.take()
+    }
     pub(in crate::engine::vm) fn take(&mut self) -> T {
         self.0.take().expect("resident owner already taken")
     }
@@ -477,21 +501,14 @@ mod lazy_tests {
         assert!(cold.rare.get().is_none());
         assert!(cold.input.callee_global.is_none());
         let expected = runtime.global_object_for_realm(context.realm).unwrap();
-        let first = cold
-            .input
-            .callee_global(&runtime, context.realm)
-            .unwrap()
-            .object_id();
+        let first = cold.input.callee_global(&runtime, context.realm).unwrap();
         assert_eq!(first, expected.object_id());
         assert_eq!(
-            cold.input
-                .callee_global(&runtime, context.realm)
-                .unwrap()
-                .object_id(),
+            cold.input.callee_global(&runtime, context.realm).unwrap(),
             first
         );
         assert!(cold.rare.get().is_none());
-        storage.recycle(cold);
+        storage.recycle_legacy(&runtime, cold).unwrap();
         assert!(storage.capture_flags.is_empty());
         let (cold, _) = storage.vacant(context.realm);
         assert!(cold.rare.get().is_none());

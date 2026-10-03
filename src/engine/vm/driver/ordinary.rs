@@ -337,15 +337,15 @@ pub(super) fn finish(
         return Ok(ReturnProgress::Declined);
     }
     // Result ownership precedes window clearing and activation removal.
-    let value = execution.pending.take().unwrap();
-    let mut frame = execution.frames.pop(id)?;
-    let guard = frame.cold.entry_guard.take();
-    execution.slots.clear_frame(runtime, frame.window.take())?;
-    if let Some(guard) = guard {
-        guard.finish().map_err(runtime_error_to_vm_error)?;
-    }
-    execution.call_storage.recycle(frame.cold);
+    let frame = execution.frames.pop(id)?;
+    let mut frame =
+        crate::engine::vm::frame::RetiredFrame::new(runtime, &mut execution.slots, frame);
+    frame.clear_window()?;
+    frame
+        .recycle(&mut execution.call_storage)
+        .map_err(runtime_error_to_vm_error)?;
     if target.operation.is_some() {
+        let value = execution.pending.take().expect("retired property return");
         #[cfg(feature = "profiling")]
         crate::engine::api::profiling::record_owned_execution_event("property_return_direct");
         return match crate::engine::vm::proxy_get_driver::reply(
@@ -364,7 +364,14 @@ pub(super) fn finish(
     }
     let parent = execution.frames.current_mut(target.frame()?)?;
     if matches!(target.value_use, ReturnValue::Push) {
-        execution.slots.push(&mut parent.window, value)?;
+        let value = execution.pending.as_mut().expect("retired ordinary return");
+        execution.slots.push_owned(&mut parent.window, value)?;
+        execution.pending = None;
+    } else {
+        let value = execution.pending.take().expect("discarded ordinary return");
+        runtime
+            .release_jsvalue(value)
+            .map_err(runtime_error_to_vm_error)?;
     }
     #[cfg(feature = "profiling")]
     crate::engine::api::profiling::record_owned_execution_event("ordinary_return_direct");

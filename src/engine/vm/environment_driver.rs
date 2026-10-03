@@ -656,7 +656,7 @@ pub(super) fn prepare_environment_read(
 /// Authenticate the published name and the closure-owned cell without taking
 /// another cell owner. The view is valid only while these frame owners live.
 fn global_cell_view<'a>(
-    runtime: &Runtime,
+    runtime: &'a Runtime,
     executable: &'a crate::engine::code::runtime::PublishedFunctionSnapshot,
     roots: &'a super::closure::ClosureSlots,
     index: u16,
@@ -683,7 +683,7 @@ fn global_cell_view<'a>(
         ));
     };
     let root = roots
-        .get(usize::from(index))
+        .get(runtime, usize::from(index))
         .ok_or_else(|| Error::internal("global closure slot is out of bounds"))?;
     if !root.belongs_to(runtime) {
         return Err(Error::internal("global closure belongs to another runtime"));

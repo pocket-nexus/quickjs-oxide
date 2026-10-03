@@ -104,7 +104,7 @@ pub(super) fn step(
                     .cold
                     .function
                     .closures()
-                    .get(usize::from(index))
+                    .get(runtime, usize::from(index))
                     .ok_or_else(|| Error::internal("private closure slot is out of bounds"))?,
             ),
         };
@@ -296,7 +296,7 @@ fn enter_accessor(
                 .cold
                 .function
                 .closures()
-                .get(usize::from(index))
+                .get(runtime, usize::from(index))
                 .ok_or_else(|| Error::internal("private closure slot is out of bounds"))?,
         ),
     };

@@ -231,6 +231,10 @@ struct EncodedActivationEntry {
 
 impl Drop for EncodedActivationEntry {
     fn drop(&mut self) {
+        if self.runtime.skip_cleanup() {
+            return;
+        }
+        let _unwind = self.runtime.unwind_guard();
         let Some(mut entry) = self.entry.take() else {
             return;
         };
@@ -244,6 +248,9 @@ impl Drop for EncodedActivationEntry {
             },
         );
         super::stack::release_unconverted_frame_storage(&self.runtime, storage);
+        if entry.release(&self.runtime).is_err() {
+            self.runtime.0.poisoned.set(true);
+        }
     }
 }
 
@@ -251,6 +258,8 @@ impl Drop for EncodedActivationEntry {
 /// are detached. `host.active_frame_token` remains a sentinel until the
 /// short-lived bytecode active frame is pushed for the actual resume.
 pub(crate) struct RootedVmActivation {
+    runtime: std::rc::Weak<crate::engine::heap::runtime::RuntimeInner>,
+    domain: u64,
     entry: Option<super::frame::FrameEntry>,
     kind: VmSuspendKind,
     saved_pc: usize,
@@ -258,11 +267,18 @@ pub(crate) struct RootedVmActivation {
 
 impl Drop for RootedVmActivation {
     fn drop(&mut self) {
-        let Some(entry) = self.entry.take() else {
-            return;
-        };
-        let runtime = entry.cold.function.runtime().clone();
-        super::stack::release_frame_storage(&runtime, entry.storage);
+        if let Some(runtime) = self.runtime.upgrade().map(Runtime) {
+            runtime.unregister_raw_execution_owner();
+            if runtime.skip_cleanup() {
+                return;
+            }
+            let _unwind = runtime.unwind_guard();
+            if let Some(entry) = self.entry.take() {
+                if entry.release(&runtime).is_err() {
+                    runtime.0.poisoned.set(true);
+                }
+            }
+        }
     }
 }
 
@@ -294,7 +310,7 @@ impl RootedVmActivation {
             .entry
             .as_ref()
             .expect("rooted activation entry is present before prepare");
-        if entry.cold.function.runtime().domain_id() != runtime.domain_id() {
+        if self.domain != runtime.domain_id() || !entry.cold.function.belongs_to(runtime) {
             return Err(RuntimeError::WrongRuntime("suspended execution"));
         }
         // Internal resume values are handle-only and carry no runtime tag, so
@@ -343,7 +359,7 @@ impl RootedVmActivation {
                 ))?
                 .try_clone()?;
             let guard = runtime.push_bytecode_active_frame(
-                (*entry.cold.function).try_clone()?,
+                entry.cold.function.to_root(runtime)?,
                 root,
                 entry.executable.realm,
                 entry.executable.frame_layout().is_strict(),
@@ -355,10 +371,10 @@ impl RootedVmActivation {
                     RuntimeError::Invariant("suspended resume PC is not an execution boundary"),
                 )?),
             )?;
-            entry.cold.entry_guard = Some(guard);
+            entry.cold.entry_guard = Some(guard.into_internal());
             // Both frame storage and the resume input retain their original
             // owners through validation and the final fallible reservation.
-            owned::prepare(entry, self.kind, &mut pending_resume)
+            owned::prepare(runtime, entry, self.kind, &mut pending_resume)
         })();
         if let Err(error) = prepared {
             if let Some(resume) = pending_resume {
@@ -392,8 +408,12 @@ pub(super) fn freeze_entry(
     let _profile_phase = crate::engine::api::profiling::PhaseTimer::start_vm("freeze.encode");
     // Encoding has not yet published or balanced any conversion edges. Keep
     // the ordinary frame owner until the complete encoded record exists.
+    let mut entry = super::frame::FrameEntryGuard::new(runtime, entry);
+    let weak = runtime.register_raw_execution_owner()?;
     let mut source = RootedVmActivation {
-        entry: Some(entry),
+        runtime: weak,
+        domain: runtime.domain_id(),
+        entry: Some(entry.take()),
         kind,
         saved_pc: pc,
     };
@@ -439,7 +459,7 @@ pub(super) fn freeze_entry(
         normalized_this,
         new_target: input.new_target.as_raw(),
         strict: entry.executable.frame_layout().is_strict(),
-        callee_global: global.object_id(),
+        callee_global: *global,
     };
     let data = GeneratorActivationData {
         bytecode: bytecode.bytecode_id(),
@@ -582,15 +602,13 @@ pub(crate) fn thaw(
             return Err(error);
         }
     };
-    let input = super::CallInput::new(&runtime, this_value, new_target, Some(callee_global));
-    let normalized_this = data
-        .vm
-        .normalized_this
-        .as_ref()
-        .map(|value| decode_raw_jsvalue(&runtime, value.clone()))
-        .transpose()?;
+    let mut input = super::protocol::CallInputGuard::new(
+        &runtime,
+        super::CallInput::new(&runtime, this_value, new_target, Some(callee_global)),
+    );
+    let function = crate::engine::vm::closure::FrameFunction::new(current_function, closure_slots)?;
     let storage = roots.take();
-    let mut entry = super::frame::FrameEntry {
+    let entry = super::frame::FrameEntry {
         initialize_bindings: false,
         property_generation: 0,
         iterator_generation: 0,
@@ -601,20 +619,26 @@ pub(crate) fn thaw(
             rare: std::cell::OnceCell::new(),
             return_to: None,
             entry_guard: None,
-            function: crate::engine::vm::closure::FrameFunction::new(
-                current_function,
-                closure_slots,
-            )
-            .into(),
+            function: function.into(),
             reusable_captured_locals: data.reusable_captured_locals.clone(),
-            input: input.into(),
+            input: input.take().into(),
         }),
         storage,
     };
+    let mut entry = super::frame::FrameEntryGuard::new(&runtime, entry);
     entry.cold.regions = data.vm.regions.clone();
+    let normalized_this = data
+        .vm
+        .normalized_this
+        .as_ref()
+        .map(|value| decode_raw_jsvalue(&runtime, value.clone()))
+        .transpose()?;
     entry.cold.normalized_this = normalized_this;
+    let weak = runtime.register_raw_execution_owner()?;
     Ok(RootedVmActivation {
-        entry: Some(entry),
+        runtime: weak,
+        domain: runtime.domain_id(),
+        entry: Some(entry.take()),
         kind,
         saved_pc: data.vm.pc,
     })
