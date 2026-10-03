@@ -9,7 +9,8 @@
 - [执行不变量](principles.md)：所有权、借用、位置与可观察操作。
 - [类型化存储](typed-arenas.md)：捕获变量、形状和回收。
 - [测量方法](measurement.md)：构建身份、固定工作量、profile 与资源成本。
-- [内部执行所有权阶段 A 验收](runtime-core-stage-a.md)：当前组合的原版 Score、固定时间、资源交换、机制与历史 Boa 对照。
+- [内部执行所有权阶段 A 验收](runtime-core-stage-a.md)：最近完整验收的组合，包含原版 Score、固定时间、资源交换、机制与历史 Boa 对照。
+- [内部执行所有权阶段 B](runtime-core-stage-b.md)：当前已提交的状态迁移、局部正确性验证及尚未完成的阶段门槛；新增提交尚无性能结论。
 - [2026-10-01 提交栈测量](current-measurement.md)：旧 main 与 PR #84 的累计原版 Score，保留原来的归因范围。
 - [V8 v7 已采纳优化](v8-v7-boa-parity.md)：当前实现的提交、机制与组合验证。
 - [RegExpSplit 简化验收](v8-v7-structural-simplification.md)：2026-10-02 普通 release 原版成绩、机制与历史 Boa 对照。
