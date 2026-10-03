@@ -498,6 +498,161 @@ pub(super) fn finish(
 #[cfg(test)]
 mod layout_tests {
     #[test]
+    fn unhinted_native_callee_is_selected_once_and_keeps_its_slot_owner() {
+        use crate::engine::{
+            api::Runtime,
+            value::JsValue,
+            vm::{
+                call::CallableExecution,
+                execute::{VmAction, execute_frame_in_state},
+                execution::{ExecutionLimits, RunningExecution},
+            },
+        };
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let callable = runtime
+            .callable_from_value(
+                context
+                    .eval("(function invoke(fn,arg){let result=fn(arg,9);return result})")
+                    .unwrap(),
+            )
+            .unwrap();
+        let CallableExecution::Bytecode {
+            bytecode,
+            closure_slots,
+        } = runtime.bytecode_for_callable(&callable).unwrap()
+        else {
+            unreachable!()
+        };
+        let callee = runtime
+            .into_jsvalue(context.eval("Math.min").unwrap())
+            .unwrap();
+        let JsValue::Object(function) = callee else {
+            unreachable!()
+        };
+        let entry = crate::engine::vm::root_call::prepare_call(
+            &runtime,
+            context.realm,
+            &callable,
+            JsValue::Undefined,
+            JsValue::Undefined,
+            vec![callee, JsValue::Int(7)],
+            bytecode,
+            closure_slots,
+        )
+        .unwrap();
+        let mut execution = RunningExecution::new(&runtime, ExecutionLimits::default()).unwrap();
+        let parent =
+            crate::engine::vm::driver::push_frame(&runtime, &mut execution, entry).unwrap();
+        assert!(execution.selected_native.is_none());
+        let runtime_owners = std::rc::Rc::strong_count(&runtime.0);
+        #[cfg(feature = "profiling")]
+        let profile = crate::engine::api::profiling::CostProfile::start();
+        let action = {
+            let mut state = runtime.0.state.borrow_mut();
+            execute_frame_in_state(&runtime, &mut state, &mut execution, parent).unwrap()
+        };
+        let VmAction::Call {
+            arguments,
+            method,
+            tail,
+            fallthrough,
+        } = action
+        else {
+            panic!("native call exits the ordinary execution segment")
+        };
+        assert_eq!(arguments, 2);
+        assert!(!method && !tail);
+        let selected = execution
+            .selected_native
+            .take()
+            .expect("carried native fact");
+        assert!(selected.matches_in_domain(runtime.domain_id(), function));
+        assert!(!selected.matches_in_domain(runtime.domain_id().wrapping_add(1), function));
+        let other = runtime.new_object(None).unwrap();
+        assert!(!selected.matches_in_domain(runtime.domain_id(), other.object_id()));
+        drop(other);
+        assert_eq!(std::rc::Rc::strong_count(&runtime.0), runtime_owners);
+        let frame = execution.frames.current_mut(parent).unwrap();
+        assert_eq!(
+            execution
+                .slots
+                .peek(&frame.window, usize::from(arguments))
+                .unwrap(),
+            &JsValue::Object(function),
+        );
+        assert!(matches!(
+            super::enter_selected(
+                &runtime,
+                &mut execution,
+                parent,
+                arguments,
+                method,
+                tail,
+                Some(selected),
+                fallthrough,
+            )
+            .unwrap(),
+            super::Entry::NativeReady
+        ));
+        {
+            let mut state = runtime.0.state.borrow_mut();
+            assert!(matches!(
+                execute_frame_in_state(&runtime, &mut state, &mut execution, parent).unwrap(),
+                VmAction::Complete
+            ));
+        }
+        assert_eq!(execution.pending, Some(JsValue::Int(7)));
+        assert!(execution.selected_native.is_none());
+        #[cfg(feature = "profiling")]
+        {
+            let events = profile.snapshot().owned_execution_events;
+            assert_eq!(events.get("direct_callee_payload_selection"), Some(&1));
+            assert_eq!(events.get("core.call_decline.native"), Some(&1));
+            assert_eq!(
+                events.get("native_linked_classification_consumed"),
+                Some(&1)
+            );
+            assert_eq!(events.get("native_callee_owner_transferred"), Some(&1));
+        }
+        assert!(!runtime.0.deferred_references.has_pending());
+        drop(execution);
+        assert!(!runtime.is_poisoned());
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+    }
+
+    #[cfg(feature = "profiling")]
+    #[test]
+    fn outer_native_hint_survives_ordinary_argument_calls() {
+        use crate::engine::api::{Runtime, Value, profiling::CostProfile};
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        drop(context.eval("Math.min;Math.max").unwrap());
+        let profile = CostProfile::start();
+        assert_eq!(
+            context
+                .eval("(()=>{function arg(){return 7};return Math.min(arg(),9)})()")
+                .unwrap(),
+            Value::Int(7)
+        );
+        let events = profile.snapshot().owned_execution_events;
+        assert_eq!(
+            events.get("native_linked_classification_consumed"),
+            Some(&1)
+        );
+        assert_eq!(events.get("core.call_decline.native_hint"), Some(&1));
+        drop(profile);
+        assert_eq!(
+            context
+                .eval("(()=>{return Math.min((()=>{let f=Math.max;return f(3,7)})(),9)})()")
+                .unwrap(),
+            Value::Int(7)
+        );
+        assert!(runtime.0.state.borrow().active_frames.is_empty());
+        assert!(!runtime.is_poisoned());
+    }
+
+    #[test]
     fn nonmethod_zero_argument_call_keeps_ordinary_native_and_general_entries() {
         use crate::engine::api::{Runtime, Value};
         let runtime = Runtime::new();
