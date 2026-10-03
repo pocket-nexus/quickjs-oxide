@@ -290,117 +290,20 @@ impl OrdinaryCall {
         fallthrough: crate::engine::vm::execute::FallthroughPc,
     ) -> Result<(), Error> {
         let _unwind = runtime.unwind_guard();
-        self.install_in_state(
-            runtime,
-            &mut runtime.0.state.borrow_mut(),
-            execution,
-            parent,
-            checked,
-            tail,
-            fallthrough,
-        )
+        let mut state = runtime.0.state.borrow_mut();
+        let mut execution = crate::engine::vm::stack::FrameExecution::admit(execution, parent)?;
+        execution.install_ordinary(runtime, &mut state, self, checked, tail, fallthrough)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub(in crate::engine::vm) fn install_in_state(
+    /// Consume facts whose callee edge remains in the admitted caller slot.
+    pub(in crate::engine::vm) fn into_slot_parts(
         self,
-        runtime: &Runtime,
-        state: &mut crate::engine::heap::runtime::RuntimeState,
-        execution: &mut crate::engine::vm::execution::RunningExecution,
-        parent: crate::engine::vm::frame::FrameId,
-        checked: crate::engine::vm::stack::CheckedOrdinaryCallOperands,
-        tail: bool,
-        fallthrough: crate::engine::vm::execute::FallthroughPc,
-    ) -> Result<(), Error> {
+    ) -> (ObjectId, PublishedFunctionSnapshot, std::rc::Rc<[VarRefId]>) {
         debug_assert!(
             self.owner.is_none(),
-            "ordinary slot installation transfers its source owner"
+            "slot installation transfers its source owner"
         );
-        #[cfg(feature = "profiling")]
-        let _timer =
-            crate::engine::api::profiling::PhaseTimer::start_vm_sampled("ordinary.install.sampled");
-        use crate::engine::vm::frame::{Frame, ReturnOwner, ReturnTarget, ReturnValue};
-        #[cfg(feature = "profiling")]
-        {
-            let count = checked.count();
-            let method = checked.method();
-            use crate::engine::api::profiling::record_owned_execution_event as record;
-            record(if method {
-                "ordinary_install.method"
-            } else {
-                "ordinary_install.function"
-            });
-            record(match count {
-                0 => "ordinary_install.args0",
-                1 => "ordinary_install.args1",
-                2 => "ordinary_install.args2",
-                3 => "ordinary_install.args3",
-                _ => "ordinary_install.args4plus",
-            });
-        }
-        let depth = execution.frames.depth() + 1;
-        execution.call_storage.reserve_depth(depth)?;
-        let frame = execution.frames.current_mut(parent)?;
-        let caller_realm = frame.executable.realm;
-        // The private continuation comes from the instruction that produced
-        // this Call. No caller instruction or slot changed during preflight.
-        let resume = fallthrough.index();
-        let (flags, flag_bytes) = if self.executable.has_captured_locals {
-            execution
-                .call_storage
-                .capture_flags(self.executable.local_definitions.len())?
-        } else {
-            (Vec::new(), 0)
-        };
-        let prepared = execution.frames.prepare_push()?;
-        let mut prepared = prepared;
-        let frame = prepared.current_mut(parent)?;
-        let installed = {
-            #[cfg(feature = "profiling")]
-            let _timer = crate::engine::api::profiling::PhaseTimer::start_vm_sampled(
-                "ordinary.install.slots.sampled",
-            );
-            execution.slots.push_ordinary_frame_in_state(
-                runtime,
-                state,
-                &self.executable.frame_layout(),
-                &mut frame.window,
-                checked,
-                self.function,
-                self.executable.observes_arguments,
-            )?
-        };
-        frame.resume_pc = resume;
-        let (mut cold, frame_bytes) = execution.call_storage.vacant(caller_realm);
-        cold.return_to = Some(ReturnTarget {
-            value_use: ReturnValue::Push,
-            owner: ReturnOwner::Frame(parent),
-            tail,
-            operation: None,
-        });
-        cold.entry_guard = None;
-        cold.function = FrameFunction::shared(runtime, installed.function, self.closure).into();
-        cold.reusable_captured_locals = flags;
-        cold.input = installed.input.into();
-        cold.executable = self.executable.into();
-        cold.window = installed.window.into();
-        prepared.install(Frame {
-            property_generation: 0,
-            iterator_generation: 0,
-            caller_realm,
-            active_frame: crate::engine::vm::frames::ActiveFrameToken::unmaterialized(),
-
-            fault_pc: 0,
-            resume_pc: 0,
-            cold,
-        });
-        #[cfg(feature = "profiling")]
-        {
-            crate::engine::api::profiling::record_owned_call_storage(frame_bytes, flag_bytes, 0);
-        }
-        #[cfg(not(feature = "profiling"))]
-        let _ = (frame_bytes, flag_bytes);
-        Ok(())
+        (self.function, self.executable, self.closure)
     }
 }
 

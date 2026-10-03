@@ -47,6 +47,7 @@ impl SlotStore {
         )
     }
 
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub(in crate::engine::vm) fn push_ordinary_frame_in_state(
         &mut self,
@@ -64,6 +65,30 @@ impl SlotStore {
                 "ordinary call operands changed after validation",
             ));
         }
+        self.push_current_ordinary_frame_in_state(
+            runtime,
+            state,
+            layout,
+            parent,
+            checked,
+            function,
+            observes_arguments,
+        )
+    }
+
+    /// Called only by a checked legacy adapter or by the current transaction
+    /// producer, which holds the exclusive store and caller window together.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn push_current_ordinary_frame_in_state(
+        &mut self,
+        runtime: &Runtime,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        layout: &FrameLayout<'_>,
+        parent: &mut FrameWindow,
+        checked: CheckedOrdinaryCallOperands,
+        function: crate::engine::heap::ObjectId,
+        observes_arguments: bool,
+    ) -> Result<InstalledOrdinaryFrame, Error> {
         let count = checked.count;
         let method = checked.method;
         let consumed = count
@@ -345,6 +370,17 @@ impl SlotStore {
         window: FrameWindow,
     ) -> Result<(), Error> {
         self.check_current(&window)?;
+        self.clear_current_frame_owned_in_state(state, poisoned, window)
+    }
+
+    /// The exclusive execution producer supplies the actual retiring window.
+    /// No detached window/currentness proof is accepted outside this module.
+    pub(super) fn clear_current_frame_owned_in_state(
+        &mut self,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        poisoned: &std::cell::Cell<bool>,
+        window: FrameWindow,
+    ) -> Result<(), Error> {
         #[cfg(feature = "profiling")]
         {
             let cleared = self.slots[window.whole()]

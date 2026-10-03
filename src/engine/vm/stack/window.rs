@@ -91,27 +91,47 @@ impl<'a> FrameExecution<'a> {
         tail: bool,
         fallthrough: crate::engine::vm::execute::FallthroughPc,
     ) -> Result<crate::engine::vm::driver::ordinary::Entry, Error> {
-        // The ordinary segment cannot consume a native activation. Preserve
-        // its already selected facts for the legacy boundary's consumer.
-        if self.execution.selected_native.is_some() {
-            return Ok(crate::engine::vm::driver::ordinary::Entry::General);
+        use crate::engine::vm::driver::ordinary::{Entry, prepare_ordinary_in_state};
+        // A weak outer method hint may remain while its ordinary arguments
+        // execute. Preflight declines only if the actual callee matches it.
+        let (prepared, depth) = {
+            let turn = self.frame();
+            let depth = turn.transaction.window.depth;
+            let prepared = prepare_ordinary_in_state(
+                runtime,
+                state,
+                &turn.transaction,
+                turn.executable,
+                *turn.fault_pc,
+                usize::from(arguments),
+                method,
+                turn.selected_native.as_ref(),
+            )?;
+            (prepared, depth)
+        };
+        let Some((call, checked)) = prepared else {
+            return Ok(Entry::General);
+        };
+        if !self.execution.frames.can_push() || runtime.bytecode_call_would_overflow() {
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "core.call_decline.overflow",
+            );
+            return Ok(Entry::General);
         }
-        let id = self
-            .execution
-            .frames
-            .current_id()
-            .expect("an admitted ordinary execution has a current frame");
-        crate::engine::vm::driver::ordinary::enter_selected_in_state(
-            runtime,
-            state,
-            self.execution,
-            id,
-            arguments,
-            method,
-            tail,
-            None,
-            fallthrough,
-        )
+        // The same exclusive lease produced these operands. Between preflight
+        // and consumption, only reservation/immutable authentication can occur.
+        self.install_current_ordinary(runtime, state, call, checked, tail, fallthrough)?;
+        #[cfg(feature = "profiling")]
+        {
+            crate::engine::api::profiling::record_owned_execution_event(
+                "ordinary_call.carried_fallthrough",
+            );
+            crate::engine::api::profiling::record_owned_instruction(depth);
+        }
+        #[cfg(not(feature = "profiling"))]
+        let _ = depth;
+        Ok(Entry::Ordinary)
     }
 
     pub(in crate::engine::vm) fn enter_constructor(
@@ -136,17 +156,258 @@ impl<'a> FrameExecution<'a> {
         )
     }
 
+    /// The legacy call driver supplies a detached checked operand witness.
+    /// Recheck its identity/depth within this admitted lease before invoking
+    /// the same installer used by uninterrupted internal calls.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::engine::vm) fn install_ordinary(
+        &mut self,
+        runtime: &Runtime,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        call: crate::engine::vm::call::ordinary::OrdinaryCall,
+        checked: CheckedOrdinaryCallOperands,
+        tail: bool,
+        fallthrough: crate::engine::vm::execute::FallthroughPc,
+    ) -> Result<(), Error> {
+        {
+            let turn = self.frame();
+            if turn.transaction.window.id != checked.window_id
+                || turn.transaction.window.depth != checked.depth
+            {
+                return Err(Error::internal(
+                    "ordinary call operands changed after validation",
+                ));
+            }
+        }
+        self.install_current_ordinary(runtime, state, call, checked, tail, fallthrough)
+    }
+
+    /// Sole ordinary slot installer. This method cannot be called through a
+    /// raw RunningExecution or a caller-supplied current-frame identity.
+    #[allow(clippy::too_many_arguments)]
+    fn install_current_ordinary(
+        &mut self,
+        runtime: &Runtime,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        call: crate::engine::vm::call::ordinary::OrdinaryCall,
+        checked: CheckedOrdinaryCallOperands,
+        tail: bool,
+        fallthrough: crate::engine::vm::execute::FallthroughPc,
+    ) -> Result<(), Error> {
+        #[cfg(feature = "profiling")]
+        let _timer =
+            crate::engine::api::profiling::PhaseTimer::start_vm_sampled("ordinary.install.sampled");
+        use crate::engine::vm::frame::{Frame, ReturnOwner, ReturnTarget, ReturnValue};
+        #[cfg(feature = "profiling")]
+        {
+            let count = checked.count();
+            let method = checked.method();
+            use crate::engine::api::profiling::record_owned_execution_event as record;
+            record(if method {
+                "ordinary_install.method"
+            } else {
+                "ordinary_install.function"
+            });
+            record(match count {
+                0 => "ordinary_install.args0",
+                1 => "ordinary_install.args1",
+                2 => "ordinary_install.args2",
+                3 => "ordinary_install.args3",
+                _ => "ordinary_install.args4plus",
+            });
+        }
+        let execution = &mut *self.execution;
+        let (function, executable, closure) = call.into_slot_parts();
+        let depth = execution.frames.depth() + 1;
+        execution.call_storage.reserve_depth(depth)?;
+        let (parent, frame) = execution
+            .frames
+            .current_frame_mut()
+            .expect("an admitted ordinary call has a caller");
+        let caller_realm = frame.executable.realm;
+        // The private continuation comes from the instruction that produced
+        // this Call. No caller instruction or slot changed during preflight.
+        let resume = fallthrough.index();
+        let (flags, flag_bytes) = if executable.has_captured_locals {
+            execution
+                .call_storage
+                .capture_flags(executable.local_definitions.len())?
+        } else {
+            (Vec::new(), 0)
+        };
+        let prepared = execution.frames.prepare_push()?;
+        let mut prepared = prepared;
+        let (_, frame) = prepared
+            .current_frame_mut()
+            .expect("ordinary publication retains its caller");
+        let installed = {
+            #[cfg(feature = "profiling")]
+            let _timer = crate::engine::api::profiling::PhaseTimer::start_vm_sampled(
+                "ordinary.install.slots.sampled",
+            );
+            FrameTransaction {
+                store: &mut execution.slots,
+                window: &mut frame.cold.window,
+            }
+            .install_ordinary_window(
+                runtime,
+                state,
+                &executable.frame_layout(),
+                checked,
+                function,
+                executable.observes_arguments,
+            )?
+        };
+        frame.resume_pc = resume;
+        let (mut cold, frame_bytes) = execution.call_storage.vacant(caller_realm);
+        cold.return_to = Some(ReturnTarget {
+            value_use: ReturnValue::Push,
+            owner: ReturnOwner::Frame(parent),
+            tail,
+            operation: None,
+        });
+        cold.entry_guard = None;
+        cold.function =
+            crate::engine::vm::closure::FrameFunction::shared(runtime, installed.function, closure)
+                .into();
+        cold.reusable_captured_locals = flags;
+        cold.input = installed.input.into();
+        cold.executable = executable.into();
+        cold.window = installed.window.into();
+        prepared.install(Frame {
+            property_generation: 0,
+            iterator_generation: 0,
+            caller_realm,
+            active_frame: crate::engine::vm::frames::ActiveFrameToken::unmaterialized(),
+
+            fault_pc: 0,
+            resume_pc: 0,
+            cold,
+        });
+        #[cfg(feature = "profiling")]
+        {
+            crate::engine::api::profiling::record_owned_call_storage(frame_bytes, flag_bytes, 0);
+        }
+        #[cfg(not(feature = "profiling"))]
+        let _ = (frame_bytes, flag_bytes);
+        Ok(())
+    }
+
+    /// Retire actual current frames, preserving a registered result through
+    /// Base normalization and tail propagation. Legacy roots/continuations
+    /// return with the actual remaining frame and pending owner untouched.
     pub(in crate::engine::vm) fn finish_ordinary(
         &mut self,
         runtime: &Runtime,
         state: &mut crate::engine::heap::runtime::RuntimeState,
     ) -> Result<crate::engine::vm::driver::ordinary::ReturnProgress, Error> {
-        let id = self
-            .execution
-            .frames
-            .current_id()
-            .expect("an admitted ordinary execution has a current frame");
-        crate::engine::vm::driver::ordinary::finish_in_state(runtime, state, self.execution, id)
+        use crate::engine::vm::{driver::ordinary::ReturnProgress, frame::ReturnValue};
+        let execution = &mut *self.execution;
+        loop {
+            let (_, frame) = execution
+                .frames
+                .current_frame_mut()
+                .expect("an admitted ordinary return has a current frame");
+            let Some(target) = frame.cold.state_return() else {
+                #[cfg(feature = "profiling")]
+                frame.cold.record_state_return_decline();
+                return Ok(ReturnProgress::Declined);
+            };
+            if target.operation.is_some() {
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "core.return_decline.operation",
+                );
+                return Ok(ReturnProgress::Declined);
+            }
+            if frame.executable.root().is_some() {
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "core.return_decline.public_root",
+                );
+                return Ok(ReturnProgress::Declined);
+            }
+            if frame
+                .cold
+                .rare
+                .get()
+                .is_some_and(|rare| !rare.property_keys.is_empty())
+            {
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "core.return_decline.live_wait",
+                );
+                return Ok(ReturnProgress::Declined);
+            }
+            if execution.pending.is_none() {
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "core.return_decline.missing_result",
+                );
+                return Ok(ReturnProgress::Declined);
+            }
+            if let Err(error) = frame
+                .cold
+                .normalize_base_return_in_state(state, &mut execution.pending)
+            {
+                runtime.0.poisoned.set(true);
+                return Err(super::runtime_error_to_vm_error(error));
+            }
+            let mut frame = execution
+                .frames
+                .pop_current()
+                .expect("ordinary retirement owns the actual top frame");
+            if let Err(error) = execution.slots.clear_current_frame_owned_in_state(
+                state,
+                &runtime.0.poisoned,
+                frame.window.take(),
+            ) {
+                runtime.0.poisoned.set(true);
+                return Err(error);
+            }
+            if let Err(error) = execution.call_storage.recycle(state, frame.cold) {
+                runtime.0.poisoned.set(true);
+                return Err(super::runtime_error_to_vm_error(error));
+            }
+            // Return destinations may originate in a legacy/materialized entry;
+            // preserve this semantic routing check, independently of admission.
+            let destination = target.frame()?;
+            let (current, parent) = execution.frames.current_frame_mut().ok_or_else(|| {
+                Error::internal("frame identity is not the current execution frame")
+            })?;
+            if current != destination {
+                return Err(Error::internal(
+                    "frame identity is not the current execution frame",
+                ));
+            }
+            if target.tail {
+                #[cfg(feature = "profiling")]
+                crate::engine::api::profiling::record_owned_execution_event(
+                    "ordinary_tail_return_direct",
+                );
+                continue;
+            }
+            if matches!(target.value_use, ReturnValue::Push) {
+                FrameTransaction {
+                    store: &mut execution.slots,
+                    window: &mut parent.cold.window,
+                }
+                .slots()
+                .push_pending(&mut execution.pending)?;
+            } else {
+                let value = execution
+                    .pending
+                    .take()
+                    .expect("registered discarded result");
+                if let Err(error) = state.release_jsvalue(value) {
+                    runtime.0.poisoned.set(true);
+                    return Err(super::runtime_error_to_vm_error(error));
+                }
+            }
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event("ordinary_return_direct");
+            return Ok(ReturnProgress::Returned);
+        }
     }
 }
 
@@ -178,8 +439,10 @@ pub(in crate::engine::vm) struct FrameTransaction<'a> {
 ///
 /// The driver may carry this across authentication and allocation, but must not
 /// write a caller slot, switch frames, or invoke JavaScript before consuming it.
-/// The install path checks window identity and depth again; those checks alone
-/// do not certify unchanged slot contents after an arbitrary intervening write.
+/// A legacy installer checks window identity and depth again; those checks
+/// alone do not certify unchanged slots after an arbitrary intervening write.
+/// Internal producers instead consume this within their exclusive execution
+/// lease, with no slot mutation or JavaScript between preflight and transfer.
 pub(in crate::engine::vm) struct CheckedOrdinaryCallOperands {
     pub(super) window_id: u64,
     pub(super) depth: usize,
@@ -200,6 +463,28 @@ impl CheckedOrdinaryCallOperands {
 }
 
 impl FrameTransaction<'_> {
+    /// Consume the actual caller window before publishing its child. Only the
+    /// private execution producer combines this lease with preflighted operands.
+    #[allow(clippy::too_many_arguments)]
+    fn install_ordinary_window(
+        self,
+        runtime: &Runtime,
+        state: &mut crate::engine::heap::runtime::RuntimeState,
+        layout: &crate::engine::code::function::layout::FrameLayout<'_>,
+        checked: CheckedOrdinaryCallOperands,
+        function: crate::engine::heap::ObjectId,
+        observes_arguments: bool,
+    ) -> Result<super::call::InstalledOrdinaryFrame, Error> {
+        self.store.push_current_ordinary_frame_in_state(
+            runtime,
+            state,
+            layout,
+            self.window,
+            checked,
+            function,
+            observes_arguments,
+        )
+    }
     pub(in crate::engine::vm) fn peek(&self, offset: usize) -> Result<&JsValue, Error> {
         self.store.peek_current(self.window, offset)
     }
@@ -1039,6 +1324,8 @@ mod primitive_transaction_tests {
             &[Instruction::Call(0), Instruction::Return],
             vec![JsValue::Object(child_id)],
         );
+        #[cfg(feature = "profiling")]
+        let profile = crate::engine::api::profiling::CostProfile::start();
         let mut state = runtime.0.state.borrow_mut();
         {
             let mut segment = FrameExecution::admit(&mut execution, parent).unwrap();
@@ -1073,6 +1360,73 @@ mod primitive_transaction_tests {
             state.heap.object(child_id).is_err(),
             "retirement releases the callee's final owner"
         );
+        #[cfg(feature = "profiling")]
+        {
+            let events = profile.snapshot().owned_execution_events;
+            assert_eq!(events.get("slot_authentication"), Some(&1));
+            assert_eq!(events.get("core.window_authentication"), Some(&1));
+            assert_eq!(events.get("core.pc_authentication"), Some(&1));
+            assert_eq!(events.get("ordinary_return_direct"), Some(&1));
+        }
+    }
+
+    #[test]
+    fn legacy_installer_rejects_changed_operand_witness_before_transfer() {
+        use crate::engine::{
+            code::bytecode::Instruction,
+            vm::{call::ordinary::DirectSelection, execute::FallthroughPc},
+        };
+        let runtime = Runtime::new();
+        let mut context = runtime.new_context().unwrap();
+        let child = runtime
+            .into_jsvalue(context.eval("(function(){return 42})").unwrap())
+            .unwrap();
+        let JsValue::Object(child_id) = child else {
+            panic!("bytecode function")
+        };
+        let mut execution = running(&runtime);
+        let parent = execution_frame(
+            &runtime,
+            &mut execution,
+            context.realm,
+            &[Instruction::Call(0), Instruction::Return],
+            vec![JsValue::Object(child_id)],
+        );
+        let mut state = runtime.0.state.borrow_mut();
+        {
+            let mut segment = FrameExecution::admit(&mut execution, parent).unwrap();
+            let (checked, fallthrough) = {
+                let mut turn = segment.frame();
+                let checked = turn
+                    .transaction
+                    .validate_ordinary_call_operands(0, false)
+                    .unwrap();
+                let fallthrough =
+                    FallthroughPc::from_decoded(turn.executable.exec.decode_published(0).unwrap());
+                turn.transaction.slots().push(JsValue::Int(7)).unwrap();
+                (checked, fallthrough)
+            };
+            let DirectSelection::Ordinary(selected) =
+                DirectSelection::select_in_state(&runtime, &state, child_id).unwrap()
+            else {
+                panic!("ordinary selection")
+            };
+            let call = selected
+                .authenticate_slot_in_state(&runtime, &state)
+                .unwrap();
+            assert!(
+                matches!(segment.install_ordinary(&runtime, &mut state, call, checked, false, fallthrough),
+                Err(ref error) if error.to_string().contains("operands changed"))
+            );
+            let mut turn = segment.frame();
+            assert_eq!(turn.id, parent);
+            assert_eq!(turn.transaction.slots().pop().unwrap(), JsValue::Int(7));
+            assert_eq!(
+                turn.transaction.peek(0).unwrap(),
+                &JsValue::Object(child_id)
+            );
+            assert_eq!(state.heap.object_strong_count(child_id).unwrap(), 1);
+        }
     }
 
     #[test]

@@ -44,10 +44,83 @@ pub(super) fn enter(
     )
 }
 
-/// Internal ordinary calls stay within the executor's current state access.
-/// General and native consumers leave every source owner in its original slot
-/// before the segment hands execution back to their explicit legacy boundary.
-#[allow(clippy::too_many_arguments, clippy::drop_non_drop)]
+/// Preflight one ordinary call through an already admitted slot transaction.
+/// Selection and authentication read metadata and execute no JavaScript; every
+/// source edge stays in its caller slot until the lease's installer consumes it.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::engine::vm) fn prepare_ordinary_in_state(
+    runtime: &Runtime,
+    state: &crate::engine::heap::runtime::RuntimeState,
+    transaction: &crate::engine::vm::stack::FrameTransaction<'_>,
+    executable: &crate::engine::code::runtime::PublishedFunctionSnapshot,
+    fault_pc: usize,
+    count: usize,
+    method: bool,
+    native_hint: Option<&crate::engine::object::LinkedNativeSelection>,
+) -> Result<
+    Option<(
+        crate::engine::vm::call::ordinary::OrdinaryCall,
+        crate::engine::vm::stack::CheckedOrdinaryCallOperands,
+    )>,
+    Error,
+> {
+    transaction.peek(count + usize::from(method))?;
+    let callable = transaction.peek(count)?;
+    #[cfg(feature = "profiling")]
+    crate::engine::api::profiling::record_callsite_callee(runtime, executable, fault_pc, callable);
+    #[cfg(not(feature = "profiling"))]
+    let _ = (executable, fault_pc);
+    let crate::engine::value::JsValue::Object(function) = callable else {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event("core.call_decline.general");
+        return Ok(None);
+    };
+    if native_hint.is_some_and(|hint| hint.matches_in_domain(runtime.domain_id(), *function)) {
+        #[cfg(feature = "profiling")]
+        crate::engine::api::profiling::record_owned_execution_event(
+            "core.call_decline.native_hint",
+        );
+        return Ok(None);
+    }
+    let selected = match DirectSelection::select_in_state(runtime, state, *function) {
+        Ok(DirectSelection::Ordinary(selected)) => selected,
+        Ok(DirectSelection::General) => {
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "core.call_decline.general",
+            );
+            return Ok(None);
+        }
+        Ok(DirectSelection::Native(_)) => {
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event("core.call_decline.native");
+            return Ok(None);
+        }
+        Err(error) => {
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "core.call_decline.authentication_error",
+            );
+            transaction.validate_call_value_domains(runtime, count, method)?;
+            return Err(runtime_error_to_vm_error(error));
+        }
+    };
+    let checked = transaction.validate_ordinary_call_operands(count, method)?;
+    let call = selected
+        .authenticate_slot_in_state(runtime, state)
+        .map_err(|error| {
+            #[cfg(feature = "profiling")]
+            crate::engine::api::profiling::record_owned_execution_event(
+                "core.call_decline.authentication_error",
+            );
+            runtime_error_to_vm_error(error)
+        })?;
+    Ok(Some((call, checked)))
+}
+
+/// Test legacy entry still authenticates its supplied frame and window once.
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
 pub(in crate::engine::vm) fn enter_selected_in_state(
     runtime: &Runtime,
     state: &mut crate::engine::heap::runtime::RuntimeState,
@@ -62,60 +135,14 @@ pub(in crate::engine::vm) fn enter_selected_in_state(
     if selected_native.is_some() {
         return Ok(Entry::General);
     }
-    let (current, frame) = execution
-        .frames
-        .current_frame_mut()
-        .ok_or_else(|| Error::internal("ordinary call has no current frame"))?;
-    if current != id {
-        return Err(Error::internal(
-            "frame identity is not the current execution frame",
-        ));
-    }
-    let count = usize::from(count);
-    let depth = execution.slots.depth(&frame.window);
-    #[cfg(feature = "profiling")]
-    let fault_pc = frame.fault_pc;
-    let body = &mut *frame.cold;
-    let transaction = execution.slots.frame_transaction(&mut body.window)?;
-    transaction.peek(count + usize::from(method))?;
-    let callable = transaction.peek(count)?;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_callsite_callee(
+    crate::engine::vm::stack::FrameExecution::admit(execution, id)?.enter_ordinary(
         runtime,
-        &body.executable,
-        fault_pc,
-        callable,
-    );
-    let crate::engine::value::JsValue::Object(function) = callable else {
-        return Ok(Entry::General);
-    };
-    let selection = DirectSelection::select_in_state(runtime, state, *function);
-    let selected = match selection {
-        Ok(DirectSelection::Ordinary(selected)) => selected,
-        Ok(DirectSelection::General | DirectSelection::Native(_)) => return Ok(Entry::General),
-        Err(error) => {
-            transaction.validate_call_value_domains(runtime, count, method)?;
-            return Err(runtime_error_to_vm_error(error));
-        }
-    };
-    let checked = transaction.validate_ordinary_call_operands(count, method)?;
-    let call = selected
-        .authenticate_slot_in_state(runtime, state)
-        .map_err(runtime_error_to_vm_error)?;
-    drop(transaction);
-    if !execution.frames.can_push() || runtime.bytecode_call_would_overflow() {
-        return Ok(Entry::General);
-    }
-    call.install_in_state(runtime, state, execution, id, checked, tail, fallthrough)?;
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_execution_event(
-        "ordinary_call.carried_fallthrough",
-    );
-    #[cfg(feature = "profiling")]
-    crate::engine::api::profiling::record_owned_instruction(depth);
-    #[cfg(not(feature = "profiling"))]
-    let _ = depth;
-    Ok(Entry::Ordinary)
+        state,
+        count,
+        method,
+        tail,
+        fallthrough,
+    )
 }
 
 // These explicit drops end the authenticated slot lease before installing a
@@ -395,84 +422,15 @@ pub(in crate::engine::vm) enum ReturnProgress {
     Returned,
     Property(super::CallStep),
 }
-/// Return to an ordinary parent without an outer driver turn. Tail results
-/// remain registered while successive ordinary parents retire. A publication
-/// root or public continuation leaves that current frame and result untouched
-/// for its explicit boundary, even if earlier tail frames already retired.
+/// Test legacy return admission keeps malformed frame/window entries checked.
+#[cfg(test)]
 pub(in crate::engine::vm) fn finish_in_state(
     runtime: &Runtime,
     state: &mut crate::engine::heap::runtime::RuntimeState,
     execution: &mut RunningExecution,
-    mut id: FrameId,
+    id: FrameId,
 ) -> Result<ReturnProgress, Error> {
-    loop {
-        let frame = execution.frames.current_mut(id)?;
-        let Some(target) = frame.cold.state_return() else {
-            return Ok(ReturnProgress::Declined);
-        };
-        if target.operation.is_some()
-            || frame.executable.root().is_some()
-            || frame
-                .cold
-                .rare
-                .get()
-                .is_some_and(|rare| !rare.property_keys.is_empty())
-            || execution.pending.is_none()
-        {
-            return Ok(ReturnProgress::Declined);
-        }
-        if let Err(error) = frame
-            .cold
-            .normalize_base_return_in_state(state, &mut execution.pending)
-        {
-            runtime.0.poisoned.set(true);
-            return Err(runtime_error_to_vm_error(error));
-        }
-        // No legacy destructor is reachable below. The result stays registered
-        // across window clearing, active-frame restoration, and parent validation.
-        let mut frame = execution.frames.pop(id)?;
-        if let Err(error) = execution.slots.clear_frame_owned_in_state(
-            state,
-            &runtime.0.poisoned,
-            frame.window.take(),
-        ) {
-            runtime.0.poisoned.set(true);
-            return Err(error);
-        }
-        if let Err(error) = execution.call_storage.recycle(state, frame.cold) {
-            runtime.0.poisoned.set(true);
-            return Err(runtime_error_to_vm_error(error));
-        }
-        id = target.frame()?;
-        let parent = execution.frames.current_mut(id)?;
-        if target.tail {
-            #[cfg(feature = "profiling")]
-            crate::engine::api::profiling::record_owned_execution_event(
-                "ordinary_tail_return_direct",
-            );
-            continue;
-        }
-        if matches!(target.value_use, ReturnValue::Push) {
-            let value = execution
-                .pending
-                .as_mut()
-                .expect("registered ordinary result");
-            execution.slots.push_owned(&mut parent.window, value)?;
-            execution.pending = None;
-        } else {
-            let value = execution
-                .pending
-                .take()
-                .expect("registered discarded result");
-            if let Err(error) = state.release_jsvalue(value) {
-                runtime.0.poisoned.set(true);
-                return Err(runtime_error_to_vm_error(error));
-            }
-        }
-        #[cfg(feature = "profiling")]
-        crate::engine::api::profiling::record_owned_execution_event("ordinary_return_direct");
-        return Ok(ReturnProgress::Returned);
-    }
+    crate::engine::vm::stack::FrameExecution::admit(execution, id)?.finish_ordinary(runtime, state)
 }
 
 pub(super) fn finish(

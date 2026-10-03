@@ -44,6 +44,13 @@ pub(crate) struct LinkedNativeSelection {
     data: crate::engine::builtins::native::NativeFunctionData,
 }
 impl LinkedNativeSelection {
+    /// Compare the already selected weak fact with a currently owned callee.
+    /// No payload lookup or fact consumption is required on an ordinary
+    /// argument call while an outer native method remains selected.
+    pub(crate) fn matches_in_domain(&self, domain_id: u64, function: ObjectId) -> bool {
+        domain_id == self.domain_id && function == self.function
+    }
+
     pub(crate) fn into_parts_jsvalue(
         self,
         runtime: &Runtime,
@@ -57,7 +64,8 @@ impl LinkedNativeSelection {
         domain_id: u64,
         function: ObjectId,
     ) -> Option<crate::engine::builtins::native::NativeFunctionData> {
-        (domain_id == self.domain_id && function == self.function).then_some(self.data)
+        self.matches_in_domain(domain_id, function)
+            .then_some(self.data)
     }
 }
 

@@ -518,6 +518,10 @@ pub(super) struct FramePush<'a> {
     next: u64,
 }
 impl FramePush<'_> {
+    /// Reserved publication still lends the actual caller stack top.
+    pub(super) fn current_frame_mut(&mut self) -> Option<(FrameId, &mut Frame)> {
+        self.store.current_frame_mut()
+    }
     pub(super) fn current_mut(&mut self, id: FrameId) -> Result<&mut Frame, Error> {
         self.store.current_mut(id)
     }
