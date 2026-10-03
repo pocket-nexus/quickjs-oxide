@@ -6,7 +6,9 @@
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::heap::{Heap, HeapError, RawId, SlotState};
-use crate::engine::value::{JsValue, Value};
+use crate::engine::value::JsValue;
+#[cfg(test)]
+use crate::engine::value::Value;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SlotReleaseReadiness {
@@ -81,7 +83,7 @@ impl Heap {
 }
 
 impl Runtime {
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub(crate) fn slot_value_release_readiness(
         &self,
         value: &Value,
@@ -179,7 +181,7 @@ impl Runtime {
     /// proof. No callback or reference decrease can intervene between the
     /// preflight and Drop. Ready consumes the Value; every other outcome leaves
     /// it untouched, so the caller may move it to a pending operation safely.
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg(test)]
     pub(crate) fn try_release_slot_value(&self, value: &mut Value) -> Result<bool, RuntimeError> {
         if self.slot_value_release_readiness(value)? != SlotReleaseReadiness::Ready {
             return Ok(false);
