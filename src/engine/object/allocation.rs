@@ -46,17 +46,7 @@ impl Runtime {
         let prototype = prototype.map(ObjectRef::object_id);
 
         let mut state = self.0.state.borrow_mut();
-        let shape = state.get_or_create_shape(prototype, &[])?;
-        let object = match state.heap.allocate_object(build(shape, Vec::new())) {
-            Ok(object) => object,
-            Err(error) => {
-                let cleanup = state.heap.release_shape(shape)?;
-                state.apply_cleanup(cleanup)?;
-                return Err(error.into());
-            }
-        };
-        let cleanup = state.heap.release_shape(shape)?;
-        state.apply_cleanup(cleanup)?;
+        let object = state.allocate_object_with_layout(prototype, &[], Vec::new(), build)?;
         drop(state);
         Ok(ObjectRef::from_owned_handle(self.clone(), object))
     }
